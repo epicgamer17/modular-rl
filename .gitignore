@@ -10,3 +10,5 @@
 # *.pkl
 **/checkpoints/
 *.DS_Store
+.venv/
+*/deprecated/*
