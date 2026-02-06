@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import time
 from search.search_factories import create_mcts
 from replay_buffers.game import Game
 
@@ -141,6 +142,7 @@ class MuZeroActor:
         """
         Runs one episode and returns the Game object.
         """
+        start_time = time.time()
         with torch.no_grad():
             if self.config.game.num_players != 1:
                 env.reset()
@@ -215,6 +217,12 @@ class MuZeroActor:
 
                 state = next_state
                 info = next_info
+
+            if stats_tracker:
+                duration = time.time() - start_time
+                if duration > 0:
+                    fps = len(game) / duration
+                    stats_tracker.append("actor_fps", fps)
 
             return game
 

@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
+import time
 from torch.nn.utils import clip_grad_norm_
 from replay_buffers.buffer_factories import create_muzero_buffer
 from losses.losses import create_muzero_loss_pipeline
@@ -154,6 +155,7 @@ class MuZeroLearner:
 
     def _learn_step(self, samples, stats=None):
         """Internal logic for a single backprop step."""
+        start_time = time.time()
         # Unpack data
         observations = samples["observations"]
         target_observations = samples["unroll_observations"].to(self.device)
@@ -268,6 +270,12 @@ class MuZeroLearner:
 
         self.optimizer.step()
         self.lr_scheduler.step()
+
+        if stats is not None:
+            duration = time.time() - start_time
+            if duration > 0:
+                fps = self.config.minibatch_size / duration
+                stats.append("learner_fps", fps)
 
         if self.device == "mps" and self.training_step % 100 == 0:
             torch.mps.empty_cache()

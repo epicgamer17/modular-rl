@@ -11,7 +11,12 @@ from search.search_factories import create_mcts
 sys.path.append("../")
 from time import time
 import traceback
-from modules.utils import scalar_to_support, support_to_scalar, get_lr_scheduler, get_optimal_device
+from modules.utils import (
+    scalar_to_support,
+    support_to_scalar,
+    get_lr_scheduler,
+    get_optimal_device,
+)
 import numpy as np
 from stats.stats import PlotType, StatTracker
 from losses.losses import create_muzero_loss_pipeline
@@ -156,6 +161,8 @@ class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
             "policy_entropy",
             "value_diff",
             "policy_improvement",
+            "learner_fps",
+            "actor_fps",
         ] + test_score_keys
 
         if self.config.stochastic:
@@ -250,6 +257,10 @@ class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
             "value_diff", PlotType.ROLLING_AVG, rolling_window=100
         )
         self.stats.add_plot_types("policy_improvement", PlotType.BAR)
+        self.stats.add_plot_types(
+            "learner_fps", PlotType.ROLLING_AVG, rolling_window=100
+        )
+        self.stats.add_plot_types("actor_fps", PlotType.ROLLING_AVG, rolling_window=100)
 
         if self.config.stochastic:
             self.stats.add_plot_types("chance_probs", PlotType.BAR)
