@@ -48,22 +48,23 @@ class MuZeroLearner:
         num_actions,
         observation_dimensions,
         observation_dtype,
-        predict_initial_inference_fn,
-        predict_recurrent_inference_fn,
-        predict_afterstate_recurrent_inference_fn,
-        preprocess_fn,
+        policy,
     ):
         self.config = config
         self.model = model
         self.device = device
         self.num_actions = num_actions
         self.observation_dimensions = observation_dimensions
-        self.predict_initial_inference_fn = predict_initial_inference_fn
-        self.predict_recurrent_inference_fn = predict_recurrent_inference_fn
+        self.observation_dtype = observation_dtype
+        self.policy = policy
+
+        # Extracted functions for convenience
+        self.predict_initial_inference_fn = policy.predict_initial_inference
+        self.predict_recurrent_inference_fn = policy.predict_recurrent_inference
         self.predict_afterstate_recurrent_inference_fn = (
-            predict_afterstate_recurrent_inference_fn
+            policy.predict_afterstate_recurrent_inference
         )
-        self.preprocess_fn = preprocess_fn
+        self.preprocess_fn = policy.preprocess
         self.training_step = 0
 
         # 1. Initialize Replay Buffer
@@ -111,8 +112,8 @@ class MuZeroLearner:
         self.loss_pipeline = create_muzero_loss_pipeline(
             config=self.config,
             device=self.device,
-            predict_initial_inference_fn=predict_initial_inference_fn,
-            preprocess_fn=preprocess_fn,
+            predict_initial_inference_fn=self.predict_initial_inference_fn,
+            preprocess_fn=self.preprocess_fn,
             model=self.model,
         )
 

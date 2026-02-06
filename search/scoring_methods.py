@@ -51,9 +51,9 @@ class UCBScoring(ScoringMethod):
         # check if value_score is nan
         assert value_score == value_score, "value_score is nan"
         assert prior_score == prior_score, "prior_score is nan"
-        
-        return prior_score + value_score
 
+        score = prior_score + value_score
+        return score.detach().item() if torch.is_tensor(score) else score
 
 
 class GumbelScoring(ScoringMethod):
@@ -113,7 +113,8 @@ class PriorScoring(ScoringMethod):
     """Simple scoring based on priors."""
 
     def score(self, node, child, min_max_stats) -> float:
-        return child.prior
+        p = child.prior
+        return p.detach().item() if torch.is_tensor(p) else p
 
     def score_initial(self, prior: float, action: int) -> float:
         return prior
@@ -126,9 +127,10 @@ class QValueScoring(ScoringMethod):
 
     def score(self, node, child, min_max_stats) -> float:
         if child.expanded():
-            return node.get_child_q_from_parent(child)
+            v = node.get_child_q_from_parent(child)
         else:
-            return child.value()
+            v = child.value()
+        return v.detach().item() if torch.is_tensor(v) else v
 
     def score_initial(self, prior: float, action: int) -> float:
         return prior

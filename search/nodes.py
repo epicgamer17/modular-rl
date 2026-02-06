@@ -103,7 +103,7 @@ class ChanceNode:
     def _sample_code(self, codes, probs):
         """Helper to sample a single code index from probabilities."""
         # Normalize probs just in case
-        probs = [float(p) for p in probs]
+        probs = [(p.detach().item() if torch.is_tensor(p) else float(p)) for p in probs]
         probs = np.array(probs)
         probs /= probs.sum()
         return np.random.choice(len(codes), p=probs)
@@ -123,9 +123,19 @@ class ChanceNode:
 
     def get_child_q_from_parent(self, child):
         # assert isinstance(child, DecisionNode)
-        r = float(self.child_reward(child))
+        r = self.child_reward(child)
+        if torch.is_tensor(r):
+            r = r.detach().item()
+        else:
+            r = float(r)
+
         # child.value() if visited else v_mix
-        v = float(child.value())
+        v = child.value()
+        if torch.is_tensor(v):
+            v = v.detach().item()
+        else:
+            v = float(v)
+
         # sign = +1 if child.to_play == self.to_play else -1 (multi-agent).
         sign = 1.0 if child.to_play == self.to_play else -1.0
         q_from_parent = r + self.discount * (sign * v)
@@ -156,19 +166,21 @@ class ChanceNode:
         """Calculates the weighted value term for v_mix based on visited codes."""
         num_codes = len(self.code_probs)
         q_vals = torch.zeros(num_codes)
-        
+
         # Convert code_probs dict to tensor
         code_probs_list = [self.code_probs[i] for i in range(num_codes)]
         code_probs_tensor = torch.tensor(code_probs_list)
-        
+
         p_vis_sum = 0
         for code in visited_codes:
             child = self.children[code]
             q_vals[code] = self.get_child_q_from_parent(child)
             p_vis_sum += code_probs_tensor[code]
-        expected_q_vis = float(
-            (code_probs_tensor * q_vals).sum()
-        )
+        expected_q_vis = (code_probs_tensor * q_vals).sum()
+        if torch.is_tensor(expected_q_vis):
+            expected_q_vis = expected_q_vis.detach().item()
+        else:
+            expected_q_vis = float(expected_q_vis)
 
         if p_vis_sum == 0:
             return 0.0
@@ -312,9 +324,13 @@ class DecisionNode:
             child = self.children[action]
             q_vals[action] = self.get_child_q_from_parent(child)
             p_vis_sum += self.network_policy[action]
-        expected_q_vis = float(
-            (self.network_policy * q_vals).sum()
-        )  # sum_pi(a) * q(a) but q(a)=0 for unvisited
+        expected_q_vis = (self.network_policy * q_vals).sum()
+        if torch.is_tensor(expected_q_vis):
+            expected_q_vis = expected_q_vis.detach().item()
+        else:
+            expected_q_vis = float(
+                expected_q_vis
+            )  # sum_pi(a) * q(a) but q(a)=0 for unvisited
 
         if p_vis_sum == 0:
             return 0.0
@@ -327,11 +343,21 @@ class DecisionNode:
             if not child.expanded():
                 # For unexpanded nodes (e.g. during pruning of candidates),
                 # we rely on the bootstrap value (value()) which handles the estimation method.
-                return float(child.value())
+                v = child.value()
+                return v.detach().item() if torch.is_tensor(v) else float(v)
 
-            r = float(self.child_reward(child))
+            r = self.child_reward(child)
+            if torch.is_tensor(r):
+                r = r.detach().item()
+            else:
+                r = float(r)
+
             # child.value() if visited else v_mix
-            v = float(child.value())
+            v = child.value()
+            if torch.is_tensor(v):
+                v = v.detach().item()
+            else:
+                v = float(v)
             # sign = +1 if child.to_play == self.to_play else -1 (multi-agent).
             sign = 1.0 if child.to_play == self.to_play else -1.0
             q_from_parent = r + self.discount * (sign * v)

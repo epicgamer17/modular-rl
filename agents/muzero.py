@@ -39,8 +39,9 @@ import torch.multiprocessing as mp
 from tqdm import tqdm
 
 from agents.torch_mp_agent import TorchMPAgent
-from agents.muzero_actor import MuZeroActor
+from agents.muzero_policy import MuZeroPolicy
 from agents.muzero_learner import MuZeroLearner
+from agents.actors import GenericActor
 
 
 class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
@@ -76,8 +77,17 @@ class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
             world_model_cls=self.config.world_model_cls,
         )
 
-        self.actor = MuZeroActor(
-            self.config, self.device, self.num_actions, self.observation_dimensions
+        self.policy = MuZeroPolicy(
+            self.config,
+            self.device,
+            self.num_actions,
+            self.observation_dimensions,
+            model=self.model,
+        )
+        self.actor = GenericActor(
+            self.config.game.make_env,
+            self.policy,
+            num_players=self.config.game.num_players,
         )
 
         self.learner = MuZeroLearner(
@@ -87,10 +97,7 @@ class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
             num_actions=self.num_actions,
             observation_dimensions=self.observation_dimensions,
             observation_dtype=self.observation_dtype,
-            predict_initial_inference_fn=self.actor.predict_initial_inference,
-            predict_recurrent_inference_fn=self.actor.predict_recurrent_inference,
-            predict_afterstate_recurrent_inference_fn=self.actor.predict_afterstate_recurrent_inference,
-            preprocess_fn=self.actor.preprocess,
+            policy=self.policy,
         )
 
         if self.config.multi_process:
@@ -273,18 +280,10 @@ class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
     ):
         self.stats = stats_client
         print(f"[Worker {worker_id}] Starting self-play...")
-        worker_env = self.config.game.make_env()  # each process needs its own env
-        try:
-            from wrappers import record_video_wrapper
-
-            worker_env.render_mode = "rgb_array"
-            worker_env = record_video_wrapper(
-                worker_env,
-                f"./videos/{self.model_name}/{worker_id}",
-                self.checkpoint_interval,
-            )
-        except:
-            print(f"[Worker {worker_id}] Could not record video")
+        self.actor.setup()
+        self.actor.configure_video_recording(
+            f"./videos/{self.model_name}/{worker_id}", self.checkpoint_interval
+        )
         # Workers should use the target model for inference so training doesn't
         # destabilize ongoing self-play. Ensure the target model is on the worker's device
         # and set as the inference model.
@@ -299,14 +298,10 @@ class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
                 ):
                     self.reanalyze_game(inference_model=self.target_model)
                 else:
-                    score, num_steps = self.play_game(
-                        env=worker_env, inference_model=self.target_model
-                    )
-                    # print(f"[Worker {worker_id}] Finished a game with score {score}")
-                    # worker_env.close()  # for saving video
-                    stats_client.append("score", score)
-                    stats_client.append("episode_length", num_steps)
-                    stats_client.increment_steps(num_steps)
+                    # Update policy with current inference model
+                    self.policy.model = self.target_model
+                    game = self.actor.play_game(stats_tracker=stats_client)
+                    self.replay_buffer.store_aggregate(game_object=game)
         except Exception as e:
             # Send both exception and traceback back
             error_queue.put((e, traceback.format_exc()))
@@ -339,9 +334,7 @@ class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
                         print("Stopping game generation")
                         break
 
-                    score, num_steps = self.play_game(inference_model=self.target_model)
-                    self.stats.append("score", score)
-                    self.stats.increment_steps(num_steps)
+                    self.play_game(inference_model=self.target_model)
                 if self.stop_flag.value:
                     print("Stopping training")
                     break
@@ -446,7 +439,8 @@ class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
     ):
         if inference_model is None:
             inference_model = self.model
-        return self.actor.predict(state, info, env=env, inference_model=inference_model)
+        self.policy.model = inference_model
+        return self.policy.predict(state, info)
 
     def select_actions(
         self,
@@ -455,24 +449,24 @@ class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
         *args,
         **kwargs,
     ):
-        return self.actor.select_actions(prediction, temperature=temperature)
+        return self.policy.select_actions(prediction, temperature=temperature)
 
     def play_game(self, env=None, inference_model=None):
-        if env is None:
-            env = self.env
+        if inference_model is None:
+            inference_model = self.model
 
-        # Use actor to play the game
-        game = self.actor.play_game(
-            env=env,
-            model=inference_model if inference_model is not None else self.model,
-            stats_tracker=self.stats,
-        )
+        self.policy.model = inference_model
+        game = self.actor.play_game(stats_tracker=self.stats)
 
         # Store in replay buffer
         self.replay_buffer.store_aggregate(game_object=game)
 
         if self.config.game.num_players != 1:
-            return env.rewards[env.agents[0]], len(game)
+            # game.rewards is a list of rewards for each step
+            # We want the total reward for player 0
+            final_rewards = game.info_history[-1].get("final_rewards", {})
+            score = final_rewards.get(self.player_id, 0)
+            return score, len(game)
         else:
             return sum(game.rewards), len(game)
 
@@ -527,26 +521,26 @@ class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
                     infos.append(info)
                     # print("info with legal moves from nonzero mask", info)
                     # ADD INJECTING SEEN ACTION THING FROM MUZERO UNPLUGGED
+                    self.policy.model = inference_model
                     if self.config.reanalyze_method == "mcts":
                         root_value, _, new_policy, best_action, _ = (
-                            self.actor.search.run(
+                            self.policy.search.run(
                                 obs,
                                 info,
                                 to_play,
                                 {
-                                    "initial": self.actor.predict_initial_inference,
-                                    "recurrent": self.actor.predict_recurrent_inference,
-                                    "afterstate": self.actor.predict_afterstate_recurrent_inference,
+                                    "initial": self.policy.predict_initial_inference,
+                                    "recurrent": self.policy.predict_recurrent_inference,
+                                    "afterstate": self.policy.predict_afterstate_recurrent_inference,
                                 },
                                 trajectory_action=int(traj_action.item()),
-                                inference_model=inference_model,
                             )
                         )
 
                         new_root_value = float(root_value)
                     else:
-                        value, new_policy, _ = self.actor.predict_initial_inference(
-                            obs, model=inference_model
+                        value, new_policy, _ = self.policy.predict_initial_inference(
+                            obs
                         )
                         new_root_value = value.item()
                 else:
