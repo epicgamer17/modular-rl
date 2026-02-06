@@ -504,7 +504,9 @@ class MARLBaseAgent(BaseAgent):
                     done = terminated or truncated
 
                     if done:
-                        score += self.test_env.rewards[f"player_{player}"]
+                        score += self.test_env.rewards[
+                            self.test_env.possible_agents[player]
+                        ]
                 results.append(score)
 
             # reset
