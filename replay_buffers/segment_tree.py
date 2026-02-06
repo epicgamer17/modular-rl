@@ -20,13 +20,20 @@ class SegmentTree:
 
     """
 
-    def __init__(self, capacity: int, operation: Callable, init_value: float):
+    def __init__(
+        self,
+        capacity: int,
+        operation: Callable,
+        init_value: float,
+        is_shared: bool = True,
+    ):
         """Initialization.
 
         Args:
             capacity (int)
             operation (function)
             init_value (float)
+            is_shared (bool)
 
         """
         assert (
@@ -34,9 +41,9 @@ class SegmentTree:
         ), "capacity must be positive and a power of 2."
         self.capacity = capacity
         # self.tree = [init_value for _ in range(2 * capacity)]
-        self.tree = torch.full(
-            (2 * capacity,), init_value, dtype=torch.float32
-        ).share_memory_()
+        self.tree = torch.full((2 * capacity,), init_value, dtype=torch.float32)
+        if is_shared:
+            self.tree = self.tree.share_memory_()
         self.operation = operation
 
     def _operate_helper(
@@ -86,18 +93,38 @@ class SegmentTree:
                     return right_index
 
     def operate(self, start: int = 0, end: int = 0) -> float:
-        """Returns result of applying `self.operation`."""
-        if end <= 0:
-            end += self.capacity
-        end -= 1
+        """Returns result of applying `self.operation`.
+
+        Args:
+            start (int): Start index (inclusive).
+            end (int): End index (inclusive). If None, uses capacity - 1.
+        """
+        # if end is None:
+        #     end = self.capacity - 1
+        # elif end < 0:
+        #     end += self.capacity
+
+        assert (
+            0 <= start <= end < self.capacity
+        ), f"Invalid range: [{start}, {end}] for capacity {self.capacity}"
 
         return self._operate_helper(start, end, 1, 0, self.capacity - 1)
 
     def get_operate_index(self, start: int = 0, end: int = 0) -> int:
-        """Returns index of the result of applying `self.operation`."""
-        if end <= 0:
-            end += self.capacity
-        end -= 1
+        """Returns index of the result of applying `self.operation`.
+
+        Args:
+            start (int): Start index (inclusive).
+            end (int): End index (inclusive). If None, uses capacity - 1.
+        """
+        # if end is None:
+        #     end = self.capacity - 1
+        # elif end < 0:
+        #     end += self.capacity
+
+        assert (
+            0 <= start <= end < self.capacity
+        ), f"Invalid range: [{start}, {end}] for capacity {self.capacity}"
 
         return self._get_operate_index_helper(start, end, 1, 0, self.capacity - 1)
 
@@ -127,15 +154,19 @@ class SumSegmentTree(SegmentTree):
 
     """
 
-    def __init__(self, capacity: int):
+    def __init__(self, capacity: int, is_shared: bool = True):
         """Initialization.
 
         Args:
             capacity (int)
+            is_shared (bool)
 
         """
         super(SumSegmentTree, self).__init__(
-            capacity=capacity, operation=operator.add, init_value=0.0
+            capacity=capacity,
+            operation=operator.add,
+            init_value=0.0,
+            is_shared=is_shared,
         )
 
     def sum(self, start: int = 0, end: int = 0) -> float:
@@ -146,8 +177,8 @@ class SumSegmentTree(SegmentTree):
         """Find the highest index `i` about upper bound in the tree"""
         # TODO: Check assert case and fix bug
         assert (
-            0 <= upperbound <= self.sum() + 1e-5
-        ), f"upperbound: {upperbound} < {self.sum() + 1e-5}"
+            0 <= upperbound <= self.sum(0, self.capacity - 1) + 1e-5
+        ), f"upperbound: {upperbound} < {self.sum(0, self.capacity - 1) + 1e-5}"
 
         idx = 1
 
@@ -171,15 +202,19 @@ class MinSegmentTree(SegmentTree):
 
     """
 
-    def __init__(self, capacity: int):
+    def __init__(self, capacity: int, is_shared: bool = True):
         """Initialization.
 
         Args:
             capacity (int)
+            is_shared (bool)
 
         """
         super(MinSegmentTree, self).__init__(
-            capacity=capacity, operation=min, init_value=float("inf")
+            capacity=capacity,
+            operation=min,
+            init_value=float("inf"),
+            is_shared=is_shared,
         )
 
     def min(self, start: int = 0, end: int = 0) -> float:

@@ -223,28 +223,37 @@ def create_muzero_buffer(
     lstm_horizon_len=10,
     value_prefix=False,
     tau=0.3,
+    multi_process=True,
 ):
     configs = [
         BufferConfig(
             "observations",
             shape=observation_dimensions,
             dtype=observation_dtype,
-            is_shared=True,
+            is_shared=multi_process,
         ),
-        BufferConfig("actions", shape=(), dtype=torch.float16, is_shared=True),
-        BufferConfig("rewards", shape=(), dtype=torch.float32, is_shared=True),
-        BufferConfig("values", shape=(), dtype=torch.float32, is_shared=True),
+        BufferConfig("actions", shape=(), dtype=torch.float16, is_shared=multi_process),
+        BufferConfig("rewards", shape=(), dtype=torch.float32, is_shared=multi_process),
+        BufferConfig("values", shape=(), dtype=torch.float32, is_shared=multi_process),
         BufferConfig(
-            "policies", shape=(num_actions,), dtype=torch.float32, is_shared=True
+            "policies",
+            shape=(num_actions,),
+            dtype=torch.float32,
+            is_shared=multi_process,
         ),
-        BufferConfig("to_plays", shape=(), dtype=torch.int16, is_shared=True),
-        BufferConfig("chances", shape=(1,), dtype=torch.int16, is_shared=True),
-        BufferConfig("game_ids", shape=(), dtype=torch.int64, is_shared=True),
-        BufferConfig("ids", shape=(), dtype=torch.int64, is_shared=True),
-        BufferConfig("training_steps", shape=(), dtype=torch.int64, is_shared=True),
-        BufferConfig("dones", shape=(), dtype=torch.bool, is_shared=True),
+        BufferConfig("to_plays", shape=(), dtype=torch.int16, is_shared=multi_process),
+        BufferConfig("chances", shape=(1,), dtype=torch.int16, is_shared=multi_process),
+        BufferConfig("game_ids", shape=(), dtype=torch.int64, is_shared=multi_process),
+        BufferConfig("ids", shape=(), dtype=torch.int64, is_shared=multi_process),
         BufferConfig(
-            "legal_masks", shape=(num_actions,), dtype=torch.bool, is_shared=True
+            "training_steps", shape=(), dtype=torch.int64, is_shared=multi_process
+        ),
+        BufferConfig("dones", shape=(), dtype=torch.bool, is_shared=multi_process),
+        BufferConfig(
+            "legal_masks",
+            shape=(num_actions,),
+            dtype=torch.bool,
+            is_shared=multi_process,
         ),
     ]
 
@@ -270,7 +279,11 @@ def create_muzero_buffer(
             value_prefix,
             tau,
         ),
-        writer=SharedCircularWriter(max_size),
+        writer=(
+            SharedCircularWriter(max_size)
+            if multi_process
+            else CircularWriter(max_size)
+        ),
         sampler=PrioritizedSampler(
             max_size,
             alpha=alpha,
@@ -278,6 +291,7 @@ def create_muzero_buffer(
             epsilon=epsilon,
             use_batch_weights=use_batch_weights,
             use_initial_max_priority=use_initial_max_priority,
+            is_shared=multi_process,
         ),
     )
 

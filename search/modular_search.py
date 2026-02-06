@@ -312,9 +312,9 @@ class SearchAlgorithm:
                     reward_c_state,
                 ) = inference_fns["recurrent"](
                     parent.hidden_state,
-                    torch.tensor(action_or_code)
-                    .to(parent.hidden_state.device)
-                    .unsqueeze(0),
+                    torch.as_tensor(
+                        [action_or_code], device=parent.hidden_state.device
+                    ),
                     parent.reward_h_state,
                     parent.reward_c_state,
                     model=inference_model,
@@ -413,10 +413,11 @@ class SearchAlgorithm:
                 "afterstate"
             ](  # <--- YOU NEED THIS METHOD
                 parent.hidden_state,
-                torch.tensor(action_or_code)
-                .to(parent.hidden_state.device)
-                .unsqueeze(0)
-                .float(),
+                torch.as_tensor(
+                    [action_or_code],
+                    device=parent.hidden_state.device,
+                    dtype=torch.float,
+                ),
                 model=inference_model,
             )
 
@@ -451,14 +452,16 @@ class SearchAlgorithm:
     ):
         use_virtual_mean = self.config.use_virtual_mean
         virtual_loss = self.config.virtual_loss
-        
+
         sim_data = []
-        
+
         # 1. Selection Phase
         for b in range(batch_size):
             node = root
             search_path = [node]
-            path_virtual_values = [] # Track virtual values for this path if using Virtual Mean
+            path_virtual_values = (
+                []
+            )  # Track virtual values for this path if using Virtual Mean
             horizon_index = 0
 
             action_or_code = None
@@ -493,12 +496,14 @@ class SearchAlgorithm:
                             for n in search_path:
                                 n.visits -= 1
                                 n.value_sum += virtual_loss
-                        
+
                         node = None
                         break
 
                     action_or_code, node = self.root_selection_strategy.select_child(
-                        node, pruned_actionset=pruned_actionset, min_max_stats=min_max_stats
+                        node,
+                        pruned_actionset=pruned_actionset,
+                        min_max_stats=min_max_stats,
                     )
                 else:
                     if isinstance(node, DecisionNode):
@@ -548,7 +553,7 @@ class SearchAlgorithm:
                         )
 
                 horizon_index = (horizon_index + 1) % self.config.lstm_horizon_len
-                
+
                 # Apply virtual update to the PARENT (search_path[-1])
                 # We do this after successful selection.
                 parent_node = search_path[-1]
@@ -556,21 +561,21 @@ class SearchAlgorithm:
                     v_val = parent_node.value()
                     parent_node.visits += 1
                     parent_node.value_sum += v_val
-                    path_virtual_values.append(v_val) # Note: path_virtual_values will match search_path indices
+                    path_virtual_values.append(
+                        v_val
+                    )  # Note: path_virtual_values will match search_path indices
                 else:
                     parent_node.visits += 1
                     parent_node.value_sum -= virtual_loss
-                
+
                 search_path.append(node)
-
-
 
             if node is None:
                 continue
 
             # Leaf Node Update (since loop only updates parents)
             if use_virtual_mean:
-                v_val = node.value() # Bootstrap
+                v_val = node.value()  # Bootstrap
                 node.visits += 1
                 node.value_sum += v_val
                 path_virtual_values.append(v_val)
@@ -634,7 +639,7 @@ class SearchAlgorithm:
                     "parent": search_path[-2],
                     "action": action_or_code,
                     "horizon_index": horizon_index,
-                    "virtual_values": path_virtual_values if use_virtual_mean else None
+                    "virtual_values": path_virtual_values if use_virtual_mean else None,
                 }
             )
 
@@ -682,12 +687,12 @@ class SearchAlgorithm:
                 if isinstance(raw_action, torch.Tensor):
                     val = raw_action.to(self.device).detach().clone()
                 else:
-                    val = torch.tensor(raw_action, device=self.device)
+                    val = torch.as_tensor(raw_action, device=self.device)
 
                 if is_chance_parent:
-                     act_list.append(val.float().unsqueeze(0))
+                    act_list.append(val.float().unsqueeze(0))
                 else:
-                     act_list.append(val.unsqueeze(0))
+                    act_list.append(val.unsqueeze(0))
 
             actions = torch.cat(act_list, dim=0)
 
@@ -719,23 +724,28 @@ class SearchAlgorithm:
                 }
 
         if afterstate_inputs:
-             states = torch.cat([x["state"] for x in afterstate_inputs], dim=0)
-             actions = torch.tensor([x["action"] for x in afterstate_inputs]).to(self.device).float().unsqueeze(1)
+            states = torch.cat([x["state"] for x in afterstate_inputs], dim=0)
+            actions = (
+                torch.tensor([x["action"] for x in afterstate_inputs])
+                .to(self.device)
+                .float()
+                .unsqueeze(1)
+            )
 
-             afterstates, values, code_probs_batch = inference_fns["afterstate"](
-                 states, actions, model=inference_model
-             )
+            afterstates, values, code_probs_batch = inference_fns["afterstate"](
+                states, actions, model=inference_model
+            )
 
-             for local_i, x in enumerate(afterstate_inputs):
-                 idx = x["idx"]
-                 sim_data[idx]["result"] = {
-                     "afterstate": afterstates[local_i : local_i + 1],
-                     "value": values[local_i],
-                     "code_probs": code_probs_batch[local_i : local_i + 1],
-                 }
+            for local_i, x in enumerate(afterstate_inputs):
+                idx = x["idx"]
+                sim_data[idx]["result"] = {
+                    "afterstate": afterstates[local_i : local_i + 1],
+                    "value": values[local_i],
+                    "code_probs": code_probs_batch[local_i : local_i + 1],
+                }
 
         # 3. Expansion & Backprop
-        
+
         # A. Revert Virtual Loss / Virtual Mean (Global Reversion Phase)
         # We must revert ALL virtual updates before backprop to ensure min_max_stats
         # sees clean values without penalty/mean bias from other simulations.
@@ -770,11 +780,11 @@ class SearchAlgorithm:
                 reward = res["reward"]
                 value = res["value"]
                 if self.config.support_range is not None:
-                     reward = support_to_scalar(reward, self.config.support_range).item()
-                     value = support_to_scalar(value, self.config.support_range).item()
+                    reward = support_to_scalar(reward, self.config.support_range).item()
+                    value = support_to_scalar(value, self.config.support_range).item()
                 else:
-                     reward = reward.item()
-                     value = value.item()
+                    reward = reward.item()
+                    value = value.item()
 
                 to_play = int(res["to_play"].argmax().item())
                 to_play_for_backprop = to_play
@@ -784,15 +794,15 @@ class SearchAlgorithm:
                 rc = res["rc"]
 
                 if self.config.value_prefix and is_reset:
-                     rh = torch.zeros_like(rh).to(self.device)
-                     rc = torch.zeros_like(rc).to(self.device)
+                    rh = torch.zeros_like(rh).to(self.device)
+                    rc = torch.zeros_like(rc).to(self.device)
 
                 policy = res["policy"][0]
                 actions_to_expand = self.internal_actionset.create_initial_actionset(
                     policy,
                     list(range(self.num_actions)),
                     self.config.gumbel_m,
-                    trajectory_action=None
+                    trajectory_action=None,
                 )
 
                 node.expand(
@@ -805,7 +815,7 @@ class SearchAlgorithm:
                     value=value,
                     reward_h_state=rh,
                     reward_c_state=rc,
-                    is_reset=is_reset
+                    is_reset=is_reset,
                 )
 
             elif isinstance(node, ChanceNode):
@@ -823,7 +833,7 @@ class SearchAlgorithm:
                     network_value=value,
                     code_probs=res["code_probs"][0],
                     reward_h_state=d["parent"].reward_h_state,
-                    reward_c_state=d["parent"].reward_c_state
+                    reward_c_state=d["parent"].reward_c_state,
                 )
 
             self.backpropagator.backpropagate(

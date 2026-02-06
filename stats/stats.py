@@ -7,10 +7,12 @@ import matplotlib.pyplot as plt
 from enum import Enum, auto
 from stats.latent_pca import LatentPCAVisualizer
 from stats.latent_tsne import LatentTSNEVisualizer
+
 try:
     from stats.latent_umap import LatentUMAPVisualizer
 except ImportError:
     LatentUMAPVisualizer = None
+
 
 class PlotType(Enum):
     ROLLING_AVG = auto()
@@ -67,17 +69,17 @@ class StatTracker:
     def __setstate__(self, state):
         self.__dict__.update(state)
         # Ensure new attributes exist even in legacy objects
-        if not hasattr(self, 'custom_viz_data'):
+        if not hasattr(self, "custom_viz_data"):
             self.custom_viz_data = {}
-        if not hasattr(self, 'latent_viz_data'):
+        if not hasattr(self, "latent_viz_data"):
             self.latent_viz_data = {}
-        if not hasattr(self, 'plot_configs'):
+        if not hasattr(self, "plot_configs"):
             self.plot_configs = {}
-        if not hasattr(self, 'targets'):
+        if not hasattr(self, "targets"):
             self.targets = {}
-        if not hasattr(self, 'time_elapsed'):
+        if not hasattr(self, "time_elapsed"):
             self.time_elapsed = 0.0
-        if not hasattr(self, 'num_steps'):
+        if not hasattr(self, "num_steps"):
             self.num_steps = 0
 
     def get_client(self) -> "StatTracker":
@@ -98,9 +100,9 @@ class StatTracker:
         if key in self.stats:
             raise ValueError(f"Stat '{key}' already exists")
         if subkeys:
-            self.stats[key] = {subkey: torch.empty(0) for subkey in subkeys}
+            self.stats[key] = {subkey: [] for subkey in subkeys}
         else:
-            self.stats[key] = torch.empty(0)
+            self.stats[key] = []
         if target_value is not None:
             self.targets[key] = target_value
 
@@ -113,25 +115,19 @@ class StatTracker:
             # Host executes the command directly
             if key not in self.stats:
                 self._init_key(key)
-            
-            # Prepare the new value as a tensor
+
+            # Ensure values are detached and moved to CPU if they are tensors
             if isinstance(value, torch.Tensor):
                 new_val = value.detach().cpu()
             else:
-                new_val = torch.tensor([value])
-
-            # Helper to append to a tensor
-            def append_to_tensor(current_tensor, new_data):
-                if current_tensor.numel() == 0:
-                    return new_data
-                return torch.cat((current_tensor, new_data))
+                new_val = value
 
             if isinstance(self.stats[key], Dict):
                 if subkey is None:
                     raise ValueError(f"Stat '{key}' requires a subkey")
-                self.stats[key][subkey] = append_to_tensor(self.stats[key][subkey], new_val)
+                self.stats[key][subkey].append(new_val)
             else:
-                self.stats[key] = append_to_tensor(self.stats[key], new_val)
+                self.stats[key].append(new_val)
 
     def increment_steps(self, n: int = 1):
         if self._is_client:
@@ -184,12 +180,12 @@ class StatTracker:
         self.plot_configs[key]["params"].update(params)
 
     def add_latent_visualization(
-        self, 
-        key: str, 
-        latents: torch.Tensor, 
-        labels: Optional[torch.Tensor] = None, 
-        method: str = 'pca', 
-        **kwargs
+        self,
+        key: str,
+        latents: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        method: str = "pca",
+        **kwargs,
     ):
         """
         Updates the latent visualization data for a given key.
@@ -202,21 +198,19 @@ class StatTracker:
             labels = labels.detach().cpu()
 
         if self._is_client:
-            self.queue.put(("add_latent_visualization", key, latents, labels, method, kwargs))
+            self.queue.put(
+                ("add_latent_visualization", key, latents, labels, method, kwargs)
+            )
         else:
             self.latent_viz_data[key] = {
                 "latents": latents,
                 "labels": labels,
                 "method": method,
-                "kwargs": kwargs
+                "kwargs": kwargs,
             }
 
     def add_custom_visualization(
-        self, 
-        key: str, 
-        data: Any, 
-        visualizer: Any = None, 
-        **kwargs
+        self, key: str, data: Any, visualizer: Any = None, **kwargs
     ):
         """
         Updates custom visualization data for a given key.
@@ -227,24 +221,20 @@ class StatTracker:
             self.custom_viz_data[key] = {
                 "data": data,
                 "visualizer": visualizer,
-                "kwargs": kwargs
+                "kwargs": kwargs,
             }
 
     def plot_graphs(self, dir: Optional[str] = None):
         if self._is_client:
             raise RuntimeError("Cannot plot graphs from a client instance.")
 
-        collected_stats = {
-            key: tensor
-            for key, tensor in self.stats.items()
-            if (
-                (
-                    isinstance(tensor, Dict)
-                    and any(t.numel() > 0 for t in tensor.values())
-                )
-                or (isinstance(tensor, torch.Tensor) and tensor.numel() > 0)
-            )
-        }
+        collected_stats = {}
+        for key, data in self.stats.items():
+            if isinstance(data, Dict):
+                if any(len(v) > 0 for v in data.values()):
+                    collected_stats[key] = data
+            elif len(data) > 0:
+                collected_stats[key] = data
 
         if len(collected_stats) > 0:
             fig, axs = plt.subplots(
@@ -273,7 +263,7 @@ class StatTracker:
                         label=f"Target: {target_value}",
                     )
                     ax.legend()
-            
+
             plt.tight_layout()
             if dir:
                 fig.savefig(f"{dir}/{self.model_name}_stats.png")
@@ -284,17 +274,17 @@ class StatTracker:
         # Plot latent visualizations
         for key, data in self.latent_viz_data.items():
             print(f"plotting latent viz {key} using {data['method']}")
-            method = data['method'].lower()
-            latents = data['latents']
-            labels = data['labels']
-            kwargs = data['kwargs']
-            
+            method = data["method"].lower()
+            latents = data["latents"]
+            labels = data["labels"]
+            kwargs = data["kwargs"]
+
             visualizer = None
-            if method == 'pca':
+            if method == "pca":
                 visualizer = LatentPCAVisualizer(**kwargs)
-            elif method == 'tsne':
+            elif method == "tsne":
                 visualizer = LatentTSNEVisualizer(**kwargs)
-            elif method == 'umap':
+            elif method == "umap":
                 if LatentUMAPVisualizer is None:
                     print(f"Skipping UMAP for {key}: umap-learn not installed.")
                     continue
@@ -302,21 +292,21 @@ class StatTracker:
             else:
                 print(f"Unknown latent visualization method: {method}")
                 continue
-            
+
             if visualizer:
                 save_path = None
                 if dir:
                     save_path = f"{dir}/{self.model_name}_{key}_{method}.png"
-                
+
                 # Check dimensionality before plotting
                 # flatten if needed is handled by visualizer, but let's be safe on input type
                 try:
                     visualizer.plot(
-                        latents, 
-                        labels=labels, 
-                        save_path=save_path, 
+                        latents,
+                        labels=labels,
+                        save_path=save_path,
                         title=f"{self.model_name} - {key} ({method.upper()})",
-                        show=False
+                        show=False,
                     )
                 except Exception as e:
                     print(f"Error plotting latent viz {key}: {e}")
@@ -324,21 +314,21 @@ class StatTracker:
         # Plot custom visualizations
         for key, data in self.custom_viz_data.items():
             print(f"plotting custom viz {key}")
-            visualizer = data['visualizer']
-            viz_data = data['data']
-            kwargs = data['kwargs']
-            
-            if visualizer and hasattr(visualizer, 'plot'):
+            visualizer = data["visualizer"]
+            viz_data = data["data"]
+            kwargs = data["kwargs"]
+
+            if visualizer and hasattr(visualizer, "plot"):
                 save_path = None
                 if dir:
                     save_path = f"{dir}/{self.model_name}_{key}_custom.png"
-                
+
                 try:
                     visualizer.plot(
-                        viz_data, 
-                        save_path=save_path, 
+                        viz_data,
+                        save_path=save_path,
                         title=f"{self.model_name} - {key}",
-                        **kwargs
+                        **kwargs,
                     )
                 except Exception as e:
                     print(f"Error plotting custom viz {key}: {e}")
@@ -347,11 +337,37 @@ class StatTracker:
             plt.close(fig)
         return fig
 
-    def _plot_tensor(self, ax, tensor: torch.Tensor, label: str, config: Dict):
-        data = tensor.numpy()
-        x = np.arange(len(data))
+    def _plot_tensor(self, ax, data: List[Any], label: str, config: Dict):
+        # Convert list to tensor for plotting if needed, or handle list directly
+        if len(data) == 0:
+            return
+
+        if isinstance(data[0], torch.Tensor):
+            # Handle list of tensors (e.g. policies)
+            if data[0].ndim > 0:
+                # If they are multi-dimensional, stack them
+                tensor_data = torch.stack(data)
+            else:
+                # If they are 0-dim scalars, cat them
+                tensor_data = torch.cat([d.view(-1) for d in data])
+        else:
+            tensor_data = torch.tensor(data)
+
+        np_data = tensor_data.numpy()
         types = config["types"]
         params = config["params"]
+
+        # Handle batch dimension if present
+        # For ROLLING_AVG, etc., we expect (T,) or (T, ActionDim)
+        # If we have (T, B) or (T, B, ActionDim), we average over B (axis 1)
+        if PlotType.BAR in types:
+            if np_data.ndim == 3:
+                np_data = np.mean(np_data, axis=1)
+        else:
+            if np_data.ndim == 2:
+                np_data = np.mean(np_data, axis=1)
+
+        x = np.arange(len(np_data))
 
         # Handle x scaling
         if "x_scale" in params:
@@ -362,16 +378,16 @@ class StatTracker:
                 mask &= x >= params["x_start"]
             if "x_end" in params:
                 mask &= x <= params["x_end"]
-            x, data = x[mask], data[mask]
+            x, np_data = x[mask], np_data[mask]
 
         if PlotType.BAR not in types:
-             ax.plot(x, data, label=label)
+            ax.plot(x, np_data, label=label)
 
         # Rolling average
         if PlotType.ROLLING_AVG in types:
             window = params.get("rolling_window", 10)
-            if window > 1 and len(data) >= window:
-                roll = np.convolve(data, np.ones(window) / window, mode="valid")
+            if window > 1 and len(np_data) >= window:
+                roll = np.convolve(np_data, np.ones(window) / window, mode="valid")
                 ax.plot(x[window - 1 :], roll, label=f"{label} (rolling {window})")
 
         if PlotType.EXPONENTIAL_AVG in types:
@@ -380,18 +396,18 @@ class StatTracker:
             # Higher beta means more smoothing (slower decay).
             beta = params.get("ema_beta", 0.9)
 
-            if len(data) > 0:
-                ema_data = np.zeros_like(data)
+            if len(np_data) > 0:
+                ema_data = np.zeros_like(np_data)
                 v = 0.0  # Initial EMA value
 
                 # TensorBoard often applies bias correction, but for simplicity
                 # and common practice, we'll implement the standard EMA (v = beta*v + (1-beta)*datum)
                 # and initialize v with the first data point.
-                v = data[0]
+                v = np_data[0]
                 ema_data[0] = v
 
-                for i in range(1, len(data)):
-                    v = beta * v + (1 - beta) * data[i]
+                for i in range(1, len(np_data)):
+                    v = beta * v + (1 - beta) * np_data[i]
                     ema_data[i] = v
 
                 ax.plot(
@@ -400,49 +416,48 @@ class StatTracker:
 
         # Variation fill (std dev)
         if PlotType.VARIATION_FILL in types:
-            mean = np.mean(data)
-            std = np.std(data)
+            mean = np.mean(np_data)
+            std = np.std(np_data)
             ax.fill_between(x, mean - std, mean + std, alpha=0.2, label=f"{label} ±σ")
 
         # Best fit line
         if PlotType.BEST_FIT_LINE in types and len(x) > 1:
-            coeffs = np.polyfit(x, data, 1)
+            coeffs = np.polyfit(x, np_data, 1)
             fit = np.polyval(coeffs, x)
             ax.plot(x, fit, linestyle="--", label=f"{label} fit")
 
         # Bar chart for the last step
         if PlotType.BAR in types:
-            if len(data.shape) > 1:
-                latest_data = data[-1]
-                
+            if len(np_data.shape) > 1:
+                latest_data = np_data[-1]
+
                 # Filter out actions with near-zero probability to reduce clutter
                 threshold = params.get("bar_threshold", 0.01)
                 significant_indices = np.where(latest_data > threshold)[0]
-                
+
                 # If too many are significant, just take the top N
                 max_bars = params.get("max_bars", 20)
                 if len(significant_indices) > max_bars:
                     top_indices = np.argsort(latest_data)[-max_bars:]
                     significant_indices = np.sort(top_indices)
-                
+
                 if len(significant_indices) == 0:
                     # Fallback to top 5 if nothing is "significant"
                     significant_indices = np.argsort(latest_data)[-5:]
                     significant_indices = np.sort(significant_indices)
 
                 plot_data = latest_data[significant_indices]
-                plot_x = np.arange(len(significant_indices)) # Dense X axis
-                
+                plot_x = np.arange(len(significant_indices))  # Dense X axis
+
                 alpha = 0.5 if "network" in label or "search" in label else 0.8
                 ax.bar(plot_x, plot_data, label=f"{label} (latest)", alpha=alpha)
-                
+
                 # Use the original significant_indices as labels for the dense x-axis
                 ax.set_xticks(plot_x)
                 ax.set_xticklabels([str(i) for i in significant_indices], rotation=45)
                 ax.set_xlabel("Action Index")
             else:
-                ax.bar(x, data, label=label, alpha=0.7)
-
+                ax.bar(x, np_data, label=label, alpha=0.7)
 
         # Logarithmic scale
         if PlotType.LOG_Y in types:

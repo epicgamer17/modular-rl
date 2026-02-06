@@ -5,8 +5,44 @@ import torch
 import torch.nn.init as init
 from torch import nn, Tensor, optim
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from agent_configs.base_config import Config
+
+
+class LinearLR:
+    def __init__(self, training_steps: int):
+        self.training_steps = training_steps
+
+    def __call__(self, current_step: int):
+        return max(
+            0.0,
+            float(self.training_steps - current_step)
+            / float(max(1, self.training_steps)),
+        )
+
+
+class StepWiseLR:
+    def __init__(self, steps: list, values: list, initial_lr: float):
+        self.steps = steps
+        self.values = values
+        self.initial_lr = initial_lr
+
+    def __call__(self, current_step: int):
+        # Find the largest step <= current_step
+        idx = bisect.bisect_right(self.steps, current_step)
+        if idx == 0:
+            return 1.0  # Before first step, use initial LR
+        else:
+            # Use the value corresponding to the step we passed
+            # The value is the absolute LR, so divide by initial_lr to get lambda
+            return self.values[idx - 1] / self.initial_lr
+
+
+class ConstantLR:
+    def __call__(self, _):
+        return 1.0
+
 
 def get_lr_scheduler(optimizer: optim.Optimizer, config: "Config"):
     """
@@ -16,45 +52,29 @@ def get_lr_scheduler(optimizer: optim.Optimizer, config: "Config"):
     schedule_type = getattr(config, "lr_schedule_type", "none")
 
     if schedule_type == "linear":
-        # Linear decay from initial LR to 0 (or small epsilon) over training steps
-        # LambdaLR is flexible.
         training_steps = getattr(config, "training_steps", 10000)
-        
-        def lr_lambda(current_step: int):
-            return max(0.0, float(training_steps - current_step) / float(max(1, training_steps)))
-            
-        return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+        return optim.lr_scheduler.LambdaLR(optimizer, LinearLR(training_steps))
 
     elif schedule_type == "step_wise":
-        # Step-wise decay: at step x, LR becomes value y
-        # We assume lr_schedule_steps and lr_schedule_values are lists
-        # We need to map steps to multipliers relative to initial LR
         steps = getattr(config, "lr_schedule_steps", [])
         values = getattr(config, "lr_schedule_values", [])
         initial_lr = config.learning_rate
-        
-        assert len(steps) == len(values), "Length of steps and values must match for step_wise scheduler"
-        
+
+        assert len(steps) == len(
+            values
+        ), "Length of steps and values must match for step_wise scheduler"
+
         # Sort just in case
         combined = sorted(zip(steps, values), key=lambda x: x[0])
-        steps, values = zip(*combined) if combined else ([], [])
-        
-        def lr_lambda(current_step: int):
-            # Find the largest step <= current_step
-            idx = bisect.bisect_right(steps, current_step)
-            if idx == 0:
-                return 1.0 # Before first step, use initial LR
-            else:
-                # Use the value corresponding to the step we passed
-                # The value is the absolute LR, so divide by initial_lr to get lambda
-                return values[idx - 1] / initial_lr
+        sorted_steps, sorted_values = zip(*combined) if combined else ([], [])
 
-        return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+        return optim.lr_scheduler.LambdaLR(
+            optimizer, StepWiseLR(sorted_steps, sorted_values, initial_lr)
+        )
 
     else:
         # No scheduling (constant LR)
-        return optim.lr_scheduler.LambdaLR(optimizer, lambda _: 1.0)
-
+        return optim.lr_scheduler.LambdaLR(optimizer, ConstantLR())
 
 
 def support_to_scalar(
