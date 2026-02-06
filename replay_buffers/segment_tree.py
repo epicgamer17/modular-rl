@@ -1,10 +1,8 @@
-# -*- coding: utf-8 -*-
-"""Segment tree for Prioritized Replay Buffer."""
-
-import operator
-from typing import Callable
+from typing import Callable, Optional
 
 import torch
+
+from .concurrency import ConcurrencyBackend, LocalBackend
 
 
 class SegmentTree:
@@ -25,7 +23,7 @@ class SegmentTree:
         capacity: int,
         operation: Callable,
         init_value: float,
-        is_shared: bool = True,
+        backend: Optional[ConcurrencyBackend] = None,
     ):
         """Initialization.
 
@@ -33,17 +31,17 @@ class SegmentTree:
             capacity (int)
             operation (function)
             init_value (float)
-            is_shared (bool)
+            backend (ConcurrencyBackend)
 
         """
         assert (
             capacity > 0 and capacity & (capacity - 1) == 0
         ), "capacity must be positive and a power of 2."
         self.capacity = capacity
-        # self.tree = [init_value for _ in range(2 * capacity)]
-        self.tree = torch.full((2 * capacity,), init_value, dtype=torch.float32)
-        if is_shared:
-            self.tree = self.tree.share_memory_()
+        self.backend = backend or LocalBackend()
+        self.tree = self.backend.create_tensor(
+            (2 * capacity,), dtype=torch.float32, fill_value=init_value
+        )
         self.operation = operation
 
     def _operate_helper(
@@ -85,8 +83,11 @@ class SegmentTree:
                 right_index = self._get_operate_index_helper(
                     mid + 1, end, 2 * node + 1, mid + 1, node_end
                 )
-                if self.tree[left_index] == self.operation(
-                    self.tree[left_index], self.tree[right_index]
+                if (
+                    self.tree[left_index].item()
+                    == self.operation(
+                        self.tree[left_index], self.tree[right_index]
+                    ).item()
                 ):
                     return left_index
                 else:
@@ -154,19 +155,23 @@ class SumSegmentTree(SegmentTree):
 
     """
 
-    def __init__(self, capacity: int, is_shared: bool = True):
+    def __init__(
+        self,
+        capacity: int,
+        backend: Optional[ConcurrencyBackend] = None,
+    ):
         """Initialization.
 
         Args:
             capacity (int)
-            is_shared (bool)
+            backend (ConcurrencyBackend)
 
         """
         super(SumSegmentTree, self).__init__(
             capacity=capacity,
-            operation=operator.add,
+            operation=torch.add,
             init_value=0.0,
-            is_shared=is_shared,
+            backend=backend,
         )
 
     def sum(self, start: int = 0, end: int = 0) -> float:
@@ -185,10 +190,10 @@ class SumSegmentTree(SegmentTree):
         while idx < self.capacity:  # while non-leaf
             left = 2 * idx
             right = left + 1
-            if self.tree[left] > upperbound:
+            if self.tree[left].item() > upperbound:
                 idx = 2 * idx
             else:
-                upperbound -= self.tree[left]
+                upperbound -= self.tree[left].item()
                 idx = right
         assert (idx - self.capacity) <= self.capacity
         return idx - self.capacity
@@ -202,19 +207,23 @@ class MinSegmentTree(SegmentTree):
 
     """
 
-    def __init__(self, capacity: int, is_shared: bool = True):
+    def __init__(
+        self,
+        capacity: int,
+        backend: Optional[ConcurrencyBackend] = None,
+    ):
         """Initialization.
 
         Args:
             capacity (int)
-            is_shared (bool)
+            backend (ConcurrencyBackend)
 
         """
         super(MinSegmentTree, self).__init__(
             capacity=capacity,
-            operation=min,
+            operation=torch.minimum,
             init_value=float("inf"),
-            is_shared=is_shared,
+            backend=backend,
         )
 
     def min(self, start: int = 0, end: int = 0) -> float:
@@ -223,4 +232,12 @@ class MinSegmentTree(SegmentTree):
 
     def min_index(self, start: int = 0, end: int = 0) -> int:
         """Returns index of min(arr[start], ...,  arr[end])."""
-        return super(MinSegmentTree, self).get_operate_index(start, end)
+        node = super(MinSegmentTree, self).get_operate_index(start, end)
+        while node < self.capacity:
+            left = 2 * node
+            right = left + 1
+            if self.tree[left].item() <= self.tree[right].item():
+                node = left
+            else:
+                node = right
+        return node

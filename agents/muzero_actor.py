@@ -210,8 +210,8 @@ class MuZeroActor:
                     value=prediction[2],
                 )
 
-                if stats_tracker:
-                    self._track_search_stats(prediction[4], stats_tracker)
+                # if stats_tracker:
+                #     self._track_search_stats(prediction[4], stats_tracker)
 
                 state = next_state
                 info = next_info

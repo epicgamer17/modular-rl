@@ -1,5 +1,7 @@
 import torch
 from replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
+from replay_buffers.concurrency import LocalBackend, TorchMPBackend, ConcurrencyBackend
+from typing import Optional
 from replay_buffers.processors import (
     InputProcessor,
     IdentityInputProcessor,
@@ -42,6 +44,11 @@ from utils.utils import legal_moves_mask
 #             if old_k in kwargs and new_k not in kwargs:
 #                 kwargs[new_k] = kwargs[old_k]
 #         return kwargs
+#     def process_single(self, **kwargs):
+#         for old_k, new_k in self.mapping.items():
+#             if old_k in kwargs and new_k not in kwargs:
+#                 kwargs[new_k] = kwargs[old_k]
+#         return kwargs
 
 
 def create_dqn_buffer(
@@ -51,6 +58,7 @@ def create_dqn_buffer(
     batch_size=32,
     observation_dtype=torch.float32,
     config=None,
+    backend: Optional[ConcurrencyBackend] = None,
 ):
     configs = [
         BufferConfig(
@@ -126,6 +134,7 @@ def create_dqn_buffer(
         output_processor=StandardOutputProcessor(),
         writer=CircularWriter(max_size),
         sampler=sampler,
+        backend=backend if backend is not None else LocalBackend(),
     )
 
 
@@ -138,10 +147,16 @@ def create_prioritized_dqn_buffer(
     beta=0.4,
     max_priority=1.0,
     observation_dtype=torch.float32,
+    backend: Optional[ConcurrencyBackend] = None,
 ):
     # Reuse the standard creation logic but swap the sampler
     buffer = create_dqn_buffer(
-        observation_dimensions, max_size, num_actions, batch_size, observation_dtype
+        observation_dimensions,
+        max_size,
+        num_actions,
+        batch_size,
+        observation_dtype,
+        backend=backend,
     )
     buffer.sampler = PrioritizedSampler(
         max_size, alpha=alpha, beta=beta, max_priority=max_priority
@@ -158,6 +173,7 @@ def create_n_step_buffer(
     num_players=1,
     batch_size=32,
     observation_dtype=torch.float32,
+    backend: Optional[ConcurrencyBackend] = None,
 ):
     configs = [
         BufferConfig(
@@ -202,6 +218,7 @@ def create_n_step_buffer(
         input_processor=input_stack,
         writer=CircularWriter(max_size),
         sampler=UniformSampler(),
+        backend=backend if backend is not None else LocalBackend(),
     )
 
 
@@ -224,7 +241,11 @@ def create_muzero_buffer(
     value_prefix=False,
     tau=0.3,
     multi_process=True,
+    backend: Optional[ConcurrencyBackend] = None,
 ):
+    if backend is None:
+        backend = TorchMPBackend() if multi_process else LocalBackend()
+
     configs = [
         BufferConfig(
             "observations",
@@ -291,8 +312,9 @@ def create_muzero_buffer(
             epsilon=epsilon,
             use_batch_weights=use_batch_weights,
             use_initial_max_priority=use_initial_max_priority,
-            is_shared=multi_process,
+            backend=backend,
         ),
+        backend=backend,
     )
 
 
@@ -302,6 +324,7 @@ def create_nfsp_buffer(
     num_actions,
     batch_size=32,
     observation_dtype=torch.float32,
+    backend: Optional[ConcurrencyBackend] = None,
 ):
     configs = [
         BufferConfig(
@@ -329,6 +352,7 @@ def create_nfsp_buffer(
         input_processor=input_stack,
         writer=ReservoirWriter(max_size),
         sampler=UniformSampler(),
+        backend=backend if backend is not None else LocalBackend(),
     )
 
 
@@ -338,6 +362,7 @@ def create_rssm_buffer(
     batch_length,
     batch_size=32,
     observation_dtype=torch.float32,
+    backend: Optional[ConcurrencyBackend] = None,
 ):
     configs = [
         BufferConfig(
@@ -370,6 +395,7 @@ def create_rssm_buffer(
         output_processor=RSSMOutputProcessor(batch_length, max_size),
         writer=CircularWriter(max_size),
         sampler=UniformSampler(),
+        backend=backend if backend is not None else LocalBackend(),
     )
 
 
@@ -380,6 +406,7 @@ def create_ppo_buffer(
     gae_lambda,
     num_actions,
     observation_dtype=torch.float32,
+    backend: Optional[ConcurrencyBackend] = None,
 ):
     configs = [
         BufferConfig(
@@ -415,4 +442,5 @@ def create_ppo_buffer(
         output_processor=PPOOutputProcessor(),
         writer=PPOWriter(max_size),
         sampler=WholeBufferSampler(),
+        backend=backend if backend is not None else LocalBackend(),
     )

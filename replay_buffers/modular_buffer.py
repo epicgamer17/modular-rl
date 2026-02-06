@@ -8,6 +8,7 @@ from typing import List, Optional, Any
 from replay_buffers.processors import IdentityInputProcessor, StandardOutputProcessor
 from replay_buffers.writers import CircularWriter
 from replay_buffers.samplers import UniformSampler
+from replay_buffers.concurrency import ConcurrencyBackend, LocalBackend
 from utils.utils import numpy_dtype_to_torch_dtype
 
 
@@ -32,33 +33,34 @@ class ModularReplayBuffer:
         sampler=None,
         input_processor=None,
         output_processor=None,
+        backend: Optional[ConcurrencyBackend] = None,
         # For mapping tuple outputs from legacy input processors to buffer names
     ):
         self.max_size: int = max_size
         self.batch_size: int = batch_size if batch_size is not None else max_size
 
         self.buffer_configs = buffer_configs
+        self.backend = backend if backend is not None else LocalBackend()
 
         # 2. Initialize Buffers dynamically
         self.buffers = {}
         for config in buffer_configs:
             self._create_buffer(config)
 
-        # 3. Multiprocessing Locks (if any buffer is shared)
-        # We detect if we are in a shared context (MuZero) by checking the writer or buffers
-        self.is_shared = any(c.is_shared for c in buffer_configs)
-        if self.is_shared:
-            self.write_lock = mp.Lock()
-            self.priority_lock = mp.Lock()
-        else:
-            self.write_lock = None
-            self.priority_lock = None
+        # 3. Synchronization (using backend)
+        self.is_shared = self.backend.is_shared
+        self.write_lock = self.backend.create_lock()
+        self.priority_lock = self.backend.create_lock()
 
         # MuZero specific counters (only initialized if shared context is detected/needed)
         # You could also make this a specific config option
         if self.is_shared:
-            self._next_id = torch.zeros(1, dtype=torch.int64).share_memory_()
-            self._next_game_id = torch.zeros(1, dtype=torch.int64).share_memory_()
+            self._next_id = self.backend.create_tensor(
+                (1,), dtype=torch.int64, fill_value=0
+            )
+            self._next_game_id = self.backend.create_tensor(
+                (1,), dtype=torch.int64, fill_value=0
+            )
 
         self.sampler = sampler if sampler is not None else UniformSampler()
         self.writer = writer if writer is not None else CircularWriter(max_size)
@@ -84,10 +86,14 @@ class ModularReplayBuffer:
         if not isinstance(dtype, torch.dtype):
             dtype = numpy_dtype_to_torch_dtype(dtype)
 
-        tensor = torch.full(final_shape, config.fill_value, dtype=dtype)
-
-        if config.is_shared:
-            tensor = tensor.share_memory_()
+        # We ignore config.is_shared if we have a backend that handles it
+        # but for compatibility, we use the backend to decide if it's shared
+        if self.backend.is_shared:
+            tensor = self.backend.create_tensor(
+                final_shape, dtype=dtype, fill_value=config.fill_value
+            )
+        else:
+            tensor = torch.full(final_shape, config.fill_value, dtype=dtype)
 
         self.buffers[config.name] = tensor
 
@@ -104,12 +110,8 @@ class ModularReplayBuffer:
         # 2. Determine Write Index
         # Locking priority_lock before write_lock ensures the sampler (which also uses priority_lock)
         # sees an atomic update of size and priorities.
-        if self.is_shared:
-            self.priority_lock.acquire()
-        try:
-            if self.is_shared:
-                self.write_lock.acquire()
-            try:
+        with self.priority_lock:
+            with self.write_lock:
                 idx = self.writer.store()
                 if idx is None:
                     return None
@@ -134,9 +136,6 @@ class ModularReplayBuffer:
                     raise ValueError(
                         "Input processor must return a dict mapping buffer names to values"
                     )
-            finally:
-                if self.is_shared:
-                    self.write_lock.release()
 
             # 4. Update Sampler (Priorities)
             priority = kwargs.get("priority", None)
@@ -148,9 +147,6 @@ class ModularReplayBuffer:
                 idx,
                 priority=priority,
             )
-        finally:
-            if self.is_shared:
-                self.priority_lock.release()
 
         return idx
 
@@ -169,12 +165,8 @@ class ModularReplayBuffer:
         n_items = data.get("n_states", len(next(iter(data.values()))))
         priorities = kwargs.get("priorities", [None] * n_items)
 
-        if self.is_shared:
-            self.priority_lock.acquire()
-        try:
-            if self.is_shared:
-                self.write_lock.acquire()
-            try:
+        with self.priority_lock:
+            with self.write_lock:
                 # 2. Reserve Batch Indices
                 slices = self.writer.store_batch(n_items)
 
@@ -218,10 +210,6 @@ class ModularReplayBuffer:
 
                     data_offset += slice_len
 
-            finally:
-                if self.is_shared:
-                    self.write_lock.release()
-
             # 5. Update Priorities
             # Reconstruct indices from slices
             all_indices = []
@@ -238,9 +226,6 @@ class ModularReplayBuffer:
                     )
                 else:
                     self.sampler.on_store(idx, priority=p)
-        finally:
-            if self.is_shared:
-                self.priority_lock.release()
 
     def _write_to_buffer(self, name, idx, val):
         if isinstance(val, np.ndarray):
@@ -249,18 +234,13 @@ class ModularReplayBuffer:
 
     def sample(self):
         # 1. Acquire Lock before checking size or sampling
-        if self.is_shared and self.priority_lock:
-            self.priority_lock.acquire()
-        try:
+        with self.priority_lock:
             assert (
                 self.size >= self.batch_size
             ), f"Not enough items in buffer to sample: {self.size} < {self.batch_size}"
 
             # 2. Sample Indices
             indices, weights = self.sampler.sample(self.size, self.batch_size)
-        finally:
-            if self.is_shared and self.priority_lock:
-                self.priority_lock.release()
 
         # no indices greater than current buffer size:
         # 2. Collect Raw Data
@@ -279,14 +259,12 @@ class ModularReplayBuffer:
         return batch
 
     def update_priorities(self, indices, priorities, ids=None):
-        if self.is_shared:
-            self.priority_lock.acquire()
-            if ids is None:
+        with self.priority_lock:
+            if self.is_shared and ids is None:
                 warning(
                     "Updating priorities without IDs in a shared buffer may lead to incorrect updates."
                 )
 
-        try:
             # Support optional ID checking if 'ids' buffer exists
             buffer_ids = None
             if "ids" in self.buffers:
@@ -295,30 +273,21 @@ class ModularReplayBuffer:
             self.sampler.update_priorities(
                 indices, priorities, ids=ids, buffer_ids=buffer_ids
             )
-        finally:
-            if self.is_shared:
-                self.priority_lock.release()
 
     def clear(self):
-        if self.is_shared:
-            self.write_lock.acquire()
-            self.priority_lock.acquire()
-        try:
-            self.sampler.clear()
-            self.writer.clear()
-            self.input_processor.clear()  # Clear processor state if necessary
-            self.output_processor.clear()  # Clear output processor state if necessary
-            # Zero out buffers
-            for buf in self.buffers.values():
-                buf.zero_()
+        with self.write_lock:
+            with self.priority_lock:
+                self.sampler.clear()
+                self.writer.clear()
+                self.input_processor.clear()  # Clear processor state if necessary
+                self.output_processor.clear()  # Clear output processor state if necessary
+                # Zero out buffers
+                for buf in self.buffers.values():
+                    buf.zero_()
 
-            if self.is_shared:
-                self._next_id.zero_()
-                self._next_game_id.zero_()
-        finally:
-            if self.is_shared:
-                self.priority_lock.release()
-                self.write_lock.release()
+                if self.is_shared:
+                    self._next_id.zero_()
+                    self._next_game_id.zero_()
 
     # Accessors for properties required by some utils (like beta)
     def set_beta(self, beta):
@@ -385,14 +354,9 @@ class ModularReplayBuffer:
             indices
         ), f"Length of new_values must match length of indices: {len(new_values)} != {len(indices)}"
         for i, idx in enumerate(indices):
-            if self.is_shared:
-                self.write_lock.acquire()
-            try:
+            with self.write_lock:
                 if ids is not None and "ids" in self.buffers:
                     if int(self.buffers["ids"][idx].item()) != ids[i]:
                         continue
                 self.buffers["values"][idx] = new_values[i]
                 self.buffers["policies"][idx] = new_policies[i]
-            finally:
-                if self.is_shared:
-                    self.write_lock.release()

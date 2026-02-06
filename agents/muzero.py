@@ -139,6 +139,7 @@ class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
                     self.value = val
 
             self.stop_flag = StopFlag(0)
+        self.testing_worker = None
 
     def _setup_stats(self):
         """Initializes or updates the stat tracker with all required keys and plot types."""
@@ -373,10 +374,15 @@ class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
             if self.training_step % self.test_interval == 0 and self.training_step > 0:
                 if self.config.multi_process:
                     try:
-                        testing_worker = mp.Process(
-                            target=self.run_tests, args=(stats_client,)
-                        )
-                        testing_worker.start()
+                        # Check if previous testing worker is still running
+                        if (
+                            self.testing_worker is None
+                            or not self.testing_worker.is_alive()
+                        ):
+                            self.testing_worker = mp.Process(
+                                target=self.run_tests, args=(stats_client,)
+                            )
+                            self.testing_worker.start()
                         self.stats.drain_queue()
                     except Exception as e:
                         print(f"Error starting testing worker: {e}")
@@ -399,7 +405,8 @@ class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
 
         if self.config.multi_process:
             try:
-                testing_worker.join()
+                if self.testing_worker is not None:
+                    self.testing_worker.join()
             except:
                 pass
             self.stats.drain_queue()

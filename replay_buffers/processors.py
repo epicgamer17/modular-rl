@@ -349,7 +349,7 @@ class MuZeroGameInputProcessor(InputProcessor):
         dones = [i.get("done", False) for i in game.info_history]
         # Pad if needed
         if len(dones) < n_states:
-             dones = dones + [False] * (n_states - len(dones))
+            dones = dones + [False] * (n_states - len(dones))
         dones_t = torch.tensor(dones[:n_states], dtype=torch.bool)
 
         return {
@@ -474,28 +474,38 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
         # 3. Validity Masks
         base_game_ids = raw_game_ids[:, 0].unsqueeze(1)
         same_game = raw_game_ids == base_game_ids
-        
+
         # Calculate episode boundaries using dones (terminated/truncated)
         # We mask out any steps that occur AFTER a done signal in the sequence
         # cumsum gives us a mask of [0, 0, 1, 1, 1] if done happens at index 2
         cumulative_dones = torch.cumsum(raw_dones.float(), dim=1)
-        
+
         # We want to mask steps *after* the done, not the done itself (which is a valid terminal state)
         # Shift cumsum right by 1: [0, 0, 0, 1, 1]
-        post_done_mask = torch.cat([torch.zeros((batch_size, 1), device=device), cumulative_dones[:, :-1]], dim=1) > 0
-        
+        post_done_mask = (
+            torch.cat(
+                [torch.zeros((batch_size, 1), device=device), cumulative_dones[:, :-1]],
+                dim=1,
+            )
+            > 0
+        )
+
         # Obs/Value Mask: Valid states (including terminal states), consistent with game ID and episode boundary
         obs_mask = same_game & (~post_done_mask)
-        
+
         # Dynamics/Policy Mask: Valid transitions (excluding terminal states)
         # We cannot predict next state or policy FROM a terminal state
         dynamics_mask = obs_mask & (~raw_dones)
 
-
-
         # 5. Compute N-Step Targets
         target_values, target_rewards = self._compute_n_step_targets(
-            batch_size, raw_rewards, raw_values, raw_to_plays, raw_dones, dynamics_mask, device
+            batch_size,
+            raw_rewards,
+            raw_values,
+            raw_to_plays,
+            raw_dones,
+            dynamics_mask,
+            device,
         )
 
         # 6. Prepare Unroll Targets
@@ -528,7 +538,7 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
             tp_indices = torch.clamp(raw_to_plays[:, u].long(), 0, self.num_players - 1)
             target_to_plays[range(batch_size), u, tp_indices] = 1.0
             target_to_plays[~is_consistent, u] = 0
-            
+
             target_dones[is_consistent, u] = raw_dones[is_consistent, u]
             # If not consistent (different game or padding), treat as done
             target_dones[~is_consistent, u] = True
@@ -591,6 +601,9 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
         )
         lookahead_window = self.unroll_steps + self.n_step
 
+        # Pre-allocate zero tensor to avoid redundant allocations in the loop
+        zero = torch.tensor(0.0, device=device)
+
         value_prefix = 0.0
         horizon_id = 0  # Initialize horizon_id
 
@@ -624,7 +637,7 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
 
             computed_value = torch.zeros(batch_size, device=device)
             current_player = raw_to_plays[:, u]
-            
+
             # Using done mask to determine game border/termination
             has_ended = torch.zeros(batch_size, dtype=torch.bool, device=device)
 
@@ -632,17 +645,15 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
                 r_idx = u + k
                 if r_idx >= lookahead_window:
                     break
-                
+
                 # Valid step: Game ID match AND not explicitly ended via dones
                 r_is_valid = valid_mask[:, r_idx] & (~has_ended)
-                
+
                 step_player = raw_to_plays[:, r_idx]
                 sign = torch.where(current_player == step_player, 1.0, -1.0)
                 reward_chunk = (self.gamma**k) * raw_rewards[:, r_idx] * sign
-                computed_value += torch.where(
-                    r_is_valid, reward_chunk, torch.tensor(0.0, device=device)
-                )
-                
+                computed_value += torch.where(r_is_valid, reward_chunk, zero)
+
                 # If current step is done, mark as ended for *future* steps
                 # (current reward is the final transition reward)
                 has_ended = has_ended | (raw_dones[:, r_idx] & valid_mask[:, r_idx])
@@ -655,9 +666,7 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
                 val_chunk = (
                     (self.gamma**self.n_step) * raw_values[:, boot_idx] * sign_boot
                 )
-                computed_value += torch.where(
-                    b_is_valid, val_chunk, torch.tensor(0.0, device=device)
-                )
+                computed_value += torch.where(b_is_valid, val_chunk, zero)
 
             target_values[is_valid_node, u] = computed_value[is_valid_node]
 

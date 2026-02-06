@@ -1,7 +1,9 @@
+from abc import ABC, abstractmethod
+from typing import Optional, Any
 import numpy as np
 import torch
-from abc import ABC, abstractmethod
-from replay_buffers.segment_tree import SumSegmentTree, MinSegmentTree
+from .segment_tree import SumSegmentTree, MinSegmentTree
+from .concurrency import ConcurrencyBackend, LocalBackend
 
 
 class Sampler(ABC):
@@ -46,7 +48,7 @@ class PrioritizedSampler(Sampler):
         max_priority: float = 1.0,
         use_batch_weights: bool = False,
         use_initial_max_priority: bool = True,
-        is_shared: bool = True,
+        backend: Optional[ConcurrencyBackend] = None,
     ):
         self.alpha = alpha
         self.beta = beta
@@ -54,7 +56,7 @@ class PrioritizedSampler(Sampler):
         self.max_priority = max_priority
         self.use_initial_max_priority = use_initial_max_priority
         self.use_batch_weights = use_batch_weights
-        self.is_shared = is_shared
+        self.backend = backend or LocalBackend()
 
         self.initial_max_priority = max_priority
 
@@ -62,8 +64,8 @@ class PrioritizedSampler(Sampler):
         while tree_capacity < max_size:
             tree_capacity *= 2
 
-        self.sum_tree = SumSegmentTree(tree_capacity, is_shared=is_shared)
-        self.min_tree = MinSegmentTree(tree_capacity, is_shared=is_shared)
+        self.sum_tree = SumSegmentTree(tree_capacity, backend=self.backend)
+        self.min_tree = MinSegmentTree(tree_capacity, backend=self.backend)
 
     def sample(self, buffer_size: int, batch_size: int):
         indices = self._sample_proportional(buffer_size, batch_size)
@@ -81,6 +83,7 @@ class PrioritizedSampler(Sampler):
             weights = weights / weights.max()
         else:
             # Importance sampling weights normalization
+            # sum() without args now defaults to full capacity
             min_priority = self.min_tree.min() / self.sum_tree.sum()
             # Avoid divide by zero if tree is empty or min_priority is 0 (though min() init is inf)
             if min_priority == 0:
@@ -113,6 +116,10 @@ class PrioritizedSampler(Sampler):
             upperbound = min(upperbound, total_priority - 1e-6)
             upperbound = max(0.0, upperbound)
             idx = self.sum_tree.retrieve(upperbound)
+
+            # Retrieve bug: if upperbound is very close to total_priority, it might return capacity
+            # which is an out-of-bounds index for the buffer.
+            idx = min(idx, buffer_size - 1)
             indices.append(idx)
         return indices
 
@@ -180,6 +187,6 @@ class PrioritizedSampler(Sampler):
     def clear(self):
         # Re-initialize trees or zero them out
         capacity = self.sum_tree.capacity
-        self.sum_tree = SumSegmentTree(capacity, is_shared=self.is_shared)
-        self.min_tree = MinSegmentTree(capacity, is_shared=self.is_shared)
+        self.sum_tree = SumSegmentTree(capacity, backend=self.backend)
+        self.min_tree = MinSegmentTree(capacity, backend=self.backend)
         self.max_priority = 1.0
