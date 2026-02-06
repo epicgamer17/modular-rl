@@ -308,7 +308,7 @@ class MuZeroGameInputProcessor(InputProcessor):
         rews_t = torch.cat([rews_raw, rews_pad])
 
         # Policies
-        pols_raw = torch.stack(game.policy_history).cpu().float()
+        pols_raw = torch.stack([p.detach() for p in game.policy_history]).cpu().float()
         pols_pad = (
             torch.ones((1, self.num_actions), dtype=torch.float32) / self.num_actions
         )

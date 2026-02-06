@@ -206,7 +206,7 @@ class MuZeroActor:
                     info=next_info,
                     action=action,
                     reward=reward,
-                    policy=prediction[1],
+                    policy=prediction[1].detach(),
                     value=prediction[2],
                 )
 
@@ -238,8 +238,8 @@ class MuZeroActor:
 
         # Policy Improvement
         stats_tracker.append(
-            "policy_improvement", network_policy.unsqueeze(0), subkey="network"
+            "policy_improvement", network_policy.detach().unsqueeze(0), subkey="network"
         )
         stats_tracker.append(
-            "policy_improvement", search_policy.unsqueeze(0), subkey="search"
+            "policy_improvement", search_policy.detach().unsqueeze(0), subkey="search"
         )

@@ -110,6 +110,8 @@ class StatTracker:
         if self._is_client:
             # print("Appending stat {} from client".format(key))
             # Client sends the command to the queue
+            if isinstance(value, torch.Tensor):
+                value = value.detach().cpu()
             self.queue.put(("append", key, value, subkey))
         else:
             # Host executes the command directly

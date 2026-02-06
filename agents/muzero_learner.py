@@ -269,24 +269,24 @@ class MuZeroLearner:
         self.optimizer.step()
         self.lr_scheduler.step()
 
-        if self.device == "mps":
+        if self.device == "mps" and self.training_step % 100 == 0:
             torch.mps.empty_cache()
 
         return {
             "stats": self._prepare_stats(loss_dict, loss_mean.item()),
             "priorities": priorities,
-            "predictions": predictions_tensor,
-            "targets": targets_tensor,
+            "predictions": {k: v.detach() for k, v in predictions_tensor.items()},
+            "targets": {k: v.detach() for k, v in targets_tensor.items()},
             "masks": (has_valid_action_mask, has_valid_obs_mask),
-            "actions": actions,
+            "actions": actions.detach(),
         }
 
     def _track_latent_visualization(self, latent_states, actions, stats):
         """Track latent space representations categorized by action."""
         if stats is None:
             return
-        s0 = latent_states[:, 0]
-        a0 = actions[:, 0]
+        s0 = latent_states[:, 0].detach().cpu()
+        a0 = actions[:, 0].detach().cpu()
         stats.add_latent_visualization(
             "latent_root", s0, labels=a0, method=self.config.latent_viz_method
         )
@@ -329,7 +329,7 @@ class MuZeroLearner:
         else:
             mean_probs = latent_node_probs.mean(dim=0)
 
-        stats.append("chance_probs", mean_probs.unsqueeze(0))
+        stats.append("chance_probs", mean_probs.detach().cpu().unsqueeze(0))
 
         probs = latent_code_probs_tensor
         entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1)

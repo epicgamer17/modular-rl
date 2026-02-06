@@ -552,7 +552,7 @@ class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
                     new_policy = torch.ones_like(policies[0]) / self.num_actions
                     new_root_value = 0.0
 
-                new_policies.append(new_policy)
+                new_policies.append(new_policy.detach())
                 new_root_values.append(new_root_value)
 
                 # decide value target per your config (paper default: keep stored n-step TD for Atari)
@@ -599,10 +599,10 @@ class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
 
         # 3. Policy Improvement (BAR plot comparison)
         self.stats.append(
-            "policy_improvement", network_policy.unsqueeze(0), subkey="network"
+            "policy_improvement", network_policy.detach().unsqueeze(0), subkey="network"
         )
         self.stats.append(
-            "policy_improvement", search_policy.unsqueeze(0), subkey="search"
+            "policy_improvement", search_policy.detach().unsqueeze(0), subkey="search"
         )
 
     def __getstate__(self):
