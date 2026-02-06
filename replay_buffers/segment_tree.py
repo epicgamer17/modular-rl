@@ -103,8 +103,9 @@ class SegmentTree:
 
     def __setitem__(self, idx: int, val: float):
         """Set value in tree."""
+        # FIX: cast to float to avoid TypeError when assigning numpy types to torch tensors
         idx += self.capacity
-        self.tree[idx] = val
+        self.tree[idx] = float(val)
 
         idx //= 2
         while idx >= 1:

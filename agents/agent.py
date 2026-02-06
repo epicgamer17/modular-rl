@@ -59,7 +59,14 @@ class BaseAgent(ABC):
         self.replay_buffer = None  # Placeholder
 
         # 3. Training Params
-        self.player_id = "player_0"
+        # Dynamically determine player_id (PettingZoo uses player_1 for TicTacToe, etc.)
+        if hasattr(env, "possible_agents") and len(env.possible_agents) > 0:
+            self.player_id = env.possible_agents[0]
+        elif hasattr(env, "agents") and len(env.agents) > 0:
+            self.player_id = env.agents[0]
+        else:
+            self.player_id = "player_0"
+
         self.training_step = 0
         # Safety checks for config values
         total_steps = self.config.training_steps
@@ -138,7 +145,29 @@ class BaseAgent(ABC):
         elif isinstance(obs_space, gym.spaces.Tuple):
             return torch.Size((len(obs_space.spaces),)), np.int32
         elif callable(obs_space):
-            return torch.Size(obs_space(self.player_id).shape), obs_space(self.player_id).dtype
+            # For PettingZoo-style callable observation spaces
+            player_id = getattr(self, "player_id", None)
+            if player_id is None:
+                # If player_id isn't set yet during init, try to find a valid one
+                if hasattr(env, "possible_agents") and env.possible_agents:
+                    player_id = env.possible_agents[0]
+                elif hasattr(env, "agents") and env.agents:
+                    player_id = env.agents[0]
+                else:
+                    # Fallback to a common default
+                    player_id = "player_0"
+
+            # Use try-except as a last resort because some wrappers/envs might behave unexpectedly
+            try:
+                space = obs_space(player_id)
+            except KeyError:
+                # If the chosen player_id failed, try once with the first possible agent directly
+                if hasattr(env, "possible_agents") and env.possible_agents:
+                    space = obs_space(env.possible_agents[0])
+                else:
+                    raise
+
+            return torch.Size(space.shape), space.dtype
         else:
             return torch.Size(obs_space.shape), obs_space.dtype
 
@@ -389,8 +418,14 @@ class BaseAgent(ABC):
             raise ValueError
 
     def __getstate__(self):
-        state = self.__dict__.copy()
-        # Don't pickle the environment or stats when saving the agent class instance
+        # Always work on a copy to avoid mutating the original instance
+        try:
+            state = super().__getstate__()
+            state = state.copy()  # Ensure we have our own copy if super returned a ref
+        except AttributeError:
+            state = self.__dict__.copy()
+
+        # 2. BaseAgent specific exclusions
         if "env" in state:
             del state["env"]
         if "test_env" in state:
@@ -422,6 +457,15 @@ class MARLBaseAgent(BaseAgent):
         print(
             f"MARL Agent '{self.model_name}' initialized. Test agents: {[a.model_name for a in self.test_agents]}"
         )
+
+    def __getstate__(self):
+        try:
+            state = super().__getstate__()
+            state = state.copy()
+        except AttributeError:
+            state = self.__dict__.copy()
+
+        return state
 
     def test(self, num_trials, player=0, dir="./checkpoints") -> None:
         if self.config.game.num_players == 1:

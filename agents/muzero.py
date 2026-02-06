@@ -33,8 +33,10 @@ from torch.nn.utils import clip_grad_norm_
 import torch.multiprocessing as mp
 from tqdm import tqdm
 
+from agents.torch_mp_agent import TorchMPAgent
 
-class MuZeroAgent(MARLBaseAgent):
+
+class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
     def __init__(
         self,
         env,
@@ -74,7 +76,10 @@ class MuZeroAgent(MARLBaseAgent):
             # TODO: sort out when to do channel first and channel last
             channel_first=True,
             world_model_cls=self.config.world_model_cls,
-        ).share_memory()
+        )
+
+        if self.config.multi_process:
+            self.model.share_memory()
 
         self.target_model = Network(
             config=config,
@@ -154,7 +159,7 @@ class MuZeroAgent(MARLBaseAgent):
             "test_score_vs_{}".format(agent.model_name) for agent in self.test_agents
         ]
         self._setup_stats()
-        self.stop_flag = mp.Value("i", 0)
+        self.setup_mp()
 
     def _setup_stats(self):
         """Initializes or updates the stat tracker with all required keys and plot types."""
@@ -330,17 +335,11 @@ class MuZeroAgent(MARLBaseAgent):
         self._setup_stats()
         if self.config.multi_process:
             stats_client = self.stats.get_client()
-            error_queue = mp.Queue()
-
-            workers = [
-                mp.Process(
-                    target=self.worker_fn,
-                    args=(i, self.stop_flag, stats_client, error_queue),
-                )
-                for i in range(self.config.num_workers)
-            ]
-            for w in workers:
-                w.start()
+            self.start_workers(
+                worker_fn=self.worker_fn,
+                num_workers=self.config.num_workers,
+                stats_client=stats_client,
+            )
 
         start_time = time() - self.stats.get_time_elapsed()
         self.model.to(self.device)
@@ -350,18 +349,7 @@ class MuZeroAgent(MARLBaseAgent):
 
         while self.training_step < self.config.training_steps:
             if self.config.multi_process:
-                if not error_queue.empty():
-                    err, tb = error_queue.get()
-
-                    # Stop all workers
-                    self.stop_flag.value = 1
-                    for w in workers:
-                        w.terminate()
-
-                    # Re-raise the *exact same* exception type with traceback
-                    print("".join(tb))  # optional: print worker traceback
-                    raise err
-
+                self.check_worker_errors()
                 self.stats.drain_queue()
             if not self.config.multi_process:
                 for training_game in tqdm(range(self.config.games_per_generation)):
@@ -444,10 +432,7 @@ class MuZeroAgent(MARLBaseAgent):
                     save_weights=self.config.save_intermediate_weights,
                 )
         if self.config.multi_process:
-            self.stop_flag.value = 1
-            for w in workers:
-                print("Stopping workers")
-                w.terminate()
+            self.stop_workers()
             print("All workers stopped")
 
         if self.config.multi_process:
@@ -1134,31 +1119,43 @@ class MuZeroAgent(MARLBaseAgent):
         )
 
     def __getstate__(self):
-        state = self.__dict__.copy()
-        state["stop_flag"] = state["stop_flag"].value
-        if "env" in state:
-            del state["env"]
-        if "test_env" in state:
-            del state["test_env"]
+        # 1. Start with a copy of state from parents/mixins
+        try:
+            state = super().__getstate__()
+            state = state.copy()
+        except AttributeError:
+            state = self.__dict__.copy()
+
+        # 2. Exclude multiprocessing specific objects or large learner objects
+
+        # ALWAYS exclude these - they are only needed by the learner/main process
         if "optimizer" in state:
             del state["optimizer"]
         if "lr_scheduler" in state:
             del state["lr_scheduler"]
+        if "loss_pipeline" in state:
+            del state["loss_pipeline"]
+
+        # If the user has used torch.compile on the model, it might contain unpicklable weakrefs.
+        if "model" in state and hasattr(self.model, "_orig_mod"):
+            state["model_state_dict"] = {
+                k: v.cpu() for k, v in self.model.state_dict().items()
+            }
+            del state["model"]
+
+        if "target_model" in state and hasattr(self.target_model, "_orig_mod"):
+            del state["target_model"]
 
         # Only handle these if training has started (step > 0)
-        # At step 0 (worker spawn), model is on CPU and replay_buffer is empty/picklable.
         if self.training_step > 0:
-            # Manually serialize model to CPU state dict to avoid device sharing issues (MPS etc)
             if "model" in state:
                 state["model_state_dict"] = {
                     k: v.cpu() for k, v in self.model.state_dict().items()
                 }
                 del state["model"]
+
             if "target_model" in state:
                 del state["target_model"]
-
-            if "loss_pipeline" in state:
-                del state["loss_pipeline"]
 
             if "replay_buffer" in state:
                 del state["replay_buffer"]
@@ -1168,11 +1165,13 @@ class MuZeroAgent(MARLBaseAgent):
     def __setstate__(self, state):
         model_state_dict = state.pop("model_state_dict", None)
         self.__dict__.update(state)
-        self.stop_flag = mp.Value("i", state["stop_flag"])
+        # self.stop_flag is already in state if we didn't convert it to int
+
+        # env and test_env were deleted in __getstate__, re-initialize
         self.env = self.config.game.make_env()
         self.test_env = self.config.game.make_env(render_mode="rgb_array")
 
-        # Reconstruct model if we have weights
+        # Reconstruct model if we have weights (usually for step > 0)
         if model_state_dict is not None:
             # self.config, self.observation_dimensions, self.num_actions are in state
             device = torch.device("cpu")  # Initialize on CPU
