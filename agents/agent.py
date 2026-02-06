@@ -20,6 +20,7 @@ from agents.random import RandomAgent
 from stats.stats import StatTracker
 from agent_configs.base_config import Config
 from wrappers import record_video_wrapper, EpisodeTrigger
+from modules.utils import get_optimal_device
 
 
 class BaseAgent(ABC):
@@ -40,15 +41,7 @@ class BaseAgent(ABC):
         self.config = config
 
         # 1. Device Setup
-        if device:
-            self.device = device
-        else:
-            if torch.cuda.is_available():
-                self.device = torch.device("cuda")
-            elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
-                self.device = torch.device("mps")
-            else:
-                self.device = torch.device("cpu")
+        self.device = device if device else get_optimal_device()
 
         print(f"[{self.model_name}] Using device: {self.device}")
 

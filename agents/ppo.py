@@ -16,6 +16,7 @@ from utils import (
     update_linear_schedule,
 )
 from utils.utils import clip_low_prob_actions, normalize_policies, get_lr_scheduler
+from modules.utils import get_optimal_device
 
 sys.path.append("../")
 
@@ -31,16 +32,7 @@ class PPOAgent(BaseAgent):
         env,
         config: PPOConfig,
         name=datetime.datetime.now().timestamp(),
-        device: torch.device = (
-            torch.device("cuda")
-            if torch.cuda.is_available()
-            # MPS is sometimes useful for M2 instances, but only for large models/matrix multiplications otherwise CPU is faster
-            # else (
-            #     torch.device("mps")
-            #     if torch.backends.mps.is_available() and torch.backends.mps.is_built()
-            else torch.device("cpu")
-            # )
-        ),
+        device: torch.device = get_optimal_device(),
         from_checkpoint=False,
     ):
         super(PPOAgent, self).__init__(

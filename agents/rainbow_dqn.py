@@ -30,6 +30,7 @@ from losses.basic_losses import (
 from losses.losses import LossPipeline, StandardDQNLoss, C51Loss
 
 from replay_buffers.utils import update_per_beta
+from modules.utils import get_optimal_device
 
 import sys
 
@@ -46,16 +47,7 @@ class RainbowAgent(BaseAgent):
         env,
         config: RainbowConfig,
         name=f"rainbow_{current_timestamp():.1f}",
-        device: torch.device = (
-            torch.device("cuda")
-            if torch.cuda.is_available()
-            # MPS is sometimes useful for M2 instances, but only for large models/matrix multiplications otherwise CPU is faster
-            else (
-                torch.device("mps")
-                if torch.backends.mps.is_available() and torch.backends.mps.is_built()
-                else torch.device("cpu")
-            )
-        ),
+        device: torch.device = get_optimal_device(),
         from_checkpoint=False,
     ):
         super(RainbowAgent, self).__init__(env, config, name, device=device)

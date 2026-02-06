@@ -592,6 +592,15 @@ import torch
 import torch.nn.functional as F
 
 
+def get_optimal_device() -> torch.device:
+    """Returns the optimal available device (cuda > mps > cpu)."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
 @dataclass
 class NetworkOutput:
     """

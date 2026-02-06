@@ -2,6 +2,7 @@ import torch
 from utils import action_mask, normalize_policies, current_timestamp, get_legal_moves
 from utils.utils import clip_low_prob_actions, get_lr_scheduler
 from agents.agent import BaseAgent
+from modules.utils import get_optimal_device
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam, SGD
 
@@ -15,16 +16,7 @@ class PolicyImitationAgent(BaseAgent):
         env,
         config,
         name=f"policy_imitation_{current_timestamp():.1f}",
-        device: torch.device = (
-            torch.device("cuda")
-            if torch.cuda.is_available()
-            # MPS is sometimes useful for M2 instances, but only for large models/matrix multiplications otherwise CPU is faster
-            else (
-                torch.device("mps")
-                if torch.backends.mps.is_available() and torch.backends.mps.is_built()
-                else torch.device("cpu")
-            )
-        ),
+        device: torch.device = get_optimal_device(),
         from_checkpoint=False,
     ):
         super().__init__(env, config, name, device, from_checkpoint=from_checkpoint)

@@ -11,7 +11,7 @@ from search.search_factories import create_mcts
 sys.path.append("../")
 from time import time
 import traceback
-from modules.utils import scalar_to_support, support_to_scalar, get_lr_scheduler
+from modules.utils import scalar_to_support, support_to_scalar, get_lr_scheduler, get_optimal_device
 import numpy as np
 from stats.stats import PlotType, StatTracker
 from losses.losses import create_muzero_loss_pipeline
@@ -45,16 +45,7 @@ class MuZeroAgent(MARLBaseAgent, TorchMPAgent):
         config: MuZeroConfig,
         name=datetime.datetime.now().timestamp(),
         test_agents=[],
-        device: torch.device = (
-            torch.device("cuda")
-            if torch.cuda.is_available()
-            # MPS is sometimes useful for M2 instances, but only for large models/matrix multiplications otherwise CPU is faster
-            else (
-                torch.device("mps")
-                if torch.backends.mps.is_available() and torch.backends.mps.is_built()
-                else torch.device("cpu")
-            )
-        ),
+        device: torch.device = get_optimal_device(),
         from_checkpoint=False,
         loss_pipeline=None,
     ):
