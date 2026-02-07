@@ -256,3 +256,13 @@ class TemperatureSelector(ActionSelector):
         # Sample: [B, A] -> [B, 1] -> [B]
         action = torch.multinomial(probs, 1).squeeze(-1)
         return action
+
+    def update_parameters(self, params: Dict[str, Any]) -> None:
+        """
+        Updates the temperature parameter if present in params.
+        """
+        if "temperature" in params:
+            assert isinstance(
+                params["temperature"], (float, int)
+            ), "Temperature must be a number"
+            self.temperature = float(params["temperature"])

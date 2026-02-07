@@ -131,10 +131,11 @@ class SupervisedNetwork(nn.Module):
         return x.softmax(dim=-1)
 
     def reset_noise(self):
-        if self.has_residual_layers:
+        if self.has_residual_layers and hasattr(self.residual_layers, "reset_noise"):
             self.residual_layers.reset_noise()
-        if self.has_conv_layers:
+        if self.has_conv_layers and hasattr(self.conv_layers, "reset_noise"):
             self.conv_layers.reset_noise()
-        if self.has_dense_layers:
+        if self.has_dense_layers and hasattr(self.dense_layers, "reset_noise"):
             self.dense_layers.reset_noise()
-        self.output_layer.reset_noise()
+        if hasattr(self.output_layer, "reset_noise"):
+            self.output_layer.reset_noise()
