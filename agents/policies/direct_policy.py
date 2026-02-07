@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional
 import torch
 import torch.nn as nn
 from agents.policies.policy import Policy
-from agents.action_selectors.action_selectors import ActionSelector
+from agents.action_selectors.selectors import ActionSelector
 
 
 class DirectPolicy(Policy):
@@ -50,7 +50,7 @@ class DirectPolicy(Policy):
         with torch.inference_mode():
             predictions = self.model(obs_tensor)
 
-        action = self.action_selector.select_action(predictions, info)
+        action = self.action_selector.select(predictions, info=info)
         return action
 
     def get_info(self) -> Dict[str, Any]:

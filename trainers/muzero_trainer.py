@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any, List
 from executors import LocalExecutor, TorchMPExecutor
 from agents.muzero_learner import MuZeroLearner
 from agents.policies.search_policy import SearchPolicy
-from agents.action_selectors.action_selectors import TemperatureSelector
+from agents.action_selectors.selectors import TemperatureSelector
 from search.search_factories import create_mcts
 from agents.actors import GenericActor
 from modules.agent_nets.muzero import Network

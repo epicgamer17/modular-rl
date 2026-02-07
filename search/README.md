@@ -12,7 +12,7 @@ search/
 ├── scoring_methods.py      # Node scoring functions
 ├── backpropogation.py      # Value backpropagation
 ├── root_policies.py        # Root action policies
-├── initial_action_sets.py  # Initial action selection
+├── initial_searchsets.py  # Initial action selection
 ├── prior_injectors.py      # Prior injection mechanisms
 ├── pruners.py              # Tree pruning strategies
 ├── min_max_stats.py        # Min-max normalization

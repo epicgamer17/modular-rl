@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
 import pytest
-from modules.action_selectors import (
+from agents.action_selectors.selectors import (
     ArgmaxSelector,
     CategoricalSelector,
-    EpsilonGreedySelector,
+    EpsilonGreedy as EpsilonGreedySelector,
 )
-from modules.direct_policy import DirectPolicy
+from agents.policies.direct_policy import DirectPolicy
 
 
 class MockModel(nn.Module):
@@ -26,12 +26,12 @@ def test_argmax_selector():
     predictions = torch.tensor([[0.1, 0.5, 0.2, 0.2]])
 
     # Test without info
-    action = selector.select_action(predictions)
+    action = selector.select(predictions)
     assert action.item() == 1
 
     # Test with masking
     info = {"legal_moves": [0, 2, 3]}
-    action = selector.select_action(predictions, info)
+    action = selector.select(predictions, info)
     assert (
         action.item() == 2
     )  # 0.2 is the max among [0.1, 0.2, 0.2] (argmax picks first)
@@ -42,7 +42,7 @@ def test_categorical_selector():
     probs = torch.tensor([[0.0, 1.0, 0.0, 0.0]])
     dist = torch.distributions.Categorical(probs=probs)
 
-    action = selector.select_action(dist)
+    action = selector.select(dist)
     assert action.item() == 1
 
 
@@ -52,7 +52,7 @@ def test_epsilon_greedy_selector():
     # Epsilon = 0 (always greedy)
     selector = EpsilonGreedySelector(argmax_selector, epsilon=0.0)
     predictions = torch.tensor([[0.1, 0.5, 0.2, 0.2]])
-    action = selector.select_action(predictions, {})
+    action = selector.select(predictions, exploration=False)
     assert action == 1
 
     # Epsilon = 1 (always random) - We can't easily test randomness deterministically,

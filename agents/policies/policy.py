@@ -26,3 +26,9 @@ class Policy(ABC):
         Returns metadata about the last decision (e.g., policy, value).
         """
         return {}
+
+    def update_parameters(self, params_dict: Dict[str, Any]) -> None:
+        """
+        Updates the internal parameters of the policy.
+        """
+        pass

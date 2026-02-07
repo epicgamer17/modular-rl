@@ -47,7 +47,7 @@ class AverageDiscountedReturnBackpropagator(Backpropagator):
             # totals for this node = acc[node_player] (current Acc_p(i))
             # print(totals[i])
             totals[i] = acc[node_player]
-            
+
             node.value_sum += totals[i]
             node.visits += 1
 
@@ -111,7 +111,7 @@ class MinimaxBackpropagator(Backpropagator):
                 # Because we are processing bottom-up, children are already updated.
                 best_val = -float("inf")
 
-                for action, child in node.children.items():
+                for action_or_code, child in node.children.items():
                     # get_child_q_from_parent uses child.value(), which is now the minimax value
                     q_val = node.get_child_q_from_parent(child)
                     if q_val > best_val:

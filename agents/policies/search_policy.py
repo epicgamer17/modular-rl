@@ -1,8 +1,9 @@
 import torch
 import numpy as np
 import time
-from typing import Any, Dict, Optional, Protocol
-from agents.action_selectors.action_selectors import ActionSelector
+from typing import Any, Dict, Optional, Protocol, Union
+from agents.policies.policy import Policy
+from agents.action_selectors.selectors import ActionSelector, TemperatureSelector
 
 
 class SearchAlgorithmProtocol(Protocol):
@@ -20,7 +21,7 @@ class SearchAlgorithmProtocol(Protocol):
         ...
 
 
-class SearchPolicy:
+class SearchPolicy(Policy):
     """
     SearchPolicy handles the MCTS search and network inference logic.
     It implements a Policy interface to be used with a GenericActor.
@@ -33,10 +34,10 @@ class SearchPolicy:
         self,
         model: Any,
         search_algorithm: SearchAlgorithmProtocol,
-        action_selector: ActionSelector,
         config: Any,
         device: torch.device,
         observation_dimensions: tuple,
+        action_selector: Optional[ActionSelector] = None,
     ):
         """
         Initializes SearchPolicy with injected dependencies.
@@ -48,10 +49,11 @@ class SearchPolicy:
             config: Configuration object containing policy parameters.
             device: Torch device for tensor operations.
             observation_dimensions: Shape of a single observation (without batch dim).
+            action_selector: Optional action selector. Defaults to TemperatureSoftmax.
         """
         self.model = model
         self.search = search_algorithm
-        self.action_selector = action_selector
+        self.action_selector = action_selector or TemperatureSelector()
         self.config = config
         self.device = device
 
@@ -89,10 +91,10 @@ class SearchPolicy:
         action, policy_info = self.predict(obs, info)
 
         # 3. Select action (delegated to action_selector)
-        if hasattr(self.action_selector, "temperature"):
-            self.action_selector.temperature = curr_temp
-
-        action_tensor = self.action_selector.select_action((action, policy_info), info)
+        # We use exploratory_policy (visit counts/probs) for sampling
+        action_tensor = self.action_selector.select(
+            policy_info["exploratory_policy"], temperature=curr_temp
+        )
 
         # 4. Store metadata for get_info
         self.last_prediction = {
@@ -104,6 +106,13 @@ class SearchPolicy:
 
         self.steps_in_episode += 1
         return action_tensor
+
+    def update_parameters(self, params_dict: Dict[str, Any]) -> None:
+        """
+        Updates the internal parameters of the policy and its selector.
+        """
+        if self.action_selector is not None:
+            self.action_selector.update_parameters(params_dict)
 
     def get_info(self) -> Dict[str, Any]:
         """Returns metadata about the last decision."""

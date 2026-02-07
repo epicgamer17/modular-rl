@@ -9,7 +9,7 @@ import torch.nn.functional as F
 
 class SelectionStrategy(ABC):
     @abstractmethod
-    def select_child(self, node, min_max_stats, pruned_actionset=None):
+    def select_child(self, node, min_max_stats, pruned_searchset=None):
         pass
 
 
@@ -27,14 +27,14 @@ class TopScoreSelection(SelectionStrategy):
         self.scoring_method = scoring_method
         self.tiebreak_scoring_method = tiebreak_scoring_method
 
-    def select_child(self, node, min_max_stats, pruned_actionset=None):
+    def select_child(self, node, min_max_stats, pruned_searchset=None):
         assert isinstance(node, DecisionNode)
         assert node.expanded(), "node must be expanded to select a child"
 
         actions = list(node.children.keys())
-        if pruned_actionset is not None:
+        if pruned_searchset is not None:
             # assert node.parent is None
-            actions = [a for a in pruned_actionset if a in node.children]
+            actions = [a for a in pruned_searchset if a in node.children]
 
         if len(actions) == 1:
             return actions[0], node.children[actions[0]]
@@ -99,12 +99,12 @@ class SamplingSelection(SelectionStrategy):
         self.scoring_method = scoring_method
         self.temperature = temperature
 
-    def select_child(self, node, min_max_stats, pruned_actionset=None):
+    def select_child(self, node, min_max_stats, pruned_searchset=None):
         if isinstance(node, DecisionNode):
             actions = list(node.children.keys())
-            if pruned_actionset is not None:
+            if pruned_searchset is not None:
                 # assert node.parent is None
-                actions = [a for a in pruned_actionset if a in node.children]
+                actions = [a for a in pruned_searchset if a in node.children]
 
             assert len(actions) > 0
 

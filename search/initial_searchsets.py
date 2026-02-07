@@ -4,23 +4,23 @@ from typing import List
 import torch
 
 
-class ActionSet(ABC):
+class SearchSet(ABC):
     @abstractmethod
-    def create_initial_actionset(
+    def create_initial_searchset(
         self, priors, legal_moves, count: int, trajectory_action=None
     ) -> List[int]:
         pass
 
 
-class SelectAll(ActionSet):
-    def create_initial_actionset(
+class SelectAll(SearchSet):
+    def create_initial_searchset(
         self, priors, legal_moves, count: int, trajectory_action=None
     ) -> List[int]:
         return legal_moves
 
 
-class SelectTopK(ActionSet):
-    def create_initial_actionset(
+class SelectTopK(SearchSet):
+    def create_initial_searchset(
         self, priors, legal_moves, count: int, trajectory_action=None
     ) -> List[int]:
         """using the priors should work the same as using logits, as priors for gumbel would be g + logits softmaxed, so top k are the same as top k of g + logits"""

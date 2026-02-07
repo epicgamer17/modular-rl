@@ -68,7 +68,7 @@ replay_buffers/writers.py
 search/__init__.py
 search/action_selectors.py
 search/backpropogation.py
-search/initial_action_sets.py
+search/initial_searchsets.py
 search/min_max_stats.py
 search/modular_search.py
 search/nodes.py

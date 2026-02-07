@@ -1,9 +1,9 @@
-from search.action_selectors import SamplingSelection, TopScoreSelection
+from search.search_selectors import SamplingSelection, TopScoreSelection
 from search.backpropogation import (
     AverageDiscountedReturnBackpropagator,
     MinimaxBackpropagator,
 )
-from search.initial_action_sets import SelectAll, SelectTopK
+from search.initial_searchsets import SelectAll, SelectTopK
 from search.modular_search import SearchAlgorithm
 from search.pruners import SequentialHalvingPruning, NoPruning, AlphaBetaPruning
 from search.prior_injectors import (
@@ -37,8 +37,8 @@ def create_mcts(config, device, num_actions) -> SearchAlgorithm:
             root_target_policy=CompletedQValuesRootPolicy(config, device, num_actions),
             root_exploratory_policy=VisitFrequencyPolicy(config, device, num_actions),
             prior_injectors=[ActionTargetInjector(), GumbelInjector()],
-            root_actionset=SelectTopK(),
-            internal_actionset=SelectAll(),
+            root_searchset=SelectTopK(),
+            internal_searchset=SelectAll(),
             pruning_method=SequentialHalvingPruning(),
             internal_pruning_method=NoPruning(),
             backpropagator=AverageDiscountedReturnBackpropagator(),
@@ -54,8 +54,8 @@ def create_mcts(config, device, num_actions) -> SearchAlgorithm:
             root_target_policy=VisitFrequencyPolicy(config, device, num_actions),
             root_exploratory_policy=VisitFrequencyPolicy(config, device, num_actions),
             prior_injectors=[ActionTargetInjector(), DirichletInjector()],
-            root_actionset=SelectAll(),
-            internal_actionset=SelectAll(),
+            root_searchset=SelectAll(),
+            internal_searchset=SelectAll(),
             pruning_method=NoPruning(),
             internal_pruning_method=NoPruning(),
             backpropagator=AverageDiscountedReturnBackpropagator(),
@@ -77,8 +77,8 @@ def create_mcts(config, device, num_actions) -> SearchAlgorithm:
         #     root_exploratory_policy=VisitFrequencyPolicy(config, device, num_actions),
         #     # Setup
         #     prior_injectors=[],
-        #     root_actionset=SelectAll(),
-        #     internal_actionset=SelectAll(),
+        #     root_searchset=SelectAll(),
+        #     internal_searchset=SelectAll(),
         #     # Pruning: Alpha Beta on both Root and Internal
         #     pruning_method=AlphaBetaPruning(),
         #     internal_pruning_method=AlphaBetaPruning(),

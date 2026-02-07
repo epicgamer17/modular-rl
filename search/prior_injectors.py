@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 from modules.utils import support_to_scalar
-from search.initial_action_sets import ActionSet, SelectAll, SelectTopK
+from search.initial_searchsets import SearchSet, SelectAll, SelectTopK
 from utils.utils import get_legal_moves
 
 
@@ -23,7 +23,7 @@ class DirichletInjector(PriorInjector):
             alpha = 1.0 / np.sqrt(len(legal_moves))
         else:
             alpha = config.root_dirichlet_alpha
-        
+
         noise = np.random.dirichlet([alpha] * len(legal_moves))
         frac = config.root_exploration_fraction
 

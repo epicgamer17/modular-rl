@@ -2,9 +2,9 @@ from abc import ABC
 import torch
 import math
 from modules.utils import support_to_scalar
-from search.action_selectors import SelectionStrategy
+from search.search_selectors import SelectionStrategy
 from search.backpropogation import Backpropagator
-from search.initial_action_sets import ActionSet
+from search.initial_searchsets import SearchSet
 from search.nodes import ChanceNode, DecisionNode
 from search.min_max_stats import MinMaxStats
 from search.prior_injectors import PriorInjector
@@ -25,8 +25,8 @@ class SearchAlgorithm:
         root_target_policy,
         root_exploratory_policy,
         prior_injectors,
-        root_actionset,
-        internal_actionset,
+        root_searchset,
+        internal_searchset,
         pruning_method,
         internal_pruning_method,
         backpropagator,
@@ -43,8 +43,8 @@ class SearchAlgorithm:
         self.root_target_policy: RootPolicyStrategy = root_target_policy
         self.root_exploratory_policy: RootPolicyStrategy = root_exploratory_policy
         self.prior_injectors: PriorInjector = prior_injectors
-        self.root_actionset: ActionSet = root_actionset
-        self.internal_actionset: ActionSet = internal_actionset
+        self.root_searchset: SearchSet = root_searchset
+        self.internal_searchset: SearchSet = internal_searchset
         self.pruning_method: PruningMethod = pruning_method
         self.internal_pruning_method: PruningMethod = internal_pruning_method
         self.backpropagator: Backpropagator = backpropagator
@@ -103,7 +103,7 @@ class SearchAlgorithm:
 
         # 6. Select Actions
         selection_count = self.config.gumbel_m
-        selected_actions = self.root_actionset.create_initial_actionset(
+        selected_actions = self.root_searchset.create_initial_searchset(
             policy, legal_moves, selection_count, trajectory_action
         )
 
@@ -161,7 +161,7 @@ class SearchAlgorithm:
                     min_max_stats,
                     inference_fns,
                     inference_model=inference_model,
-                    # pruned_actionset=allowed_actions,
+                    # pruned_searchset=allowed_actions,
                     current_sim_idx=i,
                     pruning_context=pruning_context,
                 )
@@ -227,7 +227,7 @@ class SearchAlgorithm:
         # while node.expanded():
         #     action, node = node.select_child(
         #         min_max_stats=min_max_stats,
-        #         pruned_actionset=pruned_actionset,
+        #         pruned_searchset=pruned_searchset,
         #     )
         #     # old_to_play = (old_to_play + 1) % self.config.game.num_players
         #     search_path.append(node)
@@ -243,7 +243,7 @@ class SearchAlgorithm:
 
             # Use root strategy if parent is None, otherwise use internal strategy
             if node.parent is None:
-                pruned_actionset, next_state = self.pruning_method.step(
+                pruned_searchset, next_state = self.pruning_method.step(
                     node,
                     pruning_context["root"],
                     self.config,
@@ -252,12 +252,12 @@ class SearchAlgorithm:
                 )
                 pruning_context["root"] = next_state
                 # TODO: EARLY STOPPING CLASSES
-                if pruned_actionset is not None and len(pruned_actionset) == 0:
+                if pruned_searchset is not None and len(pruned_searchset) == 0:
                     return  # Stop this simulation
 
                 action_or_code, node = self.root_selection_strategy.select_child(
                     node,
-                    pruned_actionset=pruned_actionset,
+                    pruned_searchset=pruned_searchset,
                     min_max_stats=min_max_stats,
                 )
             else:
@@ -267,7 +267,7 @@ class SearchAlgorithm:
                             self.internal_pruning_method.initialize(node, self.config)
                         )
 
-                    pruned_actionset, next_state = self.internal_pruning_method.step(
+                    pruned_searchset, next_state = self.internal_pruning_method.step(
                         node,
                         pruning_context["internal"][node],
                         self.config,
@@ -276,21 +276,21 @@ class SearchAlgorithm:
                     )
 
                     # TODO: EARLY STOPPING CLASSES
-                    if pruned_actionset is not None and len(pruned_actionset) == 0:
+                    if pruned_searchset is not None and len(pruned_searchset) == 0:
                         return  # Stop this simulation
 
                     pruning_context["internal"][node] = next_state
                     action_or_code, node = (
                         self.decision_selection_strategy.select_child(
                             node,
-                            pruned_actionset=pruned_actionset,
+                            pruned_searchset=pruned_searchset,
                             min_max_stats=min_max_stats,
                         )
                     )
                 elif isinstance(node, ChanceNode):
                     action_or_code, node = self.chance_selection_strategy.select_child(
                         node,
-                        # pruned_actionset=pruned_actionset,
+                        # pruned_searchset=pruned_searchset,
                         min_max_stats=min_max_stats,
                     )
 
@@ -333,7 +333,7 @@ class SearchAlgorithm:
                     reward_h_state = torch.zeros_like(reward_h_state).to(self.device)
                     reward_c_state = torch.zeros_like(reward_c_state).to(self.device)
 
-                actions_to_expand = self.internal_actionset.create_initial_actionset(
+                actions_to_expand = self.internal_searchset.create_initial_searchset(
                     policy[0],
                     list(range(self.num_actions)),
                     self.config.gumbel_m,
@@ -384,7 +384,7 @@ class SearchAlgorithm:
                     reward_h_state = torch.zeros_like(reward_h_state).to(self.device)
                     reward_c_state = torch.zeros_like(reward_c_state).to(self.device)
 
-                actions_to_expand = self.internal_actionset.create_initial_actionset(
+                actions_to_expand = self.internal_searchset.create_initial_searchset(
                     policy[0],
                     list(range(self.num_actions)),
                     self.config.gumbel_m,
@@ -476,7 +476,7 @@ class SearchAlgorithm:
 
                 if node.parent is None:
                     # Root
-                    pruned_actionset, next_state = self.pruning_method.step(
+                    pruned_searchset, next_state = self.pruning_method.step(
                         node,
                         pruning_context["root"],
                         self.config,
@@ -484,7 +484,7 @@ class SearchAlgorithm:
                         current_sim_idx + b,
                     )
                     pruning_context["root"] = next_state
-                    if pruned_actionset is not None and len(pruned_actionset) == 0:
+                    if pruned_searchset is not None and len(pruned_searchset) == 0:
                         # Revert virtual update for this failed path
                         # existing nodes in search_path (including root) have been updated
                         if use_virtual_mean:
@@ -502,7 +502,7 @@ class SearchAlgorithm:
 
                     action_or_code, node = self.root_selection_strategy.select_child(
                         node,
-                        pruned_actionset=pruned_actionset,
+                        pruned_searchset=pruned_searchset,
                         min_max_stats=min_max_stats,
                     )
                 else:
@@ -514,7 +514,7 @@ class SearchAlgorithm:
                                 )
                             )
 
-                        pruned_actionset, next_state = (
+                        pruned_searchset, next_state = (
                             self.internal_pruning_method.step(
                                 node,
                                 pruning_context["internal"][node],
@@ -525,7 +525,7 @@ class SearchAlgorithm:
                         )
                         pruning_context["internal"][node] = next_state
 
-                        if pruned_actionset is not None and len(pruned_actionset) == 0:
+                        if pruned_searchset is not None and len(pruned_searchset) == 0:
                             if use_virtual_mean:
                                 for n, v in zip(search_path, path_virtual_values):
                                     n.visits -= 1
@@ -540,7 +540,7 @@ class SearchAlgorithm:
                         action_or_code, node = (
                             self.decision_selection_strategy.select_child(
                                 node,
-                                pruned_actionset=pruned_actionset,
+                                pruned_searchset=pruned_searchset,
                                 min_max_stats=min_max_stats,
                             )
                         )
@@ -798,7 +798,7 @@ class SearchAlgorithm:
                     rc = torch.zeros_like(rc).to(self.device)
 
                 policy = res["policy"][0]
-                actions_to_expand = self.internal_actionset.create_initial_actionset(
+                actions_to_expand = self.internal_searchset.create_initial_searchset(
                     policy,
                     list(range(self.num_actions)),
                     self.config.gumbel_m,
