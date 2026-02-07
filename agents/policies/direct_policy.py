@@ -49,7 +49,9 @@ class DirectPolicy(Policy):
         Computes an action given an observation and info.
         """
         if not isinstance(obs, torch.Tensor):
-            obs_tensor = torch.tensor(obs, device=self.device).unsqueeze(0)
+            obs_tensor = torch.tensor(
+                obs, device=self.device, dtype=torch.float32
+            ).unsqueeze(0)
         else:
             obs_tensor = obs.to(self.device)
             if (

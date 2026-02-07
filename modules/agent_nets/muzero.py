@@ -169,6 +169,7 @@ class Encoder(nn.Module):
 
         # one_hot_st = F.gumbel_softmax(x, tau=1.0, hard=True, dim=-1)
         # probs = F.softmax(x, dim=-1)
+        # TODO: output logits or probs here?
         probs = x
         return probs, one_hot_st
 

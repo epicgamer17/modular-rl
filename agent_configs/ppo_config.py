@@ -1,9 +1,9 @@
-from .base_config import Config
+from .base_config import Config, DistributionalConfig, NoisyConfig
 from .actor_config import ActorConfig
 from .critic_config import CriticConfig
 
 
-class PPOConfig(Config):
+class PPOConfig(Config, DistributionalConfig, NoisyConfig):
     def __init__(
         self,
         config_dict,
@@ -12,6 +12,8 @@ class PPOConfig(Config):
         critic_config: CriticConfig,
     ):
         super(PPOConfig, self).__init__(config_dict, game_config)
+        self.parse_distributional_params()
+        self.parse_noisy_params()
         # config_dict["optimizer"] = -1
         # config_dict["adam_epsilon"] = -1
         # config_dict["learning_rate"] = -1
@@ -55,7 +57,6 @@ class PPOConfig(Config):
 
         # Network Arcitecture
         # COULD SET ALL ACTOR STUFF IN ACTOR CONFIG AND CRITIC STUFF IN CRITIC CONFIG FOR NETWORK ARCHITECTURE
-        self.noisy_sigma = self.parse_field("noisy_sigma", 0.0)
         self.critic_conv_layers = self.parse_field("conv_layers", [])
         self.actor_conv_layers = self.parse_field("conv_layers", [])
         self.critic_dense_layer_widths = self.parse_field("critic_dense_layers", [])
@@ -74,7 +75,7 @@ class PPOConfig(Config):
         self.target_kl = self.parse_field("target_kl", 0.02)
         # self.discount_factor parsed in Config
         self.gae_lambda = self.parse_field("gae_lambda", 0.98)
-        self.entropy_coefficient = self.parse_field("entropy_coefficient", 0.001)
+        self.entropy_coefficient = self.parse_field("entropy_coefficient", 0.01)
         self.critic_coefficient = self.parse_field("critic_coefficient", 0.5)
 
         self.clip_low_prob = self.parse_field("clip_low_prob", 0.00)

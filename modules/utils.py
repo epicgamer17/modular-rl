@@ -418,7 +418,15 @@ def prepare_kernel_initializers(kernel_initializer: str, output_layer: bool = Fa
     raise ValueError(f"Invalid kernel initializer: {kernel_initializer}")
 
 
-def prepare_activations(activation: str):
+def prepare_activations(activation: str | nn.Module | Callable):
+    """
+    Returns an activation module from a string name or returns the input if already a module/callable.
+    """
+    if isinstance(activation, nn.Module) or (
+        callable(activation) and not isinstance(activation, str)
+    ):
+        return activation
+
     # print("Activation to prase: ", activation)
     if activation == "linear":
         return nn.Identity()

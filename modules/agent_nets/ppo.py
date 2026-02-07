@@ -14,7 +14,7 @@ class PPONetwork(nn.Module):
         super().__init__()
         # TODO: ADD SHARED LAYERS
         self.critic = CriticNetwork(config, input_shape)
-        self.actor = ActorNetwork(config, input_shape, output_size, discrete)
+        self.actor = ActorNetwork(config, input_shape, output_size)
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         self.actor.initialize(initializer)

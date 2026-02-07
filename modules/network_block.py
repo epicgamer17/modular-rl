@@ -9,6 +9,7 @@ from agent_configs.base_config import Config
 from torch import nn
 
 from utils.utils import to_lists
+from modules.utils import prepare_activations
 
 
 class NetworkBlock(nn.Module):

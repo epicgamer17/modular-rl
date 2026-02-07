@@ -148,18 +148,76 @@ class ArgmaxSelector(ActionSelector):
 
 class CategoricalSelector(ActionSelector):
     """
-    Samples an action from a categorical distribution or logits.
+    Samples an action from a categorical distribution, logits, or probabilities.
     """
 
-    def select(self, values: Any, **kwargs) -> torch.Tensor:
+    def __init__(self, from_logits: bool = True):
         """
-        Samples an action.
+        Initializes the CategoricalSelector.
+
+        Args:
+            from_logits: Whether the input values are raw logits (True) or
+                         probabilities that sum to 1 (False).
+        """
+        self.from_logits = from_logits
+
+    def select(
+        self,
+        values: Any,
+        exploration: bool = True,
+        info: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        """
+        Samples or selects the best action.
+
+        Args:
+            values: Model output (logits or probabilities).
+            exploration: Whether to sample (True) or take argmax (False).
+            info: Optional dict for action masking.
         """
         if isinstance(values, torch.distributions.Distribution):
-            return values.sample()
+            return (
+                values.sample() if exploration else torch.argmax(values.probs, dim=-1)
+            )
 
-        # If logits:
-        probs = torch.softmax(values, dim=-1)
+        # Handle tensor input
+        if self.from_logits:
+            probs = torch.softmax(values, dim=-1)
+        else:
+            probs = values
+
+        # Handle Action Masking if provided
+        if info is not None and "legal_moves" in info:
+            from utils.utils import action_mask
+
+            legal_moves = info.get("legal_moves")
+            if legal_moves is not None and len(legal_moves) > 0:
+                # Masking usually done on logits.
+                # If we have probs, we set illegal to 0.0
+                if self.from_logits:
+                    values = action_mask(
+                        values,
+                        legal_moves,
+                        mask_value=-float("inf"),
+                        device=values.device,
+                    )
+                    probs = torch.softmax(values, dim=-1)
+                else:
+                    probs = action_mask(
+                        probs, legal_moves, mask_value=0.0, device=probs.device
+                    )
+                    # Re-normalize if we masked probs
+                    probs = probs / (probs.sum(dim=-1, keepdim=True) + 1e-10)
+
+        if not exploration:
+            return probs.argmax(dim=-1).squeeze()
+
+        # Ensure probs for multinomial (B, num_actions)
+        if probs.dim() == 1:
+            probs = probs.unsqueeze(0)
+            return torch.multinomial(probs, 1).squeeze()
+
         return torch.multinomial(probs, 1).squeeze(-1)
 
 
