@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import time
 from typing import Any, Dict, Optional, Protocol
+from agents.action_selectors.action_selectors import ActionSelector
 
 
 class SearchAlgorithmProtocol(Protocol):
@@ -32,6 +33,7 @@ class SearchPolicy:
         self,
         model: Any,
         search_algorithm: SearchAlgorithmProtocol,
+        action_selector: ActionSelector,
         config: Any,
         device: torch.device,
         observation_dimensions: tuple,
@@ -49,6 +51,7 @@ class SearchPolicy:
         """
         self.model = model
         self.search = search_algorithm
+        self.action_selector = action_selector
         self.config = config
         self.device = device
 
@@ -85,10 +88,11 @@ class SearchPolicy:
 
         action, policy_info = self.predict(obs, info)
 
-        # 3. Select action (handles temperature sampling)
-        action_tensor = self.select_actions(
-            (action, policy_info), temperature=curr_temp
-        )
+        # 3. Select action (delegated to action_selector)
+        if hasattr(self.action_selector, "temperature"):
+            self.action_selector.temperature = curr_temp
+
+        action_tensor = self.action_selector.select_action((action, policy_info), info)
 
         # 4. Store metadata for get_info
         self.last_prediction = {
@@ -235,24 +239,3 @@ class SearchPolicy:
         }
 
         return best_action, info_dict
-
-    def select_actions(self, prediction: tuple, temperature: float = 0.0) -> Any:
-        """
-        Selects an action from the prediction based on temperature.
-
-        Args:
-            prediction: Output tuple (best_action, info_dict) from predict().
-            temperature: Exploration temperature (0 = greedy).
-
-        Returns:
-            Selected action tensor.
-        """
-        best_action, info_dict = prediction
-
-        if temperature != 0:
-            probs = info_dict["exploratory_policy"] ** (1 / temperature)
-            probs /= probs.sum()
-            action = torch.multinomial(probs, 1)
-            return action
-        else:
-            return best_action

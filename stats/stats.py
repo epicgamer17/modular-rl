@@ -5,6 +5,7 @@ from queue import Empty
 from typing import Dict, Optional, List, Any
 import matplotlib.pyplot as plt
 from enum import Enum, auto
+from pathlib import Path
 from stats.latent_pca import LatentPCAVisualizer
 from stats.latent_tsne import LatentTSNEVisualizer
 
@@ -116,7 +117,10 @@ class StatTracker:
         else:
             # Host executes the command directly
             if key not in self.stats:
-                self._init_key(key)
+                if subkey is not None:
+                    self._init_key(key, subkeys=[subkey])
+                else:
+                    self._init_key(key)
 
             # Ensure values are detached and moved to CPU if they are tensors
             if isinstance(value, torch.Tensor):
@@ -127,6 +131,8 @@ class StatTracker:
             if isinstance(self.stats[key], Dict):
                 if subkey is None:
                     raise ValueError(f"Stat '{key}' requires a subkey")
+                if subkey not in self.stats[key]:
+                    self.stats[key][subkey] = []
                 self.stats[key][subkey].append(new_val)
             else:
                 self.stats[key].append(new_val)
@@ -238,6 +244,7 @@ class StatTracker:
             elif len(data) > 0:
                 collected_stats[key] = data
 
+        fig = None
         if len(collected_stats) > 0:
             fig, axs = plt.subplots(
                 len(collected_stats), 1, figsize=(10, 5 * len(collected_stats))
@@ -245,15 +252,23 @@ class StatTracker:
             if len(collected_stats) == 1:
                 axs = [axs]
 
-            for ax, (key, tensor) in zip(axs, collected_stats.items()):
+            # Group subkeys by base key to handle consolidated plotting
+            for ax, key in zip(axs, collected_stats.keys()):
+                data = collected_stats[key]
                 config = self.plot_configs.get(key, {"types": set(), "params": {}})
-                print("plotting {}".format(key))
-                if isinstance(tensor, Dict):
-                    for subkey, subtensor in tensor.items():
-                        print("  subkey {}".format(subkey))
-                        self._plot_tensor(ax, subtensor, f"{key}:{subkey}", config)
+                print(f"plotting {key}")
+
+                if isinstance(data, Dict):
+                    # Check for min/avg/max pattern
+                    has_min_max = all(k in data for k in ["min", "max"])
+                    if has_min_max and PlotType.VARIATION_FILL in config["types"]:
+                        self._plot_consolidated(ax, data, key, config)
+                    else:
+                        for subkey, subtensor in data.items():
+                            print(f"  subkey {subkey}")
+                            self._plot_tensor(ax, subtensor, f"{key}:{subkey}", config)
                 else:
-                    self._plot_tensor(ax, tensor, key, config)
+                    self._plot_tensor(ax, data, key, config)
 
                 # Plot target line if exists as a horizontal line
                 if key in self.targets and self.targets[key] is not None:
@@ -268,7 +283,11 @@ class StatTracker:
 
             plt.tight_layout()
             if dir:
-                fig.savefig(f"{dir}/{self.model_name}_stats.png")
+                save_dir = Path(dir)
+                save_dir.mkdir(parents=True, exist_ok=True)
+                save_path = save_dir / f"{self.model_name}_stats.png"
+                fig.savefig(save_path)
+                print(f"Saved stats plot to {save_path.absolute()}")
             plt.close(fig)
         else:
             fig = None
@@ -298,7 +317,9 @@ class StatTracker:
             if visualizer:
                 save_path = None
                 if dir:
-                    save_path = f"{dir}/{self.model_name}_{key}_{method}.png"
+                    save_dir = Path(dir)
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    save_path = save_dir / f"{self.model_name}_{key}_{method}.png"
 
                 # Check dimensionality before plotting
                 # flatten if needed is handled by visualizer, but let's be safe on input type
@@ -323,7 +344,9 @@ class StatTracker:
             if visualizer and hasattr(visualizer, "plot"):
                 save_path = None
                 if dir:
-                    save_path = f"{dir}/{self.model_name}_{key}_custom.png"
+                    save_dir = Path(dir)
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    save_path = save_dir / f"{self.model_name}_{key}_custom.png"
 
                 try:
                     visualizer.plot(
@@ -339,35 +362,59 @@ class StatTracker:
             plt.close(fig)
         return fig
 
-    def _plot_tensor(self, ax, data: List[Any], label: str, config: Dict):
-        # Convert list to tensor for plotting if needed, or handle list directly
-        if len(data) == 0:
+    def _plot_consolidated(
+        self, ax, data: Dict[str, List[Any]], label: str, config: Dict
+    ):
+        """Plots min/avg/max as a consolidated variation fill."""
+        avg_data = self._to_numpy(data.get("avg", data.get("score", [])))
+        min_data = self._to_numpy(data.get("min", []))
+        max_data = self._to_numpy(data.get("max", []))
+
+        if len(avg_data) == 0:
             return
 
+        x = np.arange(len(avg_data))
+        params = config["params"]
+        if "x_scale" in params:
+            x = x * params["x_scale"]
+
+        ax.plot(x, avg_data, label=f"{label} (avg)")
+
+        if len(min_data) == len(avg_data) and len(max_data) == len(avg_data):
+            ax.fill_between(
+                x, min_data, max_data, alpha=0.2, label=f"{label} (min-max)"
+            )
+
+        ax.set_title(f"{self.model_name} - {label}")
+        ax.set_xlabel(params.get("x_label", "Updates"))
+        ax.set_ylabel(label)
+        ax.grid()
+        ax.legend()
+
+    def _to_numpy(self, data: List[Any]) -> np.ndarray:
+        if not data:
+            return np.array([])
         if isinstance(data[0], torch.Tensor):
-            # Handle list of tensors (e.g. policies)
             if data[0].ndim > 0:
-                # If they are multi-dimensional, stack them
                 tensor_data = torch.stack(data)
             else:
-                # If they are 0-dim scalars, cat them
                 tensor_data = torch.cat([d.view(-1) for d in data])
         else:
             tensor_data = torch.tensor(data)
 
         np_data = tensor_data.numpy()
+        if np_data.ndim == 2:
+            np_data = np.mean(np_data, axis=1)
+        return np_data
+
+    def _plot_tensor(self, ax, data: List[Any], label: str, config: Dict):
+        # Convert list to tensor for plotting if needed, or handle list directly
+        if len(data) == 0:
+            return
+
+        np_data = self._to_numpy(data)
         types = config["types"]
         params = config["params"]
-
-        # Handle batch dimension if present
-        # For ROLLING_AVG, etc., we expect (T,) or (T, ActionDim)
-        # If we have (T, B) or (T, B, ActionDim), we average over B (axis 1)
-        if PlotType.BAR in types:
-            if np_data.ndim == 3:
-                np_data = np.mean(np_data, axis=1)
-        else:
-            if np_data.ndim == 2:
-                np_data = np.mean(np_data, axis=1)
 
         x = np.arange(len(np_data))
 
@@ -416,7 +463,7 @@ class StatTracker:
                     x, ema_data, label=f"{label} (EMA $\\beta={beta}$)", linestyle="-."
                 )
 
-        # Variation fill (std dev)
+        # Variation fill (std dev) - Only fallback if not using consolidated min/max
         if PlotType.VARIATION_FILL in types:
             mean = np.mean(np_data)
             std = np.std(np_data)
@@ -466,7 +513,7 @@ class StatTracker:
             ax.set_yscale("log")
 
         ax.set_title(f"{self.model_name} - {label}")
-        ax.set_xlabel("Steps")
+        ax.set_xlabel(params.get("x_label", "Updates"))
         ax.set_ylabel(label)
         ax.grid()
         ax.legend()

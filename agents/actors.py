@@ -2,7 +2,7 @@ import time
 import torch
 from typing import Any, Callable, Dict, Optional
 from replay_buffers.game import Game
-from agents.policy import Policy
+from agents.policies.policy import Policy
 
 
 from abc import ABC, abstractmethod

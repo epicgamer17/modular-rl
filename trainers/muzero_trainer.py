@@ -4,7 +4,8 @@ import numpy as np
 from typing import Optional, Dict, Any, List
 from executors import LocalExecutor, TorchMPExecutor
 from agents.muzero_learner import MuZeroLearner
-from agents.search_policy import SearchPolicy
+from agents.policies.search_policy import SearchPolicy
+from agents.action_selectors.action_selectors import TemperatureSelector
 from search.search_factories import create_mcts
 from agents.actors import GenericActor
 from modules.agent_nets.muzero import Network
@@ -77,13 +78,15 @@ class MuZeroTrainer:
             self.model.share_memory()
         self.model.to(self.device)
 
-        # 2. Create Search Algorithm
+        # 2. Create Search Algorithm and Action Selector
         self.search_alg = create_mcts(self.config, self.device, num_actions)
+        self.action_selector = TemperatureSelector()
 
         # 3. Initialize Policy with dependency injection
         self.policy = SearchPolicy(
             model=self.model,
             search_algorithm=self.search_alg,
+            action_selector=self.action_selector,
             config=self.config,
             device=self.device,
             observation_dimensions=obs_dim,
@@ -225,7 +228,8 @@ class MuZeroTrainer:
             self.stats.plot_graphs(dir=graph_dir)
 
         gc.collect()
-        print(f"Saved checkpoint at step {self.training_step}")
+        abs_path = os.path.abspath(step_dir)
+        print(f"Saved checkpoint at step {self.training_step} to {abs_path}")
 
     def _run_tests(self):
         """Run tests at checkpoint intervals."""
@@ -237,8 +241,10 @@ class MuZeroTrainer:
         # 1. Run self-evaluation (works for single and multi-player)
         test_results = self.test(self.test_trials, dir=training_step_dir)
         if test_results:
-            self.stats.append("test_score", test_results.get("score", 0.0))
-            print(f"Test score: {test_results.get('score', 0.0):.3f}")
+            self.stats.append("test_score", test_results.get("score"), subkey="avg")
+            self.stats.append("test_score", test_results.get("min_score"), subkey="min")
+            self.stats.append("test_score", test_results.get("max_score"), subkey="max")
+            print(f"Test score: {test_results.get('score'):.3f}")
 
         # 2. Run vs test agents (multi-player only)
         if hasattr(self, "test_agents") and self.test_agents:
@@ -251,11 +257,35 @@ class MuZeroTrainer:
                 print(f"Results vs {test_agent.model_name}: {results}")
 
                 for key in results:
-                    self.stats.append(
-                        f"test_score_vs_{test_agent.model_name}",
-                        results[key],
-                        subkey=key,
-                    )
+                    if key == "score":
+                        # Log consolidated min/avg/max
+                        self.stats.append(
+                            f"test_score_vs_{test_agent.model_name}",
+                            results["score"],
+                            subkey="avg",
+                        )
+                        self.stats.append(
+                            f"test_score_vs_{test_agent.model_name}",
+                            results.get("min_score", results["score"]),
+                            subkey="min",
+                        )
+                        self.stats.append(
+                            f"test_score_vs_{test_agent.model_name}",
+                            results.get("max_score", results["score"]),
+                            subkey="max",
+                        )
+                    elif key in ["min_score", "max_score"]:
+                        continue  # Already handled in the 'score' block
+                    elif "score" in key:
+                        # Skip individual player scores for the main plot to keep it clean
+                        continue
+                    else:
+                        # Log other results (like win%) under their own keys or as subkeys
+                        self.stats.append(
+                            f"test_score_vs_{test_agent.model_name}",
+                            results[key],
+                            subkey=key,
+                        )
 
     def test(self, num_trials: int, dir="./checkpoints") -> Dict[str, float]:
         """
@@ -381,13 +411,13 @@ class MuZeroTrainer:
                     f"Player {player} win%: {win_pct*100:.1f}%, avg score: {avg_score:.2f}"
                 )
 
-        results["score"] = (
-            sum(
-                results[f"player_{p}_score"]
-                for p in range(self.config.game.num_players)
-            )
-            / self.config.game.num_players
-        )
+        player_scores = [
+            results[f"player_{p}_score"] for p in range(self.config.game.num_players)
+        ]
+        results["score"] = sum(player_scores) / self.config.game.num_players
+        results["min_score"] = min(player_scores)
+        results["max_score"] = max(player_scores)
+
         test_env.close()
         return results
 
@@ -467,7 +497,10 @@ class MuZeroTrainer:
         # Initialize keys
         for key in stat_keys:
             if key not in self.stats.stats:
-                self.stats._init_key(key)
+                if "test_score" in key:
+                    self.stats._init_key(key, subkeys=["avg", "min", "max"])
+                else:
+                    self.stats._init_key(key)
 
         # Add plot types
         self.stats.add_plot_types(
@@ -477,7 +510,14 @@ class MuZeroTrainer:
             rolling_window=100,
             ema_beta=0.6,
         )
-        self.stats.add_plot_types("test_score", PlotType.BEST_FIT_LINE)
+        self.stats.add_plot_types(
+            "test_score", PlotType.BEST_FIT_LINE, PlotType.VARIATION_FILL
+        )
+        if test_score_keys:
+            for key in test_score_keys:
+                self.stats.add_plot_types(
+                    key, PlotType.BEST_FIT_LINE, PlotType.VARIATION_FILL
+                )
         self.stats.add_plot_types(
             "policy_loss", PlotType.ROLLING_AVG, rolling_window=100
         )
