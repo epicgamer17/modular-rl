@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from typing import Optional, Dict, Any, List
 from executors import LocalExecutor, TorchMPExecutor
-from agents.muzero_learner import MuZeroLearner
+from agents.learners.muzero_learner import MuZeroLearner
 from agents.policies.search_policy import SearchPolicy
 from agents.action_selectors.selectors import TemperatureSelector
 from search.search_factories import create_mcts

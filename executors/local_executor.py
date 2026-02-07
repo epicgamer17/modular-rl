@@ -22,11 +22,16 @@ class LocalExecutor(BaseExecutor):
                 results.append(worker.run_episode())
         return results
 
-    def update_weights(self, state_dict: Dict[str, Any]):
+    def update_weights(
+        self, state_dict: Dict[str, Any], params: Optional[Dict[str, Any]] = None
+    ):
         for worker in self.workers:
             # Assumes worker has a policy with a model
             if hasattr(worker, "policy") and hasattr(worker.policy, "model"):
                 worker.policy.model.load_state_dict(state_dict)
+                # Forward additional params to policy (e.g., epsilon updates)
+                if params is not None and hasattr(worker.policy, "update_parameters"):
+                    worker.policy.update_parameters(params)
 
     def stop(self):
         self.workers = []

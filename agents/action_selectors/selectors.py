@@ -51,25 +51,50 @@ class EpsilonGreedy(ActionSelector):
         """
         self.epsilon = epsilon
 
-    def select(self, values: torch.Tensor, exploration: bool = True) -> torch.Tensor:
+    def select(
+        self,
+        values: torch.Tensor,
+        exploration: bool = True,
+        info: Optional[Dict[str, Any]] = None,
+    ) -> torch.Tensor:
         """
         Performs epsilon-greedy on values.
 
         Args:
             values: Q-values or logits.
             exploration: Whether to use epsilon-greedy exploration.
+            info: Optional dict with 'legal_moves' for action masking.
 
         Returns:
             Action tensor.
         """
-        if exploration and np.random.rand() < self.epsilon:
-            # Random action
-            return torch.randint(
-                0, values.shape[-1], values.shape[:-1], device=values.device
+        from utils.utils import action_mask
+
+        # Check for valid legal moves (non-empty, non-None)
+        legal_moves = None
+        if info is not None and "legal_moves" in info:
+            moves = info.get("legal_moves")
+            if moves is not None and len(moves) > 0:
+                legal_moves = moves
+
+        # Apply action masking if legal moves provided
+        if legal_moves is not None:
+            if exploration and np.random.rand() < self.epsilon:
+                # Random action from legal moves only
+                return torch.tensor(np.random.choice(legal_moves), device=values.device)
+            # Greedy with masking
+            masked_values = action_mask(
+                values, legal_moves, mask_value=-float("inf"), device=values.device
             )
+            return masked_values.argmax(dim=-1).squeeze()
+
+        # No legal move constraints - standard epsilon-greedy
+        if exploration and np.random.rand() < self.epsilon:
+            # Random action - scalar for single obs
+            return torch.randint(0, values.shape[-1], (), device=values.device)
 
         # Greedy action
-        return values.argmax(dim=-1)
+        return values.argmax(dim=-1).squeeze()
 
     def update_parameters(self, params: Dict[str, Any]) -> None:
         """
@@ -88,24 +113,37 @@ class ArgmaxSelector(ActionSelector):
     """
 
     def select(
-        self, values: torch.Tensor, info: Optional[Dict[str, Any]] = None
+        self,
+        values: torch.Tensor,
+        exploration: bool = False,
+        info: Optional[Dict[str, Any]] = None,
     ) -> torch.Tensor:
         """
         Selects the action with the highest value.
+
+        Args:
+            values: Q-values or logits tensor.
+            exploration: Ignored for argmax (always greedy).
+            info: Optional dict with 'legal_moves' for action masking.
         """
-        # We can add masking logic here if needed, similar to the old implementation
-        # But for now, let's keep it simple as the user didn't specify masking.
-        # Actually, let's add it for compatibility.
-        from utils.utils import get_legal_moves, action_mask
+        from utils.utils import action_mask
 
         q_values = values
-        if info is not None and "legal_moves" in info:
-            legal_moves = get_legal_moves(info)
-            q_values = action_mask(
-                q_values, legal_moves, mask_value=-float("inf"), device=q_values.device
-            )
 
-        return q_values.argmax(dim=-1)
+        # Only apply masking if we have valid legal_moves
+        if info is not None and "legal_moves" in info:
+            legal_moves = info.get("legal_moves")
+            # Handle various cases where legal_moves is None, empty, or not constraining
+            if legal_moves is not None and len(legal_moves) > 0:
+                q_values = action_mask(
+                    q_values,
+                    legal_moves,
+                    mask_value=-float("inf"),
+                    device=q_values.device,
+                )
+            # If legal_moves is empty or None, just use all actions (no masking needed)
+
+        return q_values.argmax(dim=-1).squeeze()
 
 
 class CategoricalSelector(ActionSelector):

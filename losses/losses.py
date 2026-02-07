@@ -66,9 +66,10 @@ class LossModule(ABC):
 
 
 class StandardDQNLoss(LossModule):
-    def __init__(self, config, device):
+    def __init__(self, config, device, action_selector=None):
         super().__init__(config, device)
         self.sequence_loss = False
+        self.action_selector = action_selector
 
     def ensure_predictions(self, agent, context: dict):
         # IF EXISTS: Skip
@@ -108,7 +109,35 @@ class StandardDQNLoss(LossModule):
             # COMPUTE (Double DQN)
             # 1. Select best action using Online Network
             curr_next_q = agent.predict(next_obs)
-            next_actions = agent.select_actions(curr_next_q, info=next_infos)
+
+            # Use action selector if provided, otherwise use argmax
+            if self.action_selector is not None:
+                # Select actions batch-wise
+                next_actions = []
+                for i in range(self.config.minibatch_size):
+                    action = self.action_selector.select(
+                        curr_next_q[i : i + 1], exploration=False, info=next_infos[i]
+                    )
+                    next_actions.append(action)
+                next_actions = torch.stack(next_actions)
+            else:
+                # Fallback: simple greedy with masking
+                from utils.utils import action_mask
+
+                masked_q = torch.stack(
+                    [
+                        action_mask(
+                            curr_next_q[i],
+                            next_infos[i].get(
+                                "legal_moves", list(range(curr_next_q.shape[-1]))
+                            ),
+                            mask_value=-float("inf"),
+                            device=self.device,
+                        )
+                        for i in range(self.config.minibatch_size)
+                    ]
+                )
+                next_actions = masked_q.argmax(dim=-1)
 
             # 2. Evaluate that action using Target Network
             target_next_q = agent.predict_target(next_obs)
@@ -149,12 +178,13 @@ class StandardDQNLoss(LossModule):
 
 
 class C51Loss(LossModule):
-    def __init__(self, config, device):
+    def __init__(self, config, device, action_selector=None):
         super().__init__(config, device)
         self.support = torch.linspace(config.v_min, config.v_max, config.atom_size).to(
             device
         )
         self.sequence_loss = False
+        self.action_selector = action_selector
 
     def ensure_predictions(self, agent, context: dict):
         if "online_dist" in context:
@@ -185,11 +215,24 @@ class C51Loss(LossModule):
                 {"legal_moves": torch.nonzero(m).view(-1).tolist()} for m in next_masks
             ]
 
-            # 1. Select Actions (Online Net)
+            # 1. Select Actions (Online Net) - Double DQN: online net picks action
             online_next_dist = agent.predict(next_obs)
-            next_actions = agent.select_actions(online_next_dist, info=next_infos)
 
-            # 2. Get Target Distributions (Target Net)
+            # Convert distributions to Q-values for action selection
+            online_q_values = (online_next_dist * self.support).sum(dim=-1)
+
+            # Use action selector if provided, otherwise use argmax
+            next_actions = []
+            for i in range(self.config.minibatch_size):
+                action = self.action_selector.select(
+                    online_q_values[i : i + 1],
+                    exploration=False,
+                    info=next_infos[i],
+                )
+                next_actions.append(action)
+            next_actions = torch.stack(next_actions)
+
+            # 2. Get Target Distributions (Target Net) - Target net evaluates the action
             target_next_dist = agent.predict_target(next_obs)
             probabilities = target_next_dist[
                 range(self.config.minibatch_size), next_actions
