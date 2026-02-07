@@ -103,6 +103,7 @@ class Game:
         self.info_history = []
 
         self.num_players = num_players
+        self.duration_seconds: float = 0.0  # For FPS tracking across processes
 
     def append(
         self,

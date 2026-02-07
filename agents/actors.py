@@ -23,6 +23,10 @@ class BaseActor(ABC):
         """Runs one episode and returns the Game object."""
         pass
 
+    def run_episode(self, stats_tracker: Optional[Any] = None) -> Game:
+        """Runs one episode. Alias for play_game to support Executor patterns."""
+        return self.play_game(stats_tracker=stats_tracker)
+
 
 class GenericActor(BaseActor):
     """
@@ -135,10 +139,12 @@ class GenericActor(BaseActor):
             # We put it in the last info of the game
             game.info_history[-1]["final_rewards"] = self.env.rewards
 
+        # Store duration for FPS calculation (works across process boundaries)
+        game.duration_seconds = time.time() - start_time
+
         if stats_tracker:
-            duration = time.time() - start_time
-            if duration > 0:
-                stats_tracker.append("actor_fps", len(game) / duration)
+            if game.duration_seconds > 0:
+                stats_tracker.append("actor_fps", len(game) / game.duration_seconds)
 
             # Log score (from player 0's perspective)
             if self.num_players == 1:
@@ -154,3 +160,7 @@ class GenericActor(BaseActor):
             stats_tracker.increment_steps(len(game))
 
         return game
+
+    def run_episode(self, stats_tracker: Optional[Any] = None) -> Game:
+        """Runs one episode. Alias for play_game to support Executor patterns."""
+        return self.play_game(stats_tracker=stats_tracker)
