@@ -1,24 +1,10 @@
 import torch
-import torch.multiprocessing as mp
-from unittest.mock import MagicMock
-
-
-# Mock multiprocessing to avoid shared memory issues on this environment
-class MockValue:
-    def __init__(self, typecode, value):
-        self.value = value
-
-
-mp.Value = MockValue
-mp.Queue = MagicMock
-
-from torch.optim import Adam
-import gymnasium as gym
-from agents.muzero import MuZeroAgent
+from trainers.muzero_trainer import MuZeroTrainer
 from agent_configs.muzero_config import MuZeroConfig
 from game_configs.cartpole_config import CartPoleConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from losses.basic_losses import CategoricalCrossentropyLoss
+from torch.optim import Adam
 
 
 def action_as_onehot(action, num_actions):
@@ -29,7 +15,7 @@ def action_as_onehot(action, num_actions):
     return one_hot
 
 
-def verify_agent_refactor():
+def verify_trainer_refactor():
     print("Initializing environment...")
     game_config = CartPoleConfig()
     env = game_config.make_env()
@@ -62,23 +48,22 @@ def verify_agent_refactor():
         "reward_loss_function": CategoricalCrossentropyLoss(),
         "policy_loss_function": CategoricalCrossentropyLoss(),
         "support_range": 31,
+        "model_name": "verify_trainer_refactor",
     }
 
     config = MuZeroConfig(config_dict, game_config)
 
-    print("Initializing Agent...")
-    agent = MuZeroAgent(env, config)
+    print("Initializing Trainer...")
+    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"))
 
-    print("Running training smoke test...")
-    # Manually populate buffer to ensure it can learn
-    for _ in range(3):
-        agent.play_game()
+    print("Running training loop verification...")
+    # Trainer.train() handles data collection, storage, and optimization
+    trainer.train()
 
-    print(f"Buffer size: {agent.replay_buffer.size}")
-
-    agent.train()
+    print(f"Buffer size: {trainer.buffer.size}")
+    assert trainer.stats.get_num_steps() > 0
     print("Training loop completed successfully!")
 
 
 if __name__ == "__main__":
-    verify_agent_refactor()
+    verify_trainer_refactor()

@@ -4,7 +4,8 @@ import numpy as np
 from typing import Optional, Dict, Any, List
 from executors import LocalExecutor, TorchMPExecutor
 from agents.muzero_learner import MuZeroLearner
-from agents.muzero_policy import MuZeroPolicy
+from agents.search_policy import SearchPolicy
+from search.search_factories import create_mcts
 from agents.actors import GenericActor
 from modules.agent_nets.muzero import Network
 from stats.stats import StatTracker
@@ -76,13 +77,16 @@ class MuZeroTrainer:
             self.model.share_memory()
         self.model.to(self.device)
 
-        # 2. Initialize Policy (used by actors and learner)
-        self.policy = MuZeroPolicy(
-            self.config,
-            self.device,
-            num_actions,
-            obs_dim,
+        # 2. Create Search Algorithm
+        self.search_alg = create_mcts(self.config, self.device, num_actions)
+
+        # 3. Initialize Policy with dependency injection
+        self.policy = SearchPolicy(
             model=self.model,
+            search_algorithm=self.search_alg,
+            config=self.config,
+            device=self.device,
+            observation_dimensions=obs_dim,
         )
 
         # 3. Initialize Learner (handles buffer and optimizer)

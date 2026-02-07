@@ -1,11 +1,12 @@
 import torch
 import pytest
-from agents.muzero import MuZeroAgent
+from trainers.muzero_trainer import MuZeroTrainer
 from agent_configs.muzero_config import MuZeroConfig
 from game_configs.cartpole_config import CartPoleConfig
 from game_configs.tictactoe_config import TicTacToeConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from losses.basic_losses import CategoricalCrossentropyLoss, MSELoss
+
 
 def action_as_onehot(action, num_actions):
     """
@@ -17,6 +18,7 @@ def action_as_onehot(action, num_actions):
     one_hot[action] = 1.0
     return one_hot
 
+
 def action_as_plane(action, num_actions, height, width):
     """
     Encodes an action as a plane (for CNNs).
@@ -27,14 +29,15 @@ def action_as_plane(action, num_actions, height, width):
     plane[action, :, :] = 1.0
     return plane
 
+
 def test_muzero_cartpole_smoke():
     """
     Smoke test for MuZero on CartPole.
-    Ensures agent can initialize and run a training step.
+    Ensures trainer can initialize and run a training step.
     """
     game_config = CartPoleConfig()
     env = game_config.make_env()
-    
+
     config_dict = {
         "world_model_cls": MuzeroWorldModel,
         "residual_layers": [],
@@ -50,11 +53,11 @@ def test_muzero_cartpole_smoke():
         "num_simulations": 2,
         "minibatch_size": 2,
         "min_replay_buffer_size": 2,
-        "replay_buffer_size": 10,
+        "replay_buffer_size": 100,
         "unroll_steps": 2,
         "n_step": 2,
         "multi_process": False,
-        "training_steps": 1,
+        "training_steps": 2,
         "games_per_generation": 1,
         "learning_rate": 0.001,
         "action_function": action_as_onehot,
@@ -62,19 +65,23 @@ def test_muzero_cartpole_smoke():
         "reward_loss_function": CategoricalCrossentropyLoss(),
         "policy_loss_function": CategoricalCrossentropyLoss(),
         "support_range": 31,
+        "model_name": "smoke_test_cartpole",
     }
-    
+
     config = MuZeroConfig(config_dict, game_config)
-    
-    agent = MuZeroAgent(
-        env,
-        config,
-        name="smoke_test_cartpole",
-        device="cpu"
-    )
-    
-    assert agent.model is not None
-    assert agent.replay_buffer is not None
+
+    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"))
+
+    # Disable checkpointing/plotting to avoid permission errors in this environment
+    trainer._save_checkpoint = lambda: None
+
+    assert trainer.model is not None
+    assert trainer.buffer is not None
+
+    # Run a few steps of self-play and a learner step to verify the whole loop
+    trainer.train()
+    assert trainer.training_step >= 1
+
 
 def test_muzero_tictactoe_smoke():
     """
@@ -82,7 +89,7 @@ def test_muzero_tictactoe_smoke():
     """
     game_config = TicTacToeConfig()
     env = game_config.make_env()
-    
+
     config_dict = {
         "world_model_cls": MuzeroWorldModel,
         "residual_layers": [(16, 3, 1)],
@@ -92,32 +99,34 @@ def test_muzero_tictactoe_smoke():
         "num_simulations": 2,
         "minibatch_size": 2,
         "min_replay_buffer_size": 2,
-        "replay_buffer_size": 10,
+        "replay_buffer_size": 100,
         "unroll_steps": 2,
         "n_step": 3,
         "multi_process": False,
-        "training_steps": 1,
+        "training_steps": 2,
         "games_per_generation": 1,
         "action_function": action_as_plane,
         "value_loss_function": MSELoss(),
         "reward_loss_function": MSELoss(),
         "policy_loss_function": CategoricalCrossentropyLoss(),
         "support_range": None,
+        "model_name": "smoke_test_tictactoe",
     }
-    
+
     config = MuZeroConfig(config_dict, game_config)
-    
-    agent = MuZeroAgent(
-        env,
-        config,
-        name="smoke_test_tictactoe",
-        device="cpu"
-    )
-    # Patch player_id because TicTacToe uses player_1
-    agent.player_id = "player_1"
-    
-    assert agent.model is not None
-    assert agent.replay_buffer is not None
+
+    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"))
+
+    # Disable checkpointing/plotting
+    trainer._save_checkpoint = lambda: None
+
+    assert trainer.model is not None
+    assert trainer.buffer is not None
+
+    # Verify trainer can run
+    trainer.train()
+    assert trainer.training_step >= 1
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

@@ -1,20 +1,23 @@
-from agents.muzero import MuZeroAgent
+import torch
+import time
+import os
+from trainers.muzero_trainer import MuZeroTrainer
 from agent_configs.muzero_config import MuZeroConfig
 from game_configs.cartpole_config import CartPoleConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from losses.basic_losses import CategoricalCrossentropyLoss
-import torch
-import time
 
 
 def action_as_onehot(action, num_actions):
+    if isinstance(action, torch.Tensor):
+        action = action.item()
     one_hot = torch.zeros(num_actions)
     one_hot[action] = 1.0
     return one_hot
 
 
 def verify():
-    print("Starting verification of MuZero multiprocessing...")
+    print("Starting verification of MuZero multiprocessing using MuZeroTrainer...")
     game_config = CartPoleConfig()
     env = game_config.make_env()
 
@@ -33,52 +36,49 @@ def verify():
         "num_simulations": 1,
         "minibatch_size": 1,
         "min_replay_buffer_size": 1,
-        "replay_buffer_size": 10,
+        "replay_buffer_size": 100,
         "unroll_steps": 1,
         "n_step": 1,
         "multi_process": True,
         "num_workers": 1,
-        "training_steps": 1,
+        "training_steps": 2,
         "games_per_generation": 1,
         "action_function": action_as_onehot,
         "value_loss_function": CategoricalCrossentropyLoss(),
         "reward_loss_function": CategoricalCrossentropyLoss(),
         "policy_loss_function": CategoricalCrossentropyLoss(),
         "support_range": 31,
+        "model_name": "verify_mp_trainer",
     }
 
     config = MuZeroConfig(config_dict, game_config)
-    agent = MuZeroAgent(env, config, name="verify_mp", device="cpu")
 
-    print("Initial MRO:", MuZeroAgent.__mro__)
+    # Use CPU for verification to avoid MPS/CUDA issues on smoke tests
+    device = torch.device("cpu")
+
+    print("Initializing Trainer...")
+    trainer = MuZeroTrainer(config, env, device=device)
+
+    # Disable checkpointing/plotting to avoid permission errors
+    trainer._save_checkpoint = lambda: None
 
     try:
-        print("Starting workers...")
-        stats_client = agent.stats.get_client()
-        agent.start_workers(
-            worker_fn=agent.worker_fn, num_workers=1, stats_client=stats_client
-        )
+        print("Starting training with MP executor...")
+        # Note: trainer.train() will start workers, collect data, and stop workers
+        trainer.train()
 
-        print("Workers started. Waiting 5 seconds for some self-play...")
-        time.sleep(5)
+        print("Training step:", trainer.training_step)
+        assert trainer.training_step >= 1
 
-        print("Checking for errors...")
-        agent.check_worker_errors()
-
-        print("Stats steps:", agent.stats.get_num_steps())
-
-        print("Stopping workers...")
-        agent.stop_workers()
-        print("Workers stopped successfully.")
-        print("Verification PASSED!")
+        print("MuZeroTrainer MP Verification PASSED!")
 
     except Exception as e:
         print(f"Verification FAILED: {e}")
         import traceback
 
         traceback.print_exc()
-        if hasattr(agent, "stop_workers"):
-            agent.stop_workers()
+        if hasattr(trainer, "executor") and trainer.executor:
+            trainer.executor.stop()
         exit(1)
 
 
