@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional, Tuple, Type
-from executors.base import BaseExecutor
+from .base import BaseExecutor
 
 
 class LocalExecutor(BaseExecutor):
@@ -18,8 +18,8 @@ class LocalExecutor(BaseExecutor):
         # to simulate "fetching available results"
         results = []
         for worker in self.workers:
-            if hasattr(worker, "run_episode"):
-                results.append(worker.run_episode())
+            if hasattr(worker, "play_game"):
+                results.append(worker.play_game())
         return results
 
     def update_weights(

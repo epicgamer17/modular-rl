@@ -15,7 +15,7 @@ class Policy(ABC):
         pass
 
     @abstractmethod
-    def compute_action(self, obs: Any, info: Dict[str, Any] = None) -> Any:
+    def compute_action(self, obs: Any, info: Dict[str, Any] = None, **kwargs) -> Any:
         """
         Computes an action given an observation and info.
         """

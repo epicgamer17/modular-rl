@@ -16,11 +16,12 @@ import torch
 import numpy as np
 import dill as pickle
 
-from executors import LocalExecutor, TorchMPExecutor
+from agents.executors.local_executor import LocalExecutor
+from agents.executors.torch_mp_executor import TorchMPExecutor
 from agents.learners.imitation_learner import ImitationLearner
 from agents.policies.direct_policy import DirectPolicy
 from agents.action_selectors.selectors import CategoricalSelector, ArgmaxSelector
-from agents.actors import GenericActor
+from agents.actors.actors import get_actor_class
 from modules.agent_nets.policy_imitation import SupervisedNetwork
 from stats.stats import StatTracker, PlotType
 
@@ -127,7 +128,8 @@ class ImitationTrainer:
             self.policy,
             num_players,
         )
-        self.executor.launch(GenericActor, worker_args, num_workers)
+        actor_cls = get_actor_class(env)
+        self.executor.launch(actor_cls, worker_args, num_workers)
 
         self.training_step = 0
         self.model_name = config.model_name

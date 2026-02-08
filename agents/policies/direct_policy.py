@@ -44,7 +44,7 @@ class DirectPolicy(Policy):
         if hasattr(self.model, "reset_noise"):
             self.model.reset_noise()
 
-    def compute_action(self, obs: Any, info: Dict[str, Any] = None) -> Any:
+    def compute_action(self, obs: Any, info: Dict[str, Any] = None, **kwargs) -> Any:
         """
         Computes an action given an observation and info.
         """

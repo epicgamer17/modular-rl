@@ -1,7 +1,7 @@
 import torch.multiprocessing as mp
 import traceback
 from typing import Any, Dict, List, Optional, Tuple, Type
-from executors.base import BaseExecutor
+from .base import BaseExecutor
 
 
 class TorchMPExecutor(BaseExecutor):
@@ -40,12 +40,12 @@ class TorchMPExecutor(BaseExecutor):
                 worker.setup()
 
             while not stop_flag.value:
-                if hasattr(worker, "run_episode"):
-                    data = worker.run_episode()
+                if hasattr(worker, "play_game"):
+                    data = worker.play_game()
                     result_queue.put(data)
                 else:
                     raise AttributeError(
-                        f"Worker {worker_cls} must implement run_episode()"
+                        f"Worker {worker_cls} must implement play_game()"
                     )
         except Exception as e:
             error_queue.put((e, traceback.format_exc()))

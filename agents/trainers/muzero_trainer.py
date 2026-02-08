@@ -2,12 +2,13 @@ import time
 import torch
 import numpy as np
 from typing import Optional, Dict, Any, List
-from executors import LocalExecutor, TorchMPExecutor
+from agents.executors.local_executor import LocalExecutor
+from agents.executors.torch_mp_executor import TorchMPExecutor
 from agents.learners.muzero_learner import MuZeroLearner
 from agents.policies.search_policy import SearchPolicy
 from agents.action_selectors.selectors import TemperatureSelector
 from search.search_factories import create_mcts
-from agents.actors import GenericActor
+from agents.actors.actors import get_actor_class
 from modules.agent_nets.muzero import Network
 from stats.stats import StatTracker
 
@@ -110,7 +111,8 @@ class MuZeroTrainer:
             self.policy,
             self.config.game.num_players,
         )
-        self.executor.launch(GenericActor, worker_args, self.config.num_workers)
+        actor_cls = get_actor_class(env)
+        self.executor.launch(actor_cls, worker_args, self.config.num_workers)
 
         self.training_step = 0
 

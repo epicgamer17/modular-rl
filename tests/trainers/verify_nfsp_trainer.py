@@ -13,7 +13,7 @@ import torch.nn as nn
 import gymnasium as gym
 import numpy as np
 
-from trainers.nfsp_trainer import NFSPTrainer
+from agents.trainers.nfsp_trainer import NFSPTrainer
 from agents.policies.nfsp_policy import NFSPPolicy
 from agent_configs.dqn.nfsp_config import NFSPDQNConfig
 from agent_configs.dqn.rainbow_config import RainbowConfig

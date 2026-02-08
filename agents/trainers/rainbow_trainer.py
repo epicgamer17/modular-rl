@@ -1,32 +1,33 @@
 """
-PPOTrainer orchestrates the training process for PPO by coordinating
-the executor for data collection, the learner for optimization, and
-handling the on-policy training loop.
+RainbowTrainer orchestrates the training process for Rainbow DQN by coordinating
+the executor for data collection, the replay buffer for storage, and the learner
+for optimization.
 """
 
 import time
-import gc
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import torch
 import numpy as np
-import dill as pickle
 
-from executors import LocalExecutor, TorchMPExecutor
-from agents.learners.ppo_learner import PPOLearner
+from agents.executors.local_executor import LocalExecutor
+from agents.executors.torch_mp_executor import TorchMPExecutor
+from agents.learners.rainbow_learner import RainbowLearner
 from agents.policies.direct_policy import DirectPolicy
-from agents.action_selectors.selectors import CategoricalSelector
-from agents.actors import GenericActor
-from modules.agent_nets.ppo import PPONetwork
+from agents.action_selectors.selectors import EpsilonGreedy
+from agents.actors.actors import get_actor_class
+from replay_buffers.transition import Transition, TransitionBatch
+from modules.agent_nets.rainbow_dqn import RainbowNetwork
 from stats.stats import StatTracker, PlotType
+from utils.utils import update_linear_schedule, update_inverse_sqrt_schedule
 
 
-class PPOTrainer:
+class RainbowTrainer:
     """
-    PPOTrainer orchestrates the training process by coordinating
-    the executor for data collection and the learner for optimization.
+    RainbowTrainer orchestrates the training process by coordinating
+    the executor for data collection, the replay buffer for storage,
+    and the learner for optimization.
     """
 
     def __init__(
@@ -38,10 +39,10 @@ class PPOTrainer:
         test_agents: Optional[List] = None,
     ):
         """
-        Initializes the PPOTrainer.
+        Initializes the RainbowTrainer.
 
         Args:
-            config: PPOConfig with hyperparameters.
+            config: RainbowConfig with hyperparameters.
             env: Environment instance or factory function.
             device: Torch device for training.
             stats: Optional StatTracker for logging metrics.
@@ -68,47 +69,65 @@ class PPOTrainer:
         obs_dim, obs_dtype = self._determine_observation_dimensions(env)
         obs_dtype = getattr(config, "observation_dtype", obs_dtype)
         num_actions = self._get_num_actions(env)
-        self.num_actions = num_actions
 
-        # 1. Initialize Network
+        # 1. Initialize Networks
         input_shape = torch.Size((config.minibatch_size,) + obs_dim)
-        self.model = PPONetwork(
+        self.model = RainbowNetwork(
             config=config,
             output_size=num_actions,
             input_shape=input_shape,
-            discrete=True,  # PPO discrete action space
         )
-        self.model.to(device)
+        self.target_model = RainbowNetwork(
+            config=config,
+            output_size=num_actions,
+            input_shape=input_shape,
+        )
 
         # Initialize weights
         if config.kernel_initializer is not None:
             self.model.initialize(config.kernel_initializer)
 
-        if getattr(config, "multi_process", False):
+        self.model.to(device)
+        self.target_model.to(device)
+        self.target_model.load_state_dict(self.model.state_dict())
+        self.target_model.eval()
+
+        if config.multi_process:
             self.model.share_memory()
 
-        # 2. Initialize Action Selector (Categorical for stochastic policy)
-        self.action_selector = CategoricalSelector(from_logits=False)
+        # 2. Initialize Action Selector with initial epsilon
+        self.action_selector = EpsilonGreedy(epsilon=config.eg_epsilon)
+        self.current_epsilon = config.eg_epsilon
 
-        # 3. Initialize Policy
-        self.policy = PPOPolicy(
+        # 3. Create support for distributional RL (C51)
+        self.support = None
+        if config.atom_size > 1:
+            self.support = torch.linspace(
+                config.v_min, config.v_max, config.atom_size, device=device
+            )
+
+        # 4. Initialize Policy
+        self.policy = DirectPolicy(
             model=self.model,
             action_selector=self.action_selector,
             device=device,
+            support=self.support,
         )
 
         # 4. Initialize Learner
-        self.learner = PPOLearner(
+        self.learner = RainbowLearner(
             config=config,
             model=self.model,
+            target_model=self.target_model,
             device=device,
             num_actions=num_actions,
             observation_dimensions=obs_dim,
             observation_dtype=obs_dtype,
         )
+        self.buffer = self.learner.replay_buffer
 
         # 5. Initialize Executor
-        if getattr(config, "multi_process", False):
+        if config.multi_process:
             self.executor = TorchMPExecutor()
         else:
             self.executor = LocalExecutor()
@@ -120,7 +139,8 @@ class PPOTrainer:
             self.policy,
             config.game.num_players,
         )
-        self.executor.launch(GenericActor, worker_args, num_workers)
+        actor_cls = get_actor_class(self._env)
+        self.executor.launch(actor_cls, worker_args, num_workers)
 
         self.training_step = 0
         self.model_name = config.model_name
@@ -137,125 +157,110 @@ class PPOTrainer:
         """
         self._setup_stats()
 
-        print(f"Starting PPO training for {self.config.training_steps} steps...")
+        print(f"Starting Rainbow training for {self.config.training_steps} steps...")
         start_time = time.time()
 
-        # Track residues between epochs for accurate episode-level logging
-        current_episode_score = 0.0
-        current_episode_length = 0
-        completed_scores = []
-        completed_lengths = []
-
         while self.training_step < self.config.training_steps:
-            # 1. Broadcast weights to workers
-            self.executor.update_weights(self.model.state_dict())
+            # 1. Update epsilon schedule
+            self._update_epsilon()
 
-            # 2. Collect trajectory data (steps_per_epoch transitions)
-            steps_collected = 0
+            # 2. Broadcast weights and epsilon to workers
+            self.executor.update_weights(
+                self.model.state_dict(),
+                params={"epsilon": self.current_epsilon},
+            )
 
-            while steps_collected < self.config.steps_per_epoch:
-                with torch.no_grad():
-                    # Get state from environment
-                    state, info = self._env.reset()
-                    done = False
-                    current_episode_score = 0.0
-                    current_episode_length = 0
+            # 3. Collect data from executor (returns TransitionBatch objects)
+            data, collect_stats = self.executor.collect_data(min_samples=1)
 
-                    while not done and steps_collected < self.config.steps_per_epoch:
-                        # Compute action and value
-                        action, log_prob, value = self.policy.compute_action_with_info(
-                            state, info
-                        )
-                        action_val = (
-                            action.item() if hasattr(action, "item") else action
-                        )
+            # 4. Store transitions in buffer
+            for batch in data:
+                self._store_transitions(batch)
 
-                        # Environment step
-                        next_state, reward, terminated, truncated, next_info = (
-                            self._env.step(action_val)
-                        )
-                        done = terminated or truncated
+            # 5. Log collection stats
+            for key, val in collect_stats.items():
+                self.stats.append(key, val)
 
-                        # Store transition
-                        self.learner.store(
-                            observation=state,
-                            action=action_val,
-                            value=value,
-                            log_probability=log_prob,
-                            reward=reward,
-                        )
+            # 6. Learning step
+            if self.buffer.size >= self.config.min_replay_buffer_size:
+                for _ in range(self.config.num_minibatches):
+                    loss_stats = self.learner.step(self.stats)
+                    if loss_stats:
+                        for key, val in loss_stats.items():
+                            self.stats.append(key, val)
 
-                        state = next_state
-                        info = next_info
-                        current_episode_score += reward
-                        current_episode_length += 1
-                        steps_collected += 1
+                self.training_step += 1
 
-                        if done:
-                            completed_scores.append(current_episode_score)
-                            completed_lengths.append(current_episode_length)
-                            # reset for next episode in same epoch
-                            current_episode_score = 0.0
-                            current_episode_length = 0
+                # 7. Update target network
+                if self.training_step % self.config.transfer_interval == 0:
+                    self.learner.update_target_network()
 
-                    # Finish trajectory with bootstrap value
-                    if done:
-                        last_value = 0.0
-                    else:
-                        with torch.inference_mode():
-                            obs = self.learner.preprocess(state)
-                            last_value = self.model.critic(obs).item()
+                # 8. Periodic checkpointing
+                if self.training_step % self.checkpoint_interval == 0:
+                    self._save_checkpoint()
 
-                    self.learner.finish_trajectory(last_value)
-
-            # Log collection stats
-            if completed_scores:
-                for s, l in zip(completed_scores, completed_lengths):
-                    self.stats.append("score", float(s))
-                    self.stats.append("episode_length", float(l))
-
-                # Print diagnostics
-                if self.training_step % 10 == 0:
-                    avg_score = float(np.mean(completed_scores))
-                    print(
-                        f"Step {self.training_step}, "
-                        f"Avg Score: {avg_score:.2f}, "
-                        f"Episodes Finished: {len(completed_scores)}"
-                    )
-
-                # Clear for next stats reporting window
-                completed_scores = []
-                completed_lengths = []
-            else:
-                avg_score = 0.0
-
-            # 3. Learning step
-            loss_stats = self.learner.step(self.stats)
-            if loss_stats:
-                for key, val in loss_stats.items():
-                    self.stats.append(key, val)
-
-            self.training_step += 1
-
-            # 4. Periodic checkpointing
-            if self.training_step % self.checkpoint_interval == 0:
-                self._save_checkpoint()
-
-            # 5. Periodic testing
-            if self.training_step % self.test_interval == 0:
-                self._run_tests()
+                # 9. Periodic testing
+                if self.training_step % self.test_interval == 0:
+                    self._run_tests()
 
             # Periodic logging
-            if self.training_step % 10 == 0:
+            if self.training_step % 100 == 0 and self.training_step > 0:
                 print(
                     f"Step {self.training_step}, "
-                    f"Avg Score: {avg_score:.2f}, "
-                    f"Episodes Finished: {len(completed_scores)}"
+                    f"Epsilon: {self.current_epsilon:.4f}, "
+                    f"Buffer: {self.buffer.size}"
                 )
 
         self.executor.stop()
         self._save_checkpoint()
         print("Training finished.")
+
+    def _update_epsilon(self) -> None:
+        """
+        Updates epsilon according to the configured decay schedule.
+        """
+        if self.config.eg_epsilon_decay_type == "linear":
+            self.current_epsilon = update_linear_schedule(
+                self.config.eg_epsilon_final,
+                self.config.eg_epsilon_final_step,
+                self.config.eg_epsilon,
+                self.training_step,
+            )
+        elif self.config.eg_epsilon_decay_type == "inverse_sqrt":
+            self.current_epsilon = update_inverse_sqrt_schedule(
+                self.config.eg_epsilon,
+                self.training_step,
+            )
+        else:
+            raise ValueError(
+                f"Invalid epsilon decay type: {self.config.eg_epsilon_decay_type}"
+            )
+
+    def _store_transitions(self, batch: TransitionBatch) -> None:
+        """
+        Stores transitions in the replay buffer.
+
+        Args:
+            batch: TransitionBatch containing individual transitions.
+        """
+        for transition in batch:
+            self._store_transition(transition)
+
+    def _store_transition(self, transition: Transition) -> None:
+        """
+        Stores a single transition in the replay buffer.
+
+        Args:
+            transition: Single Transition object.
+        """
+        self.buffer.store(
+            observations=transition.observation,
+            actions=transition.action,
+            rewards=transition.reward,
+            next_observations=transition.next_observation,
+            next_infos=transition.next_info if transition.next_info else {},
+            dones=transition.done,
+        )
 
     def _run_tests(self) -> None:
         """
@@ -296,7 +301,7 @@ class PPOTrainer:
                 while not done and episode_length < 1000:
                     episode_length += 1
 
-                    # Use policy (greedy for testing)
+                    # Use policy with exploration disabled
                     action = self.policy.compute_action(state, info)
                     action_val = action.item() if hasattr(action, "item") else action
 
@@ -323,6 +328,10 @@ class PPOTrainer:
         """
         Saves model weights and stats.
         """
+        import gc
+        import os
+        import dill as pickle
+
         base_dir = Path("checkpoints", self.model_name)
         step_dir = base_dir / f"step_{self.training_step}"
         os.makedirs(step_dir, exist_ok=True)
@@ -335,10 +344,9 @@ class PPOTrainer:
             "training_step": self.training_step,
             "model_name": self.model_name,
             "model": self.model.state_dict(),
-            "actor_optimizer": self.learner.actor_optimizer.state_dict(),
-            "critic_optimizer": self.learner.critic_optimizer.state_dict(),
-            "actor_scheduler": self.learner.actor_scheduler.state_dict(),
-            "critic_scheduler": self.learner.critic_scheduler.state_dict(),
+            "target_model": self.target_model.state_dict(),
+            "optimizer": self.learner.optimizer.state_dict(),
+            "epsilon": self.current_epsilon,
         }
         torch.save(checkpoint, weights_path)
 
@@ -418,12 +426,11 @@ class PPOTrainer:
         """
         stat_keys = [
             "score",
-            "actor_loss",
-            "critic_loss",
-            "kl_divergence",
+            "loss",
             "test_score",
             "episode_length",
             "learner_fps",
+            "actor_fps",
         ]
 
         for key in stat_keys:
@@ -442,96 +449,11 @@ class PPOTrainer:
             PlotType.ROLLING_AVG,
             rolling_window=100,
         )
-        self.stats.add_plot_types(
-            "actor_loss", PlotType.ROLLING_AVG, rolling_window=100
-        )
-        self.stats.add_plot_types(
-            "critic_loss", PlotType.ROLLING_AVG, rolling_window=100
-        )
-        self.stats.add_plot_types(
-            "kl_divergence", PlotType.ROLLING_AVG, rolling_window=100
-        )
+        self.stats.add_plot_types("loss", PlotType.ROLLING_AVG, rolling_window=100)
         self.stats.add_plot_types(
             "episode_length", PlotType.ROLLING_AVG, rolling_window=100
         )
         self.stats.add_plot_types(
             "learner_fps", PlotType.ROLLING_AVG, rolling_window=100
         )
-
-
-class PPOPolicy(DirectPolicy):
-    """
-    Extended DirectPolicy for PPO that returns action, log_prob, and value.
-    """
-
-    def compute_action(
-        self, obs: Any, info: Dict[str, Any] = None, exploration: bool = False
-    ) -> Any:
-        """
-        Computes an action given an observation and info.
-        For PPO, we only use the actor output from the model.
-        """
-        if not isinstance(obs, torch.Tensor):
-            obs_tensor = torch.tensor(
-                obs, device=self.device, dtype=torch.float32
-            ).unsqueeze(0)
-        else:
-            obs_tensor = obs.to(self.device)
-            if obs_tensor.dim() == len(self.model.actor.input_shape) - 1:
-                obs_tensor = obs_tensor.unsqueeze(0)
-
-        with torch.inference_mode():
-            # PPONetwork returns (actor_logits, critic_value)
-            logits, _ = self.model(obs_tensor)
-
-        action = self.action_selector.select(logits, exploration=exploration, info=info)
-
-        if action.dim() > 0 and action.shape[0] == 1:
-            action = action.squeeze(0)
-
-        return action
-
-    def compute_action_with_info(
-        self, obs: Any, info: Dict[str, Any] = None
-    ) -> tuple[torch.Tensor, float, float]:
-        """
-        Computes action, log probability, and value for PPO training.
-
-        Returns:
-            Tuple of (action, log_probability, value).
-        """
-        if not isinstance(obs, torch.Tensor):
-            obs_tensor = torch.tensor(
-                obs, device=self.device, dtype=torch.float32
-            ).unsqueeze(0)
-        else:
-            obs_tensor = obs.to(self.device)
-            if obs_tensor.dim() == len(self.model.actor.input_shape) - 1:
-                obs_tensor = obs_tensor.unsqueeze(0)
-
-        with torch.inference_mode():
-            # Get actor probs and critic value
-            probs = self.model.actor(obs_tensor)
-            value = self.model.critic(obs_tensor)
-
-        # Use the selector to get the action (sampling mode)
-        # Note: action_selector is configured with from_logits=False in PPOTrainer
-        action = self.action_selector.select(probs, exploration=True, info=info)
-
-        # We still need the distribution for log_prob
-        # Since CategoricalHead already did softmax, probs are probabilities
-        distribution = torch.distributions.Categorical(probs=probs)
-
-        # Ensure action is the right shape for log_prob
-        if action.dim() == 0:
-            action_for_log_prob = action.unsqueeze(0)
-        else:
-            action_for_log_prob = action
-
-        log_prob = distribution.log_prob(action_for_log_prob)
-
-        return (
-            action.squeeze(),
-            log_prob.squeeze().item(),
-            value.squeeze().item(),
-        )
+        self.stats.add_plot_types("actor_fps", PlotType.ROLLING_AVG, rolling_window=100)

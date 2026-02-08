@@ -24,7 +24,7 @@ class SearchAlgorithmProtocol(Protocol):
 class SearchPolicy(Policy):
     """
     SearchPolicy handles the MCTS search and network inference logic.
-    It implements a Policy interface to be used with a GenericActor.
+    It implements a Policy interface to be used with a BaseActor.
 
     This class uses dependency injection for model and search_algorithm,
     making it reusable across different MuZero-style agents.
@@ -71,13 +71,14 @@ class SearchPolicy(Policy):
         self.steps_in_episode = 0
         self.last_prediction = {}
 
-    def compute_action(self, obs: Any, info: Dict[str, Any] = None) -> Any:
+    def compute_action(self, obs: Any, info: Dict[str, Any] = None, **kwargs) -> Any:
         """
         Computes an action given an observation.
 
         Args:
             obs: Current observation.
             info: Additional info dict (e.g., legal moves, player).
+            **kwargs: Additional keyword arguments (e.g., player_id).
 
         Returns:
             Action tensor.
