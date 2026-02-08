@@ -55,14 +55,18 @@ class NFSPTrainer:
         )
         self.test_agents = test_agents if test_agents is not None else []
 
-        # Handle env as factory function or instance
-        if callable(env) and not hasattr(env, "observation_space"):
-            self._env_factory = env
-            env = env()
-        else:
-            self._env_factory = config.game.make_env
-
         self._env = env
+        assert not callable(
+            env
+        ), "env must be an environment instance, not a factory function"
+
+        # Detect player_id for PettingZoo environments
+        if hasattr(env, "possible_agents") and len(env.possible_agents) > 0:
+            self._player_id = env.possible_agents[0]
+        elif hasattr(env, "agents") and len(env.agents) > 0:
+            self._player_id = env.agents[0]
+        else:
+            self._player_id = "player_0"
 
         # Get observation/action specs
         obs_dim, obs_dtype = self._determine_observation_dimensions(env)
@@ -134,7 +138,7 @@ class NFSPTrainer:
         # Launch workers
         num_workers = getattr(config, "num_workers", 1)
         worker_args = (
-            self._env_factory,
+            self.config.game.make_env,
             self.policy,
             config.game.num_players,
         )
@@ -156,6 +160,8 @@ class NFSPTrainer:
         self._setup_stats()
 
         print(f"Starting NFSP training for {self.config.training_steps} steps...")
+
+        last_log_time = time.time()
 
         while self.training_step < self.config.training_steps:
             # 1. Update worker weights and parameters (eta)
@@ -214,6 +220,23 @@ class NFSPTrainer:
 
             self.training_step += 1
 
+            # Periodic logging
+            if self.training_step % 10 == 0:
+                elapsed = time.time() - last_log_time
+                avg_score = 0.0
+                if "score" in self.stats.stats and self.stats.stats["score"]:
+                    avg_score = np.mean(self.stats.stats["score"][-10:])
+
+                print(
+                    f"Step {self.training_step}/{self.config.training_steps}, "
+                    f"Avg Score: {avg_score:.2f}, "
+                    f"Time/10 steps: {elapsed:.2f}s"
+                )
+                last_log_time = time.time()
+
+                # Ensure stats are processed if using multiprocessing
+                self.stats.drain_queue()
+
             # 4. Update Target Networks (periodically)
             if self.training_step % self.config.rl_configs[0].transfer_interval == 0:
                 self.learner.update_target_network()
@@ -244,16 +267,24 @@ class NFSPTrainer:
         if num_trials == 0:
             return {}
 
-        test_env = self._env_factory()
+        test_env = self.config.game.make_env()
         scores = []
 
         # For testing, we usually use the Average Strategy (fully mixed)
         original_eta = self.policy.eta
         self.policy.eta = 0.0  # Force average strategy
 
+        num_players = getattr(self.config.game, "num_players", 1)
+
         with torch.inference_mode():
             for _ in range(num_trials):
-                state, info = test_env.reset()
+                # 1. Reset
+                if num_players != 1:
+                    test_env.reset()
+                    state, reward, terminated, truncated, info = test_env.last()
+                else:
+                    state, info = test_env.reset()
+
                 self.policy.reset(state)
                 done = False
                 episode_reward = 0.0
@@ -261,10 +292,20 @@ class NFSPTrainer:
                 while not done:
                     action = self.policy.compute_action(state, info)
                     action_val = action.item() if torch.is_tensor(action) else action
-                    state, reward, terminated, truncated, info = test_env.step(
-                        action_val
-                    )
-                    episode_reward += reward
+
+                    # 2. Step
+                    if num_players != 1:
+                        test_env.step(action_val)
+                        state, reward, terminated, truncated, info = test_env.last()
+                        # Track reward for the agent we're testing (usually player 0)
+                        # In AEC, rewards are per-agent. test_env.rewards[player_id]
+                        episode_reward += float(test_env.rewards[self._player_id])
+                    else:
+                        state, reward, terminated, truncated, info = test_env.step(
+                            action_val
+                        )
+                        episode_reward += float(reward)
+
                     done = terminated or truncated
 
                 scores.append(episode_reward)
@@ -308,21 +349,51 @@ class NFSPTrainer:
             self.stats.plot_graphs(dir=graph_dir)
 
     def _determine_observation_dimensions(self, env):
+        """
+        Infers input dimensions for the neural network.
+        Ported from BaseAgent.determine_observation_dimensions.
+        """
         import gymnasium as gym
 
         obs_space = env.observation_space
+
         if isinstance(obs_space, gym.spaces.Box):
             return torch.Size(obs_space.shape), obs_space.dtype
         elif isinstance(obs_space, gym.spaces.Discrete):
             return torch.Size((1,)), np.int32
-        return torch.Size(obs_space.shape), obs_space.dtype
+        elif isinstance(obs_space, gym.spaces.Tuple):
+            return torch.Size((len(obs_space.spaces),)), np.int32
+        elif callable(obs_space):
+            # For PettingZoo-style callable observation spaces
+            player_id = getattr(self, "_player_id", "player_0")
+            try:
+                space = obs_space(player_id)
+            except KeyError:
+                if hasattr(env, "possible_agents") and env.possible_agents:
+                    space = obs_space(env.possible_agents[0])
+                else:
+                    raise
+            return torch.Size(space.shape), space.dtype
+        else:
+            return torch.Size(obs_space.shape), obs_space.dtype
 
     def _get_num_actions(self, env) -> int:
+        """
+        Determines action space properties.
+        Ported from BaseAgent._setup_action_space.
+        """
         import gymnasium as gym
 
         if isinstance(env.action_space, gym.spaces.Discrete):
             return int(env.action_space.n)
-        return int(env.action_space.shape[0])
+        elif callable(env.action_space):  # PettingZoo
+            player_id = getattr(self, "_player_id", "player_0")
+            return int(env.action_space(player_id).n)
+        elif hasattr(self.config.game, "num_actions"):
+            return self.config.game.num_actions
+        else:
+            # Box/Continuous
+            return int(env.action_space.shape[0])
 
     def _setup_stats(self) -> None:
         stat_keys = ["score", "rl_loss", "sl_loss", "test_score"]

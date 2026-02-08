@@ -104,7 +104,7 @@ def test_nfsp_trainer_init():
 
     trainer = NFSPTrainer(
         config=config,
-        env=make_cartpole,
+        env=make_cartpole(),
         device=device,
     )
 
@@ -124,7 +124,7 @@ def test_nfsp_trainer_train():
 
     trainer = NFSPTrainer(
         config=config,
-        env=make_cartpole,
+        env=make_cartpole(),
         device=device,
     )
 

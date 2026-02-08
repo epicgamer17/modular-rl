@@ -36,13 +36,6 @@ class MuZeroTrainer:
         self.test_agents = test_agents if test_agents is not None else []
 
         # 1. Initialize Network
-        # Handle env as factory function or instance
-        if callable(env) and not hasattr(env, "observation_space"):
-            self._env_factory = env
-            env = env()  # Call factory to get instance
-        else:
-            self._env_factory = self.config.game.make_env
-
         self._env = env  # Store for later use
 
         # Detect player_id for PettingZoo environments
@@ -301,7 +294,7 @@ class MuZeroTrainer:
         if num_trials == 0:
             return {}
 
-        test_env = self._env_factory()
+        test_env = self.config.game.make_env()
         scores = []
         is_multiplayer = self.config.game.num_players > 1
 
@@ -360,7 +353,7 @@ class MuZeroTrainer:
         import os
 
         # Create test env
-        test_env = self._env_factory()
+        test_env = self.config.game.make_env()
 
         final_rewards = {player: [] for player in range(self.config.game.num_players)}
         results = {}

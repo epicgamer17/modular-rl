@@ -203,6 +203,18 @@ class ToPlayInputProcessor(InputProcessor):
         return kwargs
 
 
+class FilterKeysInputProcessor(InputProcessor):
+    """
+    Filters the input dictionary to only include specific keys (whitelist).
+    """
+
+    def __init__(self, whitelisted_keys: List[str]):
+        self.whitelisted_keys = whitelisted_keys
+
+    def process_single(self, **kwargs):
+        return {k: v for k, v in kwargs.items() if k in self.whitelisted_keys}
+
+
 class NStepInputProcessor(InputProcessor):
     """
     Handles N-Step return calculation.

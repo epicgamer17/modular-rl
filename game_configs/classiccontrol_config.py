@@ -1,8 +1,15 @@
 from .game_config import GameConfig
 
 
+import gymnasium as gym
+
+
+def make_env(render_mode=None):
+    return gym.make("CartPole-v1", render_mode=render_mode)
+
+
 class ClassicControlConfig(GameConfig):
-    def __init__(self):
+    def __init__(self, make_env=make_env):
         super(ClassicControlConfig, self).__init__(
             max_score=500,
             min_score=-500,
@@ -14,4 +21,5 @@ class ClassicControlConfig(GameConfig):
             multi_agent=False,
             num_players=1,
             # has_intermediate_rewards=True,
+            make_env=make_env,
         )

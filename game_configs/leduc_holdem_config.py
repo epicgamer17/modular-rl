@@ -1,8 +1,15 @@
 from .game_config import GameConfig
 
 
+from pettingzoo.classic import leduc_holdem_v4
+
+
+def make_env(render_mode=None):
+    return leduc_holdem_v4.env(render_mode=render_mode)
+
+
 class LeducHoldemConfig(GameConfig):
-    def __init__(self, make_env=None):
+    def __init__(self, make_env=make_env):
         super(LeducHoldemConfig, self).__init__(
             max_score=10,
             min_score=-10,

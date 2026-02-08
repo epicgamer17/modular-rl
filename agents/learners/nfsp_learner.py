@@ -178,7 +178,7 @@ class NFSPLearner:
         for _ in range(sl_config.training_iterations):
             sample = self.sl_replay_buffer.sample()
             observations = sample["observations"].to(self.device)
-            targets = sample["targets"].to(self.device)
+            targets = sample["target_policies"].to(self.device)
 
             # In NFSP, we often apply action masking even during SL training if applicable
             # But for simplicity, let's start with raw output

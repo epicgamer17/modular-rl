@@ -17,10 +17,11 @@ class NFSPDQNConfig(ConfigBase):
         self.sl_configs = [
             SupervisedConfig(config_dict) for _ in range(self.num_players)
         ]
-        for c in self.sl_configs:
-            c.game = game_config
+        self.model_name = self.parse_field("model_name", "nfsp")
+        self.training_steps = self.parse_field("training_steps", 100000)
 
         self.replay_interval = self.parse_field("replay_interval", 16)
+        self.num_minibatches = self.parse_field("num_minibatches", 1)
 
         self.anticipatory_param = self.parse_field("anticipatory_param", 0.1)
 
@@ -28,5 +29,10 @@ class NFSPDQNConfig(ConfigBase):
             "shared_networks_and_buffers", False
         )
 
+        self._verify_game()
+
     def _verify_game(self):
         assert self.game.is_discrete, "NFSP only supports discrete action spaces"
+        assert (
+            self.game.make_env is not None
+        ), "NFSP requires a valid environment factory (make_env) in the game config"

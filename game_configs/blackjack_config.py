@@ -1,8 +1,15 @@
 from .game_config import GameConfig
 
 
+import gymnasium as gym
+
+
+def make_env(render_mode=None):
+    return gym.make("Blackjack-v1", render_mode=render_mode)
+
+
 class BlackjackConfig(GameConfig):
-    def __init__(self, make_env=None):
+    def __init__(self, make_env=make_env):
         super(BlackjackConfig, self).__init__(
             max_score=1,
             min_score=-1,

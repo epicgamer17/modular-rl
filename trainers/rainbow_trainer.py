@@ -54,14 +54,15 @@ class RainbowTrainer:
         )
         self.test_agents = test_agents if test_agents is not None else []
 
-        # Handle env as factory function or instance
-        if callable(env) and not hasattr(env, "observation_space"):
-            self._env_factory = env
-            env = env()
-        else:
-            self._env_factory = config.game.make_env
-
         self._env = env
+
+        # Detect player_id for PettingZoo environments
+        if hasattr(env, "possible_agents") and len(env.possible_agents) > 0:
+            self._player_id = env.possible_agents[0]
+        elif hasattr(env, "agents") and len(env.agents) > 0:
+            self._player_id = env.agents[0]
+        else:
+            self._player_id = "player_0"
 
         # Get observation/action specs
         obs_dim, obs_dtype = self._determine_observation_dimensions(env)
@@ -285,7 +286,7 @@ class RainbowTrainer:
         if num_trials == 0:
             return {}
 
-        test_env = self._env_factory()
+        test_env = self.config.game.make_env()
         scores = []
 
         with torch.inference_mode():
@@ -373,6 +374,7 @@ class RainbowTrainer:
     def _determine_observation_dimensions(self, env):
         """
         Infers input dimensions for the neural network.
+        Ported from BaseAgent.determine_observation_dimensions.
         """
         import gymnasium as gym
 
@@ -384,20 +386,36 @@ class RainbowTrainer:
             return torch.Size((1,)), np.int32
         elif isinstance(obs_space, gym.spaces.Tuple):
             return torch.Size((len(obs_space.spaces),)), np.int32
+        elif callable(obs_space):
+            # For PettingZoo-style callable observation spaces
+            player_id = getattr(self, "_player_id", "player_0")
+            try:
+                space = obs_space(player_id)
+            except KeyError:
+                if hasattr(env, "possible_agents") and env.possible_agents:
+                    space = obs_space(env.possible_agents[0])
+                else:
+                    raise
+            return torch.Size(space.shape), space.dtype
         else:
             return torch.Size(obs_space.shape), obs_space.dtype
 
     def _get_num_actions(self, env) -> int:
         """
-        Determines the number of discrete actions.
+        Determines action space properties.
+        Ported from BaseAgent._setup_action_space.
         """
         import gymnasium as gym
 
         if isinstance(env.action_space, gym.spaces.Discrete):
             return int(env.action_space.n)
+        elif callable(env.action_space):  # PettingZoo
+            player_id = getattr(self, "_player_id", "player_0")
+            return int(env.action_space(player_id).n)
         elif hasattr(self.config.game, "num_actions"):
             return self.config.game.num_actions
         else:
+            # Box/Continuous
             return int(env.action_space.shape[0])
 
     def _setup_stats(self) -> None:

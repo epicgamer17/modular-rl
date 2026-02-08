@@ -15,6 +15,7 @@ from replay_buffers.processors import (
     MuZeroUnrollOutputProcessor,
     RSSMOutputProcessor,
     PPOOutputProcessor,
+    FilterKeysInputProcessor,
 )
 from replay_buffers.writers import (
     CircularWriter,
@@ -100,6 +101,16 @@ def create_dqn_buffer(
                     info_key="next_infos",
                     output_key="next_legal_moves_masks",
                 ),
+                FilterKeysInputProcessor(
+                    [
+                        "observations",
+                        "actions",
+                        "rewards",
+                        "next_observations",
+                        "dones",
+                        "next_legal_moves_masks",
+                    ]
+                ),
             ]
         )
 
@@ -121,6 +132,16 @@ def create_dqn_buffer(
                     num_actions,
                     info_key="next_infos",
                     output_key="next_legal_moves_masks",
+                ),
+                FilterKeysInputProcessor(
+                    [
+                        "observations",
+                        "actions",
+                        "rewards",
+                        "next_observations",
+                        "dones",
+                        "next_legal_moves_masks",
+                    ]
                 ),
             ]
         )
@@ -341,6 +362,9 @@ def create_nfsp_buffer(
         [
             LegalMovesInputProcessor(
                 num_actions, info_key="info", output_key="legal_moves_masks"
+            ),
+            FilterKeysInputProcessor(
+                ["observations", "legal_moves_masks", "target_policies"]
             ),
         ]
     )

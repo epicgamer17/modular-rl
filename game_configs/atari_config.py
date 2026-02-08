@@ -1,8 +1,18 @@
 from .game_config import GameConfig
 
 
+def make_env(render_mode=None):
+    # This is a placeholder, as Atari usually requires a game name.
+    # We'll assume the user provides make_env if they use AtariConfig directly,
+    # but we can try to make a default one if we had a default game.
+    # For now, we'll just raise an error if called without a specific env.
+    raise NotImplementedError(
+        "AtariConfig requires a specific make_env for the chosen game."
+    )
+
+
 class AtariConfig(GameConfig):
-    def __init__(self, make_env=None):
+    def __init__(self, make_env=make_env):
         super(AtariConfig, self).__init__(
             max_score=10,  # FROM CATEGORICAL DQN PAPER
             min_score=-10,

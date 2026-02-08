@@ -1,8 +1,16 @@
 from .game_config import GameConfig
 
 
+def make_env(render_mode=None, max_cycles=100):
+    from custom_gym_envs_pkg.custom_gym_envs.envs.matching_pennies import (
+        env as matching_pennies_env,
+    )
+
+    return matching_pennies_env(render_mode=render_mode, max_cycles=max_cycles)
+
+
 class MatchingPenniesConfig(GameConfig):
-    def __init__(self, make_env=None):
+    def __init__(self, make_env=make_env):
         super(MatchingPenniesConfig, self).__init__(
             max_score=1,
             min_score=-1,

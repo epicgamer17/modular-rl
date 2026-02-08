@@ -305,7 +305,12 @@ class Config(ConfigBase, OptimizationConfig, ReplayConfig):
         self.min_max_epsilon: float = self.parse_field("min_max_epsilon", 0.01)
 
     def _verify_game(self):
-        raise NotImplementedError
+        assert (
+            self.game is not None
+        ), "Config requires a game config to be provided in 'game' field"
+        assert (
+            self.game.make_env is not None
+        ), "Game config must provide a valid environment factory (make_env)"
 
     @classmethod
     def load(cls, filepath: str):
