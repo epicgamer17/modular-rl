@@ -1,6 +1,6 @@
 import time
 import torch
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Union
 from replay_buffers.game import Game
 from agents.policies.policy import Policy
 
@@ -74,26 +74,39 @@ class GenericActor(BaseActor):
         return state, info, current_player
 
     def _step(
-        self, action_val: Any, current_player: int
-    ) -> tuple[Any, float, bool, int, Any]:
-        """Performs a step in the environment."""
+        self, action_val: Any, current_player: int, player_id: str = None
+    ) -> tuple[Any, Union[float, Dict[str, float]], bool, int, Any]:
+        """
+        Performs a step in the environment.
+
+        For multi-player games, returns all_rewards dict keyed by player_id.
+        For single-player, returns a single float reward.
+        """
         if self.num_players != 1:
             self.env.step(action_val)
             next_state, _, terminated, truncated, next_info = self.env.last()
-            reward = self.env.rewards[self.env.agents[current_player]]
+            # Return ALL player rewards so we can assign correct reward per player
+            all_rewards = dict(self.env.rewards)
             if not (terminated or truncated):
                 current_player = self.env.agents.index(self.env.agent_selection)
+            return (
+                next_state,
+                all_rewards,  # Dict of all player rewards
+                terminated or truncated,
+                current_player,
+                next_info,
+            )
         else:
             next_state, reward, terminated, truncated, next_info = self.env.step(
                 action_val
             )
-        return (
-            next_state,
-            float(reward),
-            terminated or truncated,
-            current_player,
-            next_info,
-        )
+            return (
+                next_state,
+                float(reward),
+                terminated or truncated,
+                current_player,
+                next_info,
+            )
 
     def play_game(self, stats_tracker: Optional[Any] = None) -> Game:
         """
@@ -111,11 +124,17 @@ class GenericActor(BaseActor):
 
         done = False
         while not done:
-            action = self.policy.compute_action(state, info)
+            # Get player_id for multi-player environments
+            if self.num_players != 1 and hasattr(self.env, "agent_selection"):
+                player_id = self.env.agent_selection
+            else:
+                player_id = None
+
+            action = self.policy.compute_action(state, info, player_id=player_id)
             action_val = action.item() if torch.is_tensor(action) else action
 
-            next_state, reward, done, current_player, next_info = self._step(
-                action_val, current_player
+            next_state, reward_data, done, current_player, next_info = self._step(
+                action_val, current_player, player_id
             )
 
             # Policy might provide additional data for the game buffer (e.g. policy, value)
@@ -123,13 +142,33 @@ class GenericActor(BaseActor):
                 self.policy.get_info() if hasattr(self.policy, "get_info") else {}
             )
 
+            # For NFSP, get per-player policy mode
+            if "policies" in policy_info and player_id:
+                policy_mode = policy_info["policies"].get(
+                    player_id, policy_info.get("policy")
+                )
+            else:
+                policy_mode = policy_info.get("policy")
+
+            # Extract reward for the player who took the action
+            if isinstance(reward_data, dict):
+                # Multi-player: get reward for the acting player
+                reward = reward_data.get(player_id, 0.0)
+                # Store ALL rewards in info for trainer-side reward accumulation
+                if next_info is None:
+                    next_info = {}
+                next_info["all_player_rewards"] = reward_data
+            else:
+                reward = reward_data
+
             game.append(
                 observation=next_state,
                 info=next_info,
                 action=action_val,
                 reward=reward,
-                policy=policy_info.get("policy"),
+                policy=policy_mode,
                 value=policy_info.get("value"),
+                player_id=player_id,
             )
 
             state, info = next_state, next_info

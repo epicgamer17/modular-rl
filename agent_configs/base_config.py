@@ -281,7 +281,7 @@ class Config(ConfigBase, OptimizationConfig, ReplayConfig):
         self.parse_optimization_params()
         self.parse_replay_params()
 
-        self.loss_function = self.parse_field("loss_function", MSELoss)
+        self.loss_function = self.parse_field("loss_function", MSELoss())
         self.activation = self.parse_field(
             "activation", "relu", wrapper=prepare_activations
         )

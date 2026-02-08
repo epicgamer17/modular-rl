@@ -1,6 +1,6 @@
 import torch
 
-_epsilon = 1e-12
+_epsilon = 1e-8
 
 
 def categorical_crossentropy(

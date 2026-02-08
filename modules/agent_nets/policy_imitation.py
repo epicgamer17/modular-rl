@@ -100,6 +100,7 @@ class SupervisedNetwork(nn.Module):
             output_size,
             sigma=self.config.noisy_sigma,
         )
+        self.return_logits = getattr(config, "return_logits", False)
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         if self.has_residual_layers:
@@ -128,6 +129,9 @@ class SupervisedNetwork(nn.Module):
         if self.has_dense_layers:
             x: Tensor = self.dense_layers(x)
         x: Tensor = self.output_layer(x).view(-1, self.output_size)
+
+        if self.return_logits:
+            return x
         return x.softmax(dim=-1)
 
     def reset_noise(self):

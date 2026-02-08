@@ -1,4 +1,9 @@
-from typing import Any, Dict, Optional
+"""
+NFSPPolicy for Neural Fictitious Self-Play.
+Supports per-player policy selection (BR vs AVG) and optional separate weights per player.
+"""
+
+from typing import Any, Dict, List, Optional, Union
 import torch
 import torch.nn as nn
 import random
@@ -9,87 +14,171 @@ from agents.action_selectors.selectors import ActionSelector
 class NFSPPolicy(Policy):
     """
     Policy for Neural Fictitious Self-Play (NFSP).
-    Switches between a Best Response policy and an Average Strategy policy
-    based on the anticipatory parameter (eta).
+
+    Supports two modes:
+    1. Shared weights: All players share the same BR/AVG networks (default)
+    2. Separate weights: Each player has their own BR/AVG networks
+
+    Each player independently samples whether to use BR or AVG at episode start.
     """
 
     def __init__(
         self,
-        best_response_model: nn.Module,
-        average_model: nn.Module,
-        best_response_selector: ActionSelector,
-        average_selector: ActionSelector,
+        # Shared weights mode (single model for all players)
+        best_response_model: Optional[nn.Module] = None,
+        average_model: Optional[nn.Module] = None,
+        # Separate weights mode (per-player models)
+        best_response_models: Optional[Dict[str, nn.Module]] = None,
+        average_models: Optional[Dict[str, nn.Module]] = None,
+        # Selectors (shared for all players)
+        best_response_selector: Optional[ActionSelector] = None,
+        average_selector: Optional[ActionSelector] = None,
         device: torch.device = torch.device("cpu"),
         eta: float = 0.1,
+        player_ids: Optional[List[str]] = None,
     ):
         """
         Initializes the NFSPPolicy.
 
         Args:
-            best_response_model: Network for the Best Response policy (often DQN).
-            average_model: Network for the Average Strategy policy (supervised imitation).
-            best_response_selector: Selector for action selection in Best Response.
-            average_selector: Selector for action selection in Average Strategy.
+            best_response_model: Network for BR policy (shared mode).
+            average_model: Network for AVG policy (shared mode).
+            best_response_models: Dict mapping player_id -> BR network (separate mode).
+            average_models: Dict mapping player_id -> AVG network (separate mode).
+            best_response_selector: Selector for BR action selection.
+            average_selector: Selector for AVG action selection.
             device: Torch device.
-            eta: Anticipatory parameter. Probability of using the Best Response policy.
+            eta: Anticipatory parameter. Probability of using BR policy.
+            player_ids: List of player IDs for the game.
         """
-        self.best_response_model = best_response_model
-        self.average_model = average_model
-        self.best_response_selector = best_response_selector
-        self.average_selector = average_selector
         self.device = device
         self.eta = eta
+        self.best_response_selector = best_response_selector
+        self.average_selector = average_selector
 
-        self.best_response_model.to(self.device).eval()
-        self.average_model.to(self.device).eval()
+        # Determine mode based on which models are provided
+        if best_response_models is not None and average_models is not None:
+            # Separate weights mode
+            self.shared_weights = False
+            self.br_models = best_response_models
+            self.avg_models = average_models
+            self.player_ids = list(best_response_models.keys())
 
-        self.current_policy = "average_strategy"
+            # Move all models to device
+            for model in self.br_models.values():
+                model.to(self.device).eval()
+            for model in self.avg_models.values():
+                model.to(self.device).eval()
+        else:
+            # Shared weights mode (backwards compatible)
+            self.shared_weights = True
+            assert best_response_model is not None, "Must provide best_response_model"
+            assert average_model is not None, "Must provide average_model"
+            self.br_model = best_response_model
+            self.avg_model = average_model
+            self.br_model.to(self.device).eval()
+            self.avg_model.to(self.device).eval()
+            self.player_ids = player_ids if player_ids else ["player_0"]
+
+        # Per-player policy mode tracking
+        self.current_policy: Dict[str, str] = {
+            pid: "average_strategy" for pid in self.player_ids
+        }
 
     def reset(self, state: Any = None) -> None:
         """
         Resets the policy state for a new episode.
-        Decides whether to use Best Response or Average Strategy for the entire episode.
+        Each player independently decides BR vs AVG for this episode.
+        """
+        for player_id in self.player_ids:
+            self.reset_player(player_id)
+
+    def reset_player(self, player_id: str) -> None:
+        """
+        Resets policy for a specific player.
+        Samples whether to use BR or AVG for this player's episode.
+
+        Args:
+            player_id: The player ID to reset.
         """
         if random.random() < self.eta:
-            self.current_policy = "best_response"
+            self.current_policy[player_id] = "best_response"
         else:
-            self.current_policy = "average_strategy"
+            self.current_policy[player_id] = "average_strategy"
 
-        if hasattr(self.best_response_model, "reset_noise") and callable(
-            self.best_response_model.reset_noise
-        ):
-            self.best_response_model.reset_noise()
-        if hasattr(self.average_model, "reset_noise") and callable(
-            self.average_model.reset_noise
-        ):
-            self.average_model.reset_noise()
+        # Reset noise in models
+        if self.shared_weights:
+            if hasattr(self.br_model, "reset_noise"):
+                self.br_model.reset_noise()
+            if hasattr(self.avg_model, "reset_noise"):
+                self.avg_model.reset_noise()
+        else:
+            br_model = self.br_models.get(player_id)
+            avg_model = self.avg_models.get(player_id)
+            if br_model and hasattr(br_model, "reset_noise"):
+                br_model.reset_noise()
+            if avg_model and hasattr(avg_model, "reset_noise"):
+                avg_model.reset_noise()
 
-    def compute_action(self, obs: Any, info: Dict[str, Any] = None) -> Any:
+    def compute_action(
+        self,
+        obs: Any,
+        info: Dict[str, Any] = None,
+        player_id: Optional[str] = None,
+        exploration: bool = True,
+    ) -> Any:
         """
         Computes an action given an observation and info.
-        Uses the policy decided at the start of the episode.
+
+        Args:
+            obs: The observation.
+            info: Additional info dict.
+            player_id: The player making this action. Defaults to first player.
+            exploration: Whether to sample (True) or act greedily (False).
+                         For NFSP, we typically always want sampling to play
+                         the mixed strategy properly.
+
+        Returns:
+            The selected action.
         """
+        if player_id is None:
+            player_id = self.player_ids[0]
+
+        # Ensure player has a policy mode set
+        if player_id not in self.current_policy:
+            self.reset_player(player_id)
+
+        # Prepare observation tensor
         if not isinstance(obs, torch.Tensor):
             obs_tensor = torch.tensor(
                 obs, device=self.device, dtype=torch.float32
             ).unsqueeze(0)
         else:
             obs_tensor = obs.to(self.device)
-            # Ensure batch dimension
             if obs_tensor.dim() == 1:
                 obs_tensor = obs_tensor.unsqueeze(0)
 
+        # Get the appropriate model and selector
+        policy_mode = self.current_policy[player_id]
+
         with torch.inference_mode():
-            if self.current_policy == "best_response":
-                predictions = self.best_response_model(obs_tensor)
+            if policy_mode == "best_response":
+                if self.shared_weights:
+                    predictions = self.br_model(obs_tensor)
+                else:
+                    predictions = self.br_models[player_id](obs_tensor)
                 selector = self.best_response_selector
             else:
-                predictions = self.average_model(obs_tensor)
+                if self.shared_weights:
+                    predictions = self.avg_model(obs_tensor)
+                else:
+                    predictions = self.avg_models[player_id](obs_tensor)
                 selector = self.average_selector
 
-        action = selector.select(predictions, info=info)
+        # Pass exploration flag to selector for proper sampling behavior
+        action = selector.select(predictions, info=info, exploration=exploration)
 
-        # Squeeze out batch dimension if we had a single observation
+        # Squeeze out batch dimension if single observation
         if (
             isinstance(action, torch.Tensor)
             and action.dim() > 0
@@ -99,15 +188,37 @@ class NFSPPolicy(Policy):
 
         return action
 
+    def get_current_policy(self, player_id: Optional[str] = None) -> str:
+        """
+        Returns the current policy mode for a player.
+
+        Args:
+            player_id: The player to query. Defaults to first player.
+
+        Returns:
+            "best_response" or "average_strategy"
+        """
+        if player_id is None:
+            player_id = self.player_ids[0]
+        return self.current_policy.get(player_id)
+
     def get_info(self) -> Dict[str, Any]:
         """
-        Returns metadata about the last decision.
+        Returns metadata about the current state.
         """
-        return {"policy": self.current_policy}
+        return {"policies": self.current_policy.copy()}
 
     def update_parameters(self, params_dict: Dict[str, Any]) -> None:
         """
         Updates the internal parameters of the policy and its selectors.
+
+        Args:
+            params_dict: Dictionary containing parameter updates.
+                - 'eta': Update anticipatory parameter
+                - 'best_response_state_dict': Update shared BR model weights
+                - 'average_state_dict': Update shared AVG model weights
+                - 'best_response_state_dicts': Dict[player_id, state_dict] for separate mode
+                - 'average_state_dicts': Dict[player_id, state_dict] for separate mode
         """
         if "eta" in params_dict:
             self.eta = float(params_dict["eta"])
@@ -118,10 +229,19 @@ class NFSPPolicy(Policy):
         if self.average_selector is not None:
             self.average_selector.update_parameters(params_dict)
 
-        # Optional: Update model weights if provided
-        if "best_response_state_dict" in params_dict:
-            self.best_response_model.load_state_dict(
-                params_dict["best_response_state_dict"]
-            )
-        if "average_state_dict" in params_dict:
-            self.average_model.load_state_dict(params_dict["average_state_dict"])
+        # Update model weights
+        if self.shared_weights:
+            if "best_response_state_dict" in params_dict:
+                self.br_model.load_state_dict(params_dict["best_response_state_dict"])
+            if "average_state_dict" in params_dict:
+                self.avg_model.load_state_dict(params_dict["average_state_dict"])
+        else:
+            # Separate weights mode
+            if "best_response_state_dicts" in params_dict:
+                for pid, state_dict in params_dict["best_response_state_dicts"].items():
+                    if pid in self.br_models:
+                        self.br_models[pid].load_state_dict(state_dict)
+            if "average_state_dicts" in params_dict:
+                for pid, state_dict in params_dict["average_state_dicts"].items():
+                    if pid in self.avg_models:
+                        self.avg_models[pid].load_state_dict(state_dict)

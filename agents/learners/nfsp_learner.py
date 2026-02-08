@@ -3,25 +3,20 @@ NFSPLearner handles the training logic for NFSP, coordinating updates for both
 the Best Response (RL) network and the Average Strategy (SL) network.
 """
 
-import time
 from typing import Any, Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
-import numpy as np
-from torch.nn.utils import clip_grad_norm_
-from torch.optim.adam import Adam
-from torch.optim.sgd import SGD
 
 from agents.learners.rainbow_learner import RainbowLearner
-from replay_buffers.buffer_factories import create_nfsp_buffer
-from modules.utils import get_lr_scheduler
+from agents.learners.imitation_learner import ImitationLearner
 
 
 class NFSPLearner:
     """
     NFSPLearner manages the dual-learning process of NFSP.
-    It contains a Best Response learner (RL) and an Average Strategy learner (SL).
+    It composes a RainbowLearner for Best Response (RL) and an
+    ImitationLearner for Average Strategy (SL).
     """
 
     def __init__(
@@ -56,7 +51,6 @@ class NFSPLearner:
         self.training_step = 0
 
         # 1. Initialize Best Response (RL) Learner
-        # We wrap RainbowLearner for RL updates
         self.rl_learner = RainbowLearner(
             config=config.rl_configs[0],
             model=best_response_model,
@@ -67,38 +61,25 @@ class NFSPLearner:
             observation_dtype=observation_dtype,
         )
 
-        # 2. Initialize Average Strategy (SL) components
-        self.average_model = average_model
-        sl_config = config.sl_configs[0]
-
-        # SL Replay Buffer (Reservoir)
-        self.sl_replay_buffer = create_nfsp_buffer(
+        # 2. Initialize Average Strategy (SL) Learner via composition
+        self.sl_learner = ImitationLearner(
+            config=config.sl_configs[0],
+            model=average_model,
+            device=device,
+            num_actions=num_actions,
             observation_dimensions=observation_dimensions,
             observation_dtype=observation_dtype,
-            max_size=sl_config.replay_buffer_size,
-            num_actions=num_actions,
-            batch_size=sl_config.minibatch_size,
         )
 
-        # SL Optimizer
-        if sl_config.optimizer == Adam:
-            self.sl_optimizer = sl_config.optimizer(
-                params=average_model.parameters(),
-                lr=sl_config.learning_rate,
-                eps=sl_config.adam_epsilon,
-                weight_decay=sl_config.weight_decay,
-            )
-        elif sl_config.optimizer == SGD:
-            self.sl_optimizer = sl_config.optimizer(
-                params=average_model.parameters(),
-                lr=sl_config.learning_rate,
-                momentum=sl_config.momentum,
-                weight_decay=sl_config.weight_decay,
-            )
-        else:
-            raise ValueError(f"Unsupported SL optimizer: {sl_config.optimizer}")
+    @property
+    def sl_optimizer(self) -> torch.optim.Optimizer:
+        """Backwards compatibility: expose SL optimizer from composed learner."""
+        return self.sl_learner.optimizer
 
-        self.sl_lr_scheduler = get_lr_scheduler(self.sl_optimizer, sl_config)
+    @property
+    def sl_replay_buffer(self):
+        """Backwards compatibility: expose SL buffer from composed learner."""
+        return self.sl_learner.replay_buffer
 
     def store(
         self,
@@ -137,19 +118,23 @@ class NFSPLearner:
 
         # If best_response was used, store in SL reservoir buffer
         if policy_used == "best_response":
-            # NFSP stores (s, a) as a supervised target
-            # Convert action to a one-hot or target distribution if needed,
-            # but NFSPReservoirBuffer.store seems to handle action directly?
-            # Let's check NFSPReservoirBuffer.store signature (assuming it takes state, info, target_policy)
             target_policy = torch.zeros(self.num_actions)
             target_policy[action] = 1.0
-            self.sl_replay_buffer.store(
-                observations=observation, infos=info, target_policies=target_policy
+            self.sl_learner.store(
+                observation=observation,
+                info=info,
+                target_policy=target_policy,
             )
 
     def step(self, stats=None) -> Optional[Dict[str, float]]:
         """
         Performs training steps for both RL and SL components.
+
+        Args:
+            stats: Optional StatTracker for logging metrics.
+
+        Returns:
+            Dictionary of combined loss statistics.
         """
         metrics = {}
 
@@ -158,50 +143,13 @@ class NFSPLearner:
         if rl_metrics:
             metrics.update({f"rl_{k}": v for k, v in rl_metrics.items()})
 
-        # 2. SL Step
-        sl_metrics = self._sl_step()
+        # 2. SL Step (delegated to ImitationLearner)
+        sl_metrics = self.sl_learner.step(stats)
         if sl_metrics:
             metrics.update({f"sl_{k}": v for k, v in sl_metrics.items()})
 
         self.training_step += 1
         return metrics if metrics else None
-
-    def _sl_step(self) -> Optional[Dict[str, float]]:
-        """
-        Performs supervised learning update for the Average Strategy network.
-        """
-        sl_config = self.config.sl_configs[0]
-        if self.sl_replay_buffer.size < sl_config.min_replay_buffer_size:
-            return None
-
-        losses = []
-        for _ in range(sl_config.training_iterations):
-            sample = self.sl_replay_buffer.sample()
-            observations = sample["observations"].to(self.device)
-            targets = sample["target_policies"].to(self.device)
-
-            # In NFSP, we often apply action masking even during SL training if applicable
-            # But for simplicity, let's start with raw output
-            predictions = self.average_model(observations)
-
-            # Loss function (Cross Entropy / Policy Imitation)
-            # NFSP typically uses log-likelihood: L = -E[log Pi(a|s)]
-            # If using CategoricalHead, predictions are already probabilities or logits
-            # sl_config.loss_function usually handles this
-            loss = sl_config.loss_function(predictions, targets).mean()
-
-            self.sl_optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-
-            if sl_config.clipnorm > 0:
-                clip_grad_norm_(self.average_model.parameters(), sl_config.clipnorm)
-
-            self.sl_optimizer.step()
-            self.sl_lr_scheduler.step()
-
-            losses.append(loss.detach().item())
-
-        return {"loss": float(np.mean(losses))}
 
     def update_target_network(self) -> None:
         """Updates the RL target network."""

@@ -137,6 +137,32 @@ class StatTracker:
             else:
                 self.stats[key].append(new_val)
 
+    def set(self, key: str, value: Any, subkey: Optional[str] = None):
+        """Sets a stat to a single value, replacing any existing history."""
+        if self._is_client:
+            if isinstance(value, torch.Tensor):
+                value = value.detach().cpu()
+            self.queue.put(("set", key, value, subkey))
+        else:
+            if key not in self.stats:
+                if subkey is not None:
+                    self._init_key(key, subkeys=[subkey])
+                else:
+                    self._init_key(key)
+
+            # Ensure values are detached and moved to CPU if they are tensors
+            if isinstance(value, torch.Tensor):
+                new_val = value.detach().cpu()
+            else:
+                new_val = value
+
+            if isinstance(self.stats[key], Dict):
+                if subkey is None:
+                    raise ValueError(f"Stat '{key}' requires a subkey")
+                self.stats[key][subkey] = [new_val]
+            else:
+                self.stats[key] = [new_val]
+
     def increment_steps(self, n: int = 1):
         if self._is_client:
             self.queue.put(("increment_steps", n))
@@ -391,7 +417,7 @@ class StatTracker:
         ax.grid()
         ax.legend()
 
-    def _to_numpy(self, data: List[Any]) -> np.ndarray:
+    def _to_numpy(self, data: List[Any], reduce: bool = True) -> np.ndarray:
         if not data:
             return np.array([])
         if isinstance(data[0], torch.Tensor):
@@ -403,7 +429,7 @@ class StatTracker:
             tensor_data = torch.tensor(data)
 
         np_data = tensor_data.numpy()
-        if np_data.ndim == 2:
+        if reduce and np_data.ndim == 2:
             np_data = np.mean(np_data, axis=1)
         return np_data
 
@@ -412,9 +438,11 @@ class StatTracker:
         if len(data) == 0:
             return
 
-        np_data = self._to_numpy(data)
         types = config["types"]
         params = config["params"]
+
+        # If BAR is present, we don't want to reduce the distribution to a single mean value
+        np_data = self._to_numpy(data, reduce=(PlotType.BAR not in types))
 
         x = np.arange(len(np_data))
 

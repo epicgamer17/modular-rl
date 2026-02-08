@@ -46,6 +46,8 @@ class MockConfig:
         self.anticipatory_param = 0.1
         self.num_minibatches = 1
         self.multi_process = False
+        self.num_workers = 1
+        self.shared_networks_and_buffers = True
         self.observation_dtype = torch.float32
         self.save_intermediate_weights = False
 
@@ -132,6 +134,28 @@ def test_nfsp_trainer_train():
     try:
         trainer.train()
         print("✓ test_nfsp_trainer_train passed")
+
+        # Verify latest-only stat behavior
+        stats = trainer.stats.get_data()
+        if "sl_policy" in stats:
+            policy_data = stats["sl_policy"]
+            print(f"DEBUG: sl_policy length: {len(policy_data)}")
+            assert (
+                len(policy_data) == 1
+            ), f"Expected sl_policy to have 1 item, got {len(policy_data)}"
+
+            # Verify no reduction was applied (it should be 2D after stack)
+            np_policy = trainer.stats._to_numpy(policy_data, reduce=False)
+            print(f"DEBUG: sl_policy shape: {np_policy.shape}")
+            # If stack [1D (2,)] -> (1, 2)
+            assert (
+                len(np_policy.shape) == 2
+            ), f"Expected 2D shape for policy distribution, got {np_policy.shape}"
+            assert (
+                np_policy.shape[1] == 2
+            ), f"Expected 2 actions, got {np_policy.shape[1]}"
+            print("✓ Latest-only sl_policy verification passed")
+
     except Exception as e:
         print(f"✗ test_nfsp_trainer_train failed: {e}")
         import traceback

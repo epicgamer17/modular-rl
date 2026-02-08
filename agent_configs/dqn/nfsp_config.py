@@ -25,8 +25,18 @@ class NFSPDQNConfig(ConfigBase):
 
         self.anticipatory_param = self.parse_field("anticipatory_param", 0.1)
 
+        # Whether all players share the same networks and buffers
         self.shared_networks_and_buffers = self.parse_field(
-            "shared_networks_and_buffers", False
+            "shared_networks_and_buffers", True
+        )
+
+        # Multi-processing settings
+        self.multi_process = self.parse_field("multi_process", False)
+        self.num_workers = self.parse_field("num_workers", 1)
+
+        # Optional observation dtype override (defaults to None, auto-detected)
+        self.observation_dtype = self.parse_field(
+            "observation_dtype", None, required=False
         )
 
         self._verify_game()

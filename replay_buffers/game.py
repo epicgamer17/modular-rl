@@ -101,6 +101,7 @@ class Game:
         self.value_history = []
         self.action_history = []
         self.info_history = []
+        self.player_id_history = []  # Track which player took each action
 
         self.num_players = num_players
         self.duration_seconds: float = 0.0  # For FPS tracking across processes
@@ -113,6 +114,7 @@ class Game:
         policy=None,
         value=None,
         action=None,
+        player_id=None,
     ):
         self.observation_history.append(copy.deepcopy(observation))
         self.info_history.append(copy.deepcopy(info))
@@ -124,7 +126,8 @@ class Game:
             self.value_history.append(value)
         if action is not None:
             self.action_history.append(action)
-        # print("Game info history", self.info_history)
+        if player_id is not None:
+            self.player_id_history.append(player_id)
 
     def __len__(self):
         # SHOULD THIS BE LEN OF ACTIONS INSTEAD???
