@@ -1,6 +1,8 @@
 import numpy as np
-from typing import NamedTuple, Optional, Any
+from typing import NamedTuple, Optional, Any, Iterator
 import copy
+
+from .transition import Transition
 
 
 # 1. THE INTERFACE
@@ -133,3 +135,19 @@ class Game:
         # SHOULD THIS BE LEN OF ACTIONS INSTEAD???
         # AS THIS ALLOWS SAMPLING THE TERMINAL STATE WHICH HAS NO FURTHER ACTIONS
         return len(self.action_history)
+
+    def __iter__(self) -> Iterator[Transition]:
+        """
+        Allows iterating over the game transitions.
+        Yields Transition objects.
+        """
+        for i in range(len(self.action_history)):
+            yield Transition(
+                observation=self.observation_history[i],
+                action=self.action_history[i],
+                reward=float(self.rewards[i]) if self.rewards else 0.0,
+                next_observation=self.observation_history[i + 1],
+                done=(i == len(self.action_history) - 1),
+                info=self.info_history[i] if self.info_history else None,
+                next_info=self.info_history[i + 1] if self.info_history else None,
+            )
