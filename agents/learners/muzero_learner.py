@@ -338,7 +338,7 @@ class MuZeroLearner:
         else:
             mean_probs = latent_node_probs.mean(dim=0)
 
-        stats.append("chance_probs", mean_probs.detach().cpu().unsqueeze(0))
+        stats.append("chance_probs", mean_probs.detach().cpu())
 
         probs = latent_code_probs_tensor
         entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1)

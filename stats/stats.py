@@ -428,9 +428,23 @@ class StatTracker:
         else:
             tensor_data = torch.tensor(data)
 
-        np_data = tensor_data.numpy()
-        if reduce and np_data.ndim == 2:
-            np_data = np.mean(np_data, axis=1)
+        # Ensure we are on CPU and convert to numpy
+        np_data = tensor_data.detach().cpu().numpy()
+
+        # Squeeze singleton dimensions except the first one (batch/time dimension)
+        if np_data.ndim > 1:
+            # Keep first dim, squeeze others
+            shape = list(np_data.shape)
+            new_shape = [shape[0]] + [s for s in shape[1:] if s != 1]
+            np_data = np_data.reshape(new_shape)
+
+        # Reduce N-D tensors (N > 2) by averaging extra dimensions if reduce=True
+        if reduce and np_data.ndim >= 2:
+            # For 2D, this averages everything into a 1D line plot
+            # For >2D, this collapses all feature dimensions into an average scalar per step
+            axes_to_reduce = tuple(range(1, np_data.ndim))
+            np_data = np.mean(np_data, axis=axes_to_reduce)
+
         return np_data
 
     def _plot_tensor(self, ax, data: List[Any], label: str, config: Dict):
