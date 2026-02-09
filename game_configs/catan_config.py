@@ -4,7 +4,7 @@ from wrappers import (
     FrameStackWrapper,
     TwoPlayerPlayerPlaneWrapper,
 )
-from .game_config import GameConfig
+from game_configs.game_config import GameConfig
 from custom_gym_envs.envs.catan import (
     env as catan_env,
     CatanAECEnv,
@@ -13,12 +13,13 @@ from custom_gym_envs.envs.catan import (
 
 def make_env(
     num_players=2,
-    map_type="TOURNAMENT",
-    vps_to_win=10,
+    map_type="MINI",
+    vps_to_win=5,
     representation="vector",
     invalid_action_reward=-10,
     render_mode="rgb_array",
-    auto_play_single_action=False,
+    auto_play_single_action=True,
+    bandit_mode=True,
 ):
     env = catan_env(
         render_mode=render_mode,
@@ -28,6 +29,7 @@ def make_env(
         representation=representation,
         invalid_action_reward=invalid_action_reward,
         auto_play_single_action=auto_play_single_action,
+        bandit_mode=bandit_mode,
     )
     env = ActionMaskInInfoWrapper(env)
     env = FrameStackWrapper(env, 4, channel_first=False)

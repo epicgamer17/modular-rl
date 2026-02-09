@@ -24,6 +24,7 @@ class TorchMPExecutor(BaseExecutor):
                 args=(
                     worker_cls,
                     args,
+                    i,  # Pass worker_id
                     self.stop_flag,
                     self.result_queue,
                     self.error_queue,
@@ -33,9 +34,9 @@ class TorchMPExecutor(BaseExecutor):
             self.workers.append(p)
 
     @staticmethod
-    def _worker_loop(worker_cls, args, stop_flag, result_queue, error_queue):
+    def _worker_loop(worker_cls, args, worker_id, stop_flag, result_queue, error_queue):
         try:
-            worker = worker_cls(*args)
+            worker = worker_cls(*args, worker_id=worker_id)
             if hasattr(worker, "setup"):
                 worker.setup()
 

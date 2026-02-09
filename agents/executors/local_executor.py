@@ -8,7 +8,7 @@ class LocalExecutor(BaseExecutor):
     """
 
     def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int):
-        self.workers = [worker_cls(*args) for _ in range(num_workers)]
+        self.workers = [worker_cls(*args, worker_id=i) for i in range(num_workers)]
         for worker in self.workers:
             if hasattr(worker, "setup"):
                 worker.setup()

@@ -110,6 +110,7 @@ class MuZeroTrainer:
             self.config.game.make_env,
             self.policy,
             self.config.game.num_players,
+            self.config,
         )
         actor_cls = get_actor_class(env)
         self.executor.launch(actor_cls, worker_args, self.config.num_workers)
@@ -139,8 +140,8 @@ class MuZeroTrainer:
             data, collect_stats = self.executor.collect_data(min_samples=1)
 
             # 2. Store data in buffer
-            for game in data:
-                self.buffer.store_aggregate(game_object=game)
+            for sequence in data:
+                self.buffer.store_aggregate(sequence_object=sequence)
 
             # 3. Log collection stats
             for key, val in collect_stats.items():

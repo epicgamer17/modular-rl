@@ -665,12 +665,12 @@ class RecordVideo(BaseWrapper):
             # Try to render as rgb_array
             frame = self.env.render()
             # imageio/ffmpeg expects RGB (PettingZoo/Pygame already provides this usually)
-            # If the frame has an alpha channel, we'll keep it or strip it depending on needs, 
+            # If the frame has an alpha channel, we'll keep it or strip it depending on needs,
             # but usually for MP4 we want RGB.
             if len(frame.shape) == 3 and frame.shape[2] == 4:
                 # Convert RGBA to RGB
                 frame = frame[:, :, :3]
-            
+
             return frame
 
         except Exception as e:
@@ -698,8 +698,9 @@ class RecordVideo(BaseWrapper):
         if hasattr(self, "recording") and self.recording:
             self._stop_recording()
 
+    # Convenience function for common use cases
 
-# Convenience function for common use cases
+
 def record_video_wrapper(
     env: AECEnv,
     video_folder: str = "videos",
@@ -724,3 +725,153 @@ def record_video_wrapper(
         video_length=max_frames,
         fps=fps,
     )
+
+
+class GymRecordVideo(gym.Wrapper):
+    """
+    Records video of Gymnasium environment episodes.
+    """
+
+    def __init__(
+        self,
+        env: gym.Env,
+        video_folder: str = "videos",
+        episode_trigger: Optional[Callable[[int], bool]] = None,
+        video_length: int = 0,
+        name_prefix: str = "episode",
+        fps: int = 30,
+    ):
+        super().__init__(env)
+
+        self.video_folder = video_folder
+        self.episode_trigger = episode_trigger or EpisodeTrigger(1000)
+        self.video_length = video_length
+        self.name_prefix = name_prefix
+        self.fps = fps
+
+        # Create video directory
+        os.makedirs(self.video_folder, exist_ok=True)
+
+        # Video recording state
+        self.recording = False
+        self.video_writer = None
+        self.frames_recorded = 0
+        self.episode_id = 0
+
+        # Ensure environment has render capability
+        if not hasattr(env, "render"):
+            raise ValueError("Environment must support rendering to record video")
+
+    def reset(self, **kwargs):
+        """Reset environment and potentially start recording new episode"""
+        result = super().reset(**kwargs)
+
+        # Check if we should record this episode
+        should_record = self.episode_trigger(self.episode_id)
+
+        if should_record and not self.recording:
+            self._start_recording()
+        elif not should_record and self.recording:
+            self._stop_recording()
+
+        # Capture initial frame if recording
+        if self.recording:
+            self._capture_frame()
+
+        return result
+
+    def step(self, action):
+        """Step environment and capture frame if recording"""
+        obs, reward, terminated, truncated, info = super().step(action)
+        done = terminated or truncated
+
+        # Capture frame if recording
+        if self.recording:
+            self._capture_frame()
+
+        # Stop recording if episode ended or max frames reached
+        if self.recording and (
+            done
+            or (self.video_length > 0 and self.frames_recorded >= self.video_length)
+        ):
+            self._stop_recording()
+
+        # If episode ended, increment episode counter
+        if done:
+            self.episode_id += 1
+
+        return obs, reward, terminated, truncated, info
+
+    def _start_recording(self):
+        """Initialize video recording"""
+        if self.recording:
+            self._stop_recording()
+
+        video_name = f"{self.name_prefix}_{self.episode_id:06d}.mp4"
+        video_path = os.path.join(self.video_folder, video_name)
+
+        frame = self._get_frame()
+        try:
+            self.video_writer = imageio.get_writer(
+                video_path, fps=self.fps, macro_block_size=1
+            )
+            self.recording = True
+            self.frames_recorded = 0
+            print(f"Started recording episode {self.episode_id} to {video_path}")
+        except Exception as e:
+            print(f"Warning: Could not open video writer for {video_path}: {e}")
+            self.video_writer = None
+
+    def _stop_recording(self):
+        """Stop video recording and save file"""
+        if self.video_writer is not None:
+            self.video_writer.close()
+            self.video_writer = None
+            print(
+                f"Stopped recording episode {self.episode_id}. Recorded {self.frames_recorded} frames."
+            )
+
+        self.recording = False
+        self.frames_recorded = 0
+
+    def _get_frame(self):
+        """Get current frame from environment"""
+        try:
+            frame = self.env.render()
+            if frame is not None and len(frame.shape) == 3 and frame.shape[2] == 4:
+                frame = frame[:, :, :3]
+            return frame
+        except Exception as e:
+            print(f"Warning: Error getting frame: {e}")
+            return None
+
+    def _capture_frame(self):
+        """Capture and write current frame to video"""
+        if not self.recording or self.video_writer is None:
+            return
+
+        frame = self._get_frame()
+        if frame is not None:
+            self.video_writer.append_data(frame)
+            self.frames_recorded += 1
+
+    def close(self):
+        """Clean up video recording"""
+        if self.recording:
+            self._stop_recording()
+        super().close()
+
+
+def wrap_recording(env, **kwargs):
+    """Factory function to wrap either Gym or PettingZoo env for recording."""
+    is_pz = hasattr(env, "possible_agents") and hasattr(env, "agent_selection")
+    if not is_pz and hasattr(env, "unwrapped"):
+        unwrapped = env.unwrapped
+        is_pz = hasattr(unwrapped, "possible_agents") and hasattr(
+            unwrapped, "agent_selection"
+        )
+
+    if is_pz:
+        return RecordVideo(env, **kwargs)
+    else:
+        return GymRecordVideo(env, **kwargs)

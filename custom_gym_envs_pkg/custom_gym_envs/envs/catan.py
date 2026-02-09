@@ -331,7 +331,9 @@ def normalize_action(action):
 
 
 def to_action_space(action):
+    # print(action)
     normalized = normalize_action(action)
+    # print(normalized)
     return ACTIONS_ARRAY.index((normalized.action_type, normalized.value))
 
 
@@ -370,6 +372,7 @@ class CatanAECEnv(AECEnv):
         representation="vector",
         invalid_action_reward=-1,
         auto_play_single_action: bool = False,
+        bandit_mode: bool = False,
     ):
         super().__init__()
 
@@ -404,6 +407,17 @@ class CatanAECEnv(AECEnv):
         # Agent setup
         self.possible_agents = [f"player_{i}" for i in range(num_players)]
 
+        # --- FIX: Initialize PettingZoo Attributes in __init__ ---
+        self.agents = self.possible_agents[:]
+        self.agent_selection = self.possible_agents[0]
+
+        self.rewards = {agent: 0 for agent in self.agents}
+        self._cumulative_rewards = {agent: 0 for agent in self.agents}
+        self.terminations = {agent: False for agent in self.agents}
+        self.truncations = {agent: False for agent in self.agents}
+        self.infos = {agent: {} for agent in self.agents}
+        # ---------------------------------------------------------
+
         self.color_map = {
             agent: list(Color)[i] for i, agent in enumerate(self.possible_agents)
         }
@@ -431,16 +445,11 @@ class CatanAECEnv(AECEnv):
                 {"board": board_tensor_space, "numeric": numeric_space}
             )
         elif self.representation == "image":
-            # Calculate total channels: Base Board Channels + 1 Channel per Numeric Feature
             board_channels = get_channels(len(self.possible_agents))
             total_channels = board_channels + len(self.numeric_features)
-
-            # We use HIGH for the high bound to accommodate the numeric features,
-            # even though the board parts are only 0-1.
             core_obs_space = spaces.Box(
                 low=0, high=HIGH, shape=(total_channels, 21, 11), dtype=np.float32
             )
-
         else:
             core_obs_space = spaces.Box(
                 low=0, high=HIGH, shape=(len(self.features),), dtype=np.float32
@@ -462,6 +471,7 @@ class CatanAECEnv(AECEnv):
         self.game: Game = None
         self.invalid_actions_count = {}
         self.max_invalid_actions = 10
+        self.bandit_mode = bandit_mode
 
     @functools.lru_cache(maxsize=None)
     def observation_space(self, agent):
@@ -584,9 +594,11 @@ class CatanAECEnv(AECEnv):
             self.infos[agent] = {
                 "turn": self.game.state.num_turns,
                 "player": self.possible_agents.index(agent),
-                "legal_moves": list(self._get_valid_action_indices())
-                if agent == self.agent_selection
-                else [],
+                "legal_moves": (
+                    list(self._get_valid_action_indices())
+                    if agent == self.agent_selection
+                    else []
+                ),
             }
 
         if self.render_mode == "human":
@@ -613,7 +625,24 @@ class CatanAECEnv(AECEnv):
             self.game.execute(catan_action)
             self.rewards = {agent: 0 for agent in self.agents}
 
-        winning_color = self.game.winning_color()
+        # --- WIN CONDITION LOGIC ---
+        winning_color = None
+
+        if self.bandit_mode:
+            # Custom Mode: Winner is whoever holds >= 10 resource cards first
+            # We check the current player's resource count
+            current_color = self.game.state.current_color()
+            if current_color:
+                # Note: You might need to import player_num_resource_cards or access it via state
+                # Assuming player_num_resource_cards is available as imported or via helper
+                num_cards = player_num_resource_cards(self.game.state, current_color)
+                if num_cards >= self.vps_to_win:
+                    winning_color = current_color
+        else:
+            # Standard Mode: Victory Points (handled by catanatron's game logic)
+            winning_color = self.game.winning_color()
+        # ---------------------------
+
         is_terminated = winning_color is not None
         is_truncated = (
             self.game.state.num_turns >= TURNS_LIMIT
@@ -642,9 +671,11 @@ class CatanAECEnv(AECEnv):
             self.infos[agent] = {
                 "turn": self.game.state.num_turns,
                 "player": self.possible_agents.index(agent),
-                "legal_moves": list(self._get_valid_action_indices())
-                if agent == self.agent_selection
-                else [],
+                "legal_moves": (
+                    list(self._get_valid_action_indices())
+                    if agent == self.agent_selection
+                    else []
+                ),
             }
 
         if self.render_mode == "human":
@@ -800,7 +831,9 @@ class CatanAECEnv(AECEnv):
                         tile = map_tile
                         break
 
-            if tile is not None and tile.resource is not None:  # Don't draw number on desert
+            if (
+                tile is not None and tile.resource is not None
+            ):  # Don't draw number on desert
                 number = tile.number
                 text = str(number)
                 color = (

@@ -141,6 +141,7 @@ class SearchPolicy(Policy):
             else:
                 prepared_state = states.to(self.device, dtype=torch.float32)
         else:
+            # print("states", states)
             np_states = np.array(states, copy=False)
             prepared_state = torch.tensor(
                 np_states, dtype=torch.float32, device=self.device

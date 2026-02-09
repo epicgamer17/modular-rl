@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from replay_buffers.sequence import Sequence
 from replay_buffers.transition import Transition, TransitionBatch
 from agents.policies.policy import Policy
+from wrappers import wrap_recording
 
 
 class BaseActor(ABC):
@@ -20,6 +21,8 @@ class BaseActor(ABC):
         env_factory: Callable[[], Any],
         policy: Policy,
         num_players: Optional[int] = None,
+        config: Optional[Any] = None,
+        worker_id: int = 0,
     ):
         """
         Initializes the BaseActor.
@@ -31,6 +34,8 @@ class BaseActor(ABC):
         """
         self.env_factory = env_factory
         self.policy = policy
+        self.config = config
+        self.worker_id = worker_id
         self.env = env_factory()
 
         # Determine num_players if not provided
@@ -54,6 +59,21 @@ class BaseActor(ABC):
     def setup(self):
         """Re-initializes the environment."""
         self.env = self.env_factory()
+
+        # Wrap with RecordVideo if enabled in config and we are the first worker
+        if (
+            self.config is not None
+            and hasattr(self.config, "record_video")
+            and self.config.record_video
+            and self.worker_id == 0
+        ):
+            interval = getattr(self.config, "record_video_interval", 1000)
+            self.env = wrap_recording(
+                self.env,
+                video_folder=f"videos/{getattr(self.config, 'model_name', 'agent')}",
+                episode_trigger=lambda ep_id: ep_id % interval == 0,
+            )
+
         self._done = True
 
     def reset(self) -> Tuple[Any, Dict[str, Any]]:

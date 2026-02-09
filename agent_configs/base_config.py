@@ -214,6 +214,16 @@ class ConsistencyConfig:
         assert self.projector_output_dim == self.predictor_output_dim
 
 
+class RecordConfig:
+    """Standardizes Recording parameters."""
+
+    def parse_record_params(self):
+        self.record_video: bool = self.parse_field("record_video", False)
+        self.record_video_interval: int = self.parse_field(
+            "record_video_interval", 1000, wrapper=int
+        )
+
+
 class DistributionalConfig:
     """Shared params for Rainbow (atoms) and MuZero (support)."""
 
@@ -258,7 +268,7 @@ def kernel_initializer_wrapper(x):
         return x
 
 
-class Config(ConfigBase, OptimizationConfig, ReplayConfig):
+class Config(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig):
     """
     Original Config class refactored to use Mixins but preserve identity.
     """
@@ -280,6 +290,7 @@ class Config(ConfigBase, OptimizationConfig, ReplayConfig):
         # Initialize Mixins
         self.parse_optimization_params()
         self.parse_replay_params()
+        self.parse_record_params()
 
         self.loss_function = self.parse_field("loss_function", MSELoss())
         self.activation = self.parse_field(

@@ -120,6 +120,7 @@ class PPOTrainer:
             config.game.make_env,
             self.policy,
             config.game.num_players,
+            config,
         )
         actor_cls = get_actor_class(env)
         self.executor.launch(actor_cls, worker_args, num_workers)
