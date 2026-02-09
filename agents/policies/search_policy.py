@@ -83,30 +83,43 @@ class SearchPolicy(Policy):
         Returns:
             Action tensor.
         """
-        # 1. Determine current temperature
-        curr_temp = self._get_current_temperature()
+        with torch.inference_mode():
+            # 1. Determine current temperature
+            curr_temp = self._get_current_temperature()
 
-        # 2. Run prediction (MCTS)
-        assert self.model is not None, "SearchPolicy requires a model for inference."
+            # 2. Run prediction (MCTS)
+            assert (
+                self.model is not None
+            ), "SearchPolicy requires a model for inference."
 
-        action, policy_info = self.predict(obs, info)
+            action, policy_info = self.predict(obs, info)
 
-        # 3. Select action (delegated to action_selector)
-        # We use exploratory_policy (visit counts/probs) for sampling
-        action_tensor = self.action_selector.select(
-            policy_info["exploratory_policy"], temperature=curr_temp
-        )
+            # 3. Select action (delegated to action_selector)
+            # We use exploratory_policy (visit counts/probs) for sampling
+            action_tensor = self.action_selector.select(
+                policy_info["exploratory_policy"], temperature=curr_temp
+            )
 
-        # 4. Store metadata for get_info
-        self.last_prediction = {
-            "policy": policy_info["target_policy"].detach(),
-            "value": policy_info["root_value"],
-            "best_action": action,
-            "search_metadata": policy_info["search_metadata"],
-        }
+            # 4. Store metadata for get_info
+            # Ensure everything is detached and moved to CPU to avoid memory leaks
+            def detach_all(obj):
+                if isinstance(obj, torch.Tensor):
+                    return obj.detach().cpu()
+                elif isinstance(obj, dict):
+                    return {k: detach_all(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [detach_all(v) for v in obj]
+                return obj
 
-        self.steps_in_episode += 1
-        return action_tensor
+            self.last_prediction = {
+                "policy": policy_info["target_policy"].detach().cpu(),
+                "value": float(policy_info["root_value"]),
+                "best_action": int(action),
+                "search_metadata": detach_all(policy_info["search_metadata"]),
+            }
+
+            self.steps_in_episode += 1
+            return action_tensor
 
     def update_parameters(self, params_dict: Dict[str, Any]) -> None:
         """
