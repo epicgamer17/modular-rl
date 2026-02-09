@@ -1,4 +1,4 @@
-from .game_config import SequenceConfig
+from .game_config import GameConfig
 
 
 def make_env(render_mode=None):
@@ -11,7 +11,7 @@ def make_env(render_mode=None):
     )
 
 
-class AtariConfig(SequenceConfig):
+class AtariConfig(GameConfig):
     def __init__(self, make_env=make_env):
         super(AtariConfig, self).__init__(
             max_score=10,  # FROM CATEGORICAL DQN PAPER

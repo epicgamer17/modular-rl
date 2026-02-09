@@ -1,4 +1,4 @@
-from .game_config import SequenceConfig
+from .game_config import GameConfig
 import gymnasium as gym
 import custom_gym_envs
 
@@ -8,7 +8,7 @@ def make_env(render_mode=None):
     return env
 
 
-class Game2048Config(SequenceConfig):
+class Game2048Config(GameConfig):
     def __init__(self, make_env=make_env):
         super(Game2048Config, self).__init__(
             max_score=2**16,

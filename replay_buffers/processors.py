@@ -300,7 +300,13 @@ class MuZeroSequenceInputProcessor(InputProcessor):
         self.num_players = num_players
         self.device = device
 
-    def process_sequence(self, sequence):
+    def process_single(self, **kwargs):
+        """MuZeroSequenceInputProcessor only supports sequence processing."""
+        raise NotImplementedError(
+            "MuZeroSequenceInputProcessor only supports process_sequence."
+        )
+
+    def process_sequence(self, sequence, **kwargs):
         # 1. Prepare Observations
         obs_history = sequence.observation_history
         obs_tensor = torch.from_numpy(np.stack(obs_history))  # .to(self.device)

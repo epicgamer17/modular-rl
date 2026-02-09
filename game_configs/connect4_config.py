@@ -1,4 +1,4 @@
-from .game_config import SequenceConfig
+from .game_config import GameConfig
 
 
 from pettingzoo.classic import connect4_v3
@@ -8,7 +8,7 @@ def make_env(render_mode=None):
     return connect4_v3.env(render_mode=render_mode)
 
 
-class Connect4Config(SequenceConfig):
+class Connect4Config(GameConfig):
     def __init__(self, make_env=make_env):
         super(Connect4Config, self).__init__(
             max_score=1,

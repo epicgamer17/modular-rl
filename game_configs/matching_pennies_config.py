@@ -1,4 +1,4 @@
-from .game_config import SequenceConfig
+from .game_config import GameConfig
 
 
 def make_env(render_mode=None, max_cycles=100):
@@ -9,7 +9,7 @@ def make_env(render_mode=None, max_cycles=100):
     return matching_pennies_env(render_mode=render_mode, max_cycles=max_cycles)
 
 
-class MatchingPenniesConfig(SequenceConfig):
+class MatchingPenniesConfig(GameConfig):
     def __init__(self, make_env=make_env):
         super(MatchingPenniesConfig, self).__init__(
             max_score=1,

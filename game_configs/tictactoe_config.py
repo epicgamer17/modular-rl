@@ -1,4 +1,4 @@
-from .game_config import SequenceConfig
+from .game_config import GameConfig
 import sys
 
 sys.path.append("../../")
@@ -22,7 +22,7 @@ def make_env(render_mode="rgb_array"):
     return env
 
 
-class TicTacToeConfig(SequenceConfig):
+class TicTacToeConfig(GameConfig):
     def __init__(self, make_env=make_env):
         super(TicTacToeConfig, self).__init__(
             max_score=1,

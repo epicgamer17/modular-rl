@@ -4,7 +4,7 @@ from wrappers import (
     FrameStackWrapper,
     TwoPlayerPlayerPlaneWrapper,
 )
-from .game_config import SequenceConfig
+from .game_config import GameConfig
 from custom_gym_envs.envs.catan import (
     env as catan_env,
     CatanAECEnv,
@@ -35,7 +35,7 @@ def make_env(
     return env
 
 
-class CatanConfig(SequenceConfig):
+class CatanConfig(GameConfig):
     def __init__(self, make_env=make_env):
         super(CatanConfig, self).__init__(
             max_score=1,
@@ -51,7 +51,7 @@ class CatanConfig(SequenceConfig):
         )
 
 
-class SinglePlayerCatanConfig(SequenceConfig):
+class SinglePlayerCatanConfig(GameConfig):
     def __init__(self, make_env=None):
         super(SinglePlayerCatanConfig, self).__init__(
             max_score=1,

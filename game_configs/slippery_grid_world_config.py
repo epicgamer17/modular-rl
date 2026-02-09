@@ -1,5 +1,5 @@
 import gymnasium as gym
-from .game_config import SequenceConfig
+from .game_config import GameConfig
 import custom_gym_envs
 
 
@@ -8,7 +8,7 @@ def make_env(render_mode=None):
     return env
 
 
-class SlipperyGridWorldConfig(SequenceConfig):
+class SlipperyGridWorldConfig(GameConfig):
     def __init__(self):
         super(SlipperyGridWorldConfig, self).__init__(
             max_score=10,
