@@ -6,7 +6,7 @@ import time
 from typing import Optional, Any
 from executors.local_executor import LocalExecutor
 from executors.torch_mp_executor import TorchMPExecutor
-from replay_buffers.game import Game
+from replay_buffers.sequence import Sequence
 
 
 class MockPolicy:
@@ -32,13 +32,13 @@ class MockActor:
         pass
 
     def run_episode(self, stats_tracker=None):
-        game = Game(num_players=1)
-        # Mock a game with 5 steps
+        seq = Sequence(num_players=1)
+        # Mock a sequence with 5 steps
         for _ in range(5):
-            game.append(
+            seq.append(
                 observation=np.zeros(1), info={}, action=0, reward=self.reward_val
             )
-        return game
+        return seq
 
 
 def test_local_executor_collect_data():

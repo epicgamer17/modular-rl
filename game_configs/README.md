@@ -30,11 +30,11 @@ Game configs provide a standardized way to describe environments to agents. They
 
 ## Base Game Config
 
-All configs inherit from `GameConfig`:
+All configs inherit from `SequenceConfig`:
 
 ```python
 @dataclass
-class GameConfig:
+class SequenceConfig:
     name: str
     observation_shape: Tuple[int, ...]
     action_space: int
@@ -87,7 +87,7 @@ observation_mode = 'both'  # What each player sees
 Configs can include observation transformations:
 
 ```python
-class Game2048Config(GameConfig):
+class Game2048Config(SequenceConfig):
     def preprocess_observation(self, obs):
         # Normalize grid values
         return np.log2(obs + 1) / 16.0
@@ -95,7 +95,7 @@ class Game2048Config(GameConfig):
 
 ## Adding New Games
 
-1. Create config class inheriting from `GameConfig`
+1. Create config class inheriting from `SequenceConfig`
 2. Define observation_shape, action_space, max_episode_steps
 3. Add any game-specific parameters
 4. Implement preprocess_observation if needed

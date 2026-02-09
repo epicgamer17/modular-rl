@@ -165,11 +165,11 @@ class StandingsTable:
         else:
             return df
 
-    def play_1v1_tournament(self, games_per_pair, play_game):
+    def play_1v1_tournament(self, games_per_pair, play_sequence):
         tournament_results = []
         for player_index in range(len(self.players)):
             results = self.play_matches(
-                play_game, player_index, games_per_pair=games_per_pair
+                play_sequence, player_index, games_per_pair=games_per_pair
             )
             tournament_results.extend(results)
         tournament_results = pd.DataFrame(
@@ -179,7 +179,7 @@ class StandingsTable:
 
     def play_matches(
         self,
-        play_game,
+        play_sequence,
         player_index,
         opponent_indices=None,
         games_per_pair=10,
@@ -196,7 +196,7 @@ class StandingsTable:
                 print(
                     f"Playing {player.model_name} vs {opponent.model_name} game {_+1}"
                 )
-                result = play_game(player, opponent)
+                result = play_sequence(player, opponent)
                 results.append((player, opponent, result))
 
         for opponent in opponents:
@@ -204,7 +204,7 @@ class StandingsTable:
                 print(
                     f"Playing {opponent.model_name} vs {player.model_name} game {_+1}"
                 )
-                result = play_game(opponent, player)
+                result = play_sequence(opponent, player)
                 results.append((opponent, player, result))
         self.add_results_from_array(results)
         print(self.bayes_elo())

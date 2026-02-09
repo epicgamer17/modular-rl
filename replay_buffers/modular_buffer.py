@@ -150,14 +150,14 @@ class ModularReplayBuffer:
 
         return idx
 
-    def store_aggregate(self, game_object, **kwargs):
+    def store_aggregate(self, sequence_object, **kwargs):
         """
-        Stores a complete game/trajectory (MuZero style).
-        Uses process_game instead of process_single.
+        Stores a complete sequence/trajectory (MuZero style).
+        Uses process_sequence instead of process_single.
         """
-        # 1. Process Game
+        # 1. Process Sequence
         # Expecting a dictionary of tensors: {'observations': ..., 'actions': ...}
-        data = self.input_processor.process_game(game_object, **kwargs)
+        data = self.input_processor.process_sequence(sequence_object, **kwargs)
 
         # We need to know how many items to write to reserve space
         # We assume the input processor returns a dict where values are arrays/tensors of equal length
@@ -305,9 +305,9 @@ class ModularReplayBuffer:
     def beta(self):
         return self.sampler.beta
 
-    def sample_game(self):
+    def sample_sequence(self):
         """
-        Retrieves all stored states for a specific game ID.
+        Retrieves all stored states for a specific sequence ID.
         Useful for debugging or visualization, but slow (O(N) scan).
         """
         if "game_ids" not in self.buffers:
@@ -327,7 +327,7 @@ class ModularReplayBuffer:
         indices.sort()
         return self.output_processor.process_batch(indices, self.buffers)
 
-    def reanalyze_game(
+    def reanalyze_sequence(
         self,
         indices,
         new_policies,

@@ -25,10 +25,10 @@ class InputProcessor(ABC):
         """
         pass
 
-    def process_game(self, game, *args, **kwargs):
-        """Optional hook for processing entire game objects (e.g. MuZero)."""
+    def process_sequence(self, sequence, *args, **kwargs):
+        """Optional hook for processing entire sequence objects (e.g. MuZero)."""
         raise NotImplementedError(
-            "Batch/Game processing not implemented for this processor."
+            "Batch/Sequence processing not implemented for this processor."
         )
 
     def clear(self):
@@ -98,10 +98,10 @@ class StackedInputProcessor(InputProcessor):
 
         return data
 
-    def process_game(self, game, **kwargs):
-        data = {"game": game, **kwargs}
+    def process_sequence(self, sequence, **kwargs):
+        data = {"sequence": sequence, **kwargs}
         for p in self.processors:
-            data = p.process_game(**data)
+            data = p.process_sequence(**data)
             if data is None:
                 return None
         return data
@@ -289,9 +289,9 @@ class NStepInputProcessor(InputProcessor):
         ]
 
 
-class MuZeroGameInputProcessor(InputProcessor):
+class MuZeroSequenceInputProcessor(InputProcessor):
     """
-    Processes a complete Game object into tensors for MuZero storage.
+    Processes a complete Sequence object into tensors for MuZero storage.
     Extracted from: replay_buffers/muzero_replay_buffer.py
     """
 
@@ -300,65 +300,62 @@ class MuZeroGameInputProcessor(InputProcessor):
         self.num_players = num_players
         self.device = device
 
-    def process_single(self, *args, **kwargs):
-        raise NotImplementedError("MuZero Input Processor only supports process_game")
-
-    def process_game(self, game):
+    def process_sequence(self, sequence):
         # 1. Prepare Observations
-        obs_history = game.observation_history
+        obs_history = sequence.observation_history
         obs_tensor = torch.from_numpy(np.stack(obs_history))  # .to(self.device)
 
         # 2. Prepare & Pad Actions, Rewards, Policies
         # Actions
-        acts_raw = torch.tensor(game.action_history, dtype=torch.float16)
+        acts_raw = torch.tensor(sequence.action_history, dtype=torch.float16)
         acts_pad = torch.zeros(1, dtype=torch.float16)
         acts_t = torch.cat([acts_raw, acts_pad])
 
         # Rewards
-        rews_raw = torch.tensor(game.rewards, dtype=torch.float32)
+        rews_raw = torch.tensor(sequence.rewards, dtype=torch.float32)
         rews_pad = torch.zeros(1, dtype=torch.float32)
         rews_t = torch.cat([rews_raw, rews_pad])
 
         # Policies
-        pols_raw = torch.stack([p.detach() for p in game.policy_history]).cpu().float()
+        pols_raw = (
+            torch.stack([p.detach() for p in sequence.policy_history]).cpu().float()
+        )
         pols_pad = (
             torch.ones((1, self.num_actions), dtype=torch.float32) / self.num_actions
         )
         pols_t = torch.cat([pols_raw, pols_pad])
 
         # Values
-        vals_t = torch.tensor(game.value_history, dtype=torch.float32)
-        if len(vals_t) == len(game.action_history):
+        vals_t = torch.tensor(sequence.value_history, dtype=torch.float32)
+        if len(vals_t) == len(sequence.action_history):
             vals_t = torch.cat([vals_t, torch.zeros(1, dtype=torch.float32)])
 
         # To Plays
-        to_plays = [i.get("player", 0) for i in game.info_history]
+        to_plays = [i.get("player", 0) for i in sequence.info_history]
         n_states = len(obs_history)
         if len(to_plays) < n_states:
             to_plays = to_plays + [0] * (n_states - len(to_plays))
         tps_t = torch.tensor(to_plays[:n_states], dtype=torch.int16)
 
         # Chances
-        chances = [i.get("chance", 0) for i in game.info_history]
+        chances = [i.get("chance", 0) for i in sequence.info_history]
         if len(chances) < n_states:
             chances = chances + [0] * (n_states - len(chances))
         chance_t = torch.tensor(chances[:n_states], dtype=torch.int16).unsqueeze(1)
 
         # Legal Moves Mask
         legal_masks = []
-        n_transitions = len(game.action_history)
+        n_transitions = len(sequence.action_history)
         for i in range(n_transitions):
-            moves = game.info_history[i].get("legal_moves", [])
+            moves = sequence.info_history[i].get("legal_moves", [])
             legal_masks.append(legal_moves_mask(self.num_actions, moves))
         # Terminal state mask: All False
         legal_masks.append(torch.zeros(self.num_actions, dtype=torch.bool))
         legal_masks_t = torch.stack(legal_masks)
 
         # Dones (Terminated/Truncated)
-        # Assuming dones are stored in info or we can infer from game state
-        # For now, let's assume 'done' key in info_history, or just last step is done if game is over.
-        # But actually, specific step dones are useful.
-        dones = [i.get("done", False) for i in game.info_history]
+        # Assuming dones are stored in info or we can infer from sequence state
+        dones = [i.get("done", False) for i in sequence.info_history]
         # Pad if needed
         if len(dones) < n_states:
             dones = dones + [False] * (n_states - len(dones))

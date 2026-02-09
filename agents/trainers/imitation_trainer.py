@@ -158,15 +158,15 @@ class ImitationTrainer:
             self.executor.update_weights(self.model.state_dict())
 
             # 2. Collect data from workers
-            games, collection_stats = self.executor.collect_data(replay_interval)
+            sequences, collection_stats = self.executor.collect_data(replay_interval)
 
             # Log collection stats
             for key, val in collection_stats.items():
                 self.stats.append(key, val)
 
-            # 3. Store transitions from collected games
-            for game in games:
-                self._store_game_transitions(game)
+            # 3. Store transitions from collected sequences
+            for sequence in sequences:
+                self._store_sequence_transitions(sequence)
 
             # 4. Learning step
             for _ in range(num_minibatches):
@@ -204,23 +204,23 @@ class ImitationTrainer:
         self._save_checkpoint()
         print("Training finished.")
 
-    def _store_game_transitions(self, game) -> None:
+    def _store_sequence_transitions(self, sequence) -> None:
         """
-        Stores transitions from a game episode into the learner's buffer.
+        Stores transitions from a sequence episode into the learner's buffer.
 
         For imitation learning, we store (observation, info, target_policy)
         where target_policy is typically the action taken as a one-hot vector.
 
         Args:
-            game: Game object with observation_history, action_history, info_history.
+            sequence: Sequence object with observation_history, action_history, info_history.
         """
-        if not hasattr(game, "action_history") or not game.action_history:
+        if not hasattr(sequence, "action_history") or not sequence.action_history:
             return
 
-        for i in range(len(game.action_history)):
-            obs = game.observation_history[i]
-            info = game.info_history[i] if game.info_history else {}
-            action = game.action_history[i]
+        for i in range(len(sequence.action_history)):
+            obs = sequence.observation_history[i]
+            info = sequence.info_history[i] if sequence.info_history else {}
+            action = sequence.action_history[i]
 
             # Create one-hot target policy from action
             target_policy = torch.zeros(self.num_actions)

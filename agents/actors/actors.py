@@ -4,7 +4,7 @@ import numpy as np
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from abc import ABC, abstractmethod
 
-from replay_buffers.game import Game
+from replay_buffers.sequence import Sequence
 from replay_buffers.transition import Transition, TransitionBatch
 from agents.policies.policy import Policy
 
@@ -133,21 +133,21 @@ class BaseActor(ABC):
 
         return transition_info
 
-    def play_game(self, stats_tracker: Optional[Any] = None) -> Game:
+    def play_sequence(self, stats_tracker: Optional[Any] = None) -> Sequence:
         """
-        Runs one complete episode and returns a Game object.
+        Runs one complete episode and returns a Sequence object.
 
         Args:
             stats_tracker: Optional statistics tracker for logging.
 
         Returns:
-            A Game object containing the episode transcript.
+            A Sequence object containing the episode transcript.
         """
         start_time = time.time()
-        game = Game(self.num_players)
+        sequence = Sequence(self.num_players)
 
         state, info = self.reset()
-        game.append(state, info)
+        sequence.append(state, info)
 
         while not self._done:
             # Note: player_id must be captured BEFORE the step for PettingZoo
@@ -162,7 +162,7 @@ class BaseActor(ABC):
             else:
                 policy_mode = p_info.get("policy")
 
-            game.append(
+            sequence.append(
                 observation=transition["next_state"],
                 info=transition["next_info"],
                 action=transition["action"],
@@ -172,16 +172,18 @@ class BaseActor(ABC):
                 player_id=player_id,
             )
 
-        game.duration_seconds = time.time() - start_time
+        sequence.duration_seconds = time.time() - start_time
 
         if self.num_players > 1:
             # Store final rewards for multi-agent evaluation
-            game.info_history[-1]["final_rewards"] = getattr(self.env, "rewards", {})
+            sequence.info_history[-1]["final_rewards"] = getattr(
+                self.env, "rewards", {}
+            )
 
         if stats_tracker:
-            self._update_stats(game, stats_tracker)
+            self._update_stats(sequence, stats_tracker)
 
-        return game
+        return sequence
 
     def collect_transitions(
         self, n_transitions: int = 1, stats_tracker: Optional[Any] = None
@@ -234,13 +236,13 @@ class BaseActor(ABC):
             },
         )
 
-    def _update_stats(self, game: Game, stats_tracker: Any):
-        """Internal helper to log game stats."""
-        if game.duration_seconds > 0:
-            stats_tracker.append("actor_fps", len(game) / game.duration_seconds)
+    def _update_stats(self, sequence: Sequence, stats_tracker: Any):
+        """Internal helper to log sequence stats."""
+        if sequence.duration_seconds > 0:
+            stats_tracker.append("actor_fps", len(sequence) / sequence.duration_seconds)
 
         if self.num_players == 1:
-            score = sum(game.rewards)
+            score = sum(sequence.rewards)
         else:
             final_rewards = getattr(self.env, "rewards", {})
             # Assumes environment is PettingZoo and has possible_agents
@@ -249,8 +251,8 @@ class BaseActor(ABC):
             score = final_rewards.get(agent_id, 0.0)
 
         stats_tracker.append("score", score)
-        stats_tracker.append("episode_length", len(game))
-        stats_tracker.increment_steps(len(game))
+        stats_tracker.append("episode_length", len(sequence))
+        stats_tracker.increment_steps(len(sequence))
 
 
 def get_actor_class(env: Any) -> type[BaseActor]:

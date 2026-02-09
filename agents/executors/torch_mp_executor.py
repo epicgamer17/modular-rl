@@ -40,12 +40,12 @@ class TorchMPExecutor(BaseExecutor):
                 worker.setup()
 
             while not stop_flag.value:
-                if hasattr(worker, "play_game"):
-                    data = worker.play_game()
+                if hasattr(worker, "play_sequence"):
+                    data = worker.play_sequence()
                     result_queue.put(data)
                 else:
                     raise AttributeError(
-                        f"Worker {worker_cls} must implement play_game()"
+                        f"Worker {worker_cls} must implement play_sequence()"
                     )
         except Exception as e:
             error_queue.put((e, traceback.format_exc()))

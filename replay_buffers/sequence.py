@@ -19,7 +19,7 @@ class TimeStep(NamedTuple):
     policy: Optional[Any] = None
 
 
-# class Game:
+# class Sequence:
 #     def __init__(self, num_players: int):
 #         self.num_players = num_players
 #         self.length = 0
@@ -92,7 +92,7 @@ class TimeStep(NamedTuple):
 #         return self.length
 
 
-class Game:
+class Sequence:
     def __init__(
         self, num_players: int
     ):  # num_actions, discount=1.0, n_step=1, gamma=0.99
@@ -138,7 +138,7 @@ class Game:
 
     def __iter__(self) -> Iterator[Transition]:
         """
-        Allows iterating over the game transitions.
+        Allows iterating over the sequence transitions.
         Yields Transition objects.
         """
         for i in range(len(self.action_history)):

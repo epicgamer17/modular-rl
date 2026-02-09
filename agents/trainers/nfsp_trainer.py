@@ -266,7 +266,7 @@ class NFSPTrainer:
             self._update_worker_weights()
 
             # 2. Collect data from workers
-            games, collection_stats = self.executor.collect_data(
+            sequences, collection_stats = self.executor.collect_data(
                 self.config.replay_interval
             )
 
@@ -275,8 +275,8 @@ class NFSPTrainer:
                 self.stats.append(key, val)
 
             # 3. Store transitions
-            for game in games:
-                self._store_game_transitions(game)
+            for sequence in sequences:
+                self._store_sequence_transitions(sequence)
 
             # 4. Learning step
             for _ in range(self.config.num_minibatches):
@@ -339,60 +339,60 @@ class NFSPTrainer:
                 }
             )
 
-    def _store_game_transitions(self, game):
+    def _store_sequence_transitions(self, sequence):
         """
-        Store game transitions in appropriate learner(s).
+        Store sequence transitions in appropriate learner(s).
 
-        For multi-player games, this method folds transitions so each player
+        For multi-player sequences, this method folds transitions so each player
         learns from their own observation sequence and correctly accumulated rewards.
         """
-        if not game.policy_history:
+        if not sequence.policy_history:
             return
 
         # 1. Compute per-player accumulated rewards from all_player_rewards history
         if self.config.game.num_players > 1:
-            player_rewards = self._compute_player_rewards(game)
+            player_rewards = self._compute_player_rewards(sequence)
         else:
             player_rewards = None
 
         # 2. Store transitions, folding the next_state to the player's next turn
-        for i in range(len(game.action_history)):
-            obs = game.observation_history[i]
-            info = game.info_history[i]
-            action = game.action_history[i]
+        for i in range(len(sequence.action_history)):
+            obs = sequence.observation_history[i]
+            info = sequence.info_history[i]
+            action = sequence.action_history[i]
 
-            if game.player_id_history and i < len(game.player_id_history):
-                player_id = game.player_id_history[i]
+            if sequence.player_id_history and i < len(sequence.player_id_history):
+                player_id = sequence.player_id_history[i]
             else:
                 player_id = self.player_ids[0]
 
             # Find NEXT turn for this specific player to get the correct next_observation
             next_turn_idx = -1
             if self.config.game.num_players > 1:
-                for j in range(i + 1, len(game.action_history)):
-                    if game.player_id_history[j] == player_id:
+                for j in range(i + 1, len(sequence.action_history)):
+                    if sequence.player_id_history[j] == player_id:
                         next_turn_idx = j
                         break
 
             if next_turn_idx != -1:
                 # Next state for this player is the state at their next turn
-                next_obs = game.observation_history[next_turn_idx]
-                next_info = game.info_history[next_turn_idx]
+                next_obs = sequence.observation_history[next_turn_idx]
+                next_info = sequence.info_history[next_turn_idx]
                 done = False
             else:
                 # No more turns for this player in this episode - use terminal state
-                next_obs = game.observation_history[-1]
-                next_info = game.info_history[-1]
+                next_obs = sequence.observation_history[-1]
+                next_info = sequence.info_history[-1]
                 done = True
 
             # Get correctly attributed reward
             if player_rewards is not None and player_id in player_rewards:
                 reward = player_rewards[player_id].get(i, 0.0)
             else:
-                reward = game.rewards[i]
+                reward = sequence.rewards[i]
 
-            if i < len(game.policy_history):
-                policy_used = game.policy_history[i]
+            if i < len(sequence.policy_history):
+                policy_used = sequence.policy_history[i]
             else:
                 policy_used = "average_strategy"
 
@@ -421,9 +421,9 @@ class NFSPTrainer:
                         policy_used=policy_used,
                     )
 
-    def _compute_player_rewards(self, game) -> Dict[str, Dict[int, float]]:
+    def _compute_player_rewards(self, sequence) -> Dict[str, Dict[int, float]]:
         """
-        Compute per-player accumulated rewards for turnover-based games.
+        Compute per-player accumulated rewards for turnover-based sequences.
 
         Uses 'all_player_rewards' from info history to ensure rewards occurring
         between a player's turns are correctly captured.
@@ -435,15 +435,15 @@ class NFSPTrainer:
         # Track the index of the LAST action taken by each player
         last_action_idx: Dict[str, int] = {}
 
-        for i in range(len(game.action_history)):
-            if game.player_id_history and i < len(game.player_id_history):
-                acting_player = game.player_id_history[i]
+        for i in range(len(sequence.action_history)):
+            if sequence.player_id_history and i < len(sequence.player_id_history):
+                acting_player = sequence.player_id_history[i]
             else:
                 acting_player = self.player_ids[0]
 
             # The rewards in info_history[i+1] were generated by action i (acting_player)
             # We attribute rewards to EACH player for their PREVIOUS move.
-            summary_info = game.info_history[i + 1]
+            summary_info = sequence.info_history[i + 1]
             all_rewards = summary_info.get("all_player_rewards", {})
 
             for pid, r in all_rewards.items():
@@ -451,7 +451,7 @@ class NFSPTrainer:
                     idx = last_action_idx[pid]
                     player_rewards[pid][idx] = player_rewards[pid].get(idx, 0.0) + r
                 else:
-                    # Initial reward? (e.g. at start of game)
+                    # Initial reward? (e.g. at start of sequence)
                     # We can't attribute it to an action if player hasn't moved yet.
                     pass
 

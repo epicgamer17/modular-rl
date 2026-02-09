@@ -1,4 +1,4 @@
-from .game_config import GameConfig
+from .game_config import SequenceConfig
 import gymnasium as gym
 
 
@@ -7,7 +7,7 @@ def make_env(render_mode=None):
     return env
 
 
-class CartPoleConfig(GameConfig):
+class CartPoleConfig(SequenceConfig):
     def __init__(self, make_env=make_env):
         super(CartPoleConfig, self).__init__(
             max_score=500,

@@ -16,7 +16,7 @@ trigger: always_on
     * `OMP_PROC_BIND = "CLOSE"` (or "SPREAD" on Apple Silicon).
 
 #### 2. Weight Synchronization
-* **Rule:** NEVER use blocking `ray.get()` to fetch weights inside a tight loop (e.g., `play_game`).
+* **Rule:** NEVER use blocking `ray.get()` to fetch weights inside a tight loop (e.g., `play_sequence`).
 * **Pattern:** Use an **Async Polling** pattern.
     1.  Call `get_weights.remote()` at the start of the loop.
     2.  Check `ray.get(future, timeout=0)` inside the loop (non-blocking) or check a lightweight "version integer" first.

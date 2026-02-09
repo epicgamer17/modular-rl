@@ -75,7 +75,7 @@ class MarlHyperoptConfig:
     games_per_pair: int
     num_opps: int
     table: Any
-    play_game: Callable
+    play_sequence: Callable
     checkpoint_interval: int = 100
     test_interval: int = 100
     test_trials: int = 10
@@ -269,7 +269,7 @@ def elo_evaluation(agent):
         return 0
 
     config.table.play_matches(
-        play_game=config.play_game,
+        play_sequence=config.play_sequence,
         player_index=len(config.table.players) - 1,
         opponent_indices=opponents_indices,
         games_per_pair=config.games_per_pair,
@@ -296,7 +296,7 @@ def best_agent_elo_evaluation(agent):
     table.add_player(agent)
 
     table.play_matches(
-        play_game=config.play_game,
+        play_sequence=config.play_sequence,
         player_index=1,
         opponent_indices=[0],
         games_per_pair=config.games_per_pair,
@@ -326,7 +326,7 @@ def test_agents_elo_evaluation(agent):
         table.add_player(agent)
 
         table.play_matches(
-            play_game=config.play_game,
+            play_sequence=config.play_sequence,
             player_index=1,
             opponent_indices=[0],
             games_per_pair=config.games_per_pair,

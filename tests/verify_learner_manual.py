@@ -111,11 +111,11 @@ def test_learner_directly():
     )
 
     print("Populating buffer...")
-    from replay_buffers.game import Game
+    from replay_buffers.sequence import Sequence
 
-    game = Game(num_players=1)
+    seq = Sequence(num_players=1)
     for _ in range(10):
-        game.append(
+        seq.append(
             observation=torch.randn(4),
             info={},
             reward=1.0,
@@ -123,7 +123,7 @@ def test_learner_directly():
             value=0.0,
             action=0,
         )
-    learner.replay_buffer.store_aggregate(game)
+    learner.replay_buffer.store_aggregate(seq)
 
     print(f"Buffer size: {learner.replay_buffer.size}")
 

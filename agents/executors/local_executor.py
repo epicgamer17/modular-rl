@@ -18,8 +18,8 @@ class LocalExecutor(BaseExecutor):
         # to simulate "fetching available results"
         results = []
         for worker in self.workers:
-            if hasattr(worker, "play_game"):
-                results.append(worker.play_game())
+            if hasattr(worker, "play_sequence"):
+                results.append(worker.play_sequence())
         return results
 
     def update_weights(

@@ -6,7 +6,7 @@ from replay_buffers.processors import (
     InputProcessor,
     IdentityInputProcessor,
     NStepInputProcessor,
-    MuZeroGameInputProcessor,
+    MuZeroSequenceInputProcessor,
     PPOInputProcessor,
     StackedInputProcessor,
     LegalMovesInputProcessor,
@@ -299,11 +299,11 @@ def create_muzero_buffer(
         ),
     ]
 
-    # MuZero uses a monolithic processor because it processes the entire Game history at once.
-    # However, if you wanted to chain post-processing on the 'data' dict returned by process_game,
+    # MuZero uses a monolithic processor because it processes the entire Sequence history at once.
+    # However, if you wanted to chain post-processing on the 'data' dict returned by process_sequence,
     # you could wrap this in a StackedInputProcessor.
-    # For now, MuZeroGameInputProcessor handles extraction of policies, values, and legal_masks internally.
-    input_processor = MuZeroGameInputProcessor(num_actions, num_players)
+    # For now, MuZeroSequenceInputProcessor handles extraction of policies, values, and legal_masks internally.
+    input_processor = MuZeroSequenceInputProcessor(num_actions, num_players)
 
     return ModularReplayBuffer(
         max_size=max_size,

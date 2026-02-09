@@ -104,7 +104,7 @@ batch = buffer.sample(512)
 Stores sequences for unrolling and supports reanalysis:
 
 ```python
-from replay_buffers.game import GameBuffer
+from replay_buffers.sequence import GameBuffer
 
 buffer = GameBuffer(
     capacity=1000000,
