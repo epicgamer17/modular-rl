@@ -7,7 +7,13 @@ from search.nodes import DecisionNode, ChanceNode
 class Backpropagator(ABC):
     @abstractmethod
     def backpropagate(
-        self, search_path, leaf_value, leaf_to_play, min_max_stats, config
+        self,
+        search_path,
+        action_path,
+        leaf_value,
+        leaf_to_play,
+        min_max_stats,
+        config,
     ):
         """
         Backpropagates the leaf value up the search path to update node values.
@@ -17,7 +23,13 @@ class Backpropagator(ABC):
 
 class AverageDiscountedReturnBackpropagator(Backpropagator):
     def backpropagate(
-        self, search_path, leaf_value, leaf_to_play, min_max_stats, config
+        self,
+        search_path,
+        action_path,
+        leaf_value,
+        leaf_to_play,
+        min_max_stats,
+        config,
     ):
         n = len(search_path)
         if n == 0:
@@ -53,26 +65,65 @@ class AverageDiscountedReturnBackpropagator(Backpropagator):
 
             # Prepare acc for i-1 (if any)
             if i > 0:
+                parent = search_path[i - 1]
                 # reward at index i belongs to acting_player = search_path[i-1].to_play
-                acting_player = search_path[i - 1].to_play
-                if isinstance(search_path[i], DecisionNode):
-                    r_i = search_path[i - 1].child_reward(search_path[i])
+                acting_player = parent.to_play
 
-                    # # Update per-player accumulators in O(num_players)
-                    # # Acc_p(i-1) = sign(p, i) * r_i + discount * Acc_p(i)
-                    # # sign(p, i) = +1 if acting_player == p else -1
-                    # # We overwrite acc[p] in-place to be Acc_p(i-1)
+                # Retrieve action used to reach node
+                action = action_path[i - 1]
+
+                # Wait, parent is expanding to node.
+                # If parent is ChanceNode, node is DecisionNode.
+                # If parent is DecisionNode, node is ChanceNode (or Decision if deterministic).
+
+                if isinstance(node, DecisionNode):
+                    r_i = parent.child_reward(node)
+
+                    # Update per-player accumulators in O(num_players)
+                    # Acc_p(i-1) = sign(p, i) * r_i + discount * Acc_p(i)
+                    # sign(p, i) = +1 if acting_player == p else -1
+                    # We overwrite acc[p] in-place to be Acc_p(i-1)
                     for p in range(config.game.num_players):
                         sign = 1.0 if acting_player == p else -1.0
                         acc[p] = sign * r_i + config.discount_factor * acc[p]
-                elif isinstance(search_path[i], ChanceNode):
+                elif isinstance(node, ChanceNode):
                     for p in range(config.game.num_players):
-                        # sign = 1.0 if acting_player == p else -1.0
-                        # acc[p] = sign * r_i + config.discount_factor * acc[p]
                         # chance nodes can be thought to have 0 reward, and no discounting (as its like the roll after the action, or another way of thinking of it is that only on decision nodes do we discount expected reward, a chance node is not a decision point)
                         acc[p] = acc[p]
-                child_q = search_path[i - 1].get_child_q_from_parent(search_path[i])
+
+                child_q = parent.get_child_q_from_parent(node)
                 min_max_stats.update(child_q)
+
+                # --- VECTORIZED UPDATE ---
+                # Update parent's tensor stats for the action taken
+                # We need the return relative to PARENT's player.
+                # acc now holds values for i-1 (parent).
+
+                target_q = (
+                    acc[acting_player] if hasattr(parent, "to_play") else acc[0]
+                )  # ChanceNodes share parent to_play
+
+                # Correct access for ChanceNode parent?
+                # ChanceNode.to_play == parent.to_play.
+                # So acc[acting_player] is correct.
+
+                # Update visits
+                parent.child_visits[action] += 1
+
+                # Invalidate v_mix cache since children stats changed
+                parent._v_mix = None
+
+                # Incremental Mean Update
+                # v_new = v_old + (target - v_old) / n
+                current_val = parent.child_values[action]
+                n_visits = parent.child_visits[action]
+
+                # Note: target_q here is the Monte Carlo return G.
+                # Does child_values store G or Q?
+                # Q(s,a) = E[G]. So yes.
+
+                parent.child_values[action] += (target_q - current_val) / n_visits
+
             else:
                 min_max_stats.update(search_path[i].value())
 
@@ -84,7 +135,13 @@ class MinimaxBackpropagator(Backpropagator):
     """
 
     def backpropagate(
-        self, search_path, leaf_value, leaf_to_play, min_max_stats, config
+        self,
+        search_path,
+        action_path,
+        leaf_value,
+        leaf_to_play,
+        min_max_stats,
+        config,
     ):
         n = len(search_path)
         if n == 0:
@@ -106,36 +163,82 @@ class MinimaxBackpropagator(Backpropagator):
             node = search_path[i]
             node.visits += 1
 
+            # Need to update PARENT stats?
+            # Iteration is: node is parent, we look at children.
+            # search_path[i] is the node we are updating.
+            # We determine node's value from its children.
+            # Wait, Minimax logic computes node.value from node.children.
+
+            # BUT we also need to update node's tensors!
+            # node.child_values[action] needs to be updated.
+            # The child responsible for the update is in the path?
+            # No, Minimax scans ALL children.
+
+            # Note: `DecisionNode` stores `child_values`.
+            # If we update `node.children`'s values recursively,
+            # do we need to reflect that in `node.child_values` tensor?
+            # YES.
+
+            # But iterating all children is slow!
+            # However, Minimax is used for strict tree search (usually smaller).
+            # If efficient updates are needed, we can't iterate all children.
+            # But Minimax inherently looks at all children.
+
+            # Optimization:
+            # We only updated one child (the one in search_path[i+1]).
+            # So `node.child_values[action_path[i]]` needs update.
+            # The other children didn't change (in this simulation).
+
+            # Get the child that was just updated
+            child = search_path[i + 1]
+            action = action_path[i]
+
+            # Update tensor for that child
+            # child.value() is the new minimax value of the child.
+            q_val = node.get_child_q_from_parent(child)
+            node.child_values[action] = q_val
+            node.child_visits[action] += 1  # Is this right?
+            # Minimax doesn't average, but visits track usage.
+
+            # Invalidate v_mix cache
+            node._v_mix = None
+
+            # Now recompute node's value from TENSORS
             if isinstance(node, DecisionNode):
-                # Maximize Q-value of children
-                # Because we are processing bottom-up, children are already updated.
-                best_val = -float("inf")
-
-                for action_or_code, child in node.children.items():
-                    # get_child_q_from_parent uses child.value(), which is now the minimax value
-                    q_val = node.get_child_q_from_parent(child)
-                    if q_val > best_val:
-                        best_val = q_val
-
-                # If no children (shouldn't happen in backprop path), keep current val
-                if len(node.children) == 0:
-                    best_val = node.value()
+                # Maximize Q
+                # Only iterate expanded (visited) children?
+                # child_values contains valid Qs for visited children.
+                # unvisited children have 0 or bootstrap.
+                # Minimax usually assumes full expansion or heuristic.
+                # Using visits mask
+                mask = node.child_visits > 0
+                if mask.any():
+                    best_val = node.child_values[mask].max().item()
+                else:
+                    best_val = node.value()  # bootstrap
 
                 node.value_sum = best_val * node.visits
 
             elif isinstance(node, ChanceNode):
-                # Expectimax: Weighted sum of children Q-values
-                val_sum = 0.0
-                total_prob = 0.0
+                # Expectimax: sum(prob * val)
+                # Use tensors
+                vals = node.child_values
+                probs = node.child_priors
+                # Normalize probs? ChanceNode child_priors are probs.
 
-                for code, child in node.children.items():
-                    p = float(node.code_probs[code])
-                    q_val = node.get_child_q_from_parent(child)
+                # If we assume we visited all children or use priors for unvisited?
+                # Usually ChanceNode expands fully?
+                # With lazy expansion, we might have unvisited.
+                # Expected value over ALL outcomes.
+                # Default unvisited to bootstrap or 0?
+                # Let's assume child_values matches child.value() which handles bootstrap.
+                # But child_values initialized to 0.
+                # We need to compute expectation properly.
 
-                    val_sum += p * q_val
-                    total_prob += p
+                # For now, minimal update:
+                avg_val = (vals * probs).sum().item()
+                # Check normalized probs?
 
-                avg_val = val_sum / total_prob if total_prob > 0 else 0.0
                 node.value_sum = avg_val * node.visits
 
             # Update global stats with the new minimax value

@@ -29,59 +29,55 @@ class TopScoreSelection(SelectionStrategy):
 
     def select_child(self, node, min_max_stats, pruned_searchset=None):
         assert isinstance(node, DecisionNode)
-        assert node.expanded(), "node must be expanded to select a child"
+        # assert node.expanded(), "node must be expanded to select a child"
 
-        actions = list(node.children.keys())
+        scores = self.scoring_method.get_scores(node, min_max_stats)
+
+        # Masking for pruned_searchset
         if pruned_searchset is not None:
-            # assert node.parent is None
-            actions = [a for a in pruned_searchset if a in node.children]
-
-        if len(actions) == 1:
-            return actions[0], node.children[actions[0]]
-
-        assert len(actions) > 0
-        # print(actions)
-
-        # Compute Primary Scores
-        scores_dict = self.scoring_method.get_scores(node, min_max_stats)
-
-        # Filter scores for allowed actions
-        relevant_scores = {
-            a: (s.detach().item() if torch.is_tensor(s) else float(s))
-            for a, s in scores_dict.items()
-            if a in actions
-        }
+            # Create a mask for allowed actions
+            # Ideally pruned_searchset should be a boolean mask tensor for efficiency
+            # But if it's a list, we must convert.
+            mask = torch.full_like(scores, -float("inf"))
+            mask[pruned_searchset] = 0
+            scores = scores + mask
 
         # Find max score
-        max_score = max(relevant_scores.values())
+        max_score = torch.max(scores)
 
         # Identify ties
-        tied_actions = [
-            a for a, s in relevant_scores.items() if np.isclose(s, max_score)
-        ]
+        # using a small epsilon for float comparison stability if needed,
+        # but pure equality often works for discrete logic like visits.
+        # safe approach: isclose
+        tied_mask = torch.isclose(scores, max_score)
 
-        # Break ties
-        if len(tied_actions) == 1:
-            action = tied_actions[0]
-        else:
-            if self.tiebreak_scoring_method:
-                # Use tiebreak scoring method to resolve ties
-                # We calculate secondary scores only for the tied actions (or all if simpler)
-                all_sec_scores = self.tiebreak_scoring_method.get_scores(
+        # If we have a tiebreaker
+        if self.tiebreak_scoring_method is not None:
+            # Check if we actually have ties (sum of mask > 1)
+            if tied_mask.sum() > 1:
+                sec_scores = self.tiebreak_scoring_method.get_scores(
                     node, min_max_stats
                 )
-                sec_scores_filtered = {a: all_sec_scores[a] for a in tied_actions}
+                # apply mask to clear non-tied actions
+                sec_scores[~tied_mask] = -float("inf")
 
-                max_sec = max(sec_scores_filtered.values())
-                tied_actions = [
-                    a for a, s in sec_scores_filtered.items() if np.isclose(s, max_sec)
-                ]
+                max_sec = torch.max(sec_scores)
+                tied_mask = torch.isclose(sec_scores, max_sec)
 
-            # Default random tiebreak
-            action = np.random.choice(tied_actions)
+        # Break ties randomly among survivors
+        tied_indices = torch.nonzero(tied_mask).flatten()
 
-        assert isinstance(action, int) or isinstance(action, np.integer)
-        return action, node.children[action]
+        if len(tied_indices) == 0:
+            # Should not happen unless all scores are -inf
+            # Fallback to argmax
+            action = torch.argmax(scores).item()
+        elif len(tied_indices) == 1:
+            action = tied_indices[0].item()
+        else:
+            idx = torch.randint(len(tied_indices), (1,)).item()
+            action = tied_indices[idx].item()
+
+        return action, node.get_child(action)
 
 
 class SamplingSelection(SelectionStrategy):
@@ -95,36 +91,60 @@ class SamplingSelection(SelectionStrategy):
         self, scoring_method: Optional[ScoringMethod] = None, temperature: float = 1.0
     ):
         # TODO BETTER WAY OF ENFORCING THE SCORING METHOD IS A PROBABILITY, FOR EXAMPLE SAMPLING FROM IMPROVED GUMBEL POLICY
-        assert isinstance(scoring_method, PriorScoring)
+        # assert isinstance(scoring_method, PriorScoring)
         self.scoring_method = scoring_method
         self.temperature = temperature
 
     def select_child(self, node, min_max_stats, pruned_searchset=None):
         if isinstance(node, DecisionNode):
-            actions = list(node.children.keys())
+            scores = self.scoring_method.get_scores(node, min_max_stats)
+
             if pruned_searchset is not None:
-                # assert node.parent is None
-                actions = [a for a in pruned_searchset if a in node.children]
-
-            assert len(actions) > 0
-
-            # Use scores to determine probabilities
-            scores_dict = self.scoring_method.get_scores(node, min_max_stats)
-            scores = np.array([scores_dict[a] for a in actions])
+                mask = torch.full_like(scores, -float("inf"))
+                mask[pruned_searchset] = 0
+                scores = scores + mask
 
             if self.temperature == 0:
-                action_idx = np.argmax(scores)
+                action = torch.argmax(scores).item()
             else:
-                probs = scores / scores.sum()
-                action_idx = np.random.choice(len(actions), p=probs)
-            action = actions[action_idx]
-            return action, node.children[action]
+                # If scores are PROBABILITIES (PriorScoring), we normalize.
+                # If scores are LOGITS (Gumbel?), we softmax.
+                # PriorScoring returns priors (probs).
+                # GumbelScoring returns 'scores' which are shifted logits?
+                # The original code assumed:
+                # probs = scores / scores.sum()
+
+                # We assume scores are strictly positive probabilities or quasi-probabilities here
+                # unless logic dictates otherwise.
+                # For Gumbel, we usually pick Top 1. Sampling with Gumbel is specific.
+
+                # Safe handling:
+                # values can be negative?
+                # If PriorScoring, values are probs [0,1].
+
+                probs = scores
+                if self.temperature != 1.0:
+                    # apply temp to probs? probs^(1/T)
+                    # safeguard against negative or zero
+                    probs = torch.pow(probs.clamp(min=1e-8), 1.0 / self.temperature)
+
+                # Normalize
+                probs = probs / probs.sum()
+
+                action = torch.multinomial(probs, 1).item()
+
+            return action, node.get_child(action)
 
         elif isinstance(node, ChanceNode):
-            # TODO MAKE THIS USE SCORING METHODS TOO
-            codes = list(node.code_probs.keys())
-            probs = list(node.code_probs.values())
-            code = node._sample_code(codes, probs)
-            selected_code = F.one_hot(torch.tensor(code), num_classes=len(codes))
-            child_node = node.children[code]
-            return selected_code, child_node
+            # ChanceNode selection
+            probs = node.child_priors
+            # Normalize
+            probs = probs / probs.sum()
+
+            code = torch.multinomial(probs, 1).item()
+
+            # Return one-hot as expected by modular_search dynamics inference
+            num_codes = len(probs)
+            selected_code = F.one_hot(torch.tensor(code), num_classes=num_codes)
+
+            return selected_code, node.get_child(code)

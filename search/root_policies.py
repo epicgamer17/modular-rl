@@ -40,9 +40,8 @@ class VisitFrequencyPolicy(RootPolicyStrategy):
 
     def get_policy(self, root, min_max_stats):
         # Gather visits
-        visits = torch.zeros(self.num_actions, device=self.device)
-        for action, child in root.children.items():
-            visits[action] = child.visits
+        # Vectorized access
+        visits = root.child_visits.to(self.device)
 
         if self.temperature == 0:
             # Greedy Argmax (break ties randomly or first)
@@ -62,6 +61,8 @@ class VisitFrequencyPolicy(RootPolicyStrategy):
         else:
             # Temperature Adjusted
             # prevent numerical instability with 0 visits by adding epsilon or masking
+            # Clamp to avoid 0^neg_power issue?
+            # Or just visits^(1/T)
             visits_powered = torch.pow(visits, 1.0 / self.temperature)
             sum_powered = torch.sum(visits_powered)
             assert sum_powered > 0
@@ -86,19 +87,15 @@ class BestActionRootPolicy(RootPolicyStrategy):
 
     def get_policy(self, root, min_max_stats):
         scorer = QValueScoring()
-        best_val = -float("inf")
-        best_action = None
+        # Use vectorized scores
+        scores = scorer.get_scores(root, min_max_stats)
 
-        for action, child in root.children.items():
-            val = scorer.score(root, child, min_max_stats)
-            if val > best_val:
-                best_val = val
-                best_action = action
+        # We need to handle potential -inf or unvisited if QValueScoring returns that?
+        # Assuming QValueScoring returns valid tensors (bootstrap or 0 for unvisited).
+
+        best_action = torch.argmax(scores).item()
 
         policy = torch.zeros(self.num_actions, device=self.device)
-        if best_action is not None:
-            policy[best_action] = 1.0
-        elif len(root.children) > 0:
-            policy[list(root.children.keys())[0]] = 1.0
+        policy[best_action] = 1.0
 
         return policy

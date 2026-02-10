@@ -1,6 +1,6 @@
 import torch
 import pytest
-from trainers.muzero_trainer import MuZeroTrainer
+from agents.trainers.muzero_trainer import MuZeroTrainer
 from agent_configs.muzero_config import MuZeroConfig
 from game_configs.cartpole_config import CartPoleConfig
 from game_configs.tictactoe_config import TicTacToeConfig
@@ -129,4 +129,8 @@ def test_muzero_tictactoe_smoke():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    test_muzero_cartpole_smoke()
+    print("CartPole smoke test passed")
+    test_muzero_tictactoe_smoke()
+    print("TicTacToe smoke test passed")
+    print("All smoke tests passed!")

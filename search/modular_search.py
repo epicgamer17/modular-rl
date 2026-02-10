@@ -220,6 +220,7 @@ class SearchAlgorithm:
     ):
         node = root
         search_path = [node]
+        action_path = []
         to_play = root.to_play
         horizon_index = 0
         # old_to_play = to_play
@@ -296,6 +297,7 @@ class SearchAlgorithm:
 
             horizon_index = (horizon_index + 1) % self.config.lstm_horizon_len
             search_path.append(node)
+            action_path.append(action_or_code)
 
         parent = search_path[-2]
         # if to_play != old_to_play and self.training_step > 1000:
@@ -437,7 +439,7 @@ class SearchAlgorithm:
             )
 
         self.backpropagator.backpropagate(
-            search_path, value, to_play, min_max_stats, self.config
+            search_path, action_path, value, to_play, min_max_stats, self.config
         )
 
     def _run_batched_simulations(
@@ -459,6 +461,7 @@ class SearchAlgorithm:
         for b in range(batch_size):
             node = root
             search_path = [node]
+            action_path = []
             path_virtual_values = (
                 []
             )  # Track virtual values for this path if using Virtual Mean
@@ -491,11 +494,21 @@ class SearchAlgorithm:
                             for n, v in zip(search_path, path_virtual_values):
                                 n.visits -= 1
                                 n.value_sum -= v
+                                n._v_mix = None
                         else:
                             # Revert standard VL
                             for n in search_path:
                                 n.visits -= 1
                                 n.value_sum += virtual_loss
+                                n._v_mix = None
+
+                        # Fix: Revert child_visits
+                        for i in range(len(action_path)):
+                            p_node = search_path[i]
+                            act = action_path[i]
+                            if isinstance(act, torch.Tensor):
+                                act = act.item()
+                            p_node.child_visits[act] -= 1
 
                         node = None
                         break
@@ -530,10 +543,21 @@ class SearchAlgorithm:
                                 for n, v in zip(search_path, path_virtual_values):
                                     n.visits -= 1
                                     n.value_sum -= v
+                                    n._v_mix = None
                             else:
                                 for n in search_path:
                                     n.visits -= 1
                                     n.value_sum += virtual_loss
+                                    n._v_mix = None
+
+                            # Fix: Revert child_visits
+                            for i in range(len(action_path)):
+                                p_node = search_path[i]
+                                act = action_path[i]
+                                if isinstance(act, torch.Tensor):
+                                    act = act.item()
+                                p_node.child_visits[act] -= 1
+
                             node = None
                             break
 
@@ -557,18 +581,34 @@ class SearchAlgorithm:
                 # Apply virtual update to the PARENT (search_path[-1])
                 # We do this after successful selection.
                 parent_node = search_path[-1]
+
+                # CRITICAL FIX: Sync child_visits tensor for vectorized selection
+                # This ensures subsequent batch items see the updated visit count
+                if isinstance(action_or_code, torch.Tensor):
+                    act_idx = action_or_code.item()
+                else:
+                    act_idx = action_or_code
+
+                parent_node.child_visits[act_idx] += 1
+
                 if use_virtual_mean:
                     v_val = parent_node.value()
                     parent_node.visits += 1
                     parent_node.value_sum += v_val
+                    # Invalidate v_mix because parent_node.value() changed
+                    parent_node._v_mix = None
+
                     path_virtual_values.append(
                         v_val
                     )  # Note: path_virtual_values will match search_path indices
                 else:
                     parent_node.visits += 1
                     parent_node.value_sum -= virtual_loss
+                    # Invalidate v_mix
+                    parent_node._v_mix = None
 
                 search_path.append(node)
+                action_path.append(action_or_code)
 
             if node is None:
                 continue
@@ -578,10 +618,12 @@ class SearchAlgorithm:
                 v_val = node.value()  # Bootstrap
                 node.visits += 1
                 node.value_sum += v_val
+                node._v_mix = None
                 path_virtual_values.append(v_val)
             else:
                 node.visits += 1
                 node.value_sum -= virtual_loss
+                node._v_mix = None
 
             # Leaf already updated in the loop (added to search_path and updated)
             # Check: Loop breaks when `not node.expanded()`.
@@ -635,6 +677,7 @@ class SearchAlgorithm:
             sim_data.append(
                 {
                     "path": search_path,
+                    "action_path": action_path,
                     "node": node,
                     "parent": search_path[-2],
                     "action": action_or_code,
@@ -759,11 +802,27 @@ class SearchAlgorithm:
                 for node, v_val in zip(path, virtual_values):
                     node.visits -= 1
                     node.value_sum -= v_val
+                    node._v_mix = None
             else:
                 # Virtual Loss Reversion (Constant)
                 for node in path:
                     node.visits -= 1
                     node.value_sum += virtual_loss
+                    node._v_mix = None
+
+            # CRITICAL FIX: Revert child_visits tensor
+            # path has [Root, Child1, Child2, ...]
+            # action_path has [Act1, Act2, ...]
+            # We iterate up to len(action_path)
+            for i in range(len(d["action_path"])):
+                parent = path[i]
+                action = d["action_path"][i]
+                if isinstance(action, torch.Tensor):
+                    act_idx = action.item()
+                else:
+                    act_idx = action
+                parent.child_visits[act_idx] -= 1
+                # No need to invalidate v_mix again, handled above (parent in path)
 
         # B. Backpropagation Phase
         for d in sim_data:
@@ -837,5 +896,10 @@ class SearchAlgorithm:
                 )
 
             self.backpropagator.backpropagate(
-                path, value, to_play_for_backprop, min_max_stats, self.config
+                path,
+                d["action_path"],
+                value,
+                to_play_for_backprop,
+                min_max_stats,
+                self.config,
             )

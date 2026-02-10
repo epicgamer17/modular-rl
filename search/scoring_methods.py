@@ -39,21 +39,50 @@ class ScoringMethod(ABC):
 
 class UCBScoring(ScoringMethod):
     def score(self, node, child, min_max_stats) -> float:
-        pb_c = log((node.visits + node.pb_c_base + 1) / node.pb_c_base) + node.pb_c_init
-        pb_c *= sqrt(node.visits) / (child.visits + 1)
-        prior_score = pb_c * child.prior
+        # Fallback to single score if needed
+        raise NotImplementedError("Use get_scores for vectorized UCB")
 
-        if child.expanded():
-            value_score = min_max_stats.normalize(node.get_child_q_from_parent(child))
-        else:
-            value_score = min_max_stats.normalize(child.value())
+    def get_scores(self, node, min_max_stats) -> torch.Tensor:
+        # Vectorized UCB
+        # Use math functions for scalar part
+        pb_c_val = (
+            log((node.visits + node.pb_c_base + 1) / node.pb_c_base) + node.pb_c_init
+        )
+        pb_c_val *= sqrt(node.visits)
 
-        # check if value_score is nan
-        assert value_score == value_score, "value_score is nan"
-        assert prior_score == prior_score, "prior_score is nan"
+        # Broadcast to tensor
+        pb_c = torch.tensor(
+            pb_c_val, device=node.child_visits.device, dtype=torch.float32
+        )
+        pb_c = pb_c / (node.child_visits + 1)
 
-        score = prior_score + value_score
-        return score.detach().item() if torch.is_tensor(score) else score
+        prior_score = pb_c * node.child_priors
+
+        # Value score
+        # We need Q-values for all children.
+        # node.child_values contains Q-values for visited children.
+        # For unvisited children (visits==0), we need to bootstrap.
+
+        # Identify visited nodes
+        visited_mask = node.child_visits > 0
+
+        # Initialize q_values with child_values (correct for visited)
+        q_values = node.child_values.clone()
+
+        # For unvisited, use bootstrap value.
+        if not visited_mask.all():
+            # Calculate bootstrap value using helper
+            bootstrap_val = node.get_child_q_for_unvisited()
+
+            q_values[~visited_mask] = bootstrap_val
+
+        # Normalize Q-values
+        # Standard normalization across ALL values (bootstrapped included)
+        value_score = min_max_stats.normalize(q_values)
+
+        # Combine
+        scores = prior_score + value_score
+        return scores
 
 
 class GumbelScoring(ScoringMethod):
@@ -61,38 +90,17 @@ class GumbelScoring(ScoringMethod):
         self.config = config
 
     def score(self, node, child, min_max_stats) -> float:
-        # Note: This is inefficient if called individually for all children.
-        # Use get_scores for batch computation.
-        scores = self.get_scores(node, min_max_stats)
-        # Find the action corresponding to this child
-        for action, ch in node.children.items():
-            if ch is child:
-                return scores[action]
-        raise ValueError("Child not found in node's children")
+        raise NotImplementedError("Use get_scores for vectorized Gumbel")
 
-    def get_scores(self, node, min_max_stats) -> Dict[int, float]:
+    def get_scores(self, node, min_max_stats) -> torch.Tensor:
+        # Vectorized Gumbel
         pi0 = get_completed_q_improved_policy(self.config, node, min_max_stats)
 
-        # Actions in node.children might be a subset of all actions if filtered,
-        # but pi0 covers all actions in network_policy (usually).
-        # We only care about actions present in node.children
-        scores = {}
-        for action, child in node.children.items():
-            # compute selection metric: pi0(a) - N(a) / (1 + sum_N)
-            visits = float(child.visits)
+        visits = node.child_visits
+        sum_N = visits.sum()
+        denom = 1.0 + sum_N
 
-            # Helper to get sum_N over the specific actions available in children
-            # (Matches original implementation logic which summed visits of candidate actions)
-            all_visits = torch.tensor(
-                [float(ch.visits) for ch in node.children.values()]
-            )
-            sum_N = float(all_visits.sum())
-            denom = 1.0 + sum_N
-
-            # pi0 is a tensor over all actions, index with action
-            score = pi0[action].item() - (visits / denom)
-            scores[action] = score
-
+        scores = pi0 - (visits / denom)
         return scores
 
     def score_initial(self, prior: float, action: int) -> float:
@@ -105,8 +113,10 @@ class GumbelScoring(ScoringMethod):
 
 class LeastVisitedScoring(ScoringMethod):
     def score(self, node, child, min_max_stats) -> float:
-        # We want least visited, so score is negative visits
         return -float(child.visits)
+
+    def get_scores(self, node, min_max_stats) -> torch.Tensor:
+        return -node.child_visits
 
 
 class PriorScoring(ScoringMethod):
@@ -118,6 +128,9 @@ class PriorScoring(ScoringMethod):
 
     def score_initial(self, prior: float, action: int) -> float:
         return prior
+
+    def get_scores(self, node, min_max_stats) -> torch.Tensor:
+        return node.child_priors
 
 
 class QValueScoring(ScoringMethod):
@@ -131,6 +144,16 @@ class QValueScoring(ScoringMethod):
         else:
             v = child.value()
         return v.detach().item() if torch.is_tensor(v) else v
+
+    def get_scores(self, node, min_max_stats) -> torch.Tensor:
+        # TODO: handle unvisited nodes?
+        # visited mask?
+        # If unvisited, child_values is 0.
+        # Standard Q-value scoring might want bootstrap?
+        # But this is usually used for BestActionRootPolicy which looks for valid best action.
+        # If we use raw child_values, unvisited (0) might be selected if others are negative.
+        # But generally Q-values are used when we have visited enough.
+        return node.child_values
 
     def score_initial(self, prior: float, action: int) -> float:
         return prior

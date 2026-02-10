@@ -15,14 +15,15 @@ class SearchSet(ABC):
 class SelectAll(SearchSet):
     def create_initial_searchset(
         self, priors, legal_moves, count: int, trajectory_action=None
-    ) -> List[int]:
-        return legal_moves
+    ) -> torch.Tensor:
+        # Convert list of ints to tensor
+        return torch.tensor(legal_moves, dtype=torch.long, device=priors.device)
 
 
 class SelectTopK(SearchSet):
     def create_initial_searchset(
         self, priors, legal_moves, count: int, trajectory_action=None
-    ) -> List[int]:
+    ) -> torch.Tensor:
         """using the priors should work the same as using logits, as priors for gumbel would be g + logits softmaxed, so top k are the same as top k of g + logits"""
         assert legal_moves
 
@@ -44,4 +45,4 @@ class SelectTopK(SearchSet):
             selected_actions[-1] = trajectory_action
 
         # print("selected actions", selected_actions)
-        return selected_actions.tolist()
+        return selected_actions
