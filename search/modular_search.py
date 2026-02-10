@@ -1,5 +1,6 @@
 from abc import ABC
 import torch
+import torch.nn.functional as F
 import math
 from modules.utils import support_to_scalar
 from search.search_selectors import SelectionStrategy
@@ -355,6 +356,12 @@ class SearchAlgorithm:
                     is_reset=is_reset,
                 )
             elif isinstance(parent, ChanceNode):
+                # Prepare scalar code as one-hot for inference
+                action_t = torch.tensor(action_or_code, device=parent.afterstate.device)
+                num_codes = parent.child_priors.shape[0]
+                action_t = action_t.long()
+                one_hot_code = F.one_hot(action_t, num_classes=num_codes)
+
                 (
                     reward,
                     hidden_state,
@@ -365,9 +372,7 @@ class SearchAlgorithm:
                     reward_c_state,
                 ) = inference_fns["recurrent"](
                     parent.afterstate,
-                    action_or_code.to(parent.afterstate.device)
-                    .unsqueeze(0)
-                    .float(),  # a sampled code instead of an action
+                    one_hot_code.unsqueeze(0).float(),
                     parent.reward_h_state,
                     parent.reward_c_state,
                     model=inference_model,
@@ -733,7 +738,11 @@ class SearchAlgorithm:
                     val = torch.as_tensor(raw_action, device=self.device)
 
                 if is_chance_parent:
-                    act_list.append(val.float().unsqueeze(0))
+                    # Convert scalar code to one-hot
+                    num_codes = d["parent"].child_priors.shape[0]
+                    val = val.long()  # one_hot expects long
+                    one_hot = F.one_hot(val, num_classes=num_codes)
+                    act_list.append(one_hot.float().unsqueeze(0))
                 else:
                     act_list.append(val.unsqueeze(0))
 

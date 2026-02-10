@@ -143,8 +143,5 @@ class SamplingSelection(SelectionStrategy):
 
             code = torch.multinomial(probs, 1).item()
 
-            # Return one-hot as expected by modular_search dynamics inference
-            num_codes = len(probs)
-            selected_code = F.one_hot(torch.tensor(code), num_classes=num_codes)
-
-            return selected_code, node.get_child(code)
+            # Return scalar code now (modular_search will handle one-hot conversion if needed)
+            return code, node.get_child(code)
