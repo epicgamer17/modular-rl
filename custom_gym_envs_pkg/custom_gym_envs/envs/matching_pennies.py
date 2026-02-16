@@ -44,6 +44,7 @@ class MatchingPenniesEnv(AECEnv):
 
         # Initialize state
         self.agents = []
+        self.agent_selection = None
         self.agent_selector = None
         self.agent_name_mapping = {
             agent: i for i, agent in enumerate(self.possible_agents)

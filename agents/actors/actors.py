@@ -286,13 +286,11 @@ def get_actor_class(env: Any) -> type[BaseActor]:
         The actor class (GymActor or PettingZooActor).
     """
     # Check both the wrapper and the unwrapped environment for PettingZoo indicators
-    # PettingZoo AEC environments have 'possible_agents' and 'agent_selection'
-    is_pz = hasattr(env, "possible_agents") and hasattr(env, "agent_selection")
+    # PettingZoo AEC environments have 'possible_agents'
+    is_pz = hasattr(env, "possible_agents")
     if not is_pz and hasattr(env, "unwrapped"):
         unwrapped = env.unwrapped
-        is_pz = hasattr(unwrapped, "possible_agents") and hasattr(
-            unwrapped, "agent_selection"
-        )
+        is_pz = hasattr(unwrapped, "possible_agents")
 
     if is_pz:
         return PettingZooActor
