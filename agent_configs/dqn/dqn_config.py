@@ -18,9 +18,9 @@ class DQNConfig(RainbowConfig):
         self.n_step: int = 1
         self.atom_size: int = 1
 
-        assert not (
-            self.game.is_image and len(self.conv_layers) == 0
-        ), "Convolutional layers must be defined for image based games"
+        # assert not (
+        #     self.game.is_image and len(self.conv_layers) == 0
+        # ), "Convolutional layers must be defined for image based games"
 
         # maybe don't use a game config, since if tuning for multiple games this should be the same regardless of the game <- (it is really a hyper parameter if you are tuning for multiple games or a game with unknown bounds)
 

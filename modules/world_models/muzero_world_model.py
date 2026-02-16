@@ -6,6 +6,7 @@ from modules.action_encoder import ActionEncoder
 from modules.dense import build_dense
 from modules.heads import CategoricalHead, ScalarHead
 from modules.network_block import NetworkBlock
+from modules.backbones.factory import BackboneFactory
 from modules.utils import _normalize_hidden_state, scale_gradient
 from modules.world_models.world_model import WorldModelInterface
 from agent_configs.muzero_config import MuZeroConfig
@@ -24,8 +25,7 @@ class Representation(nn.Module):
             config.game.is_discrete
         ), "AlphaZero only works for discrete action space games (board games)"
         self.config = config
-
-        self.net = NetworkBlock(config, input_shape, "representation")
+        self.net = BackboneFactory.create(config.representation_backbone, input_shape)
         self.output_shape = self.net.output_shape
 
     def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
@@ -81,7 +81,12 @@ class BaseDynamics(nn.Module):
             self.fusion_bn = nn.BatchNorm1d(out_features)
 
         # 3. Core Network Block
-        self.net = NetworkBlock(config, input_shape, layer_prefix)
+        if layer_prefix == "dynamics":
+            bb_cfg = config.dynamics_backbone
+        elif layer_prefix == "afterstate_dynamics":
+            bb_cfg = config.afterstate_dynamics_backbone
+
+        self.net = BackboneFactory.create(bb_cfg, input_shape)
         self.output_shape = self.net.output_shape
 
     def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
@@ -125,15 +130,17 @@ class Dynamics(BaseDynamics):
             config, input_shape, num_actions, action_embedding_dim, "dynamics"
         )
         # 3. Heads
-        # Reward Head: Has its own layers (reward_conv...) defined in config
-        self.reward_head = ScalarHead(config, self.output_shape, layer_prefix="reward")
+        # Reward Head: Has its own modular backbone define in config
+        self.reward_head = ScalarHead(
+            config, self.output_shape, backbone_config=config.reward_backbone
+        )
 
-        # To-Play Head: Has its own layers (to_play_conv...) defined in config
+        # To-Play Head: Has its own modular backbone defined in config
         self.to_play_head = CategoricalHead(
             config,
             self.output_shape,
             output_size=config.game.num_players,
-            layer_prefix="to_play",
+            backbone_config=config.to_play_backbone,
         )
 
         # LSTM Support for Value Prefix
@@ -192,9 +199,12 @@ class AfterstateDynamics(BaseDynamics):
         num_actions: int,
         action_embedding_dim: int,
     ):
-        # afterstate dynamics uses the "dynamics" prefix for its network block, which seems to be the intent
         super().__init__(
-            config, input_shape, num_actions, action_embedding_dim, "dynamics"
+            config,
+            input_shape,
+            num_actions,
+            action_embedding_dim,
+            "afterstate_dynamics",
         )
 
     def forward(self, hidden_state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:

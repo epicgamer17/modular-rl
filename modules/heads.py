@@ -3,6 +3,8 @@ import torch
 from torch import nn, Tensor
 from modules.dense import build_dense
 from modules.network_block import NetworkBlock
+from modules.backbones.factory import BackboneFactory
+from configs.modules.backbones.base import BackboneConfig
 from modules.utils import zero_weights_initializer
 from agent_configs.base_config import Config
 
@@ -16,18 +18,14 @@ class BaseHead(nn.Module):
         self,
         config: Config,
         input_shape: Tuple[int],
-        layer_prefix: Optional[str] = None,
+        backbone_config: Optional[BackboneConfig] = None,
     ):
         super().__init__()
         self.config = config
 
-        # Optional: A head can have its own "neck" of layers (e.g., Reward head has reward_conv_layers)
-        if layer_prefix:
-            self.backbone = NetworkBlock(config, input_shape, layer_prefix)
-            self.input_flat_dim = self._get_flat_dim(self.backbone.output_shape)
-        else:
-            self.backbone = nn.Identity()
-            self.input_flat_dim = self._get_flat_dim(input_shape)
+        # Optional: A head can have its own modular backbone ("neck")
+        self.backbone = BackboneFactory.create(backbone_config, input_shape)
+        self.input_flat_dim = self._get_flat_dim(self.backbone.output_shape)
 
     def _get_flat_dim(self, shape: Tuple[int]) -> int:
         if len(shape) == 4:  # (B, C, H, W)
@@ -76,9 +74,9 @@ class ScalarHead(BaseHead):
         self,
         config: Config,
         input_shape: Tuple[int],
-        layer_prefix: Optional[str] = None,
+        backbone_config: Optional[BackboneConfig] = None,
     ):
-        super().__init__(config, input_shape, layer_prefix)
+        super().__init__(config, input_shape, backbone_config)
 
         # Determine output size based on support range
         if config.support_range is not None:
@@ -114,9 +112,9 @@ class CategoricalHead(BaseHead):
         config: Config,
         input_shape: Tuple[int],
         output_size: int,
-        layer_prefix: Optional[str] = None,
+        backbone_config: Optional[BackboneConfig] = None,
     ):
-        super().__init__(config, input_shape, layer_prefix)
+        super().__init__(config, input_shape, backbone_config)
         self.is_probabilistic = True
 
         self.output_layer = build_dense(
@@ -140,9 +138,9 @@ class ContinuousHead(BaseHead):
         config: Config,
         input_shape: Tuple[int],
         output_size: int,
-        layer_prefix: Optional[str] = None,
+        backbone_config: Optional[BackboneConfig] = None,
     ):
-        super().__init__(config, input_shape, layer_prefix)
+        super().__init__(config, input_shape, backbone_config)
         self.is_probabilistic = False  # Not strictly a categorical distribution
 
         self.mean = build_dense(

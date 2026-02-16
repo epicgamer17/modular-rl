@@ -11,6 +11,8 @@ from .base_config import (
     DistributionalConfig,
     NoisyConfig,
 )
+from configs.modules.backbones.base import BackboneConfig
+from configs.modules.backbones.factory import BackboneConfigFactory
 from losses.basic_losses import CategoricalCrossentropyLoss, MSELoss
 from utils.utils import tointlists
 import copy
@@ -34,62 +36,71 @@ class MuZeroConfig(
             "known_bounds", default=None, required=False
         )
 
-        # Network Arcitecture
-        self.residual_layers: list = self.parse_field(
-            "residual_layers", [(256, 3, 1)] * 20
+        # Backbone Configurations
+        self.representation_backbone: BackboneConfig = self.parse_backbone_config(
+            "representation_backbone"
         )
-        self.conv_layers: list = self.parse_field("conv_layers", [])
-        self.dense_layer_widths: int = self.parse_field(
-            "dense_layer_widths", [], tointlists
+        self.dynamics_backbone: BackboneConfig = self.parse_backbone_config(
+            "dynamics_backbone"
         )
-
-        self.representation_residual_layers: list = self.parse_field(
-            "representation_residual_layers", copy.deepcopy(self.residual_layers)
+        self.prediction_backbone: BackboneConfig = self.parse_backbone_config(
+            "prediction_backbone"
         )
-        self.representation_conv_layers: list = self.parse_field(
-            "representation_conv_layers", copy.deepcopy(self.conv_layers)
+        self.afterstate_dynamics_backbone: BackboneConfig = self.parse_backbone_config(
+            "afterstate_dynamics_backbone"
         )
-        self.representation_dense_layer_widths: int = self.parse_field(
-            "representation_dense_layer_widths", copy.deepcopy(self.dense_layer_widths)
+        self.chance_encoder_backbone: BackboneConfig = self.parse_backbone_config(
+            "chance_encoder_backbone"
         )
-
-        self.dynamics_residual_layers: list = self.parse_field(
-            "dynamics_residual_layers", copy.deepcopy(self.residual_layers)
+        self.reward_backbone: BackboneConfig = self.parse_backbone_config(
+            "reward_backbone"
         )
-        self.dynamics_conv_layers: list = self.parse_field(
-            "dynamics_conv_layers", copy.deepcopy(self.conv_layers)
-        )
-        self.dynamics_dense_layer_widths: int = self.parse_field(
-            "dynamics_dense_layer_widths", copy.deepcopy(self.dense_layer_widths)
+        self.to_play_backbone: BackboneConfig = self.parse_backbone_config(
+            "to_play_backbone"
         )
 
-        self.reward_conv_layers: list = self.parse_field(
-            "reward_conv_layers", [(32, 3, 1)]
+        # Actor/Critic Backbones (for Prediction Head)
+        # TODO: right now the afterstate backbones use these as well, maybe switch that for easier readability
+        self.actor_backbone: BackboneConfig = self.parse_backbone_config(
+            "actor_backbone"
         )
-        self.reward_dense_layer_widths: int = self.parse_field(
-            "reward_dense_layer_widths", [256], tointlists
-        )
-
-        self.to_play_conv_layers: list = self.parse_field(
-            "to_play_conv_layers", [(32, 3, 1)]
-        )
-        self.to_play_dense_layer_widths: int = self.parse_field(
-            "to_play_dense_layer_widths", [256], tointlists
+        self.critic_backbone: BackboneConfig = self.parse_backbone_config(
+            "critic_backbone"
         )
 
-        self.critic_conv_layers: list = self.parse_field(
-            "critic_conv_layers", [(32, 3, 1)]
-        )
-        self.critic_dense_layer_widths: int = self.parse_field(
-            "critic_dense_layer_widths", [256], tointlists
-        )
-        self.actor_conv_layers: list = self.parse_field(
-            "actor_conv_layers", [(32, 3, 1)]
-        )
-        self.actor_dense_layer_widths: int = self.parse_field(
-            "actor_dense_layer_widths", [256], tointlists
-        )
-
+        # Support a shared 'backbone' field as a fallback
+        shared_bb = self.parse_field("backbone", default=None, required=False)
+        if shared_bb:
+            default_bb_cfg = BackboneConfigFactory.create(shared_bb)
+            if self.representation_backbone is None:
+                self.representation_backbone = default_bb_cfg
+            if self.dynamics_backbone is None:
+                self.dynamics_backbone = default_bb_cfg
+            if self.prediction_backbone is None:
+                self.prediction_backbone = default_bb_cfg
+            if self.afterstate_dynamics_backbone is None:
+                self.afterstate_dynamics_backbone = default_bb_cfg
+            if self.chance_encoder_backbone is None:
+                self.chance_encoder_backbone = default_bb_cfg
+        else:
+            # Final defaults if nothing provided
+            dense_default = {"type": "dense"}
+            if self.representation_backbone is None:
+                self.representation_backbone = BackboneConfigFactory.create(
+                    dense_default
+                )
+            if self.dynamics_backbone is None:
+                self.dynamics_backbone = BackboneConfigFactory.create(dense_default)
+            if self.prediction_backbone is None:
+                self.prediction_backbone = BackboneConfigFactory.create(dense_default)
+            if self.afterstate_dynamics_backbone is None:
+                self.afterstate_dynamics_backbone = BackboneConfigFactory.create(
+                    dense_default
+                )
+            if self.chance_encoder_backbone is None:
+                self.chance_encoder_backbone = BackboneConfigFactory.create(
+                    dense_default
+                )
         # Mixin: Noisy
         self.parse_noisy_params()
 
@@ -166,22 +177,6 @@ class MuZeroConfig(
         )
         self.num_chance: int = self.parse_field("num_chance", 32)
         self.sigma_loss = self.parse_field("sigma_loss", CategoricalCrossentropyLoss())
-        self.afterstate_residual_layers: list = self.parse_field(
-            "afterstate_residual_layers", copy.deepcopy(self.dynamics_residual_layers)
-        )
-        self.afterstate_conv_layers: list = self.parse_field(
-            "afterstate_conv_layers", copy.deepcopy(self.dynamics_conv_layers)
-        )
-        self.afterstate_dense_layer_widths: int = self.parse_field(
-            "afterstate_dense_layer_widths",
-            copy.deepcopy(self.dynamics_dense_layer_widths),
-        )
-        self.chance_conv_layers: list = self.parse_field(
-            "chance_conv_layers", [(32, 3, 1)]
-        )
-        self.chance_dense_layer_widths: int = self.parse_field(
-            "chance_dense_layer_widths", [256], tointlists
-        )
         self.vqvae_commitment_cost_factor: float = self.parse_field(
             "vqvae_commitment_cost_factor", 1.0
         )
@@ -190,9 +185,15 @@ class MuZeroConfig(
         self.single_action_plane = self.parse_field("single_action_plane", False)
 
         self.latent_viz_method = self.parse_field("latent_viz_method", "pca")
-        self.latent_viz_interval = self.parse_field("latent_viz_interval", 1)  # how often within learn() to update buffer
+        self.latent_viz_interval = self.parse_field(
+            "latent_viz_interval", 1
+        )  # how often within learn() to update buffer
 
     def _verify_game(self):
-        # override alphazero game verification since muzero can play those games
-        # assert self.game.is_image, "MuZero only supports image-based games right now"
         pass
+
+    def parse_backbone_config(self, field_name: str) -> BackboneConfig:
+        bb_dict = self.parse_field(field_name, default=None, required=False)
+        if bb_dict is None:
+            return None
+        return BackboneConfigFactory.create(bb_dict)

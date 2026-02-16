@@ -5,7 +5,7 @@ from modules.utils import calculate_padding
 
 # modules/residual_block.py (New File)
 from torch import nn, Tensor
-from modules.utils import build_normalization_layer, unpack
+from modules.utils import build_normalization_layer, calculate_same_padding, unpack
 
 
 class ResidualBlock(nn.Module):
@@ -22,9 +22,18 @@ class ResidualBlock(nn.Module):
         stride: int,
         norm_type: Literal["batch", "layer", "none"] = "batch",
         activation: nn.Module = nn.ReLU(),
+        input_size: Tuple[int, int] = None,  # (h, w)
     ):
         super().__init__()
         self.activation = activation
+
+        # Calculate padding for same effect with stride
+        if input_size is not None:
+            self.manual_padding, self.torch_padding = calculate_same_padding(
+                input_size, kernel_size, stride
+            )
+        else:
+            self.manual_padding, self.torch_padding = None, "same"
 
         # 1st Conv + Norm
         self.conv1 = nn.Conv2d(
@@ -32,8 +41,13 @@ class ResidualBlock(nn.Module):
             out_channels,
             kernel_size,
             stride,
-            padding="same",
+            padding=self.torch_padding if self.torch_padding is not None else 0,
             bias=(norm_type == "none"),
+        )
+        self.pad1 = (
+            nn.ZeroPad2d(self.manual_padding)
+            if self.manual_padding is not None
+            else nn.Identity()
         )
         self.norm1 = build_normalization_layer(norm_type, out_channels, dim=2)
 
@@ -66,7 +80,8 @@ class ResidualBlock(nn.Module):
     def forward(self, inputs: Tensor) -> Tensor:
         residual = self.downsample(inputs)
 
-        x = self.conv1(inputs)
+        x = self.pad1(inputs)
+        x = self.conv1(x)
         x = self.norm1(x)
         x = self.activation(x)
 
@@ -103,6 +118,7 @@ class ResidualStack(BaseStack):
         )
 
         current_input_channels = input_shape[1]
+        curr_h, curr_w = input_shape[2], input_shape[3]
 
         for i in range(len(filters)):
             out_channels = filters[i]
@@ -118,9 +134,14 @@ class ResidualStack(BaseStack):
                 stride=stride,
                 norm_type=norm_type,
                 activation=activation,
+                input_size=(curr_h, curr_w),
             )
             self._layers.append(layer)
             current_input_channels = out_channels
+
+            # Update spatial dimensions for next layer
+            curr_h = (curr_h + stride - 1) // stride
+            curr_w = (curr_w + stride - 1) // stride
 
         self._output_len = current_input_channels
 

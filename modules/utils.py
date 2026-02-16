@@ -338,7 +338,8 @@ def calculate_padding(i: int, k: int, s: int) -> Tuple[int, int]:
         (p_1, p_2): where p_1 = p_2 - 1 for uneven padding and p_1 == p_2 for even padding
     """
 
-    p = (i - 1) * s - i + k
+    o = math.ceil(i / s)
+    p = max(0, (o - 1) * s + k - i)
     p_1 = p // 2
     p_2 = (p + 1) // 2
     return (p_1, p_2)

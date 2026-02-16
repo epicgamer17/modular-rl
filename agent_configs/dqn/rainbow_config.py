@@ -1,4 +1,6 @@
 from ..base_config import Config, DistributionalConfig, NoisyConfig, EpsilonGreedyConfig
+from configs.modules.backbones.base import BackboneConfig
+from configs.modules.backbones.factory import BackboneConfigFactory
 from losses.basic_losses import CategoricalCrossentropyLoss
 from utils.utils import tointlists
 
@@ -7,16 +9,12 @@ class RainbowConfig(Config, DistributionalConfig, NoisyConfig, EpsilonGreedyConf
     def __init__(self, config_dict: dict, game_config):
         super(RainbowConfig, self).__init__(config_dict, game_config)
         print("RainbowConfig")
-        self.residual_layers: list = self.parse_field("residual_layers", [])
-        self.conv_layers: list = self.parse_field("conv_layers", [])
-        self.dense_layer_widths: int = self.parse_field(
-            "dense_layer_widths", [128], tointlists
+        self.backbone: BackboneConfig = self.parse_backbone_config("backbone")
+        self.value_backbone: BackboneConfig = self.parse_backbone_config(
+            "value_backbone"
         )
-        self.value_hidden_layer_widths = self.parse_field(
-            "value_hidden_layer_widths", [], tointlists
-        )
-        self.advantage_hidden_layer_widths: int = self.parse_field(
-            "advantage_hidden_layer_widths", [], tointlists
+        self.advantage_backbone: BackboneConfig = self.parse_backbone_config(
+            "advantage_backbone"
         )
 
         # Mixin: Noisy
@@ -54,9 +52,6 @@ class RainbowConfig(Config, DistributionalConfig, NoisyConfig, EpsilonGreedyConf
         #     and len(self.residual_layers) == 0
         # ), "Convolutional layers must be defined for image based games"
 
-        if len(self.conv_layers) > 0:
-            assert len(self.conv_layers[0]) == 3
-
         # maybe don't use a game config, since if tuning for multiple games this should be the same regardless of the game <- (it is really a hyper parameter if you are tuning for multiple games or a game with unknown bounds)
 
         # could use a MuZero min-max config and just constantly update the suport size (would this break the model?) <- might mean this is not in the config but just a part of the model
@@ -70,3 +65,9 @@ class RainbowConfig(Config, DistributionalConfig, NoisyConfig, EpsilonGreedyConf
 
     def _verify_game(self):
         assert self.game.is_discrete, "Rainbow only supports discrete action spaces"
+
+    def parse_backbone_config(self, field_name: str) -> BackboneConfig:
+        bb_dict = self.parse_field(field_name, default=None, required=False)
+        if bb_dict is None:
+            return None
+        return BackboneConfigFactory.create(bb_dict)

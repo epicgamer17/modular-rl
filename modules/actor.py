@@ -1,6 +1,7 @@
 from typing import Callable, Tuple
 from torch import nn, Tensor
 from modules.network_block import NetworkBlock
+from modules.backbones.factory import BackboneFactory
 from modules.heads import (
     CategoricalHead,
     ContinuousHead,
@@ -19,8 +20,8 @@ class ActorNetwork(nn.Module):
         super().__init__()
         self.config = config
 
-        # 1. Backbone (ResNet -> Conv -> Dense)
-        self.net = NetworkBlock(config, input_shape, layer_prefix="actor")
+        # 1. Backbone
+        self.net = BackboneFactory.create(config.actor_backbone, input_shape)
 
         # 2. Output Head
         # Note: NetworkBlock calculates the correct flattened output width automatically

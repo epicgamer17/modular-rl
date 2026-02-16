@@ -1,9 +1,8 @@
 from typing import Callable, Tuple
 from torch import nn, Tensor
-from agent_configs.dqn.rainbow_config import RainbowConfig
 from modules.dense import DenseStack, build_dense
-from modules.network_block import NetworkBlock
-from modules.residual import ResidualStack
+from agent_configs.dqn.rainbow_config import RainbowConfig
+from modules.backbones.factory import BackboneFactory
 from utils.utils import to_lists  # Import the generalized block
 
 
@@ -21,9 +20,8 @@ class RainbowNetwork(nn.Module):
         self.output_size = output_size
         self.atom_size = config.atom_size
 
-        # 1. Core Feature Extraction (Uses Rainbow's default layers)
-        # Assumes config has: residual_layers, conv_layers, dense_layer_widths
-        self.feature_block = NetworkBlock(config, input_shape)
+        # 1. Core Feature Extraction (Uses modular backbones)
+        self.feature_block = BackboneFactory.create(config.backbone, input_shape)
 
         # Determine the final feature width
         current_shape = self.feature_block.output_shape
@@ -35,22 +33,11 @@ class RainbowNetwork(nn.Module):
         # 2. Dueling Heads (Conditional Logic)
         if self.config.dueling:
             # Value Stream
-            self.value_block = (
-                DenseStack(
-                    initial_width=self.initial_width,
-                    widths=config.value_hidden_layer_widths,
-                    activation=config.activation,
-                    noisy_sigma=config.noisy_sigma,
-                )
-                if len(config.value_hidden_layer_widths) > 0
-                else nn.Identity()
+            self.value_block = BackboneFactory.create(
+                config.value_backbone, current_shape
             )
 
-            value_in_features = (
-                self.value_block.output_width
-                if len(config.value_hidden_layer_widths) > 0
-                else self.initial_width
-            )
+            value_in_features = self._get_flat_dim(self.value_block.output_shape)
             self.value_layer = build_dense(
                 in_features=value_in_features,
                 out_features=self.atom_size,
@@ -58,21 +45,12 @@ class RainbowNetwork(nn.Module):
             )
 
             # Advantage Stream
-            self.advantage_block = (
-                DenseStack(
-                    initial_width=self.initial_width,
-                    widths=config.advantage_hidden_layer_widths,
-                    activation=config.activation,
-                    noisy_sigma=config.noisy_sigma,
-                )
-                if len(config.advantage_hidden_layer_widths) > 0
-                else nn.Identity()
+            self.advantage_block = BackboneFactory.create(
+                config.advantage_backbone, current_shape
             )
 
-            advantage_in_features = (
-                self.advantage_block.output_width
-                if len(config.advantage_hidden_layer_widths) > 0
-                else self.initial_width
+            advantage_in_features = self._get_flat_dim(
+                self.advantage_block.output_shape
             )
             self.advantage_layer = build_dense(
                 in_features=advantage_in_features,
@@ -104,8 +82,7 @@ class RainbowNetwork(nn.Module):
         # Pass through core layers (Residual, Conv, Dense)
         S = self.feature_block(inputs)
 
-        # Flatten if feature_block output is 4D (NetworkBlock handles this if dense_layers is present)
-        # If the output is still 4D, we need to flatten it now.
+        # Flatten if feature_block output is 4D
         if S.dim() > 2:
             S = S.flatten(1, -1)
 
@@ -133,19 +110,20 @@ class RainbowNetwork(nn.Module):
             return Q.softmax(dim=-1)
 
     def reset_noise(self):
-        # NOTE: Implement reset_noise in NetworkBlock and DenseStack/build_dense
-        # This implementation requires your underlying layers to support reset_noise
         if self.config.noisy_sigma != 0:
-            self.feature_block.reset_noise()  # Assuming NetworkBlock supports this
+            self.feature_block.reset_noise()
             if self.config.dueling:
-                if hasattr(self.value_block, "reset_noise"):
-                    self.value_block.reset_noise()
-                if hasattr(self.advantage_block, "reset_noise"):
-                    self.advantage_block.reset_noise()
+                self.value_block.reset_noise()
+                self.advantage_block.reset_noise()
                 self.value_layer.reset_noise()
                 self.advantage_layer.reset_noise()
             else:
                 self.distribution_layer.reset_noise()
+
+    def _get_flat_dim(self, shape: Tuple[int]) -> int:
+        if len(shape) == 4:
+            return shape[1] * shape[2] * shape[3]
+        return shape[1]
 
     # remove_noise can be implemented similarly
 

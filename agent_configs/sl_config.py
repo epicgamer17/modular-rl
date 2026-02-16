@@ -4,6 +4,8 @@ from .base_config import (
     ReplayConfig,
     kernel_initializer_wrapper,
 )
+from configs.modules.backbones.base import BackboneConfig
+from configs.modules.backbones.factory import BackboneConfigFactory
 from modules.utils import prepare_activations, prepare_kernel_initializers
 from torch.optim import Optimizer, Adam
 
@@ -43,9 +45,19 @@ class SupervisedConfig(ConfigBase, OptimizationConfig, ReplayConfig):
         self.clip_low_prob = self.parse_field("sl_clip_low_prob", 0.00)
 
         self.noisy_sigma = self.parse_field("sl_noisy_sigma", 0)
-        self.residual_layers = self.parse_field("sl_residual_layers", [])
-        self.conv_layers = self.parse_field("sl_conv_layers", [])
-        self.dense_layers_widths = self.parse_field("sl_dense_layer_widths", [128])
+
+        # Backbone Configuration
+        self.backbone: BackboneConfig = self.parse_backbone_config("sl_backbone")
+
+        # Fallback/Default logic
+        if self.backbone is None:
+            # Default to a simple dense backbone if nothing provided
+            self.backbone = BackboneConfigFactory.create(
+                {
+                    "type": "dense",
+                    "widths": self.parse_field("sl_dense_layer_widths", [128]),
+                }
+            )
 
         self.game = None
 
@@ -54,3 +66,9 @@ class SupervisedConfig(ConfigBase, OptimizationConfig, ReplayConfig):
         self.n_step = 1
         self.discount_factor = 1.0
         self.per_alpha = 0
+
+    def parse_backbone_config(self, field_name: str) -> BackboneConfig:
+        bb_dict = self.parse_field(field_name, default=None, required=False)
+        if bb_dict is None:
+            return None
+        return BackboneConfigFactory.create(bb_dict)

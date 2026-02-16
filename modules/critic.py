@@ -1,6 +1,7 @@
 from typing import Callable, Tuple
 from torch import nn, Tensor
 from modules.network_block import NetworkBlock
+from modules.backbones.factory import BackboneFactory
 from modules.heads import ScalarHead
 from agent_configs.base_config import Config
 
@@ -11,11 +12,11 @@ class CriticNetwork(nn.Module):
         self.config = config
 
         # 1. Backbone
-        self.net = NetworkBlock(config, input_shape, layer_prefix="critic")
+        self.net = BackboneFactory.create(config.critic_backbone, input_shape)
 
         # 2. Value Head (Handles scalar vs support automatically)
         input_width = self._get_flat_dim(self.net.output_shape)
-        self.head = ScalarHead(config, (self.net.output_shape[0], input_width), config)
+        self.head = ScalarHead(config, (self.net.output_shape[0], input_width))
 
     def _get_flat_dim(self, shape: Tuple[int]) -> int:
         if len(shape) == 4:

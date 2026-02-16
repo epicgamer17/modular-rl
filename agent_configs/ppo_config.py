@@ -1,6 +1,8 @@
 from .base_config import Config, DistributionalConfig, NoisyConfig
 from .actor_config import ActorConfig
 from .critic_config import CriticConfig
+from configs.modules.backbones.base import BackboneConfig
+from configs.modules.backbones.factory import BackboneConfigFactory
 
 
 class PPOConfig(Config, DistributionalConfig, NoisyConfig):
@@ -55,12 +57,18 @@ class PPOConfig(Config, DistributionalConfig, NoisyConfig):
             critic_config  # maybe go back since it is not inherriting anything anymore
         )
 
-        # Network Arcitecture
-        # COULD SET ALL ACTOR STUFF IN ACTOR CONFIG AND CRITIC STUFF IN CRITIC CONFIG FOR NETWORK ARCHITECTURE
-        self.critic_conv_layers = self.parse_field("conv_layers", [])
-        self.actor_conv_layers = self.parse_field("conv_layers", [])
-        self.critic_dense_layer_widths = self.parse_field("critic_dense_layers", [])
-        self.actor_dense_layer_widths = self.parse_field("actor_dense_layers", [])
+        # Backbone Configurations
+        self.actor_backbone = self.parse_backbone_config("actor_backbone")
+        self.critic_backbone = self.parse_backbone_config("critic_backbone")
+
+        # Support a shared 'backbone' field or default to dense
+        shared_bb = self.parse_field(
+            "backbone", default={"type": "dense"}, required=False
+        )
+        if self.actor_backbone is None:
+            self.actor_backbone = BackboneConfigFactory.create(shared_bb)
+        if self.critic_backbone is None:
+            self.critic_backbone = BackboneConfigFactory.create(shared_bb)
 
         self.clip_param = self.parse_field("clip_param", 0.2)
         self.steps_per_epoch = self.parse_field("steps_per_epoch", 4800)
@@ -80,11 +88,11 @@ class PPOConfig(Config, DistributionalConfig, NoisyConfig):
 
         self.clip_low_prob = self.parse_field("clip_low_prob", 0.00)
 
-        assert not (
-            self.game.is_image
-            and self.actor_conv_layers is not None
-            and self.critic_conv_layers is not None
-        ), "Convolutional layers must be defined for image based games"
-
     def _verify_game(self):
         pass
+
+    def parse_backbone_config(self, field_name: str) -> BackboneConfig:
+        bb_dict = self.parse_field(field_name, default=None, required=False)
+        if bb_dict is None:
+            return None
+        return BackboneConfigFactory.create(bb_dict)

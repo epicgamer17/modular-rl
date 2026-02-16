@@ -6,6 +6,7 @@ from modules.action_encoder import ActionEncoder
 from modules.actor import ActorNetwork
 from modules.critic import CriticNetwork
 from modules.network_block import NetworkBlock
+from modules.backbones.factory import BackboneFactory
 from modules.sim_siam_projector_predictor import Projector
 from modules.utils import _normalize_hidden_state, zero_weights_initializer
 from modules.world_models.muzero_world_model import MuzeroWorldModel
@@ -48,9 +49,7 @@ class Prediction(nn.Module):
         ), "AlphaZero only works for discrete action space games (board games)"
         self.config = config
 
-        self.net = NetworkBlock(
-            config, input_shape
-        )  # Uses default layers (config.residual_layers etc.)
+        self.net = BackboneFactory.create(config.prediction_backbone, input_shape)
         self.head = PredictionHead(config, self.net.output_shape, output_size)
 
     def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
@@ -65,69 +64,35 @@ class Prediction(nn.Module):
 class Encoder(nn.Module):
     def __init__(
         self,
-        input_shape,
+        config: MuZeroConfig,
+        input_shape: Tuple[int],
         num_codes: int = 32,
-        channel_first: bool = True,
     ):
         """
         Args:
+            config: MuZeroConfig containing chance_encoder_backbone.
             input_shape: tuple, e.g. (C, H, W) or (B, C, H, W).
             num_codes: embedding size output by encoder.
-            channel_first: if True, treats input as (..., C, H, W).
         """
         super().__init__()
-        self.channel_first = channel_first
+        self.config = config
         self.num_codes = num_codes
 
-        # --- Image / 4D Path ---
-        if len(input_shape) == 4:
-            # Heuristic: treating len=4 or len=3 (C,H,W) as image data
-            self.use_conv = True
+        # Use modular backbone for Encoder
+        self.net = BackboneFactory.create(config.chance_encoder_backbone, input_shape)
 
-            # Determine input channels based on flag
-            # Assuming input_shape excludes Batch dim if len==3, or includes it if len==4
-            if len(input_shape) == 4:
-                c = input_shape[1] if self.channel_first else input_shape[3]
-            else:
-                c = input_shape[0] if self.channel_first else input_shape[2]
-
-            self.conv1 = nn.Conv2d(c, 32, kernel_size=3, stride=2, padding=1)
-            self.act = nn.ReLU(inplace=True)
-            self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1)
-            self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1)
-
-            # --- REMOVED POOLING HERE ---
-            # previously: self.pool = nn.AdaptiveAvgPool2d(1)
-
-            # We must calculate the flattened size dynamically because
-            # we no longer force the output to 1x1.
-            with torch.no_grad():
-                # Create a dummy input to trace shape
-                # We assume input_shape provided matches the user's tensor setup
-                if len(input_shape) == 3:
-                    dummy_in = torch.zeros(1, *input_shape)
-                else:
-                    dummy_in = torch.zeros(*input_shape)
-
-                # Check for channel last input and permute for PyTorch convs if necessary
-                if not self.channel_first and dummy_in.shape[-1] == c:
-                    dummy_in = dummy_in.permute(0, 3, 1, 2)
-
-                d = self.conv1(dummy_in)
-                d = self.conv2(d)
-                d = self.conv3(d)
-                flat_dim = d.flatten(1).shape[1]
-
-            # Linear head: maps (64 * H' * W') -> num_codes
-            self.fc = nn.Linear(flat_dim, num_codes)
-
-        # --- Vector / 2D Path ---
+        # Output head: maps backbone output to num_codes
+        backbone_output_shape = self.net.output_shape
+        if len(backbone_output_shape) == 4:
+            flat_dim = (
+                backbone_output_shape[1]
+                * backbone_output_shape[2]
+                * backbone_output_shape[3]
+            )
         else:
-            self.use_conv = False
-            # Assuming input_shape is (Batch, Features) or just (Features,)
-            self.fc1 = nn.Linear(input_shape[-1], 128)
-            self.fc2 = nn.Linear(128, 64)
-            self.fc3 = nn.Linear(64, num_codes)
+            flat_dim = backbone_output_shape[1]
+
+        self.fc = nn.Linear(flat_dim, num_codes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -136,19 +101,10 @@ class Encoder(nn.Module):
             one_hot_st: (B, num_codes) - Straight-Through gradient flow
         """
         # 1. Processing to Logits
-        if self.use_conv:
-            x = self.act(self.conv1(x))
-            x = self.act(self.conv2(x))
-            x = self.act(self.conv3(x))
-
-            # Flatten directly (preserving spatial info in the flat vector)
+        x = self.net(x)
+        if x.dim() > 2:
             x = x.flatten(1, -1)
-            x = self.fc(x)  # (B, num_codes)
-        else:
-            # Vector path returns LOGITS (removed .softmax inside here to avoid double softmax)
-            x = torch.relu(self.fc1(x))
-            x = torch.relu(self.fc2(x))
-            x = self.fc3(x)
+        x = self.fc(x)
 
         # 2. Softmax
         probs = x.softmax(dim=-1)
@@ -174,16 +130,8 @@ class Encoder(nn.Module):
         return probs, one_hot_st
 
     def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
-        if self.use_conv:
-            initializer(self.conv1.weight)
-            initializer(self.conv2.weight)
-            initializer(self.conv3.weight)
-            # zero initializer for fc
-            zero_weights_initializer(self.fc)
-        else:
-            initializer(self.fc1.weight)
-            initializer(self.fc2.weight)
-            zero_weights_initializer(self.fc3)
+        self.net.initialize(initializer)
+        zero_weights_initializer(self.fc)
 
 
 class OnehotArgmax(torch.autograd.Function):
@@ -265,9 +213,9 @@ class Network(nn.Module):
         encoder_input_shape = tuple(encoder_input_shape)
         print("encoder input shape", encoder_input_shape)
         self.encoder = Encoder(
+            config,
             encoder_input_shape,
             num_codes=self.config.num_chance,
-            channel_first=channel_first,
         )
 
     def initial_inference(self, obs):
