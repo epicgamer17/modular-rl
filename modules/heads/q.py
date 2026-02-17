@@ -5,8 +5,8 @@ from torch import nn, Tensor
 from .base import BaseHead
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
-from modules.output_strategies import OutputStrategy
-from modules.dense import DenseStack, build_dense
+from modules.heads.strategies import OutputStrategy
+from modules.blocks.dense import DenseStack, build_dense
 
 
 class QHead(BaseHead):

@@ -3,11 +3,11 @@ from torch import Tensor
 from torch import nn
 import torch
 from .base import BaseHead
-from modules.output_strategies import OutputStrategy
+from modules.heads.strategies import OutputStrategy
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.heads.reward import ValuePrefixRewardHeadConfig
-from modules.dense import build_dense
+from modules.blocks.dense import build_dense
 
 
 class RewardHead(BaseHead):

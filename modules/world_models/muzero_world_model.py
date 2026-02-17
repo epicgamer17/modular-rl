@@ -2,13 +2,13 @@ from typing import Callable, List, Optional, Tuple, Dict
 
 from torch import Tensor
 import torch
-from modules.action_encoder import ActionEncoder
-from modules.dense import build_dense
+from modules.embeddings.action_embedding import ActionEncoder
+from modules.blocks.dense import build_dense
 from modules.backbones.factory import BackboneFactory
 from modules.heads.factory import HeadFactory
 from modules.heads.to_play import ToPlayHead
 from modules.heads.reward import RewardHead
-from modules.output_strategy_factory import OutputStrategyFactory
+from modules.heads.strategy_factory import OutputStrategyFactory
 from modules.utils import _normalize_hidden_state, scale_gradient
 from modules.world_models.world_model import WorldModelInterface
 from configs.agents.muzero import MuZeroConfig
@@ -208,7 +208,7 @@ class AfterstateDynamics(BaseDynamics):
         return afterstate
 
 
-from modules.encoders.chance_encoder import ChanceEncoder
+from modules.world_models.components.chance_encoder import ChanceEncoder
 from modules.world_models.world_model import WorldModelOutput
 
 

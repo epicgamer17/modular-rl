@@ -2,7 +2,7 @@ from typing import Callable, Tuple
 from torch import Tensor
 from configs.agents.supervised import SupervisedConfig
 from modules.backbones.factory import BackboneFactory
-from modules.dense import build_dense
+from modules.blocks.dense import build_dense
 import torch.nn as nn
 
 

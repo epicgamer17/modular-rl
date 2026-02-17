@@ -2,9 +2,9 @@ from collections.abc import Callable
 from typing import Tuple
 
 import torch
-from modules.conv import Conv2dStack
-from modules.dense import DenseStack
-from modules.residual import ResidualStack
+from modules.blocks.conv import Conv2dStack
+from modules.blocks.dense import DenseStack
+from modules.blocks.residual import ResidualStack
 from configs.base import Config
 from torch import nn
 

@@ -5,23 +5,24 @@ from torch import nn, Tensor
 import torch
 import torch.nn.functional as F
 
-from modules.action_encoder import ActionEncoder
+
 from modules.network_block import NetworkBlock
 from modules.backbones.factory import BackboneFactory
-from modules.sim_siam_projector_predictor import Projector
+
+from modules.projectors.sim_siam import Projector
 from modules.heads.to_play import ToPlayHead
 from modules.heads.value import ValueHead
 from modules.heads.policy import PolicyHead
 from modules.heads.reward import RewardHead
-from modules.output_strategy_factory import OutputStrategyFactory
+from modules.heads.strategy_factory import OutputStrategyFactory
 from modules.utils import _normalize_hidden_state, zero_weights_initializer
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from modules.world_models.inference_output import InferenceOutput, UnrollOutput
 from utils.utils import to_lists
 
-from modules.conv import Conv2dStack
-from modules.dense import DenseStack, build_dense
-from modules.residual import ResidualStack
+from modules.blocks.conv import Conv2dStack
+from modules.blocks.dense import DenseStack, build_dense
+from modules.blocks.residual import ResidualStack
 
 
 class AgentNetwork(nn.Module):

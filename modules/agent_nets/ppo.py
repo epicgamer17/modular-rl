@@ -4,7 +4,7 @@ from torch import Tensor
 import torch.nn as nn
 from modules.heads.policy import PolicyHead
 from modules.heads.value import ValueHead
-from modules.output_strategy_factory import OutputStrategyFactory
+from modules.heads.strategy_factory import OutputStrategyFactory
 
 
 class PPONetwork(nn.Module):

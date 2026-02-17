@@ -126,7 +126,7 @@ def build_dense(in_features: int, out_features: int, sigma: float = 0):
 # modules/dense_stack.py
 from typing import Callable
 from torch import nn, Tensor
-from modules.base_stack import BaseStack  # Assuming new structure
+from modules.blocks.base_stack import BaseStack  # Assuming new structure
 
 
 class DenseStack(BaseStack):

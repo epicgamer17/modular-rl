@@ -1,7 +1,7 @@
 from typing import Tuple
 import torch
 from torch import nn
-from modules.dense import build_dense
+from modules.blocks.dense import build_dense
 from configs.modules.backbones.denseresnet import DenseResNetConfig
 from modules.utils import build_normalization_layer
 

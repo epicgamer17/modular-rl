@@ -1,7 +1,7 @@
 from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
 from .base import BaseHead
-from modules.output_strategies import OutputStrategy
+from modules.heads.strategies import OutputStrategy
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
 

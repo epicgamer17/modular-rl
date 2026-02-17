@@ -1,10 +1,10 @@
 from typing import Callable, Tuple
 from torch import nn, Tensor
-from modules.dense import DenseStack, build_dense
 from configs.agents.rainbow_dqn import RainbowConfig
 from modules.backbones.factory import BackboneFactory
+from modules.blocks.dense import DenseStack, build_dense
 from modules.heads.q import QHead, DuelingQHead
-from modules.output_strategy_factory import OutputStrategyFactory
+from modules.heads.strategy_factory import OutputStrategyFactory
 from utils.utils import to_lists  # Import the generalized block
 
 

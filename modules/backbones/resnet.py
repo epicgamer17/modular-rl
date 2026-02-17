@@ -1,7 +1,7 @@
 from typing import Tuple
 import torch
 from torch import nn
-from modules.residual import ResidualStack
+from modules.blocks.residual import ResidualStack
 from configs.modules.backbones.resnet import ResNetConfig
 
 

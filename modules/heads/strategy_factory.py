@@ -9,7 +9,7 @@ from configs.modules.output_strategies import (
     DreamerSupportConfig,
     GaussianConfig,
 )
-from modules.output_strategies import (
+from modules.heads.strategies import (
     OutputStrategy,
     Regression,
     Categorical,

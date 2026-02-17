@@ -1,7 +1,7 @@
 from typing import Tuple
 import torch
 from torch import nn
-from modules.conv import Conv2dStack
+from modules.blocks.conv import Conv2dStack
 from configs.modules.backbones.conv import ConvConfig
 
 

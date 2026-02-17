@@ -1,7 +1,7 @@
 from typing import Tuple
 import torch
 from torch import nn
-from modules.dense import DenseStack
+from modules.blocks.dense import DenseStack
 from configs.modules.backbones.dense import DenseConfig
 
 

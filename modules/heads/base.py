@@ -4,8 +4,8 @@ from torch import nn, Tensor
 from modules.backbones.factory import BackboneFactory
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.architecture_config import ArchitectureConfig
-from modules.output_strategies import OutputStrategy
-from modules.dense import build_dense
+from modules.heads.strategies import OutputStrategy
+from modules.blocks.dense import build_dense
 
 
 class BaseHead(nn.Module):

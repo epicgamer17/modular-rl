@@ -19,7 +19,7 @@ def unpack(x: int | Tuple):
 # modules/conv2d_stack.py
 from typing import Callable, Tuple
 from torch import nn, Tensor
-from modules.base_stack import BaseStack
+from modules.blocks.base_stack import BaseStack
 from modules.utils import (
     calculate_same_padding,
     unpack,

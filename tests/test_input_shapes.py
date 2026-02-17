@@ -9,7 +9,7 @@ from configs.modules.backbones.dense import DenseConfig
 from configs.modules.backbones.resnet import ResNetConfig
 from modules.heads.base import BaseHead
 from configs.modules.architecture_config import ArchitectureConfig
-from modules.output_strategies import OutputStrategy
+from modules.heads.strategies import OutputStrategy
 
 
 class MockStrategy(OutputStrategy):
@@ -28,6 +28,15 @@ class MockStrategy(OutputStrategy):
 
     def scalar_to_target(self, scalar):
         return scalar
+
+    def compute_loss(self, prediction, target):
+        return 0.0
+
+    def get_distribution(self, prediction):
+        return None
+
+    def to_expected_value(self, prediction):
+        return prediction
 
 
 class MockHead(BaseHead):
@@ -114,7 +123,7 @@ class TestInputShapes(unittest.TestCase):
         self.assertEqual(head.flat_dim, 64)
 
         x = torch.randn(5, 64)  # Batch 5
-        out = head(x)
+        out, _ = head(x)
         self.assertEqual(out.shape, (5, 10))
 
 

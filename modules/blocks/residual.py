@@ -95,7 +95,7 @@ class ResidualBlock(nn.Module):
 
 # modules/residual_stack.py
 from torch import nn, Tensor
-from modules.base_stack import BaseStack
+from modules.blocks.base_stack import BaseStack
 
 
 class ResidualStack(BaseStack):

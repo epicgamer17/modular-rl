@@ -5,8 +5,8 @@ from torch import nn, Tensor
 import torch.nn.functional as F
 import torch.distributions as td
 
-from modules.conv import Conv2dStack, ConvTranspose2dStack
-from modules.dense import DenseStack
+from modules.blocks.conv import Conv2dStack, ConvTranspose2dStack
+from modules.blocks.dense import DenseStack
 from modules.distributions import TanhBijector, SampleDist
 
 
