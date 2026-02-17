@@ -1,4 +1,4 @@
-from .game_config import GameConfig
+from .game import GameConfig
 import gymnasium as gym
 import custom_gym_envs
 
@@ -11,6 +11,7 @@ def make_env(render_mode=None):
 class Game2048Config(GameConfig):
     def __init__(self, make_env=make_env):
         super(Game2048Config, self).__init__(
+            num_actions=4,
             max_score=2**16,
             min_score=0,
             is_discrete=True,

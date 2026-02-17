@@ -11,7 +11,7 @@ from agent_configs.base_config import (
 )
 from losses.basic_losses import MSELoss
 from modules.utils import prepare_activations, prepare_kernel_initializers
-from game_configs.game_config import GameConfig
+from configs.games.game import GameConfig
 
 
 def kernel_initializer_wrapper(x):

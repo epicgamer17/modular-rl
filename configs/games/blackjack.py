@@ -1,24 +1,25 @@
-from .game_config import GameConfig
+from .game import GameConfig
 
 
-from pettingzoo.classic import leduc_holdem_v4
+import gymnasium as gym
 
 
 def make_env(render_mode=None):
-    return leduc_holdem_v4.env(render_mode=render_mode)
+    return gym.make("Blackjack-v1", render_mode=render_mode)
 
 
-class LeducHoldemConfig(GameConfig):
+class BlackjackConfig(GameConfig):
     def __init__(self, make_env=make_env):
-        super(LeducHoldemConfig, self).__init__(
-            max_score=10,
-            min_score=-10,
+        super(BlackjackConfig, self).__init__(
+            num_actions=2,
+            max_score=1,
+            min_score=-1,
             is_discrete=True,
             is_image=False,
             is_deterministic=False,
             has_legal_moves=False,
             perfect_information=False,
-            multi_agent=True,
+            multi_agent=False,
             num_players=2,
             # has_intermediate_rewards=False,
             make_env=make_env,

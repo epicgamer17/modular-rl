@@ -4,10 +4,11 @@ from wrappers import (
     FrameStackWrapper,
     TwoPlayerPlayerPlaneWrapper,
 )
-from game_configs.game_config import GameConfig
+from configs.games.game import GameConfig
 from custom_gym_envs.envs.catan import (
     env as catan_env,
     CatanAECEnv,
+    ACTION_SPACE_SIZE,
 )
 
 
@@ -40,6 +41,7 @@ def make_env(
 class CatanConfig(GameConfig):
     def __init__(self, make_env=make_env):
         super(CatanConfig, self).__init__(
+            num_actions=ACTION_SPACE_SIZE,
             max_score=1,
             min_score=-1,
             is_discrete=True,
@@ -56,6 +58,7 @@ class CatanConfig(GameConfig):
 class SinglePlayerCatanConfig(GameConfig):
     def __init__(self, make_env=None):
         super(SinglePlayerCatanConfig, self).__init__(
+            num_actions=ACTION_SPACE_SIZE,
             max_score=1,
             min_score=-1,
             is_discrete=True,

@@ -1,4 +1,4 @@
-from .game_config import GameConfig
+from .game import GameConfig
 import sys
 
 sys.path.append("../../")
@@ -25,6 +25,7 @@ def make_env(render_mode="rgb_array"):
 class TicTacToeConfig(GameConfig):
     def __init__(self, make_env=make_env):
         super(TicTacToeConfig, self).__init__(
+            num_actions=9,
             max_score=1,
             min_score=-1,
             is_discrete=True,
@@ -36,5 +37,4 @@ class TicTacToeConfig(GameConfig):
             num_players=2,
             # has_intermediate_rewards=False,
             make_env=make_env,
-            num_actions=9,
         )

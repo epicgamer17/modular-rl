@@ -10,8 +10,8 @@ class GameConfig:
         perfect_information,
         multi_agent,
         num_players,
-        # has_intermediate_rewards,
         num_actions,
+        # has_intermediate_rewards,
         make_env=None,
     ):
         self.max_score = max_score

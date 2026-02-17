@@ -1,4 +1,4 @@
-from .game_config import GameConfig
+from .game import GameConfig
 
 
 from pettingzoo.classic import mississippi_marbles_v3
@@ -11,6 +11,7 @@ def make_env(render_mode=None):
 class MississippiMarblesConfig(GameConfig):
     def __init__(self, make_env=make_env):
         super(MississippiMarblesConfig, self).__init__(
+            num_actions=10,
             max_score=20000,  # technically infinite, but this is a good enough approximation
             min_score=0,
             is_discrete=True,

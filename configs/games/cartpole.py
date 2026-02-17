@@ -1,18 +1,18 @@
-from .game_config import GameConfig
-
-
+from .game import GameConfig
 import gymnasium as gym
 
 
 def make_env(render_mode=None):
-    return gym.make("CartPole-v1", render_mode=render_mode)
+    env = gym.make("CartPole-v1", render_mode=render_mode)
+    return env
 
 
-class ClassicControlConfig(GameConfig):
+class CartPoleConfig(GameConfig):
     def __init__(self, make_env=make_env):
-        super(ClassicControlConfig, self).__init__(
+        super(CartPoleConfig, self).__init__(
+            num_actions=2,
             max_score=500,
-            min_score=-500,
+            min_score=0,
             is_discrete=True,
             is_image=False,
             is_deterministic=True,  # i think it is deterministic (pretty sure if you input the same actions the same thing will happen, it just has a random start state)

@@ -1,4 +1,4 @@
-from .game_config import GameConfig
+from .game import GameConfig
 
 
 def make_env(render_mode=None, max_cycles=100):
@@ -12,6 +12,7 @@ def make_env(render_mode=None, max_cycles=100):
 class MatchingPenniesConfig(GameConfig):
     def __init__(self, make_env=make_env):
         super(MatchingPenniesConfig, self).__init__(
+            num_actions=2,
             max_score=1,
             min_score=-1,
             is_discrete=True,
