@@ -324,12 +324,26 @@ class BaseTrainer:
             self.stats.append("test_score", test_results.get("score"), subkey="avg")
             self.stats.append("test_score", test_results.get("min_score"), subkey="min")
             self.stats.append("test_score", test_results.get("max_score"), subkey="max")
+            # Log player-specific scores if available (mostly for multiplayer)
+            for p in range(self.config.game.num_players):
+                player_score_key = f"player_{p}_score"
+                if player_score_key in test_results:
+                    self.stats.append(
+                        "test_score", test_results[player_score_key], subkey=f"p{p}"
+                    )
             print(f"Test score: {test_results.get('score'):.3f}")
 
         # 2. Test vs agents (if any)
         for agent in self.test_agents:
             vs_results = self.test_vs_agent(self.test_trials, agent)
-            self.stats.append(f"vs_{agent.model_name}_score", vs_results["score"])
+            key = f"vs_{agent.model_name}_score"
+            self.stats.append(key, vs_results["score"], subkey="avg")
+            self.stats.append(key, vs_results["min_score"], subkey="min")
+            self.stats.append(key, vs_results["max_score"], subkey="max")
+            for p in range(self.config.game.num_players):
+                player_score_key = f"player_{p}_score"
+                if player_score_key in vs_results:
+                    self.stats.append(key, vs_results[player_score_key], subkey=f"p{p}")
 
     def _setup_stats(self):
         """Initializes the stat tracker with common keys and plot types."""
@@ -347,10 +361,13 @@ class BaseTrainer:
                 stat_keys.append(f"vs_{agent.model_name}_score")
 
         # Initialize keys
+        player_subkeys = [f"p{p}" for p in range(self.config.game.num_players)]
+        test_subkeys = ["avg", "min", "max"] + player_subkeys
+
         for key in stat_keys:
             if key not in self.stats.stats:
                 if "test_score" in key:
-                    self.stats._init_key(key, subkeys=["avg", "min", "max"])
+                    self.stats._init_key(key, subkeys=test_subkeys)
                 else:
                     self.stats._init_key(key)
 

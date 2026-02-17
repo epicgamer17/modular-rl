@@ -396,25 +396,54 @@ class StatTracker:
         min_data = self._to_numpy(data.get("min", []))
         max_data = self._to_numpy(data.get("max", []))
 
+        # Check for player-specific keys (p0, p1, p2, etc.)
+        player_keys = sorted(
+            [k for k in data.keys() if k.startswith("p") and k[1:].isdigit()]
+        )
+        player_data = {k: self._to_numpy(data[k]) for k in player_keys}
+
         if len(avg_data) == 0:
-            return
+            if player_data:
+                # Use mean of players as avg if not present
+                stacked_players = np.stack(list(player_data.values()))
+                avg_data = np.mean(stacked_players, axis=0)
+            else:
+                return
 
         x = np.arange(len(avg_data))
         params = config["params"]
         if "x_scale" in params:
             x = x * params["x_scale"]
 
-        ax.plot(x, avg_data, label=f"{label} (avg)")
+        # Plot player-specific lines first (fainter)
+        for pk, pd in player_data.items():
+            if len(pd) == len(x):
+                ax.plot(x, pd, alpha=0.3, linestyle="--", label=f"{label} ({pk})")
 
-        if len(min_data) == len(avg_data) and len(max_data) == len(avg_data):
+        # Plot main average line
+        ax.plot(x, avg_data, label=f"{label} (avg)", linewidth=2)
+
+        # Handle fill_between
+        if len(min_data) == len(x) and len(max_data) == len(x):
             ax.fill_between(
                 x, min_data, max_data, alpha=0.2, label=f"{label} (min-max)"
             )
+        elif player_data:
+            # If we have player data but no min/max keys, use min/max of players for fill
+            stacked_players = np.stack(
+                [pd for pd in player_data.values() if len(pd) == len(x)]
+            )
+            if stacked_players.size > 0:
+                p_min = np.min(stacked_players, axis=0)
+                p_max = np.max(stacked_players, axis=0)
+                ax.fill_between(
+                    x, p_min, p_max, alpha=0.2, label=f"{label} (P1-P2 fill)"
+                )
 
         ax.set_title(f"{self.model_name} - {label}")
         ax.set_xlabel(params.get("x_label", "Updates"))
         ax.set_ylabel(label)
-        ax.grid()
+        ax.grid(True, alpha=0.3)
         ax.legend()
 
     def _to_numpy(self, data: List[Any], reduce: bool = True) -> np.ndarray:
