@@ -25,9 +25,6 @@ class ValueHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-        return_scalar: bool = True,
     ) -> Tuple[Tensor, Dict[str, Any]]:
         logits, new_state = super().forward(x, state)
-        if return_scalar:
-            return self.strategy.to_expected_value(logits), new_state
         return logits, new_state

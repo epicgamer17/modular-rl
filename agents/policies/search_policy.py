@@ -169,13 +169,12 @@ class SearchPolicy(Policy):
 
         return prepared_state
 
-    def predict_initial_inference(self, states: Any, model: Any = None) -> tuple:
+    def predict_initial_inference(self, states: Any, model: Any = None) -> Any:
         """Runs initial inference through the model."""
         if model is None:
             model = self.model
         state_inputs = self.preprocess(states)
-        values, policies, hidden_states = model.initial_inference(state_inputs)
-        return values, policies, hidden_states
+        return model.initial_inference(state_inputs)
 
     def predict_recurrent_inference(
         self,
@@ -184,42 +183,25 @@ class SearchPolicy(Policy):
         reward_h_states: Any = None,
         reward_c_states: Any = None,
         model: Any = None,
-    ) -> tuple:
+    ) -> Any:
         """Runs recurrent inference through the model."""
         if model is None:
             model = self.model
-        rewards, states, values, policies, to_play, reward_hidden = (
-            model.recurrent_inference(
-                states,
-                actions_or_codes,
-                reward_h_states,
-                reward_c_states,
-            )
-        )
 
-        reward_h_states = reward_hidden[0]
-        reward_c_states = reward_hidden[1]
-
-        return (
-            rewards,
+        return model.recurrent_inference(
             states,
-            values,
-            policies,
-            to_play,
+            actions_or_codes,
             reward_h_states,
             reward_c_states,
         )
 
     def predict_afterstate_recurrent_inference(
         self, hidden_states: Any, actions: Any, model: Any = None
-    ) -> tuple:
+    ) -> Any:
         """Runs afterstate recurrent inference for stochastic MuZero."""
         if model is None:
             model = self.model
-        afterstates, value, chance_probs = model.afterstate_recurrent_inference(
-            hidden_states, actions
-        )
-        return afterstates, value, chance_probs
+        return model.afterstate_recurrent_inference(hidden_states, actions)
 
     def predict(self, state: Any, info: Dict[str, Any] = None, **kwargs) -> tuple:
         """

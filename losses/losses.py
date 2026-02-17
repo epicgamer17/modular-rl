@@ -484,7 +484,8 @@ class ConsistencyLoss(LossModule):
         # We pass model=self.model to ensure it uses the correct network instance
         # We use a detached real_latent for the consistency target
         # Note: We can reuse the `predict_initial_inference` function if it only calls the representation/project models.
-        _, _, real_latents = self.predict_initial_inference(real_obs, model=self.model)
+        initial_out = self.predict_initial_inference(real_obs, model=self.model)
+        real_latents = initial_out.network_state
 
         # may be unecessary but better safe than sorry
         real_latents = real_latents.detach()

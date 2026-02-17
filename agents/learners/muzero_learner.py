@@ -8,30 +8,7 @@ from replay_buffers.buffer_factories import create_muzero_buffer
 from losses.losses import create_muzero_loss_pipeline
 from modules.utils import get_lr_scheduler
 from replay_buffers.utils import update_per_beta
-
-
-class AgentProxy:
-    def __init__(
-        self,
-        device,
-        predict_recurrent_inference_fn,
-        predict_afterstate_recurrent_inference_fn,
-        model,
-    ):
-        self.device = device
-        self.predict_recurrent_inference_fn = predict_recurrent_inference_fn
-        self.predict_afterstate_recurrent_inference_fn = (
-            predict_afterstate_recurrent_inference_fn
-        )
-        self.model = model
-
-    def predict_recurrent_inference(self, *args, **kwargs):
-        return self.predict_recurrent_inference_fn(*args, **kwargs, model=self.model)
-
-    def predict_afterstate_recurrent_inference(self, *args, **kwargs):
-        return self.predict_afterstate_recurrent_inference_fn(
-            *args, **kwargs, model=self.model
-        )
+from modules.world_models.inference_output import UnrollOutput
 
 
 class MuZeroLearner:
@@ -176,9 +153,10 @@ class MuZeroLearner:
         has_valid_obs_mask = ~shifted_dones
 
         inputs = self.preprocess_fn(observations)
-        initial_values, initial_policies, hidden_states = (
-            self.predict_initial_inference_fn(inputs, model=self.model)
-        )
+        initial_out: InferenceOutput = self.predict_initial_inference_fn(inputs)
+        initial_values = initial_out.value
+        initial_policies = initial_out.policy
+        hidden_states = initial_out.network_state
 
         reward_h_states = torch.zeros(
             1,
@@ -197,13 +175,10 @@ class MuZeroLearner:
             1.0 / self.config.unroll_steps
         ] * self.config.unroll_steps
 
-        network_output_sequences = self.model.world_model.unroll_sequence(
-            agent=AgentProxy(
-                self.device,
-                self.predict_recurrent_inference_fn,
-                self.predict_afterstate_recurrent_inference_fn,
-                self.model,
-            ),
+        # AgentProxy is no longer needed as AgentNetwork handles head application.
+
+        # Call AgentNetwork.unroll_sequence (returns UnrollOutput with stacked tensors)
+        network_output: UnrollOutput = self.model.unroll_sequence(
             initial_hidden_state=hidden_states,
             initial_values=initial_values,
             initial_policies=initial_policies,
@@ -215,7 +190,36 @@ class MuZeroLearner:
             preprocess_fn=self.preprocess_fn,
         )
 
-        predictions_tensor = self._stack_predictions(network_output_sequences)
+        # Map UnrollOutput fields to predictions dictionary expected by loss pipeline
+        predictions_tensor = {
+            "values": network_output.values,
+            "policies": network_output.policies,
+            "rewards": network_output.rewards,
+            "latent_states": network_output.latents,
+        }
+
+        if network_output.to_plays is not None:
+            predictions_tensor["to_plays"] = network_output.to_plays
+
+        if network_output.latents_afterstates is not None:
+            predictions_tensor["latent_afterstates"] = (
+                network_output.latents_afterstates
+            )
+
+        if network_output.chance_values is not None:
+            predictions_tensor["chance_values"] = network_output.chance_values
+
+        if network_output.chance_logits is not None:
+            predictions_tensor["latent_code_probabilities"] = (
+                network_output.chance_logits
+            )
+
+        # Stochastic MuZero extra fields (if present in UnrollOutput extras or main fields)
+        if self.config.stochastic and network_output.extras:
+            if "encoder_softmaxes" in network_output.extras:
+                predictions_tensor["encoder_softmaxes"] = torch.stack(
+                    network_output.extras["encoder_softmaxes"], dim=1
+                )
 
         targets_tensor = {
             "values": target_values,
@@ -227,7 +231,10 @@ class MuZeroLearner:
         if self.config.stochastic:
             targets_tensor["chance_values"] = torch.zeros_like(target_values)
             targets_tensor["chance_values"][:, 1:] = target_values[:, :-1]
-            targets_tensor["encoder_onehots"] = predictions_tensor["encoder_onehots"]
+            if network_output.extras and "encoder_onehots" in network_output.extras:
+                targets_tensor["encoder_onehots"] = torch.stack(
+                    network_output.extras["encoder_onehots"], dim=1
+                )
 
         gradient_scales_tensor = torch.tensor(
             gradient_scales, device=self.device
@@ -254,7 +261,7 @@ class MuZeroLearner:
         if stats is not None:
             if self.config.stochastic:
                 self._track_stochastic_stats(
-                    predictions_tensor["encoder_onehots"],
+                    targets_tensor["encoder_onehots"],
                     predictions_tensor["latent_code_probabilities"],
                     stats,
                 )
@@ -351,17 +358,6 @@ class MuZeroLearner:
 
         mean_entropy = entropy.mean().item() if entropy.numel() > 0 else 0.0
         stats.append("chance_entropy", mean_entropy)
-
-    def _stack_predictions(self, network_output_sequences):
-        predictions = {}
-        for key, tensor_list in network_output_sequences.items():
-            if len(tensor_list) == 0:
-                continue
-            stacked = torch.stack(tensor_list)
-            dims = list(range(stacked.ndim))
-            dims[0], dims[1] = dims[1], dims[0]
-            predictions[key] = stacked.permute(*dims)
-        return predictions
 
     def _prepare_stats(self, loss_dict, total_loss):
         def get_val(key):

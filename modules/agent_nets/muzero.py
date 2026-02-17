@@ -1,7 +1,10 @@
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Dict, List, Optional, Any
 
 from configs.agents.muzero import MuZeroConfig
 from torch import nn, Tensor
+import torch
+import torch.nn.functional as F
+
 from modules.action_encoder import ActionEncoder
 from modules.network_block import NetworkBlock
 from modules.backbones.factory import BackboneFactory
@@ -13,62 +16,12 @@ from modules.heads.reward import RewardHead
 from modules.output_strategy_factory import OutputStrategyFactory
 from modules.utils import _normalize_hidden_state, zero_weights_initializer
 from modules.world_models.muzero_world_model import MuzeroWorldModel
+from modules.world_models.inference_output import InferenceOutput, UnrollOutput
 from utils.utils import to_lists
 
 from modules.conv import Conv2dStack
 from modules.dense import DenseStack, build_dense
 from modules.residual import ResidualStack
-import torch
-import torch.nn.functional as F
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-
-class Prediction(nn.Module):
-    def __init__(
-        self,
-        backbone_config,
-        value_config,
-        policy_config,
-        output_size: int,
-        input_shape: Tuple[int],
-        arch_config,
-        game_is_discrete: bool = True,
-    ):
-        super().__init__()
-
-        self.net = BackboneFactory.create(backbone_config, input_shape)
-
-        # Value
-        val_strategy = OutputStrategyFactory.create(value_config.output_strategy)
-        self.value_head = ValueHead(
-            arch_config=arch_config,
-            input_shape=self.net.output_shape,
-            strategy=val_strategy,
-            neck_config=value_config.neck,
-        )
-
-        # Policy (or Chance)
-        pol_strategy = OutputStrategyFactory.create(policy_config.output_strategy)
-        self.policy_head = PolicyHead(
-            arch_config=arch_config,
-            input_shape=self.net.output_shape,
-            num_actions=output_size,
-            neck_config=policy_config.neck,
-            strategy=pol_strategy,
-        )
-
-    def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
-        self.net.initialize(initializer)
-        self.value_head.initialize()
-        self.policy_head.initialize()
-
-    def forward(self, inputs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        S = self.net(inputs)
-        value, _ = self.value_head(S, return_scalar=False)
-        policy, _ = self.policy_head(S)
-        return value, policy
 
 
 class Encoder(nn.Module):
@@ -93,15 +46,13 @@ class Encoder(nn.Module):
 
         # Output head: maps backbone output to num_codes
         backbone_output_shape = self.net.output_shape
-        # Output head: maps backbone output to num_codes
-        backbone_output_shape = self.net.output_shape
         flat_dim = 1
         for d in backbone_output_shape:
             flat_dim *= d
 
         self.fc = nn.Linear(flat_dim, num_codes)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Returns:
             probs: (B, num_codes) - Softmax probabilities
@@ -132,8 +83,6 @@ class Encoder(nn.Module):
 
         # one_hot_st = F.gumbel_softmax(x, tau=1.0, hard=True, dim=-1)
         # probs = F.softmax(x, dim=-1)
-        # TODO: output logits or probs here?
-        probs = x
         return probs, one_hot_st
 
     def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
@@ -141,52 +90,11 @@ class Encoder(nn.Module):
         zero_weights_initializer(self.fc)
 
 
-class OnehotArgmax(torch.autograd.Function):
+class AgentNetwork(nn.Module):
     """
-    Overview:
-        Custom PyTorch function for one-hot argmax. This function transforms the input tensor \
-        into a one-hot tensor where the index with the maximum value in the original tensor is \
-        set to 1 and all other indices are set to 0. It allows gradients to flow to the encoder \
-        during backpropagation.
-
-        For more information, refer to: \
-        https://pytorch.org/tutorials/beginner/examples_autograd/two_layer_net_custom_function.html
+    The Composer: Wires a Physics Engine (WorldModel) to an Agent's Objectives (Heads).
     """
 
-    @staticmethod
-    def forward(ctx, input):
-        """
-        Overview:
-            Forward method for the one-hot argmax function. This method transforms the input \
-            tensor into a one-hot tensor.
-        Arguments:
-            - ctx (:obj:`context`): A context object that can be used to stash information for
-            backward computation.
-            - input (:obj:`torch.Tensor`): Input tensor.
-        Returns:
-            - (:obj:`torch.Tensor`): One-hot tensor.
-        """
-        # Transform the input tensor to a one-hot tensor
-        return torch.zeros_like(input).scatter_(
-            -1, torch.argmax(input, dim=-1, keepdim=True), 1.0
-        )
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        """
-        Overview:
-            Backward method for the one-hot argmax function. This method allows gradients \
-            to flow to the encoder during backpropagation.
-        Arguments:
-            - ctx (:obj:`context`):  A context object that was stashed in the forward pass.
-            - grad_output (:obj:`torch.Tensor`): The gradient of the output tensor.
-        Returns:
-            - (:obj:`torch.Tensor`): The gradient of the input tensor.
-        """
-        return grad_output
-
-
-class Network(nn.Module):
     def __init__(
         self,
         config: MuZeroConfig,
@@ -195,32 +103,51 @@ class Network(nn.Module):
         channel_first: bool = True,
         world_model_cls=MuzeroWorldModel,
     ):
-        super(Network, self).__init__()
+        super(AgentNetwork, self).__init__()
         self.config = config
         self.channel_first = channel_first
+        self.num_actions = num_actions
 
+        # 1. The Physics Engine
         self.world_model = world_model_cls(config, input_shape, num_actions)
 
         hidden_state_shape = self.world_model.representation.output_shape
 
-        self.prediction = Prediction(
-            backbone_config=config.prediction_backbone,
-            value_config=config.value_head,
-            policy_config=config.policy_head,
-            output_size=num_actions,
-            input_shape=hidden_state_shape,
-            arch_config=config.arch,
-            game_is_discrete=config.game.is_discrete,
+        # 2. The Task-Specific Heads
+        # Restore shared prediction backbone
+        self.prediction_backbone = BackboneFactory.create(
+            config.prediction_backbone, hidden_state_shape
         )
+        prediction_feat_shape = self.prediction_backbone.output_shape
+
+        # Value
+        val_strategy = OutputStrategyFactory.create(config.value_head.output_strategy)
+        self.value_head = ValueHead(
+            arch_config=config.arch,
+            input_shape=prediction_feat_shape,
+            strategy=val_strategy,
+            neck_config=config.value_head.neck,
+        )
+
+        # Policy
+        pol_strategy = OutputStrategyFactory.create(config.policy_head.output_strategy)
+        self.policy_head = PolicyHead(
+            arch_config=config.arch,
+            input_shape=prediction_feat_shape,
+            num_actions=num_actions,
+            neck_config=config.policy_head.neck,
+            strategy=pol_strategy,
+        )
+
+        # Stochastic Chance Heads (if applicable)
         if self.config.stochastic:
-            self.afterstate_prediction = Prediction(
-                backbone_config=config.prediction_backbone,
-                value_config=config.value_head,
-                policy_config=config.chance_probability_head,
-                output_size=config.num_chance,
-                input_shape=hidden_state_shape,
+            # Afterstate Value Head (Piggybacks on shared backbone in World Model)
+            shared_backbone_output_shape = self.world_model.shared_backbone.output_shape
+            self.afterstate_value_head = ValueHead(
                 arch_config=config.arch,
-                game_is_discrete=config.game.is_discrete,
+                input_shape=shared_backbone_output_shape,
+                strategy=val_strategy,
+                neck_config=config.value_head.neck,
             )
 
         # --- 4. EFFICIENT ZERO Projector ---
@@ -240,45 +167,226 @@ class Network(nn.Module):
             num_codes=self.config.num_chance,
         )
 
-    def initial_inference(self, obs):
+    def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
+        self.world_model.representation.initialize(initializer)
+        self.world_model.dynamics.initialize(initializer)
+        if hasattr(self.world_model, "afterstate_dynamics"):
+            self.world_model.afterstate_dynamics.initialize(initializer)
+
+        self.prediction_backbone.initialize(initializer)
+        self.value_head.initialize(initializer)
+        self.policy_head.initialize(initializer)
+
+        if self.config.stochastic:
+            self.afterstate_value_head.initialize(initializer)
+            self.encoder.initialize(initializer)
+
+        # Initialize projector?
+
+    @torch.no_grad()
+    def initial_inference(self, obs: Tensor) -> InferenceOutput:
+        """Actor/MCTS API: Translates latent states into expected values."""
+
+        # Ask World Model for physics state
         wm_output = self.world_model.initial_inference(obs)
         hidden_state = wm_output.features
-        value, policy = self.prediction(hidden_state)
-        return value, policy, hidden_state
 
+        # Pass hidden state through shared prediction backbone
+        pred_features = self.prediction_backbone(hidden_state)
+
+        # Ask Agent Heads for opinions
+        raw_value, _ = self.value_head(pred_features)
+        raw_policy, _ = self.policy_head(pred_features)
+
+        # Translate to MCTS-ready math
+        return InferenceOutput(
+            network_state=hidden_state,
+            value=self.value_head.strategy.to_expected_value(raw_value),
+            policy=self.policy_head.strategy.get_distribution(raw_policy),
+            reward=None,  # Initial inference has no reward
+            chance=None,
+            to_play=None,  # Initial inference doesn't usually return to_play, or does it?
+            # Root to_play is usually from environment.
+        )
+
+    @torch.no_grad()
     def recurrent_inference(
         self,
-        hidden_state,
-        action,
-        reward_h_states,
-        reward_c_states,
-    ):
+        hidden_state: Tensor,
+        action: Tensor,
+        reward_h_states: Optional[Tensor],
+        reward_c_states: Optional[Tensor],
+    ) -> InferenceOutput:
+
+        # Ask World Model for next physics state
         wm_output = self.world_model.recurrent_inference(
             hidden_state, action, reward_h_states, reward_c_states
         )
 
-        reward = wm_output.reward
-        next_hidden_state = wm_output.features
-        to_play = wm_output.to_play
-        reward_hidden = wm_output.reward_hidden
-        value, policy = self.prediction(next_hidden_state)
-        return reward, next_hidden_state, value, policy, to_play, reward_hidden
+        next_hidden = wm_output.features
+        raw_reward = wm_output.reward
+        raw_to_play = wm_output.to_play
 
-    def afterstate_recurrent_inference(
-        self,
-        hidden_state,
-        action,
-    ):
+        # Pass next hidden state through shared prediction backbone
+        pred_features = self.prediction_backbone(next_hidden)
+
+        # Ask Agent Heads
+        raw_value, _ = self.value_head(pred_features)
+        raw_policy, _ = self.policy_head(pred_features)
+
+        # Translate
+        # Note: reward and to_play come from WorldModel (Dynamics), so we need their strategies too.
+        # But strategies are attached to heads inside WorldModel?
+        # Yes, WorldModel owns RewardHead. We access it via wm.dynamics.reward_head.strategy?
+        # Or we duplicate the strategy logic here?
+        # Ideally WorldModel heads allow access to strategy.
+
+        expected_value = self.value_head.strategy.to_expected_value(raw_value)
+        expected_reward = (
+            self.world_model.dynamics.reward_head.strategy.to_expected_value(raw_reward)
+        )
+
+        # To Play
+        # to_play is usually categorical probs or logits.
+        to_play_dist = self.world_model.dynamics.to_play_head.strategy.get_distribution(
+            raw_to_play
+        )
+        # MCTS expects to_play as int usually? Or distribution?
+        # The new InferenceOutput has to_play as Optional[int | Tensor].
+        # Let's return the most likely player for now or the distribution?
+        # ModularSearch likely wants the integer to flip nodes.
+        # But let's check modular_search.py usage. It uses argmax.
+
+        return InferenceOutput(
+            network_state=next_hidden,
+            value=expected_value,
+            policy=self.policy_head.strategy.get_distribution(raw_policy),
+            reward=expected_reward,
+            to_play=raw_to_play,
+            extras={"reward_hidden": wm_output.reward_hidden},
+        )
+
+    @torch.no_grad()
+    def afterstate_recurrent_inference(self, hidden_state, action) -> InferenceOutput:
+        # Ask World Model for afterstate and shared features
         wm_output = self.world_model.afterstate_recurrent_inference(
             hidden_state, action
         )
+        shared_features = wm_output.features
+        chance_logits = wm_output.chance
 
-        afterstate = wm_output.afterstate_features
-        value, sigma = self.afterstate_prediction(afterstate)
-        # Prediction.forward now returns (value, policy/sigma) tensors, state is dropped inside Prediction.forward
-        # So this should be correct if Prediction.forward unpacks properly.
-        # Wait, self.afterstate_prediction IS a Prediction instance.
-        return afterstate, value, sigma
+        # Piggyback on shared features for value prediction
+        raw_value, _ = self.afterstate_value_head(shared_features)
+
+        return InferenceOutput(
+            network_state=wm_output.afterstate_features,
+            value=self.afterstate_value_head.strategy.to_expected_value(raw_value),
+            policy=self.world_model.sigma_head.strategy.get_distribution(chance_logits),
+            chance=self.world_model.sigma_head.strategy.get_distribution(chance_logits),
+            reward=None,
+        )
+
+    def unroll_sequence(
+        self,
+        initial_hidden_state: Tensor,
+        initial_values: Tensor,  # Unused?
+        initial_policies: Tensor,  # Unused?
+        actions: Tensor,
+        target_observations: Tensor,
+        target_chance_codes: Tensor,
+        reward_h_states: Tensor,
+        reward_c_states: Tensor,
+        preprocess_fn: Callable[[Tensor], Tensor],
+    ) -> UnrollOutput:
+        """Learner API: Returns pure logits for loss computation."""
+
+        # 1. Unroll Physics
+        physics_output = self.world_model.unroll_sequence(
+            initial_hidden_state=initial_hidden_state,
+            actions=actions,
+            target_observations=target_observations,
+            target_chance_codes=target_chance_codes,
+            reward_h_states=reward_h_states,
+            reward_c_states=reward_c_states,
+            preprocess_fn=preprocess_fn,
+            agent_network=self,  # Pass self for encoder/afterstate access
+        )
+
+        latent_states = physics_output["latent_states"]
+        # List of Tensors. Stack them.
+        # latent_states is [hidden_0, hidden_1, ... hidden_K]
+        stacked_latents = torch.stack(latent_states, dim=1)  # (B, K+1, ...)
+
+        # 2. Pass sequence through Agent Heads
+        # We can crush time dimension to batch dimension for efficiency
+        B, T = stacked_latents.shape[:2]
+        flat_latents = stacked_latents.reshape(B * T, *stacked_latents.shape[2:])
+
+        # Shared prediction backbone
+        pred_features = self.prediction_backbone(flat_latents)
+
+        raw_values, _ = self.value_head(pred_features)
+        raw_policies, _ = self.policy_head(pred_features)
+
+        # Uncrush
+        raw_values = raw_values.view(B, T, -1)
+        raw_policies = raw_policies.view(B, T, -1)
+
+        # Rewards and ToPlays are already lists of tensors from unroll_physics
+        stacked_rewards = (
+            torch.stack(physics_output["rewards"], dim=1)
+            if len(physics_output["rewards"]) > 0
+            else torch.empty(0)
+        )
+        stacked_toplays = (
+            torch.stack(physics_output["to_plays"], dim=1)
+            if len(physics_output["to_plays"]) > 0
+            else torch.empty(0)
+        )
+
+        # Handle Stochastic Extra Outputs
+        chance_values = None
+        chance_logits = None
+        latents_afterstates = None
+
+        if self.config.stochastic:
+            # 1. Stack Afterstates
+            stacked_afterstates = torch.stack(
+                physics_output["latent_afterstates"], dim=1
+            )
+            latents_afterstates = stacked_afterstates
+
+            # 2. Extract Shared Features (Backbone output stored in chance_out dictionary for convenience or re-computed?)
+            # Currently physics_output doesn't return stacked shared features.
+            # We can re-run the backbone or update unroll_physics to return them.
+            # Re-running is safer for now if we didn't store them.
+
+            B_as, T_as = stacked_afterstates.shape[:2]
+            flat_afterstates = stacked_afterstates.view(
+                B_as * T_as, *stacked_afterstates.shape[2:]
+            )
+
+            shared_features = self.world_model.shared_backbone(flat_afterstates)
+
+            # 3. Predict Afterstate Values (Agent Objective)
+            raw_chance_values, _ = self.afterstate_value_head(shared_features)
+            chance_values = raw_chance_values.view(B_as, T_as, -1)
+
+            # 4. Predict Chance Logits (Environment Rules - piggyback)
+            raw_chance_logits, _ = self.world_model.sigma_head(shared_features)
+            chance_logits = raw_chance_logits.view(B_as, T_as, -1)
+
+        return UnrollOutput(
+            values=raw_values,
+            policies=raw_policies,
+            rewards=stacked_rewards,
+            to_plays=stacked_toplays,
+            latents=stacked_latents,
+            latents_afterstates=latents_afterstates,
+            chance_logits=chance_logits,
+            chance_values=chance_values,
+            extras=physics_output,  # Still pass physics output for encoder stats/onehots
+        )
 
     def project(self, hidden_state: Tensor, grad=True) -> Tensor:
         """
@@ -295,3 +403,7 @@ class Network(nn.Module):
             return proj
         else:
             return proj.detach()
+
+
+# Compat alias
+Network = AgentNetwork

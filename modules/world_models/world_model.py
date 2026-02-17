@@ -24,6 +24,7 @@ class WorldModelOutput:
     reward_hidden: torch.Tensor = None
 
     afterstate_features: torch.Tensor = None
+    chance: torch.Tensor = None
 
 
 class WorldModelInterface(ABC):

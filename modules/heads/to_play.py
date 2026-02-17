@@ -28,9 +28,6 @@ class ToPlayHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-        return_probs: bool = True,
     ) -> Tuple[Tensor, Dict[str, Any]]:
         logits, new_state = super().forward(x, state)
-        if return_probs:
-            return self.strategy.get_distribution(logits).probs, new_state
         return logits, new_state

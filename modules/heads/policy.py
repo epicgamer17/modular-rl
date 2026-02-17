@@ -48,13 +48,8 @@ class PolicyHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-        return_probs: bool = False,  # Deprecated argument, kept for compatibility if needed but get_distribution preferred
     ) -> Tuple[Tensor, Dict[str, Any]]:
         logits, new_state = super().forward(x, state)
-        if return_probs:
-            # This might break given different strategies, but for categorical it works.
-            # Ideally we remove this usage.
-            pass
         return logits, new_state
 
     def get_distribution(

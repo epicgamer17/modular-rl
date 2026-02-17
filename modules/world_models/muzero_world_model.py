@@ -176,15 +176,13 @@ class Dynamics(BaseDynamics):
         # We pass the full state dict, knowing RewardHead will look for "reward_hidden"
         # and return a new state dict with "reward_hidden" if updated.
         state = {"reward_hidden": reward_hidden}
-        reward, new_state = self.reward_head(
-            next_hidden_state, state=state, return_scalar=False
-        )
+        reward, new_state = self.reward_head(next_hidden_state, state=state)
 
         # Extract new reward hidden state or use the old one if not updated
         new_reward_hidden = new_state.get("reward_hidden", reward_hidden)
 
         # To Play
-        to_play, _ = self.to_play_head(next_hidden_state, return_probs=False)
+        to_play, _ = self.to_play_head(next_hidden_state)
         return reward, next_hidden_state, to_play, new_reward_hidden
 
 
@@ -230,13 +228,27 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 action_embedding_dim=self.config.action_embedding_dim,
             )
 
-        if self.config.stochastic:
+            # Stochastic Dynamics(Afterstate, Code) -> Next State
             self.dynamics = Dynamics(
                 self.config,
                 self.representation.output_shape,
                 num_actions=self.num_chance,
                 action_embedding_dim=self.config.action_embedding_dim,
             )
+
+            # Shared Backbone for Afterstate Features (Sigma and Value Heads)
+            self.shared_backbone = BackboneFactory.create(
+                self.config.prediction_backbone, self.representation.output_shape
+            )
+
+            # Sigma Head (Owned by WorldModel - fundamental environment rules)
+            self.sigma_head = HeadFactory.create(
+                self.config.chance_probability_head,
+                self.config.arch,
+                input_shape=self.shared_backbone.output_shape,
+                num_chance_codes=self.num_chance,
+            )
+
         else:
             self.dynamics = Dynamics(
                 self.config,
@@ -250,7 +262,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             self.dynamics.output_shape == self.representation.output_shape
         ), f"{self.dynamics.output_shape} = {self.representation.output_shape}"
 
-    def initial_inference(self, observation: Tensor) -> Tensor:
+    def initial_inference(self, observation: Tensor) -> WorldModelOutput:
         hidden_state = self.representation(observation)
         return WorldModelOutput(features=hidden_state)
 
@@ -260,7 +272,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         action: Tensor,
         reward_h_states: Optional[Tensor],
         reward_c_states: Optional[Tensor],
-    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+    ) -> WorldModelOutput:
         if not self.config.stochastic:
             action = action.view(-1).to(hidden_state.device)
             # one-hot the action -> (B, num_actions)
@@ -269,8 +281,6 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 .float()
                 .to(hidden_state.device)
             )
-        # print("hidden_state", hidden_state.shape)
-        # print("action", action.shape)
 
         reward, next_hidden_state, to_play, reward_hidden = self.dynamics(
             hidden_state, action, (reward_h_states, reward_c_states)
@@ -287,8 +297,8 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         self,
         hidden_state,
         action,
-    ):
-        # The AfterstateDynamics class handles (State, Action) -> Fusion -> Afterstate internally.
+    ) -> WorldModelOutput:
+        # 1. Transition to Afterstate
         action = action.view(-1).to(hidden_state.device)
         # one-hot the action -> (B, num_actions)
         action = (
@@ -297,32 +307,45 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             .to(hidden_state.device)
         )
 
-        afterstate = self.afterstate_dynamics(hidden_state, action)
-        return WorldModelOutput(afterstate_features=afterstate)
+        afterstate_latent = self.afterstate_dynamics(hidden_state, action)
+
+        # 2. Extract Shared Features (Backbone)
+        shared_features = self.shared_backbone(afterstate_latent)
+
+        # 3. Predict Chance Probabilities (Logits)
+        chance_logits, _ = self.sigma_head(shared_features)
+
+        return WorldModelOutput(
+            afterstate_features=afterstate_latent,  # Raw dynamics output
+            features=shared_features,  # Shared processed features for Agent
+            chance=chance_logits,  # Environment chance rules
+        )
 
     def unroll_sequence(
         self,
-        agent,
         initial_hidden_state: Tensor,
-        initial_values: Tensor,
-        initial_policies: Tensor,
         actions: Tensor,
         target_observations: Tensor,
         target_chance_codes: Tensor,
         reward_h_states: Tensor,
         reward_c_states: Tensor,
         preprocess_fn: Callable[[Tensor], Tensor],
+        agent_network=None,  # Optional: Only needed for Stochastic MuZero (Encoder/Afterstate)
     ) -> Dict[str, List[Tensor]]:
         """
-        Performs the unrolling loop (Step 4 of learn).
+        Unrolls the physics engine (Representation -> Dynamics -> Reward).
+        Does NOT compute Policy or Value.
+        Returns a dictionary containing sequences of latent states, rewards, etc.
         """
         # --- 3. Initialize Storage Lists ---
         hidden_states = initial_hidden_state
         latent_states = [hidden_states]  # length will end up being unroll_steps + 1
+
+        # Stochastic MuZero specific storage
         if self.config.stochastic:
             latent_afterstates = [
                 torch.zeros_like(hidden_states).to(hidden_states.device)
-            ]  # Placeholder for initial afterstate
+            ]
             latent_code_probabilities = [
                 torch.zeros(
                     (self.config.minibatch_size, self.config.num_chance),
@@ -341,15 +364,11 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                     device=initial_hidden_state.device,
                 )
             ]
-            chance_values = [
-                torch.zeros_like(initial_values).to(initial_hidden_state.device)
-            ]
         else:
             latent_afterstates = []
             latent_code_probabilities = []
             encoder_softmaxes = []
             encoder_onehots = []
-            chance_values = []
 
         if self.config.support_range is not None:
             reward_shape = (
@@ -359,11 +378,10 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         else:
             reward_shape = (self.config.minibatch_size, 1)
 
-        values = [initial_values]
         rewards = [
             torch.zeros(reward_shape, device=initial_hidden_state.device)
         ]  # R_t = 0 (Placeholder)
-        policies = [initial_policies]
+
         to_plays = [
             torch.zeros(
                 (self.config.minibatch_size, self.config.game.num_players),
@@ -374,83 +392,78 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         # --- 4. Unroll Loop ---
         for k in range(self.config.unroll_steps):
             actions_k = actions[:, k]
-            target_observations_k = target_observations[:, k]
-            target_observations_k_plus_1 = target_observations[:, k + 1]
-            real_obs_k = preprocess_fn(target_observations_k)
-            real_obs_k_plus_1 = preprocess_fn(target_observations_k_plus_1)
-            encoder_input = torch.concat([real_obs_k, real_obs_k_plus_1], dim=1)
 
             if self.config.stochastic:
+                assert (
+                    agent_network is not None
+                ), "Stochastic MuZero requires agent_network for unrolling (Encoder/Afterstate Value)"
+
+                target_observations_k = target_observations[:, k]
+                target_observations_k_plus_1 = target_observations[:, k + 1]
+                real_obs_k = preprocess_fn(target_observations_k)
+                real_obs_k_plus_1 = preprocess_fn(target_observations_k_plus_1)
+                encoder_input = torch.concat([real_obs_k, real_obs_k_plus_1], dim=1)
+
                 # 1. Afterstate Inference
-                afterstates, q_k, code_priors_k = (
-                    agent.predict_afterstate_recurrent_inference(
-                        hidden_states, actions_k
-                    )
+                afterstate_out = self.afterstate_recurrent_inference(
+                    hidden_states, actions_k
                 )
+                afterstates = afterstate_out.afterstate_features
+                shared_features = afterstate_out.features
+                chance_logits_k = afterstate_out.chance
 
                 # 3. Encoder Inference
-                encoder_softmax_k, encoder_onehot_k = agent.model.encoder(encoder_input)
+                encoder_softmax_k, encoder_onehot_k = agent_network.encoder(
+                    encoder_input
+                )
 
                 if self.config.use_true_chance_codes:
                     codes_k = F.one_hot(
                         target_chance_codes[:, k + 1].squeeze(-1).long(),
                         self.config.num_chance,
                     )
-                    assert (
-                        codes_k.shape == encoder_onehot_k.shape
-                    ), f"{codes_k.shape} == {encoder_onehot_k.shape}"
                     encoder_onehot_k = codes_k.float()
 
                 latent_afterstates.append(afterstates)
-                latent_code_probabilities.append(code_priors_k)
-                chance_values.append(q_k)
+                latent_code_probabilities.append(chance_logits_k)  # Logits
 
-                # σ^k is trained towards the one hot chance code c_t+k+1
+                # Store encoder outputs
                 encoder_onehots.append(encoder_onehot_k)
                 encoder_softmaxes.append(encoder_softmax_k)
 
                 # 4. Dynamics Inference (using chance code as action)
-                # Note: light zero argmaxes here (effectively stopping the gradient
-                # from flowing into the encoder during the recurrent inference)
-                (
-                    rewards_k,
-                    hidden_states,
-                    values_k,
-                    policies_k,
-                    to_plays_k,
-                    reward_h_states,
-                    reward_c_states,
-                ) = agent.predict_recurrent_inference(
-                    afterstates,
-                    encoder_onehot_k,  # TODO: lightzero detaches here
-                    reward_h_states,
-                    reward_c_states,
+                reward, next_hidden_state, to_play, reward_hidden = self.dynamics(
+                    afterstates, encoder_onehot_k, (reward_h_states, reward_c_states)
                 )
+
+                rewards_k = reward
+                hidden_states = next_hidden_state
+                to_plays_k = to_play
+
+                # Update LSTM states
+                reward_h_states = reward_hidden[0]
+                reward_c_states = reward_hidden[1]
+
             else:
-                (
-                    rewards_k,
-                    hidden_states,
-                    values_k,
-                    policies_k,
-                    to_plays_k,
-                    reward_h_states,
-                    reward_c_states,
-                ) = agent.predict_recurrent_inference(
+                # Standard MuZero
+                wm_output = self.recurrent_inference(
                     hidden_states,
                     actions_k,
                     reward_h_states,
                     reward_c_states,
                 )
+                rewards_k = wm_output.reward
+                hidden_states = wm_output.features
+                to_plays_k = wm_output.to_play
+
+                reward_h_states = wm_output.reward_hidden[0]
+                reward_c_states = wm_output.reward_hidden[1]
 
             latent_states.append(hidden_states)
-            # Store the predicted states and outputs
-            values.append(values_k)
             rewards.append(rewards_k)
-            policies.append(policies_k)
             to_plays.append(to_plays_k)
 
             # Scale the gradient of the hidden state (applies to the whole batch)
-            # Append the predicted latent (ŝ_{t+k+1}) BEFORE scaling for the next step
             hidden_states = scale_gradient(hidden_states, 0.5)
 
             # reset hidden states
@@ -463,21 +476,19 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 )
 
         return {
-            "values": values,
             "rewards": rewards,
-            "policies": policies,
             "to_plays": to_plays,
             "latent_states": latent_states,
             "latent_afterstates": latent_afterstates,
-            "latent_code_probabilities": latent_code_probabilities,
+            # "latent_code_probabilities": latent_code_probabilities, # These are agent outputs, calculated by Composer?
             "encoder_softmaxes": encoder_softmaxes,
             "encoder_onehots": encoder_onehots,
-            "chance_values": chance_values,
+            # "chance_values": chance_values, # Agent output
         }
 
     def get_networks(self) -> Dict[str, nn.Module]:
         return {
             "representation_network": self.representation,
             "dynamics_network": self.dynamics,
-            "afterstate_dynamics_network": self.afterstate_dynamics,
+            "afterstate_dynamics_network": getattr(self, "afterstate_dynamics", None),
         }

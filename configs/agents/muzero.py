@@ -50,7 +50,9 @@ class MuZeroConfig(
             "use_true_chance_codes", False
         )
         self.num_chance: int = self.parse_field("num_chance", 32)
-        self.sigma_loss = self.parse_field("sigma_loss", CategoricalCrossentropyLoss())
+        self.sigma_loss = self.parse_field(
+            "sigma_loss", CategoricalCrossentropyLoss(from_logits=True)
+        )
         self.vqvae_commitment_cost_factor: float = self.parse_field(
             "vqvae_commitment_cost_factor", 1.0
         )
