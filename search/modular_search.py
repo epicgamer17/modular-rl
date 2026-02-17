@@ -98,16 +98,18 @@ class SearchAlgorithm:
         # But separate reward head has its own hidden state.
         # For initial inference, we start fresh.
         # We can extract them from extras if provided, else zeros.
+        # Initialize reward hidden states (empty for root)
+        # However, if using ValuePrefix, we might need them initialized.
+        # But separate reward head has its own hidden state.
+        # For initial inference, we start fresh.
+        # We can extract them from extras if provided, else zeros.
         if outputs.extras and "reward_hidden" in outputs.extras:
             reward_hidden = outputs.extras["reward_hidden"]
-            reward_h_state = reward_hidden[0]
-            reward_c_state = reward_hidden[1]
         else:
-            reward_h_state = torch.zeros(1, 1, self.config.lstm_hidden_size).to(
-                self.device
-            )
-            reward_c_state = torch.zeros(1, 1, self.config.lstm_hidden_size).to(
-                self.device
+            # TODO: is there not a set initial or something in the reward head maybe?
+            reward_hidden = (
+                torch.zeros(1, 1, self.config.lstm_hidden_size).to(self.device),
+                torch.zeros(1, 1, self.config.lstm_hidden_size).to(self.device),
             )
 
         # 2. Value Processing
@@ -137,8 +139,7 @@ class SearchAlgorithm:
             hidden_state=hidden_state,
             reward=0.0,
             value=v_pi_scalar,
-            reward_h_state=reward_h_state,
-            reward_c_state=reward_c_state,
+            reward_hidden=reward_hidden,
             is_reset=True,
         )
 
@@ -324,12 +325,13 @@ class SearchAlgorithm:
         if isinstance(node, DecisionNode):
             if isinstance(parent, DecisionNode):
                 outputs: InferenceOutput = inference_fns["recurrent"](
-                    parent.hidden_state,
+                    {
+                        "dynamics": parent.hidden_state,
+                        "reward_hidden": parent.reward_hidden,
+                    },
                     torch.as_tensor(
                         [action_or_code], device=parent.hidden_state.device
                     ),
-                    parent.reward_h_state,
-                    parent.reward_c_state,
                     model=inference_model,
                 )
 
@@ -344,8 +346,6 @@ class SearchAlgorithm:
 
                 to_play = outputs.to_play
                 reward_hidden = outputs.extras["reward_hidden"]
-                reward_h_state = reward_hidden[0]
-                reward_c_state = reward_hidden[1]
 
                 if isinstance(reward, torch.Tensor):
                     reward = reward.item()
@@ -376,8 +376,7 @@ class SearchAlgorithm:
                     hidden_state=hidden_state,
                     reward=reward,
                     value=value,
-                    reward_h_state=reward_h_state,
-                    reward_c_state=reward_c_state,
+                    reward_hidden=reward_hidden,
                     is_reset=is_reset,
                 )
             elif isinstance(parent, ChanceNode):
@@ -388,10 +387,11 @@ class SearchAlgorithm:
                 one_hot_code = F.one_hot(action_t, num_classes=num_codes)
 
                 outputs: InferenceOutput = inference_fns["recurrent"](
-                    parent.afterstate,
+                    {
+                        "dynamics": parent.afterstate,
+                        "reward_hidden": parent.reward_hidden,
+                    },
                     one_hot_code.unsqueeze(0).float(),
-                    parent.reward_h_state,
-                    parent.reward_c_state,
                     model=inference_model,
                 )
 
@@ -408,8 +408,6 @@ class SearchAlgorithm:
 
                 to_play = outputs.to_play
                 reward_hidden = outputs.extras["reward_hidden"]
-                reward_h_state = reward_hidden[0]
-                reward_c_state = reward_hidden[1]
 
                 if isinstance(reward, torch.Tensor):
                     reward = reward.item()
@@ -422,8 +420,13 @@ class SearchAlgorithm:
 
                 is_reset = horizon_index == 0
                 if self.config.value_prefix and is_reset:
-                    reward_h_state = torch.zeros_like(reward_h_state).to(self.device)
-                    reward_c_state = torch.zeros_like(reward_c_state).to(self.device)
+                    if isinstance(reward_hidden, tuple):
+                        reward_hidden = (
+                            torch.zeros_like(reward_hidden[0]).to(self.device),
+                            torch.zeros_like(reward_hidden[1]).to(self.device),
+                        )
+                    elif isinstance(reward_hidden, torch.Tensor):
+                        reward_hidden = torch.zeros_like(reward_hidden)
 
                 actions_to_expand = self.internal_searchset.create_initial_searchset(
                     policy[0],
@@ -440,8 +443,7 @@ class SearchAlgorithm:
                     hidden_state=hidden_state,
                     reward=reward,
                     value=value,
-                    reward_h_state=reward_h_state,
-                    reward_c_state=reward_c_state,
+                    reward_hidden=reward_hidden,
                     is_reset=is_reset,
                 )
         elif isinstance(node, ChanceNode):
@@ -477,8 +479,7 @@ class SearchAlgorithm:
                 afterstate=afterstate,
                 network_value=value,
                 code_probs=code_probs[0],
-                reward_h_state=parent.reward_h_state,
-                reward_c_state=parent.reward_c_state,
+                reward_hidden=parent.reward_hidden,
             )
 
         self.backpropagator.backpropagate(
@@ -748,8 +749,7 @@ class SearchAlgorithm:
                     {
                         "state": state,
                         "action": action,
-                        "rh": parent.reward_h_state,
-                        "rc": parent.reward_c_state,
+                        "reward_hidden": parent.reward_hidden,
                         "idx": i,
                     }
                 )
@@ -786,11 +786,46 @@ class SearchAlgorithm:
 
             actions = torch.cat(act_list, dim=0)
 
-            rhs = torch.cat([x["rh"] for x in recurrent_inputs], dim=0)
-            rcs = torch.cat([x["rc"] for x in recurrent_inputs], dim=0)
+            # Pack batch of reward hidden states
+            # Assuming list of tuples or list of tensors
+            # If all are tuples
+            first_rh = recurrent_inputs[0]["reward_hidden"]
+            if isinstance(first_rh, tuple):
+                # Stack each component
+                # rh[0] shape: (1, 1, H) -> need (B, 1, H) if passed to LSTM?
+                # Actually LSTM usually takes (1, B, H).
+                # But here we are stacking from disparate nodes.
+                # WorldModel.recurrent_inference expects batched states.
+                # If we stack (B, 1, 1, H) -> (B, 1, H)??
+                # LSTM state is (num_layers, batch, hidden_size).
+                # If we have B independent states, we need to stack them into (num_layers, B, hidden_size).
+
+                # Let's assume standard LSTM tuple: (h, c) where h is (L, 1, H) for single sample
+                rhs_list = [x["reward_hidden"][0] for x in recurrent_inputs]
+                rcs_list = [x["reward_hidden"][1] for x in recurrent_inputs]
+
+                # Stack along batch dim (dim 1)
+                rhs = torch.cat(rhs_list, dim=1)
+                rcs = torch.cat(rcs_list, dim=1)
+                batched_reward_hidden = (rhs, rcs)
+            else:
+                # Assume single tensor, stack along batch dim 0?
+                # If it's (1, H), stack -> (B, H)
+                # If it's (L, 1, H), stack -> (L, B, H)
+                rh_list = [x["reward_hidden"] for x in recurrent_inputs]
+                # If dim 1 is batch, use cat dim 1
+                if rh_list[0].dim() == 3:  # (L, B, H)
+                    batched_reward_hidden = torch.cat(rh_list, dim=1)
+                else:
+                    batched_reward_hidden = torch.stack(rh_list, dim=0)
 
             outputs: InferenceOutput = inference_fns["recurrent"](
-                states, actions, rhs, rcs, model=inference_model
+                {
+                    "dynamics": states,
+                    "reward_hidden": batched_reward_hidden,
+                },
+                actions,
+                model=inference_model,
             )
 
             rewards = outputs.reward

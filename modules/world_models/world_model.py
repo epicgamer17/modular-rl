@@ -44,13 +44,13 @@ class WorldModelInterface(ABC):
 
     @abstractmethod
     def recurrent_inference(
-        self, hidden_state: Tensor, action: Tensor
+        self, hidden_state: Tensor, action: Tensor, recurrent_state: Any = None
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         """
         Calculates the next hidden state, immediate reward
         from a hidden state and an action.
 
-        Returns: (next_hidden_state, reward)
+        Returns: (next_hidden_state, reward, to_play, next_recurrent_state)
         """
         pass
 

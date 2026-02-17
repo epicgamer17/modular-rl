@@ -130,15 +130,17 @@ class AgentNetwork(nn.Module):
     @torch.no_grad()
     def recurrent_inference(
         self,
-        hidden_state: Tensor,
+        network_state: Dict[str, Tensor],
         action: Tensor,
-        reward_h_states: Optional[Tensor],
-        reward_c_states: Optional[Tensor],
     ) -> InferenceOutput:
+
+        # 1. Unpack opaque state
+        hidden_state = network_state["dynamics"]
+        reward_hidden = network_state.get("reward_hidden")
 
         # Ask World Model for next physics state
         wm_output = self.world_model.recurrent_inference(
-            hidden_state, action, reward_h_states, reward_c_states
+            hidden_state, action, reward_hidden
         )
 
         next_hidden = wm_output.features
@@ -176,7 +178,15 @@ class AgentNetwork(nn.Module):
         # But let's check modular_search.py usage. It uses argmax.
 
         return InferenceOutput(
-            network_state=next_hidden,
+            network_state=next_hidden,  # This might need to be wrapped if we want symmetry? But caller will wrap it or MCTS handles it?
+            # MCTS expects "network_state" to be the hidden_state usually, but wait.
+            # If I pass `network_state={"dynamics": ...}` in, I should probably return a similar structure/contract?
+            # The previous implementation returned `network_state=next_hidden` and `extras={"reward_hidden": ...}`.
+            # If I want to be opaque, `network_state` in InferenceOutput should probably act as the unique state descriptor.
+            # usage in MCTS: `hidden_state = outputs.network_state`.
+            # And `reward_hidden = outputs.extras["reward_hidden"]`.
+            # If I change MCTS to use `outputs.network_state["dynamics"]`, that would be cleaner divergence.
+            # But let's look at `initial_inference`.
             value=expected_value,
             policy=self.policy_head.strategy.get_distribution(raw_policy),
             reward=expected_reward,

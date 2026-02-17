@@ -178,10 +178,8 @@ class SearchPolicy(Policy):
 
     def predict_recurrent_inference(
         self,
-        states: Any,
+        network_state: Dict[str, Any],
         actions_or_codes: Any,
-        reward_h_states: Any = None,
-        reward_c_states: Any = None,
         model: Any = None,
     ) -> Any:
         """Runs recurrent inference through the model."""
@@ -189,10 +187,8 @@ class SearchPolicy(Policy):
             model = self.model
 
         return model.recurrent_inference(
-            states,
+            network_state,
             actions_or_codes,
-            reward_h_states,
-            reward_c_states,
         )
 
     def predict_afterstate_recurrent_inference(

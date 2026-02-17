@@ -1,4 +1,4 @@
-from typing import Callable, List, Optional, Tuple, Dict
+from typing import Callable, List, Optional, Tuple, Dict, Any
 
 from torch import Tensor
 import torch
@@ -300,8 +300,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         self,
         hidden_state: Tensor,
         action: Tensor,
-        reward_h_states: Optional[Tensor],
-        reward_c_states: Optional[Tensor],
+        recurrent_state: Any = None,
     ) -> WorldModelOutput:
         if not self.config.stochastic:
             action = action.view(-1).to(hidden_state.device)
@@ -312,15 +311,15 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 .to(hidden_state.device)
             )
 
-        reward, next_hidden_state, to_play, reward_hidden = self.dynamics(
-            hidden_state, action, (reward_h_states, reward_c_states)
+        reward, next_hidden_state, to_play, next_recurrent_state = self.dynamics(
+            hidden_state, action, recurrent_state
         )
 
         return WorldModelOutput(
             features=next_hidden_state,
             reward=reward,
             to_play=to_play,
-            reward_hidden=reward_hidden,
+            reward_hidden=next_recurrent_state,
         )
 
     def afterstate_recurrent_inference(
@@ -472,8 +471,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 wm_output = self.recurrent_inference(
                     hidden_states,
                     actions_k,
-                    reward_h_states,
-                    reward_c_states,
+                    (reward_h_states, reward_c_states),
                 )
                 rewards_k = wm_output.reward
                 hidden_states = wm_output.features

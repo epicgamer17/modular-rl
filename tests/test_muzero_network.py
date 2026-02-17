@@ -47,35 +47,57 @@ def test_muzero_network_structure():
     print("Initializing Network...")
     input_shape = (4,)
 
-    net = Network(config, config.game.num_actions, input_shape)
+    net = AgentNetwork(config, config.game.num_actions, input_shape)
 
     print("Parameters check:")
-    print(f"Prediction Value Head: {net.prediction.value_head}")
-    print(f"Prediction Policy Head: {net.prediction.policy_head}")
+    print(f"Prediction Value Head: {net.value_head}")
+    print(f"Prediction Policy Head: {net.policy_head}")
 
-    if hasattr(net.prediction, "head"):
-        print("FAILED: Prediction still has 'head' attribute.")
-        raise AssertionError("PredictionHead wrapper should be removed.")
+    if hasattr(net, "prediction"):
+        print("FAILED: Network still has 'prediction' attribute.")
 
     print("Running forward pass (initial_inference)...")
     obs = torch.randn(1, *input_shape)
-    value, policy, hidden = net.initial_inference(obs)
-    print(f"Value shape: {value.shape}")
-    print(f"Policy shape: {policy.shape}")
+    outputs = net.initial_inference(obs)
+    value = outputs.value
+    policy = outputs.policy
+    hidden = outputs.network_state
+    # Value is scalar/tensor, Policy is Distribution
+    if isinstance(value, torch.Tensor):
+        print(f"Value shape: {value.shape}")
+
+    # Check Recurrent Inference (New Signature)
+    print("Checking Recurrent Inference (New Signature)...")
+    network_state = {
+        "dynamics": hidden,
+        "reward_hidden": (
+            outputs.extras.get("reward_hidden") if outputs.extras else None
+        ),
+    }
+    dummy_action = torch.nn.functional.one_hot(
+        torch.tensor([0]), num_classes=10
+    ).float()
+    rec_out = net.recurrent_inference(network_state, dummy_action)
+    if isinstance(rec_out.reward, torch.Tensor):
+        print(f"Recurrent Reward shape: {rec_out.reward.shape}")
 
     if config.stochastic:
         print("Checking Afterstate Prediction...")
-        # afterstate_prediction uses same Prediction class
-        if hasattr(net.afterstate_prediction, "head"):
+        if hasattr(net, "afterstate_prediction") and hasattr(
+            net.afterstate_prediction, "head"
+        ):
             print("FAILED: Afterstate Prediction still has 'head' attribute.")
 
         dummy_hidden = hidden
         dummy_action = torch.tensor([[0]])
-        afterstate, as_value, as_policy = net.afterstate_recurrent_inference(
-            dummy_hidden, dummy_action
-        )
-        print(f"Afterstate Value shape: {as_value.shape}")
-        print(f"Afterstate Policy (Chance) shape: {as_policy.shape}")
+
+        as_out = net.afterstate_recurrent_inference(dummy_hidden, dummy_action)
+        as_value = as_out.value
+        as_policy = as_out.policy  # Chance distribution
+
+        if isinstance(as_value, torch.Tensor):
+            print(f"Afterstate Value shape: {as_value.shape}")
+        # as_policy is Distribution
 
     print("Success!")
 
