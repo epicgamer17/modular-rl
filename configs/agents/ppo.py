@@ -1,12 +1,13 @@
 from typing import Type
 from .base import AgentConfig
-from agent_configs.base_config import DistributionalConfig, NoisyConfig
+from configs.base import DistributionalConfig, NoisyConfig
 from configs.modules.heads.specialized import PolicyHeadConfig, ValueHeadConfig
 from configs.modules.heads.base import HeadConfig
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.backbones.factory import BackboneConfigFactory
-from agent_configs.actor_config import ActorConfig
-from agent_configs.critic_config import CriticConfig
+from configs.modules.architecture_config import ArchitectureConfig
+from configs.base import ActorConfig
+from configs.base import CriticConfig
 
 
 class PPOConfig(AgentConfig, DistributionalConfig, NoisyConfig):
@@ -18,6 +19,10 @@ class PPOConfig(AgentConfig, DistributionalConfig, NoisyConfig):
         super(PPOConfig, self).__init__(config_dict, game_config)
         self.parse_distributional_params()
         self.parse_noisy_params()
+
+        # Parse shared architecture defaults
+        arch_dict = self.parse_field("architecture", default={}, required=False)
+        self.arch = ArchitectureConfig(arch_dict)
 
         # Parse Actor/Critic configs from dict
         actor_dict = self.parse_field("actor_config", default={}, required=False)

@@ -232,8 +232,7 @@ class SearchPolicy(Policy):
             info: Additional info dict (e.g., legal moves, player info).
 
         Returns:
-            Tuple of (exploratory_policy, target_policy, root_value,
-                      best_action, search_metadata).
+            Tuple of (best_action, info_dict).
         """
         # Handle multi-player 'to_play' logic
         to_play = 0

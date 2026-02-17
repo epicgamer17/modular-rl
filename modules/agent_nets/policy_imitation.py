@@ -32,9 +32,10 @@ class SupervisedNetwork(nn.Module):
         self.return_logits = getattr(config, "return_logits", False)
 
     def _get_flat_dim(self, shape: Tuple[int]) -> int:
-        if len(shape) == 4:
-            return shape[1] * shape[2] * shape[3]
-        return shape[1]
+        flat = 1
+        for dim in shape:
+            flat *= dim
+        return flat
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         self.backbone.initialize(initializer)

@@ -71,7 +71,7 @@ for agent in env.agent_iter():
 1. Create environment class in `custom_gym_envs/envs/`
 2. Register in `custom_gym_envs/envs/__init__.py`
 3. Add entry point in `setup.py`
-4. Create config in `game_configs/`
+4. Create config in `configs/games/`
 
 Example:
 ```python

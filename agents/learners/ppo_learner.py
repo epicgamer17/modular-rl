@@ -323,13 +323,7 @@ class PPOLearner:
         Returns:
             Tuple of (actor_loss, kl_divergence).
         """
-        # Get current policy distribution
-        if self.discrete_action_space:
-            probs = self.model.policy(observations)
-            distribution = torch.distributions.Categorical(probs=probs)
-        else:
-            mean, std = self.model.policy(observations)
-            distribution = torch.distributions.Normal(mean, std)
+        distribution = self.model.policy.get_distribution(observations)
 
         # New log probabilities
         new_log_probs = distribution.log_prob(actions)

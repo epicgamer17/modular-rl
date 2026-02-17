@@ -9,7 +9,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from configs.agents.muzero import MuZeroConfig
 from agents.muzero import MuZeroAgent
 from modules.world_models.muzero_world_model import MuzeroWorldModel
-from game_configs.cartpole_config import CartPoleConfig
+from configs.games.cartpole_config import CartPoleConfig
 
 
 def test_chance_prob_tracking():

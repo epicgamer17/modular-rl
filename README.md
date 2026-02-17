@@ -51,7 +51,7 @@ pip install -e .
 ```python
 from agents.rainbow_dqn import RainbowDQN
 from agent_configs.rainbow_config import RainbowConfig
-from game_configs.cartpole_config import CartPoleConfig
+from configs.games.cartpole_config import CartPoleConfig
 
 config = RainbowConfig()
 agent = RainbowDQN(config, CartPoleConfig())
@@ -66,7 +66,7 @@ agent.train(episodes=1000)
 - `replay_buffers/` - Experience replay implementations with prioritized sampling
 - `search/` - MCTS and tree search algorithms
 - `losses/` - Loss functions for different training objectives
-- `game_configs/` - Environment-specific configurations
+- `configs/games/` - Environment-specific configurations
 - `custom_gym_envs_pkg/` - Custom Gymnasium environments
 - `experiments/` - Training runs, checkpoints, and results
 - `tests/` - Unit and integration tests

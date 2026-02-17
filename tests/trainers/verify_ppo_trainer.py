@@ -268,7 +268,7 @@ def test_ppo_learner_step():
 
 def test_ppo_policy_action():
     """Test that PPOPolicy can compute actions."""
-    from agents.trainers.ppo_trainer import PPOPolicy
+    from agents.policies.ppo_policy import PPOPolicy
     from agents.action_selectors.selectors import CategoricalSelector
     from modules.agent_nets.ppo import PPONetwork
     import numpy as np

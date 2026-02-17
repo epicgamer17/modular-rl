@@ -1,5 +1,5 @@
 from typing import Optional
-from agent_configs.base_config import ConfigBase
+from configs.base import ConfigBase
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.backbones.factory import BackboneConfigFactory
 

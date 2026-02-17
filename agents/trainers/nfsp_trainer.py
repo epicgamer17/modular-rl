@@ -1,39 +1,23 @@
-"""
-NFSPTrainer orchestrates the training process for NFSP by coordinating
-the executor for data collection, the learner for optimization, and
-handling the training loop.
-
-Supports:
-- Shared networks/buffers: All players share the same BR/AVG networks (default)
-- Separate networks/buffers: Each player has their own BR/AVG networks and learners
-"""
-
-import time
-import os
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-
 import torch
-import numpy as np
-import dill as pickle
+import time
+from typing import Optional, List, Dict, Any, Tuple
 
-from agents.executors.local_executor import LocalExecutor
-from agents.executors.torch_mp_executor import TorchMPExecutor
+from agents.trainers.base_trainer import BaseTrainer
 from agents.learners.nfsp_learner import NFSPLearner
 from agents.policies.nfsp_policy import NFSPPolicy
 from agents.action_selectors.selectors import EpsilonGreedy, CategoricalSelector
 from agents.actors.actors import get_actor_class
+from agents.executors.local_executor import LocalExecutor
+from agents.executors.torch_mp_executor import TorchMPExecutor
+from replay_buffers.transition import TransitionBatch, Transition
 from modules.agent_nets.rainbow_dqn import RainbowNetwork
 from modules.agent_nets.policy_imitation import SupervisedNetwork
 from stats.stats import StatTracker, PlotType
 
 
-class NFSPTrainer:
+class NFSPTrainer(BaseTrainer):
     """
     NFSPTrainer orchestrates the NFSP training process.
-
-    Supports both shared networks/buffers (all players share networks) and
-    separate networks/buffers (each player has their own networks/learners).
     """
 
     def __init__(
@@ -44,73 +28,22 @@ class NFSPTrainer:
         stats: Optional[StatTracker] = None,
         test_agents: Optional[List] = None,
     ):
-        """
-        Initializes the NFSPTrainer.
+        super().__init__(config, env, device, stats, test_agents)
 
-        Args:
-            config: NFSPDQNConfig with hyperparameters.
-            env: Environment instance (not a factory function).
-            device: Torch device for training.
-            stats: Optional StatTracker for logging metrics.
-            test_agents: Optional list of agents to test against.
-        """
-        self.config = config
-        self.device = device
-        self.stats = (
-            stats if stats is not None else StatTracker(model_name=config.model_name)
-        )
-        self.test_agents = test_agents if test_agents is not None else []
+        self.shared_networks = config.shared_networks_and_buffers
 
-        self._env = env
-        assert not callable(
-            env
-        ), "env must be an environment instance, not a factory function"
-
-        # Detect player IDs from environment
-        if hasattr(env, "possible_agents") and len(env.possible_agents) > 0:
-            self.player_ids = list(env.possible_agents)
-        elif hasattr(env, "agents") and len(env.agents) > 0:
-            self.player_ids = list(env.agents)
+        # Get player IDs (NFSP specific)
+        if hasattr(env, "possible_agents"):
+            self.player_ids = env.possible_agents
+        elif hasattr(env, "agents"):
+            self.player_ids = env.agents
         else:
             self.player_ids = ["player_0"]
 
-        self._player_id = self.player_ids[0]
-
-        # Get observation/action specs
-        obs_dim, obs_dtype = self._determine_observation_dimensions(env)
-        # Use config override if provided, otherwise use auto-detected dtype
-        if config.observation_dtype is not None:
-            obs_dtype = config.observation_dtype
-        num_actions = self._get_num_actions(env)
-        self.num_actions = num_actions
-        self.obs_dim = obs_dim
-        self.obs_dtype = obs_dtype
-
-        # Use config field directly (no getattr)
-        self.shared_networks = config.shared_networks_and_buffers
-
         if self.shared_networks:
-            self._init_shared_networks(obs_dim, num_actions)
+            self._init_shared_networks(self.obs_dim, self.num_actions)
         else:
-            self._init_separate_networks(obs_dim, num_actions)
-
-        # Launch workers using config fields directly
-        worker_args = (
-            config.game.make_env,
-            self.policy,
-            config.game.num_players,
-        )
-        actor_cls = get_actor_class(env)
-        self.executor.launch(actor_cls, worker_args, config.num_workers)
-
-        self.training_step = 0
-        self.model_name = config.model_name
-
-        # Intervals
-        total_steps = config.training_steps
-        self.checkpoint_interval = max(total_steps // 30, 1)
-        self.test_interval = max(total_steps // 30, 1)
-        self.test_trials = 5
+            self._init_separate_networks(self.obs_dim, self.num_actions)
 
     def _init_shared_networks(self, obs_dim, num_actions):
         """Initialize networks and learners for shared networks mode."""
@@ -176,6 +109,15 @@ class NFSPTrainer:
             self.executor = TorchMPExecutor()
         else:
             self.executor = LocalExecutor()
+
+        worker_args = (
+            self.config.game.make_env,
+            self.policy,
+            self.num_players,
+            self.config,
+        )
+        actor_cls = get_actor_class(self._env)
+        self.executor.launch(actor_cls, worker_args, self.config.num_workers)
 
     def _init_separate_networks(self, obs_dim, num_actions):
         """Initialize networks and learners for separate networks per player."""
@@ -249,6 +191,15 @@ class NFSPTrainer:
             self.executor = TorchMPExecutor()
         else:
             self.executor = LocalExecutor()
+
+        worker_args = (
+            self.config.game.make_env,
+            self.policy,
+            self.num_players,
+            self.config,
+        )
+        actor_cls = get_actor_class(self.env)
+        self.executor.launch(actor_cls, worker_args, self.config.num_workers)
 
     def train(self) -> None:
         """Main training loop."""
@@ -485,14 +436,7 @@ class NFSPTrainer:
 
     def _run_tests(self) -> None:
         """Runs evaluation episodes and exploitability tests."""
-        dir_path = Path("checkpoints", self.model_name)
-        step_dir = Path(dir_path, f"step_{self.training_step}")
-
-        # Standard AVG vs AVG test
-        test_results = self.test(self.test_trials, dir=step_dir)
-        if test_results:
-            self.stats.append("test_score", test_results.get("score"))
-            print(f"Test score: {test_results.get('score'):.3f}")
+        super()._run_tests()
 
         # Exploitability tests (AVG vs BR matchups)
         exploit_results = self.test_exploitability(num_trials=self.test_trials)
@@ -512,69 +456,6 @@ class NFSPTrainer:
 
             # Print summary
             print(f"Exploitability (sum of BR payoffs): {total:.3f}")
-
-    def test(self, num_trials: int, dir: str = "./checkpoints") -> Dict[str, float]:
-        """Runs evaluation episodes."""
-        if num_trials == 0:
-            return {}
-
-        test_env = self.config.game.make_env()
-        scores = []
-
-        # For testing, use the Average Strategy (fully mixed)
-        original_eta = self.policy.eta
-        self.policy.eta = 0.0  # Force average strategy
-
-        num_players = self.config.game.num_players
-
-        with torch.inference_mode():
-            for _ in range(num_trials):
-                # 1. Reset
-                if num_players != 1:
-                    test_env.reset()
-                    state, reward, terminated, truncated, info = test_env.last()
-                else:
-                    state, info = test_env.reset()
-
-                self.policy.reset(state)
-                done = False
-                episode_reward = 0.0
-
-                while not done:
-                    # Get player_id for multi-player
-                    if num_players != 1 and hasattr(test_env, "agent_selection"):
-                        player_id = test_env.agent_selection
-                    else:
-                        player_id = None
-
-                    action = self.policy.compute_action(
-                        state, info, player_id=player_id
-                    )
-                    action_val = action.item() if torch.is_tensor(action) else action
-
-                    # 2. Step
-                    if num_players != 1:
-                        test_env.step(action_val)
-                        state, reward, terminated, truncated, info = test_env.last()
-                        episode_reward += float(test_env.rewards[self._player_id])
-                    else:
-                        state, reward, terminated, truncated, info = test_env.step(
-                            action_val
-                        )
-                        episode_reward += float(reward)
-
-                    done = terminated or truncated
-
-                scores.append(episode_reward)
-
-        test_env.close()
-        self.policy.eta = original_eta  # Restore
-
-        return {
-            "score": sum(scores) / len(scores) if scores else 0.0,
-            "max_score": max(scores) if scores else 0.0,
-            "min_score": min(scores) if scores else 0.0,
-        }
 
     def test_exploitability(self, num_trials: int = 10) -> Dict[str, float]:
         """
@@ -675,19 +556,9 @@ class NFSPTrainer:
         return sum(br_payoffs) / len(br_payoffs) if br_payoffs else 0.0
 
     def _save_checkpoint(self) -> None:
-        """Saves model weights and stats."""
-        base_dir = Path("checkpoints", self.model_name)
-        step_dir = base_dir / f"step_{self.training_step}"
-        os.makedirs(step_dir, exist_ok=True)
-
-        weights_dir = step_dir / "model_weights"
-        os.makedirs(weights_dir, exist_ok=True)
-        weights_path = weights_dir / "weights.pt"
-
+        """Saves NFSP checkpoint."""
         if self.shared_networks:
-            checkpoint = {
-                "training_step": self.training_step,
-                "model_name": self.model_name,
+            checkpoint_data = {
                 "shared_networks": True,
                 "br_model": self.br_model.state_dict(),
                 "avg_model": self.avg_model.state_dict(),
@@ -695,9 +566,7 @@ class NFSPTrainer:
                 "sl_optimizer": self.learner.sl_optimizer.state_dict(),
             }
         else:
-            checkpoint = {
-                "training_step": self.training_step,
-                "model_name": self.model_name,
+            checkpoint_data = {
                 "shared_networks": False,
                 "br_models": {pid: m.state_dict() for pid, m in self.br_models.items()},
                 "avg_models": {
@@ -711,55 +580,36 @@ class NFSPTrainer:
                     pid: l.sl_optimizer.state_dict() for pid, l in self.learners.items()
                 },
             }
-        torch.save(checkpoint, weights_path)
+        super()._save_checkpoint(checkpoint_data)
 
-        if hasattr(self, "stats"):
-            stats_dir = step_dir / "graphs_stats"
-            os.makedirs(stats_dir, exist_ok=True)
-            with open(stats_dir / "stats.pkl", "wb") as f:
-                pickle.dump(self.stats.get_data(), f)
-            graph_dir = base_dir / "graphs"
-            os.makedirs(graph_dir, exist_ok=True)
-            self.stats.plot_graphs(dir=graph_dir)
-
-    def _determine_observation_dimensions(self, env):
-        """Infers input dimensions for the neural network."""
-        import gymnasium as gym
-
-        obs_space = env.observation_space
-
-        if isinstance(obs_space, gym.spaces.Box):
-            return torch.Size(obs_space.shape), obs_space.dtype
-        elif isinstance(obs_space, gym.spaces.Discrete):
-            return torch.Size((1,)), np.int32
-        elif isinstance(obs_space, gym.spaces.Tuple):
-            return torch.Size((len(obs_space.spaces),)), np.int32
-        elif callable(obs_space):
-            # For PettingZoo-style callable observation spaces
-            try:
-                space = obs_space(self._player_id)
-            except KeyError:
-                if hasattr(env, "possible_agents") and env.possible_agents:
-                    space = obs_space(env.possible_agents[0])
-                else:
-                    raise
-            return torch.Size(space.shape), space.dtype
+    def load_checkpoint_weights(self, checkpoint: Dict[str, Any]):
+        """Loads NFSP weights."""
+        shared = checkpoint.get("shared_networks", True)
+        if shared:
+            if "br_model" in checkpoint:
+                self.br_model.load_state_dict(checkpoint["br_model"])
+            if "avg_model" in checkpoint:
+                self.avg_model.load_state_dict(checkpoint["avg_model"])
+            if "rl_optimizer" in checkpoint and hasattr(self, "learner"):
+                self.learner.rl_learner.optimizer.load_state_dict(
+                    checkpoint["rl_optimizer"]
+                )
+            if "sl_optimizer" in checkpoint and hasattr(self, "learner"):
+                self.learner.sl_optimizer.load_state_dict(checkpoint["sl_optimizer"])
         else:
-            return torch.Size(obs_space.shape), obs_space.dtype
+            if "br_models" in checkpoint:
+                for pid, sd in checkpoint["br_models"].items():
+                    if pid in self.br_models:
+                        self.br_models[pid].load_state_dict(sd)
+            if "avg_models" in checkpoint:
+                for pid, sd in checkpoint["avg_models"].items():
+                    if pid in self.avg_models:
+                        self.avg_models[pid].load_state_dict(sd)
 
-    def _get_num_actions(self, env) -> int:
-        """Determines action space properties."""
-        import gymnasium as gym
-
-        if isinstance(env.action_space, gym.spaces.Discrete):
-            return int(env.action_space.n)
-        elif callable(env.action_space):  # PettingZoo
-            return int(env.action_space(self._player_id).n)
-        elif hasattr(self.config.game, "num_actions"):
-            return self.config.game.num_actions
-        else:
-            # Box/Continuous
-            return int(env.action_space.shape[0])
+    def select_test_action(self, state, info, env) -> Any:
+        """Select action for testing (from average strategy)."""
+        # eta=0 for average strategy testing
+        return self.policy.compute_action(state, info, eta=0.0).item()
 
     def _setup_stats(self) -> None:
         # Basic stat keys

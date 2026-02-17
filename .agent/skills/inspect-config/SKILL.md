@@ -4,7 +4,7 @@ description: Locates and reads configuration files for agents (e.g., MuZero, PPO
 ---
 
 # Goal
-Find and display the content of configuration files in `agent_configs/` or `game_configs/`.
+Find and display the content of configuration files in `agent_configs/` or `configs/games/`.
 
 # Instructions
 1.  Determine if the user is asking about an "agent" config or a "game" config.

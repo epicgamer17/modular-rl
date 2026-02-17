@@ -7,7 +7,7 @@ import sys
 # Ensure project root is in path
 sys.path.append(os.path.abspath("."))
 
-from game_configs.tictactoe_config import TicTacToeConfig
+from configs.games.tictactoe_config import TicTacToeConfig
 from configs.agents.muzero import MuZeroConfig
 from agents.policies.search_policy import SearchPolicy
 from search.search_factories import create_mcts

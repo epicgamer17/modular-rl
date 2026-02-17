@@ -5,7 +5,7 @@ import torch
 from modules.conv import Conv2dStack
 from modules.dense import DenseStack
 from modules.residual import ResidualStack
-from agent_configs.base_config import Config
+from configs.base import Config
 from torch import nn
 
 from utils.utils import to_lists

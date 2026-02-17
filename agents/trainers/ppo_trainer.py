@@ -1,30 +1,20 @@
-"""
-PPOTrainer orchestrates the training process for PPO by coordinating
-the executor for data collection, the learner for optimization, and
-handling the on-policy training loop.
-"""
-
-import time
-import gc
-import os
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-
 import torch
+import time
 import numpy as np
-import dill as pickle
-
+from typing import Optional, List, Dict, Any
+from pathlib import Path
+from agents.trainers.base_trainer import BaseTrainer
 from agents.executors.local_executor import LocalExecutor
 from agents.executors.torch_mp_executor import TorchMPExecutor
 from agents.learners.ppo_learner import PPOLearner
-from agents.policies.direct_policy import DirectPolicy
 from agents.action_selectors.selectors import CategoricalSelector
 from agents.actors.actors import get_actor_class
 from modules.agent_nets.ppo import PPONetwork
+from agents.policies.ppo_policy import PPOPolicy
 from stats.stats import StatTracker, PlotType
 
 
-class PPOTrainer:
+class PPOTrainer(BaseTrainer):
     """
     PPOTrainer orchestrates the training process by coordinating
     the executor for data collection and the learner for optimization.
@@ -48,36 +38,14 @@ class PPOTrainer:
             stats: Optional StatTracker for logging metrics.
             test_agents: Optional list of agents to test against.
         """
-        self.config = config
-        self.device = device
-        self.stats = (
-            stats if stats is not None else StatTracker(model_name=config.model_name)
-        )
-        self.test_agents = test_agents if test_agents is not None else []
-
-        self._env = env
-
-        # Detect player_id for PettingZoo environments
-        if hasattr(env, "possible_agents") and len(env.possible_agents) > 0:
-            self._player_id = env.possible_agents[0]
-        elif hasattr(env, "agents") and len(env.agents) > 0:
-            self._player_id = env.agents[0]
-        else:
-            self._player_id = "player_0"
-
-        # Get observation/action specs
-        obs_dim, obs_dtype = self._determine_observation_dimensions(env)
-        obs_dtype = getattr(config, "observation_dtype", obs_dtype)
-        num_actions = self._get_num_actions(env)
-        self.num_actions = num_actions
+        super().__init__(config, env, device, stats, test_agents)
 
         # 1. Initialize Network
-        # input_shape = torch.Size((config.minibatch_size,) + obs_dim)
         # New standard: input_shape excludes batch dimension
-        input_shape = obs_dim
+        input_shape = self.obs_dim
         self.model = PPONetwork(
             config=config,
-            output_size=num_actions,
+            output_size=self.num_actions,
             input_shape=input_shape,
             discrete=True,  # PPO discrete action space
         )
@@ -105,9 +73,9 @@ class PPOTrainer:
             config=config,
             model=self.model,
             device=device,
-            num_actions=num_actions,
-            observation_dimensions=obs_dim,
-            observation_dtype=obs_dtype,
+            num_actions=self.num_actions,
+            observation_dimensions=self.obs_dim,
+            observation_dtype=self.obs_dtype,
         )
 
         # 5. Initialize Executor
@@ -126,15 +94,6 @@ class PPOTrainer:
         )
         actor_cls = get_actor_class(env)
         self.executor.launch(actor_cls, worker_args, num_workers)
-
-        self.training_step = 0
-        self.model_name = config.model_name
-
-        # Intervals
-        total_steps = config.training_steps
-        self.checkpoint_interval = max(total_steps // 30, 1)
-        self.test_interval = max(total_steps // 30, 1)
-        self.test_trials = 5
 
     def train(self) -> None:
         """
@@ -262,282 +221,76 @@ class PPOTrainer:
         self._save_checkpoint()
         print("Training finished.")
 
-    def _run_tests(self) -> None:
-        """
-        Runs test episodes and logs results.
-        """
-        dir = Path("checkpoints", self.model_name)
-        step_dir = Path(dir, f"step_{self.training_step}")
-
-        test_results = self.test(self.test_trials, dir=step_dir)
-        if test_results:
-            self.stats.append("test_score", test_results.get("score"))
-            print(f"Test score: {test_results.get('score'):.3f}")
-
-    def test(self, num_trials: int, dir: str = "./checkpoints") -> Dict[str, float]:
-        """
-        Runs evaluation episodes and returns test scores.
-
-        Args:
-            num_trials: Number of evaluation episodes.
-            dir: Directory for saving results.
-
-        Returns:
-            Dictionary with 'score', 'max_score', 'min_score' keys.
-        """
-        if num_trials == 0:
-            return {}
-
-        test_env = self.config.game.make_env()
-        scores = []
-
-        with torch.inference_mode():
-            for _ in range(num_trials):
-                state, info = test_env.reset()
-                done = False
-                episode_reward = 0.0
-                episode_length = 0
-
-                while not done and episode_length < 1000:
-                    episode_length += 1
-
-                    # Use policy (greedy for testing)
-                    action = self.policy.compute_action(state, info)
-                    action_val = action.item() if hasattr(action, "item") else action
-
-                    state, reward, terminated, truncated, info = test_env.step(
-                        action_val
-                    )
-                    episode_reward += reward
-                    done = terminated or truncated
-
-                scores.append(episode_reward)
-
-        test_env.close()
-
-        if not scores:
-            return {}
-
-        return {
-            "score": sum(scores) / len(scores),
-            "max_score": max(scores),
-            "min_score": min(scores),
-        }
-
     def _save_checkpoint(self) -> None:
         """
-        Saves model weights and stats.
+        Saves model weights and stats using BaseTrainer implementation.
         """
-        base_dir = Path("checkpoints", self.model_name)
-        step_dir = base_dir / f"step_{self.training_step}"
-        os.makedirs(step_dir, exist_ok=True)
-
-        # Save weights
-        weights_dir = step_dir / "model_weights"
-        os.makedirs(weights_dir, exist_ok=True)
-        weights_path = weights_dir / "weights.pt"
-        checkpoint = {
-            "training_step": self.training_step,
-            "model_name": self.model_name,
+        checkpoint_data = {
             "model": self.model.state_dict(),
             "policy_optimizer": self.learner.policy_optimizer.state_dict(),
             "value_optimizer": self.learner.value_optimizer.state_dict(),
             "policy_scheduler": self.learner.policy_scheduler.state_dict(),
             "value_scheduler": self.learner.value_scheduler.state_dict(),
         }
-        torch.save(checkpoint, weights_path)
+        super()._save_checkpoint(checkpoint_data)
 
-        # Save Config
-        config_dir = base_dir / "configs"
-        os.makedirs(config_dir, exist_ok=True)
-        if hasattr(self.config, "dump"):
-            self.config.dump(f"{config_dir}/config.yaml")
+    def load_checkpoint_weights(self, checkpoint: Dict[str, Any]):
+        """Ported from BaseAgent.load_model_weights and load_optimizer_state."""
+        if "model" in checkpoint:
+            self.model.load_state_dict(checkpoint["model"])
+        if "policy_optimizer" in checkpoint:
+            self.learner.policy_optimizer.load_state_dict(
+                checkpoint["policy_optimizer"]
+            )
+        if "value_optimizer" in checkpoint:
+            self.learner.value_optimizer.load_state_dict(checkpoint["value_optimizer"])
+        if "policy_scheduler" in checkpoint:
+            self.learner.policy_scheduler.load_state_dict(
+                checkpoint["policy_scheduler"]
+            )
+        if "value_scheduler" in checkpoint:
+            self.learner.value_scheduler.load_state_dict(checkpoint["value_scheduler"])
 
-        # Save Stats
-        stats_dir = step_dir / "graphs_stats"
-        os.makedirs(stats_dir, exist_ok=True)
+    def select_test_action(self, state, info, env) -> Any:
+        # PPO usually tests with its policy (which might be greedy depending on compute_action implementation)
+        action = self.policy.compute_action(state, info)
+        return action.item() if hasattr(action, "item") else action
 
-        if hasattr(self, "stats"):
-            with open(stats_dir / "stats.pkl", "wb") as f:
-                pickle.dump(self.stats.get_data(), f)
+    def _setup_stats(self):
+        """Initializes the stat tracker with PPO-specific keys and plot types."""
+        super()._setup_stats()
+        from stats.stats import PlotType
 
-            # Plot graphs
-            graph_dir = base_dir / "graphs"
-            os.makedirs(graph_dir, exist_ok=True)
-            self.stats.plot_graphs(dir=graph_dir)
-
-        gc.collect()
-        abs_path = os.path.abspath(step_dir)
-        print(f"Saved checkpoint at step {self.training_step} to {abs_path}")
-
-    def _determine_observation_dimensions(self, env):
-        """
-        Infers input dimensions for the neural network.
-        Ported from BaseAgent.determine_observation_dimensions.
-        """
-        import gymnasium as gym
-
-        obs_space = env.observation_space
-
-        if isinstance(obs_space, gym.spaces.Box):
-            return torch.Size(obs_space.shape), obs_space.dtype
-        elif isinstance(obs_space, gym.spaces.Discrete):
-            return torch.Size((1,)), np.int32
-        elif isinstance(obs_space, gym.spaces.Tuple):
-            return torch.Size((len(obs_space.spaces),)), np.int32
-        elif callable(obs_space):
-            # For PettingZoo-style callable observation spaces
-            player_id = getattr(self, "_player_id", "player_0")
-            try:
-                space = obs_space(player_id)
-            except KeyError:
-                if hasattr(env, "possible_agents") and env.possible_agents:
-                    space = obs_space(env.possible_agents[0])
-                else:
-                    raise
-            return torch.Size(space.shape), space.dtype
-        else:
-            return torch.Size(obs_space.shape), obs_space.dtype
-
-    def _get_num_actions(self, env) -> int:
-        """
-        Determines action space properties.
-        Ported from BaseAgent._setup_action_space.
-        """
-        import gymnasium as gym
-
-        if isinstance(env.action_space, gym.spaces.Discrete):
-            return int(env.action_space.n)
-        elif callable(env.action_space):  # PettingZoo
-            player_id = getattr(self, "_player_id", "player_0")
-            return int(env.action_space(player_id).n)
-        elif hasattr(self.config.game, "num_actions"):
-            return self.config.game.num_actions
-        else:
-            # Box/Continuous
-            return int(env.action_space.shape[0])
-
-    def _setup_stats(self) -> None:
-        """
-        Initializes the stat tracker with all required keys and plot types.
-        """
         stat_keys = [
-            "score",
-            "actor_loss",
-            "critic_loss",
+            "policy_loss",
+            "value_loss",
+            "policy_entropy",
             "kl_divergence",
-            "test_score",
-            "episode_length",
+            "explained_variance",
             "learner_fps",
         ]
 
+        # Initialize keys
         for key in stat_keys:
             if key not in self.stats.stats:
                 self.stats._init_key(key)
 
+        # Add plot types
         self.stats.add_plot_types(
-            "score",
-            PlotType.ROLLING_AVG,
-            PlotType.BEST_FIT_LINE,
-            rolling_window=100,
+            "policy_loss", PlotType.ROLLING_AVG, rolling_window=100
         )
         self.stats.add_plot_types(
-            "test_score",
-            PlotType.BEST_FIT_LINE,
-            PlotType.ROLLING_AVG,
-            rolling_window=100,
+            "value_loss", PlotType.ROLLING_AVG, rolling_window=100
         )
         self.stats.add_plot_types(
-            "actor_loss", PlotType.ROLLING_AVG, rolling_window=100
-        )
-        self.stats.add_plot_types(
-            "critic_loss", PlotType.ROLLING_AVG, rolling_window=100
+            "policy_entropy", PlotType.ROLLING_AVG, rolling_window=100
         )
         self.stats.add_plot_types(
             "kl_divergence", PlotType.ROLLING_AVG, rolling_window=100
         )
         self.stats.add_plot_types(
-            "episode_length", PlotType.ROLLING_AVG, rolling_window=100
+            "explained_variance", PlotType.ROLLING_AVG, rolling_window=100
         )
         self.stats.add_plot_types(
             "learner_fps", PlotType.ROLLING_AVG, rolling_window=100
-        )
-
-
-class PPOPolicy(DirectPolicy):
-    """
-    Extended DirectPolicy for PPO that returns action, log_prob, and value.
-    """
-
-    def compute_action(
-        self, obs: Any, info: Dict[str, Any] = None, exploration: bool = False
-    ) -> Any:
-        """
-        Computes an action given an observation and info.
-        For PPO, we only use the actor output from the model.
-        """
-        if not isinstance(obs, torch.Tensor):
-            obs_tensor = torch.tensor(
-                obs, device=self.device, dtype=torch.float32
-            ).unsqueeze(0)
-        else:
-            obs_tensor = obs.to(self.device)
-            # If obs_tensor matches input_shape, it's a single observation -> unsqueeze.
-            if obs_tensor.dim() == len(self.model.policy.neck.input_shape):
-                obs_tensor = obs_tensor.unsqueeze(0)
-
-        with torch.inference_mode():
-            # PPONetwork returns (actor_logits, critic_value)
-            logits, _ = self.model(obs_tensor)
-
-        action = self.action_selector.select(logits, exploration=exploration, info=info)
-
-        if action.dim() > 0 and action.shape[0] == 1:
-            action = action.squeeze(0)
-
-        return action
-
-    def compute_action_with_info(
-        self, obs: Any, info: Dict[str, Any] = None
-    ) -> tuple[torch.Tensor, float, float]:
-        """
-        Computes action, log probability, and value for PPO training.
-
-        Returns:
-            Tuple of (action, log_probability, value).
-        """
-        if not isinstance(obs, torch.Tensor):
-            obs_tensor = torch.tensor(
-                obs, device=self.device, dtype=torch.float32
-            ).unsqueeze(0)
-        else:
-            obs_tensor = obs.to(self.device)
-            if obs_tensor.dim() == len(self.model.policy.neck.input_shape):
-                obs_tensor = obs_tensor.unsqueeze(0)
-
-        with torch.inference_mode():
-            # Get actor probs and critic value
-            probs = self.model.policy(obs_tensor)
-            value = self.model.value(obs_tensor)
-
-        # Use the selector to get the action (sampling mode)
-        # Note: action_selector is configured with from_logits=False in PPOTrainer
-        action = self.action_selector.select(probs, exploration=True, info=info)
-
-        # We still need the distribution for log_prob
-        # Since CategoricalHead already did softmax, probs are probabilities
-        distribution = torch.distributions.Categorical(probs=probs)
-
-        # Ensure action is the right shape for log_prob
-        if action.dim() == 0:
-            action_for_log_prob = action.unsqueeze(0)
-        else:
-            action_for_log_prob = action
-
-        log_prob = distribution.log_prob(action_for_log_prob)
-
-        return (
-            action.squeeze(),
-            log_prob.squeeze().item(),
-            value.squeeze().item(),
         )

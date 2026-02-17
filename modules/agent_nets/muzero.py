@@ -3,8 +3,6 @@ from typing import Callable, Tuple
 from configs.agents.muzero import MuZeroConfig
 from torch import nn, Tensor
 from modules.action_encoder import ActionEncoder
-from modules.actor import ActorNetwork
-from modules.critic import CriticNetwork
 from modules.network_block import NetworkBlock
 from modules.backbones.factory import BackboneFactory
 from modules.sim_siam_projector_predictor import Projector

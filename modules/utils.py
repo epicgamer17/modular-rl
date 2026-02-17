@@ -7,7 +7,7 @@ from torch import nn, Tensor, optim
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agent_configs.base_config import Config
+    from configs.base import Config
 
 
 class LinearLR:

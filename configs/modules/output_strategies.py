@@ -1,5 +1,5 @@
 from typing import Optional
-from agent_configs.base_config import ConfigBase
+from configs.base import ConfigBase
 
 
 class OutputStrategyConfig(ConfigBase):

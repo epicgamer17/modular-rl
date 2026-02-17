@@ -1,7 +1,7 @@
 from typing import Optional, Dict, Any, TypeVar, Type
 import torch
 from configs.modules.architecture_config import ArchitectureConfig
-from agent_configs.base_config import (
+from configs.base import (
     ConfigBase,
     OptimizationConfig,
     ReplayConfig,

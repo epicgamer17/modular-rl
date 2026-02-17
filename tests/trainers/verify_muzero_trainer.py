@@ -12,7 +12,7 @@ sys.modules["matplotlib.pyplot"] = MagicMock()
 import torch
 from agents.trainers.muzero_trainer import MuZeroTrainer
 from configs.agents.muzero import MuZeroConfig
-from game_configs.cartpole_config import CartPoleConfig
+from configs.games.cartpole import CartPoleConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 
 

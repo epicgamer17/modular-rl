@@ -1,4 +1,4 @@
-from agent_configs.base_config import (
+from configs.base import (
     ConfigBase,
     OptimizationConfig,
     ReplayConfig,
@@ -6,6 +6,7 @@ from agent_configs.base_config import (
 )
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.backbones.factory import BackboneConfigFactory
+from configs.modules.architecture_config import ArchitectureConfig
 from modules.utils import prepare_activations, prepare_kernel_initializers
 from torch.optim import Optimizer, Adam
 
@@ -15,12 +16,16 @@ class SupervisedConfig(ConfigBase, OptimizationConfig, ReplayConfig):
     def __init__(self, config_dict):
         super().__init__(config_dict)
         print("SupervisedConfig")
-        self.adam_epsilon = self.parse_field("sl_adam_epsilon", 1e-7)
+        # Parse shared architecture defaults
+        arch_dict = self.parse_field("architecture", default={}, required=False)
+        self.arch = ArchitectureConfig(arch_dict)
+        self.model_name = self.parse_field("model_name", default="supervised")
         self.learning_rate = self.parse_field("sl_learning_rate", 0.005)
         self.momentum = self.parse_field("sl_momentum", 0.9)
         self.loss_function = self.parse_field("sl_loss_function", required=True)
         self.clipnorm = self.parse_field("sl_clipnorm", 0)
         self.optimizer: Optimizer = self.parse_field("sl_optimizer", Adam)
+        self.adam_epsilon = self.parse_field("sl_adam_epsilon", 1e-8)
         self.weight_decay = self.parse_field("sl_weight_decay", 0.0)
         self.training_steps = self.parse_field("training_steps", required=True)
         self.training_iterations = self.parse_field("sl_training_iterations", 1)

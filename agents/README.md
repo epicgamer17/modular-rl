@@ -56,8 +56,8 @@ class BaseAgent:
 ### Rainbow DQN
 ```python
 from agents.rainbow_dqn import RainbowDQN
-from agent_configs.rainbow_config import RainbowConfig
-from game_configs.cartpole_config import CartPoleConfig
+from configs.base import RainbowConfig
+from configs.games.cartpole_config import CartPoleConfig
 
 agent = RainbowDQN(RainbowConfig(), CartPoleConfig())
 agent.train(episodes=1000)
@@ -66,8 +66,8 @@ agent.train(episodes=1000)
 ### MuZero
 ```python
 from agents.muzero import MuZero
-from agent_configs.muzero_config import MuZeroConfig
-from game_configs.tictactoe_config import TicTacToeConfig
+from configs.base import MuZeroConfig
+from configs.games.tictactoe_config import TicTacToeConfig
 
 agent = MuZero(MuZeroConfig(), TicTacToeConfig())
 agent.train(episodes=500)
@@ -76,7 +76,7 @@ agent.train(episodes=500)
 ### NFSP (Multi-agent)
 ```python
 from agents.nfsp import NFSP
-from agent_configs.dqn.nfsp_config import NFSPConfig
+from configs.base.nfsp_config import NFSPConfig
 
 agent = NFSP(NFSPConfig(), game_config)
 agent.train(episodes=10000)  # Learns against itself

@@ -21,7 +21,7 @@ config_dict:
   transfer_interval: 100
   value_hidden_layers_widths:
   - 128
-game: !!python/object:game_configs.cartpole_config.CartPoleConfig
+game: !!python/object:configs.games.cartpole_config.CartPoleConfig
   has_legal_moves: false
   is_deterministic: true
   is_discrete: true

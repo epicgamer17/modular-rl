@@ -1,6 +1,6 @@
 from typing import Callable, Type, Optional, List, Dict
 from .base import AgentConfig
-from agent_configs.base_config import (
+from configs.base import (
     SearchConfig,
     ValuePrefixConfig,
     ConsistencyConfig,

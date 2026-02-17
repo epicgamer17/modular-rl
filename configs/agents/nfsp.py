@@ -1,6 +1,6 @@
 from configs.agents.rainbow_dqn import RainbowConfig
 from configs.agents.supervised import SupervisedConfig
-from agent_configs.base_config import Config, ConfigBase
+from configs.base import Config, ConfigBase
 from torch.optim import Optimizer, Adam
 
 

@@ -1,7 +1,7 @@
 from torch import nn
 from torch import Tensor
 
-from agent_configs.base_config import Config
+from configs.base import Config
 
 
 class Projector(nn.Module):

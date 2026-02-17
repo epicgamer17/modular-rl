@@ -1,5 +1,5 @@
 from typing import Any, Callable, Optional, Dict
-from agent_configs.base_config import ConfigBase
+from configs.base import ConfigBase
 from modules.utils import prepare_activations, prepare_kernel_initializers
 
 

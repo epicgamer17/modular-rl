@@ -1,33 +1,21 @@
-"""
-RainbowTrainer orchestrates the training process for Rainbow DQN by coordinating
-the executor for data collection, the replay buffer for storage, and the learner
-for optimization.
-"""
-
-import time
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-
 import torch
-import numpy as np
+import time
+from typing import Optional, List, Dict, Any, Tuple
 
-from agents.executors.local_executor import LocalExecutor
-from agents.executors.torch_mp_executor import TorchMPExecutor
+from agents.trainers.base_trainer import BaseTrainer
 from agents.learners.rainbow_learner import RainbowLearner
 from agents.policies.direct_policy import DirectPolicy
 from agents.action_selectors.selectors import EpsilonGreedy
 from agents.actors.actors import get_actor_class
-from replay_buffers.transition import Transition, TransitionBatch
 from modules.agent_nets.rainbow_dqn import RainbowNetwork
+from replay_buffers.transition import TransitionBatch, Transition
 from stats.stats import StatTracker, PlotType
 from utils.utils import update_linear_schedule, update_inverse_sqrt_schedule
 
 
-class RainbowTrainer:
+class RainbowTrainer(BaseTrainer):
     """
-    RainbowTrainer orchestrates the training process by coordinating
-    the executor for data collection, the replay buffer for storage,
-    and the learner for optimization.
+    RainbowTrainer orchestrates the training process for Rainbow DQN.
     """
 
     def __init__(
@@ -38,51 +26,18 @@ class RainbowTrainer:
         stats: Optional[StatTracker] = None,
         test_agents: Optional[List] = None,
     ):
-        """
-        Initializes the RainbowTrainer.
-
-        Args:
-            config: RainbowConfig with hyperparameters.
-            env: Environment instance or factory function.
-            device: Torch device for training.
-            stats: Optional StatTracker for logging metrics.
-            test_agents: Optional list of agents to test against.
-        """
-        self.config = config
-        self.device = device
-        self.stats = (
-            stats if stats is not None else StatTracker(model_name=config.model_name)
-        )
-        self.test_agents = test_agents if test_agents is not None else []
-
-        self._env = env
-
-        # Detect player_id for PettingZoo environments
-        if hasattr(env, "possible_agents") and len(env.possible_agents) > 0:
-            self._player_id = env.possible_agents[0]
-        elif hasattr(env, "agents") and len(env.agents) > 0:
-            self._player_id = env.agents[0]
-        else:
-            self._player_id = "player_0"
-
-        # Get observation/action specs
-        obs_dim, obs_dtype = self._determine_observation_dimensions(env)
-        obs_dtype = getattr(config, "observation_dtype", obs_dtype)
-        num_actions = self._get_num_actions(env)
+        super().__init__(config, env, device, stats, test_agents)
 
         # 1. Initialize Networks
-        # input_shape = torch.Size((config.minibatch_size,) + obs_dim)
-        # New standard: input_shape excludes batch dimension
-        input_shape = obs_dim
         self.model = RainbowNetwork(
             config=config,
-            output_size=num_actions,
-            input_shape=input_shape,
+            output_size=self.num_actions,
+            input_shape=self.obs_dim,
         )
         self.target_model = RainbowNetwork(
             config=config,
-            output_size=num_actions,
-            input_shape=input_shape,
+            output_size=self.num_actions,
+            input_shape=self.obs_dim,
         )
 
         # Initialize weights
@@ -122,14 +77,17 @@ class RainbowTrainer:
             model=self.model,
             target_model=self.target_model,
             device=device,
-            num_actions=num_actions,
-            observation_dimensions=obs_dim,
-            observation_dtype=obs_dtype,
+            num_actions=self.num_actions,
+            observation_dimensions=self.obs_dim,
+            observation_dtype=self.obs_dtype,
         )
         self.buffer = self.learner.replay_buffer
 
         # 5. Initialize Executor
-        if config.multi_process:
+        from agents.executors.local_executor import LocalExecutor
+        from agents.executors.torch_mp_executor import TorchMPExecutor
+
+        if getattr(config, "multi_process", False):
             self.executor = TorchMPExecutor()
         else:
             self.executor = LocalExecutor()
@@ -142,17 +100,8 @@ class RainbowTrainer:
             config.game.num_players,
             config,
         )
-        actor_cls = get_actor_class(self._env)
+        actor_cls = get_actor_class(env)
         self.executor.launch(actor_cls, worker_args, num_workers)
-
-        self.training_step = 0
-        self.model_name = config.model_name
-
-        # Intervals
-        total_steps = config.training_steps
-        self.checkpoint_interval = max(total_steps // 30, 1)
-        self.test_interval = max(total_steps // 30, 1)
-        self.test_trials = 5
 
     def train(self) -> None:
         """
@@ -265,18 +214,6 @@ class RainbowTrainer:
             dones=transition.done,
         )
 
-    def _run_tests(self) -> None:
-        """
-        Runs test episodes and logs results.
-        """
-        dir = Path("checkpoints", self.model_name)
-        step_dir = Path(dir, f"step_{self.training_step}")
-
-        test_results = self.test(self.test_trials, dir=step_dir)
-        if test_results:
-            self.stats.append("test_score", test_results.get("score"))
-            print(f"Test score: {test_results.get('score'):.3f}")
-
     def test(self, num_trials: int, dir: str = "./checkpoints") -> Dict[str, float]:
         """
         Runs evaluation episodes and returns test scores.
@@ -328,100 +265,29 @@ class RainbowTrainer:
         }
 
     def _save_checkpoint(self) -> None:
-        """
-        Saves model weights and stats.
-        """
-        import gc
-        import os
-        import dill as pickle
-
-        base_dir = Path("checkpoints", self.model_name)
-        step_dir = base_dir / f"step_{self.training_step}"
-        os.makedirs(step_dir, exist_ok=True)
-
-        # Save weights
-        weights_dir = step_dir / "model_weights"
-        os.makedirs(weights_dir, exist_ok=True)
-        weights_path = weights_dir / "weights.pt"
-        checkpoint = {
-            "training_step": self.training_step,
-            "model_name": self.model_name,
+        """Saves Rainbow checkpoint."""
+        checkpoint_data = {
             "model": self.model.state_dict(),
             "target_model": self.target_model.state_dict(),
             "optimizer": self.learner.optimizer.state_dict(),
             "epsilon": self.current_epsilon,
         }
-        torch.save(checkpoint, weights_path)
+        super()._save_checkpoint(checkpoint_data)
 
-        # Save Config
-        config_dir = base_dir / "configs"
-        os.makedirs(config_dir, exist_ok=True)
-        if hasattr(self.config, "dump"):
-            self.config.dump(f"{config_dir}/config.yaml")
+    def load_checkpoint_weights(self, checkpoint: Dict[str, Any]):
+        """Loads Rainbow weights and epsilon."""
+        if "model" in checkpoint:
+            self.model.load_state_dict(checkpoint["model"])
+        if "target_model" in checkpoint:
+            self.target_model.load_state_dict(checkpoint["target_model"])
+        if "optimizer" in checkpoint:
+            self.learner.optimizer.load_state_dict(checkpoint["optimizer"])
+        if "epsilon" in checkpoint:
+            self.current_epsilon = checkpoint["epsilon"]
 
-        # Save Stats
-        stats_dir = step_dir / "graphs_stats"
-        os.makedirs(stats_dir, exist_ok=True)
-
-        if hasattr(self, "stats"):
-            with open(stats_dir / "stats.pkl", "wb") as f:
-                pickle.dump(self.stats.get_data(), f)
-
-            # Plot graphs
-            graph_dir = base_dir / "graphs"
-            os.makedirs(graph_dir, exist_ok=True)
-            self.stats.plot_graphs(dir=graph_dir)
-
-        gc.collect()
-        abs_path = os.path.abspath(step_dir)
-        print(f"Saved checkpoint at step {self.training_step} to {abs_path}")
-
-    def _determine_observation_dimensions(self, env):
-        """
-        Infers input dimensions for the neural network.
-        Ported from BaseAgent.determine_observation_dimensions.
-        """
-        import gymnasium as gym
-
-        obs_space = env.observation_space
-
-        if isinstance(obs_space, gym.spaces.Box):
-            return torch.Size(obs_space.shape), obs_space.dtype
-        elif isinstance(obs_space, gym.spaces.Discrete):
-            return torch.Size((1,)), np.int32
-        elif isinstance(obs_space, gym.spaces.Tuple):
-            return torch.Size((len(obs_space.spaces),)), np.int32
-        elif callable(obs_space):
-            # For PettingZoo-style callable observation spaces
-            player_id = getattr(self, "_player_id", "player_0")
-            try:
-                space = obs_space(player_id)
-            except KeyError:
-                if hasattr(env, "possible_agents") and env.possible_agents:
-                    space = obs_space(env.possible_agents[0])
-                else:
-                    raise
-            return torch.Size(space.shape), space.dtype
-        else:
-            return torch.Size(obs_space.shape), obs_space.dtype
-
-    def _get_num_actions(self, env) -> int:
-        """
-        Determines action space properties.
-        Ported from BaseAgent._setup_action_space.
-        """
-        import gymnasium as gym
-
-        if isinstance(env.action_space, gym.spaces.Discrete):
-            return int(env.action_space.n)
-        elif callable(env.action_space):  # PettingZoo
-            player_id = getattr(self, "_player_id", "player_0")
-            return int(env.action_space(player_id).n)
-        elif hasattr(self.config.game, "num_actions"):
-            return self.config.game.num_actions
-        else:
-            # Box/Continuous
-            return int(env.action_space.shape[0])
+    def select_test_action(self, state, info, env) -> Any:
+        """Greedy action for testing."""
+        return self.policy.compute_action(state, info).item()
 
     def _setup_stats(self) -> None:
         """
@@ -438,7 +304,10 @@ class RainbowTrainer:
 
         for key in stat_keys:
             if key not in self.stats.stats:
-                self.stats._init_key(key)
+                if "test_score" in key:
+                    self.stats._init_key(key, subkeys=["avg", "min", "max"])
+                else:
+                    self.stats._init_key(key)
 
         self.stats.add_plot_types(
             "score",

@@ -12,7 +12,7 @@ sys.modules["matplotlib.pyplot"] = MagicMock()
 import torch
 from agents.trainers.rainbow_trainer import RainbowTrainer
 from configs.agents.rainbow_dqn import RainbowConfig
-from game_configs.cartpole_config import CartPoleConfig
+from configs.games.cartpole import CartPoleConfig
 
 
 def build_minimal_config():

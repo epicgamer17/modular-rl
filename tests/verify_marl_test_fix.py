@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from agents.agent import MARLBaseAgent, BaseAgent
-from agent_configs.base_config import Config
+from configs.base import Config
 
 
 def test_marl_test_fix():

@@ -1,6 +1,6 @@
 from typing import Type, Union
 from .base import AgentConfig
-from agent_configs.base_config import (
+from configs.base import (
     DistributionalConfig,
     NoisyConfig,
     EpsilonGreedyConfig,
@@ -10,6 +10,8 @@ from configs.modules.backbones.factory import BackboneConfigFactory
 from configs.modules.heads.base import HeadConfig
 from configs.modules.heads.q import QHeadConfig, DuelingQHeadConfig
 from configs.modules.output_strategies import OutputStrategyConfigFactory
+from configs.modules.backbones.factory import BackboneConfigFactory
+from configs.modules.architecture_config import ArchitectureConfig
 from utils.utils import tointlists
 
 
@@ -18,6 +20,10 @@ class RainbowConfig(
 ):
     def __init__(self, config_dict: dict, game_config):
         super(RainbowConfig, self).__init__(config_dict, game_config)
+
+        # Parse shared architecture defaults
+        arch_dict = self.parse_field("architecture", default={}, required=False)
+        self.arch = ArchitectureConfig(arch_dict)
         print("RainbowConfig")
 
         # Mixin: Noisy

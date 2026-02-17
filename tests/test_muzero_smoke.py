@@ -2,8 +2,8 @@ import torch
 import pytest
 from agents.trainers.muzero_trainer import MuZeroTrainer
 from configs.agents.muzero import MuZeroConfig
-from game_configs.cartpole_config import CartPoleConfig
-from game_configs.tictactoe_config import TicTacToeConfig
+from configs.games.cartpole_config import CartPoleConfig
+from configs.games.tictactoe_config import TicTacToeConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from losses.basic_losses import CategoricalCrossentropyLoss, MSELoss
 
