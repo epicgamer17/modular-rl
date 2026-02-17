@@ -208,13 +208,22 @@ class AfterstateDynamics(BaseDynamics):
         return afterstate
 
 
+from modules.encoders.chance_encoder import ChanceEncoder
+from modules.world_models.world_model import WorldModelOutput
+
+
 class MuzeroWorldModel(WorldModelInterface, nn.Module):
-    def __init__(self, config: MuZeroConfig, input_shape: Tuple[int], num_actions: int):
-        nn.Module.__init__(self)
+    def __init__(
+        self,
+        config: MuZeroConfig,
+        observation_dimensions: Tuple[int, ...],
+        num_actions: int,
+    ):
+        super().__init__()
         self.config = config
-        # --- 1. Representation Network ---
-        self.representation = Representation(config, input_shape)
         self.num_actions = num_actions
+        # 1. Representation Network
+        self.representation = Representation(config, observation_dimensions)
         self.num_chance = config.num_chance
 
         hidden_state_shape = self.representation.output_shape
@@ -249,6 +258,15 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 num_chance_codes=self.num_chance,
             )
 
+            # Encoder (Moves from AgentNetwork to WorldModel)
+            encoder_input_shape = list(observation_dimensions)
+            encoder_input_shape[0] *= 2  # Double channels for stacked obs
+            self.encoder = ChanceEncoder(
+                config,
+                tuple(encoder_input_shape),
+                num_codes=self.num_chance,
+            )
+
         else:
             self.dynamics = Dynamics(
                 self.config,
@@ -261,6 +279,18 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         assert (
             self.dynamics.output_shape == self.representation.output_shape
         ), f"{self.dynamics.output_shape} = {self.representation.output_shape}"
+
+    def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
+        self.representation.initialize(initializer)
+        self.dynamics.initialize(initializer)
+        if hasattr(self, "afterstate_dynamics"):
+            self.afterstate_dynamics.initialize(initializer)
+        if hasattr(self, "shared_backbone"):
+            self.shared_backbone.initialize(initializer)
+        if hasattr(self, "sigma_head"):
+            self.sigma_head.initialize(initializer)
+        if hasattr(self, "encoder"):
+            self.encoder.initialize(initializer)
 
     def initial_inference(self, observation: Tensor) -> WorldModelOutput:
         hidden_state = self.representation(observation)
@@ -330,7 +360,6 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         reward_h_states: Tensor,
         reward_c_states: Tensor,
         preprocess_fn: Callable[[Tensor], Tensor],
-        agent_network=None,  # Optional: Only needed for Stochastic MuZero (Encoder/Afterstate)
     ) -> Dict[str, List[Tensor]]:
         """
         Unrolls the physics engine (Representation -> Dynamics -> Reward).
@@ -394,10 +423,6 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             actions_k = actions[:, k]
 
             if self.config.stochastic:
-                assert (
-                    agent_network is not None
-                ), "Stochastic MuZero requires agent_network for unrolling (Encoder/Afterstate Value)"
-
                 target_observations_k = target_observations[:, k]
                 target_observations_k_plus_1 = target_observations[:, k + 1]
                 real_obs_k = preprocess_fn(target_observations_k)
@@ -413,9 +438,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 chance_logits_k = afterstate_out.chance
 
                 # 3. Encoder Inference
-                encoder_softmax_k, encoder_onehot_k = agent_network.encoder(
-                    encoder_input
-                )
+                encoder_softmax_k, encoder_onehot_k = self.encoder(encoder_input)
 
                 if self.config.use_true_chance_codes:
                     codes_k = F.one_hot(

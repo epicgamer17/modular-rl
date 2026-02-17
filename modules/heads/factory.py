@@ -59,17 +59,11 @@ class HeadFactory:
                 strategy=kwargs.get("strategy"),
             )
 
-        # PolicyHead needs num_actions OR output_size
+        # PolicyHead
         if isinstance(config, PolicyHeadConfig):
-            # Try to get either num_actions (discrete) or output_size (continuous)
-            num_actions = kwargs.get("num_actions")
-            output_size = kwargs.get("output_size")
-
             return PolicyHead(
                 arch_config=arch_config,
                 input_shape=input_shape,
-                num_actions=num_actions,
-                output_size=output_size,
                 neck_config=config.neck,
                 strategy=kwargs.get("strategy"),
             )

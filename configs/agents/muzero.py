@@ -33,11 +33,6 @@ class MuZeroConfig(
         super(MuZeroConfig, self).__init__(config_dict, game_config)
 
         # Initialize Architecture Config handled by AgentConfig
-        # self.arch = ArchitectureConfig(config_dict.get("architecture", {}))
-
-        self.world_model_cls = self.parse_field("world_model_cls", None, required=True)
-        # self.norm_type parsed in Config
-        # SAME AS VMIN AND VMAX?
         self.known_bounds = self.parse_field(
             "known_bounds", default=None, required=False
         )
@@ -151,15 +146,6 @@ class MuZeroConfig(
             ChanceProbabilityHeadConfig(chance_dict)
         )
 
-        # Actor/Critic Backbones (for Prediction Head)
-        # TODO: right now the afterstate backbones use these as well, maybe switch that for easier readability
-        self.actor_backbone: BackboneConfig = self.parse_backbone_config(
-            "actor_backbone"
-        )
-        self.critic_backbone: BackboneConfig = self.parse_backbone_config(
-            "critic_backbone"
-        )
-
         # Support a shared 'backbone' field as a fallback
         shared_bb = self.parse_field("backbone", default=None, required=False)
         if shared_bb:
@@ -200,7 +186,6 @@ class MuZeroConfig(
         self.games_per_generation: int = self.parse_field("games_per_generation", 100)
         self.value_loss_factor: float = self.parse_field("value_loss_factor", 1.0)
         self.to_play_loss_factor: float = self.parse_field("to_play_loss_factor", 1.0)
-        # self.weight_decay parsed in Config
 
         # Mixin: Search (MCTS)
         self.parse_search_params()
@@ -226,11 +211,7 @@ class MuZeroConfig(
             "to_play_loss_function", CategoricalCrossentropyLoss(from_logits=True)
         )
 
-        # self.n_step parsed in Config
-        # self.discount_factor parsed in Config
         self.unroll_steps: int = self.parse_field("unroll_steps", 5)
-
-        # self.per_alpha, beta, epsilon etc parsed in Config
 
         # Mixin: Distributional (Support Range) - Moved to top
 

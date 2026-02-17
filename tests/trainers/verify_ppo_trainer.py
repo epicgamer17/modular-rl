@@ -145,8 +145,6 @@ def test_ppo_learner_store():
     model = PPONetwork(
         config=config,
         input_shape=(4,),
-        output_size=2,
-        discrete=True,
     )
 
     learner = PPOLearner(
@@ -185,8 +183,6 @@ def test_ppo_learner_finish_trajectory():
     model = PPONetwork(
         config=config,
         input_shape=(4,),
-        output_size=2,
-        discrete=True,
     )
 
     learner = PPOLearner(
@@ -233,8 +229,6 @@ def test_ppo_learner_step():
     model = PPONetwork(
         config=config,
         input_shape=(4,),
-        output_size=2,
-        discrete=True,
     )
 
     learner = PPOLearner(
@@ -281,8 +275,6 @@ def test_ppo_policy_action():
     model = PPONetwork(
         config=config,
         input_shape=(4,),
-        output_size=2,
-        discrete=True,
     )
 
     policy = PPOPolicy(

@@ -40,16 +40,9 @@ def test_muzero_cartpole_smoke():
 
     config_dict = {
         "world_model_cls": MuzeroWorldModel,
-        "residual_layers": [],
-        "representation_dense_layer_widths": [64],
-        "dynamics_dense_layer_widths": [64],
-        "actor_dense_layer_widths": [64],
-        "critic_dense_layer_widths": [64],
-        "reward_dense_layer_widths": [64],
-        "actor_conv_layers": [],
-        "critic_conv_layers": [],
-        "reward_conv_layers": [],
-        "to_play_conv_layers": [],
+        "representation_backbone": {"type": "dense", "widths": [64]},
+        "dynamics_backbone": {"type": "dense", "widths": [64]},
+        "prediction_backbone": {"type": "dense", "widths": [64]},
         "num_simulations": 2,
         "minibatch_size": 2,
         "min_replay_buffer_size": 2,
@@ -92,10 +85,19 @@ def test_muzero_tictactoe_smoke():
 
     config_dict = {
         "world_model_cls": MuzeroWorldModel,
-        "residual_layers": [(16, 3, 1)],
-        "actor_conv_layers": [(8, 1, 1)],
-        "critic_conv_layers": [(8, 1, 1)],
-        "reward_conv_layers": [],
+        "representation_backbone": {
+            "type": "resnet",
+            "filters": [16, 16],
+            "kernel_sizes": [3, 3],
+            "strides": [1, 1],
+        },
+        "dynamics_backbone": {
+            "type": "resnet",
+            "filters": [16, 16],
+            "kernel_sizes": [3, 3],
+            "strides": [1, 1],
+        },
+        "prediction_backbone": {"type": "dense", "widths": [64]},
         "num_simulations": 2,
         "minibatch_size": 2,
         "min_replay_buffer_size": 2,

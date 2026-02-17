@@ -7,7 +7,7 @@ from agents.policies.search_policy import SearchPolicy
 from agents.action_selectors.selectors import TemperatureSelector
 from search.search_factories import create_mcts
 from agents.actors.actors import get_actor_class
-from modules.agent_nets.muzero import Network
+from modules.agent_nets.muzero import AgentNetwork
 from stats.stats import StatTracker, PlotType
 
 
@@ -27,7 +27,7 @@ class MuZeroTrainer(BaseTrainer):
         super().__init__(config, env, device, stats, test_agents)
         # 1. Initialize Network
         # ... (network initialization)
-        from modules.agent_nets.muzero import Network
+        from modules.agent_nets.muzero import AgentNetwork as Network
 
         self.model = Network(
             config,
@@ -143,6 +143,10 @@ class MuZeroTrainer(BaseTrainer):
             # Periodic logging
             if self.training_step % 100 == 0 and self.training_step > 0:
                 print(f"Step {self.training_step}")
+
+            # Drain stats queue to avoid deadlock if workers are logging
+            if hasattr(self.stats, "drain_queue"):
+                self.stats.drain_queue()
 
         self.executor.stop()
         # Final checkpoint and stats plot

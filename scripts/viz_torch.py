@@ -90,7 +90,7 @@ try:
     AgentConfig._verify_game = robust_verify_game
 
     from modules.agent_nets.ppo import PPONetwork
-    from modules.agent_nets.muzero import Network as MuZeroNetwork
+    from modules.agent_nets.muzero import AgentNetwork as MuZeroNetwork
     from modules.agent_nets.rainbow_dqn import RainbowNetwork
     from configs.agents.ppo import PPOConfig
     from configs.agents.muzero import MuZeroConfig

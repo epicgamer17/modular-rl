@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from agents.muzero_learner import MuZeroLearner
 from configs.agents.muzero import MuZeroConfig
 from configs.games.cartpole_config import CartPoleConfig
-from modules.agent_nets.muzero import Network
+from modules.agent_nets.muzero import AgentNetwork
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from losses.basic_losses import CategoricalCrossentropyLoss
 from torch.optim import Adam

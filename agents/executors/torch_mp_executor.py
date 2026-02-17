@@ -11,6 +11,12 @@ class TorchMPExecutor(BaseExecutor):
 
     def __init__(self):
         super().__init__()
+        # Set sharing strategy to file_system to avoid torch_shm_manager issues on Mac
+        # TODO: MAKE THIS ONLY DO THIS FOR AGENT/SANDBOX RUNS AND NOT WHEN A USER RUNS IT
+        try:
+            mp.set_sharing_strategy("file_system")
+        except Exception:
+            pass
         self.stop_flag = mp.Value("i", 0)
         self.result_queue = mp.Queue()
         self.error_queue = mp.Queue()
@@ -73,12 +79,28 @@ class TorchMPExecutor(BaseExecutor):
         return results
 
     def _check_errors(self):
+        # 1. Check if error queue has something
         if not self.error_queue.empty():
             err, tb = self.error_queue.get()
             self.stop()
             print("Error detected in worker process:")
             print("".join(tb))
             raise err
+
+        # 2. Check if all workers are still alive
+        if hasattr(self, "workers"):
+            for i, w in enumerate(self.workers):
+                if not w.is_alive():
+                    # Check if it exited with code 0 (clean stop) or not
+                    if (
+                        w.exitcode != 0
+                        and w.exitcode is not None
+                        and self.stop_flag.value == 0
+                    ):
+                        self.stop()
+                        raise RuntimeError(
+                            f"Worker process {i} died unexpectedly with exit code {w.exitcode}"
+                        )
 
     def update_weights(self, state_dict: Dict[str, Any]):
         # In TorchMP with shared memory, weights are often updated in-place
@@ -88,20 +110,33 @@ class TorchMPExecutor(BaseExecutor):
 
     def stop(self):
         self.stop_flag.value = 1
+
+        # Give workers a moment to see the stop flag
+        time.sleep(0.1)
+
         for w in self.workers:
             if w.is_alive():
+                # For some environments, join() might hang if the queue is full
+                # terminate() is safer but join() is still needed to clean up
                 w.terminate()
-                w.join()
+                w.join(timeout=1.0)
+                if w.is_alive():
+                    # Force kill if still alive
+                    import os
+                    import signal
+
+                    try:
+                        os.kill(w.pid, signal.SIGKILL)
+                    except:
+                        pass
         self.workers = []
 
-        # Clear queues
-        while not self.result_queue.empty():
-            try:
-                self.result_queue.get_nowait()
-            except:
-                break
-        while not self.error_queue.empty():
-            try:
-                self.error_queue.get_nowait()
-            except:
-                break
+        # Close and clear queues to release file descriptors/threads
+        for q in [self.result_queue, self.error_queue]:
+            while not q.empty():
+                try:
+                    q.get_nowait()
+                except:
+                    break
+            q.close()
+            q.join_thread()

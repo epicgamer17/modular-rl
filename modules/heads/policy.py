@@ -19,29 +19,7 @@ class PolicyHead(BaseHead):
         input_shape: Tuple[int, ...],
         neck_config: Optional[BackboneConfig] = None,
         strategy: Optional[OutputStrategy] = None,
-        # Legacy/Helper args
-        num_actions: Optional[int] = None,
-        output_size: Optional[int] = None,
     ):
-        if strategy is None:
-            # Lazy import to avoid circular dependencies if any
-            from modules.output_strategy_factory import OutputStrategyFactory
-            from configs.modules.output_strategies import (
-                CategoricalConfig,
-                GaussianConfig,
-            )
-
-            # Legacy Discrete support
-            if num_actions is not None:
-                config = CategoricalConfig(
-                    {"num_classes": num_actions, "type": "categorical"}
-                )
-                strategy = OutputStrategyFactory.create(config)
-            elif output_size is not None:
-                # Assume continuous/gaussian if output_size passed and no strategy
-                config = GaussianConfig({"action_dim": output_size, "type": "gaussian"})
-                strategy = OutputStrategyFactory.create(config)
-
         super().__init__(arch_config, input_shape, strategy, neck_config)
 
     def forward(

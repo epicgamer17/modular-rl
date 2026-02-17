@@ -37,7 +37,16 @@ class ConfigBase:
         self._parsed_fields.add(field_name)
 
     def __init__(self, config_dict: dict):
-        self.config_dict = config_dict
+        self.config_dict = config_dict.copy()
+        # Merge legacy nested blocks for backward compatibility
+        legacy_blocks = ["architecture", "arch", "search", "replay", "optimization"]
+        for block in legacy_blocks:
+            if block in self.config_dict and isinstance(self.config_dict[block], dict):
+                # Merge block content into top-level, but don't overwrite if top-level already has it
+                for k, v in self.config_dict[block].items():
+                    if k not in self.config_dict:
+                        self.config_dict[k] = v
+
         self._parsed_fields = set()
 
     @classmethod

@@ -2,7 +2,7 @@ import torch
 import gymnasium as gym
 from configs.agents.muzero import MuZeroConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
-from modules.agent_nets.muzero import Network
+from modules.agent_nets.muzero import AgentNetwork
 from configs.games.game import GameConfig
 
 

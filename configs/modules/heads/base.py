@@ -17,14 +17,3 @@ class HeadConfig(ConfigBase):
         self.output_strategy: Optional[dict] = self.parse_field(
             "output_strategy", default={}, required=False
         )
-
-
-class ScalarHeadConfig(HeadConfig):
-    """Configuration for ScalarHead."""
-
-    def __init__(self, config_dict: dict = None):
-        super().__init__(config_dict or {})
-
-
-# Alias for backward compatibility
-RegressionHeadConfig = ScalarHeadConfig

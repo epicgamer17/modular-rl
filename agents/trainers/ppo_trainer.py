@@ -45,9 +45,7 @@ class PPOTrainer(BaseTrainer):
         input_shape = self.obs_dim
         self.model = PPONetwork(
             config=config,
-            output_size=self.num_actions,
             input_shape=input_shape,
-            discrete=True,  # PPO discrete action space
         )
         self.model.to(device)
 
@@ -217,6 +215,10 @@ class PPOTrainer(BaseTrainer):
                     f"Avg Score: {avg_score:.2f}, "
                     f"Episodes Finished: {len(completed_scores)}"
                 )
+
+            # Drain stats queue to avoid deadlock if workers are logging
+            if hasattr(self.stats, "drain_queue"):
+                self.stats.drain_queue()
 
         self.executor.stop()
         self._save_checkpoint()

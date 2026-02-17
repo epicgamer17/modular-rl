@@ -24,72 +24,6 @@ from modules.dense import DenseStack, build_dense
 from modules.residual import ResidualStack
 
 
-class Encoder(nn.Module):
-    def __init__(
-        self,
-        config: MuZeroConfig,
-        input_shape: Tuple[int],
-        num_codes: int = 32,
-    ):
-        """
-        Args:
-            config: MuZeroConfig containing chance_encoder_backbone.
-            input_shape: tuple, e.g. (C, H, W) or (B, C, H, W).
-            num_codes: embedding size output by encoder.
-        """
-        super().__init__()
-        self.config = config
-        self.num_codes = num_codes
-
-        # Use modular backbone for Encoder
-        self.net = BackboneFactory.create(config.chance_encoder_backbone, input_shape)
-
-        # Output head: maps backbone output to num_codes
-        backbone_output_shape = self.net.output_shape
-        flat_dim = 1
-        for d in backbone_output_shape:
-            flat_dim *= d
-
-        self.fc = nn.Linear(flat_dim, num_codes)
-
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Returns:
-            probs: (B, num_codes) - Softmax probabilities
-            one_hot_st: (B, num_codes) - Straight-Through gradient flow
-        """
-        # 1. Processing to Logits
-        x = self.net(x)
-        if x.dim() > 2:
-            x = x.flatten(1, -1)
-        x = self.fc(x)
-
-        # 2. Softmax
-        probs = x.softmax(dim=-1)
-
-        # Convert to one-hot (B, num_codes)
-        one_hot = torch.zeros_like(probs).scatter_(
-            -1, torch.argmax(probs, dim=-1, keepdim=True), 1.0
-        )
-
-        # # 4. Straight-Through Estimator
-        # # Forward: use one_hot
-        # # Backward: use gradients of probs
-        one_hot_st = (one_hot - probs).detach() + probs
-
-        # TODO: LIKE LIGHT ZERO NO SOFTMAX?
-        # probs = x
-        # one_hot_st = OnehotArgmax.apply(probs)
-
-        # one_hot_st = F.gumbel_softmax(x, tau=1.0, hard=True, dim=-1)
-        # probs = F.softmax(x, dim=-1)
-        return probs, one_hot_st
-
-    def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
-        self.net.initialize(initializer)
-        zero_weights_initializer(self.fc)
-
-
 class AgentNetwork(nn.Module):
     """
     The Composer: Wires a Physics Engine (WorldModel) to an Agent's Objectives (Heads).
@@ -134,7 +68,6 @@ class AgentNetwork(nn.Module):
         self.policy_head = PolicyHead(
             arch_config=config.arch,
             input_shape=prediction_feat_shape,
-            num_actions=num_actions,
             neck_config=config.policy_head.neck,
             strategy=pol_strategy,
         )
@@ -155,23 +88,8 @@ class AgentNetwork(nn.Module):
         self.flat_hidden_dim = torch.Size(hidden_state_shape).numel()
         self.projector = Projector(self.flat_hidden_dim, config)
 
-        encoder_input_shape = list(input_shape)
-        # Input is (C, H, W) or (D,)
-        # We concatenate two observations, so channels/feature dim doubles
-        encoder_input_shape[0] = input_shape[0] * 2
-        encoder_input_shape = tuple(encoder_input_shape)
-
-        self.encoder = Encoder(
-            config,
-            encoder_input_shape,
-            num_codes=self.config.num_chance,
-        )
-
     def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
-        self.world_model.representation.initialize(initializer)
-        self.world_model.dynamics.initialize(initializer)
-        if hasattr(self.world_model, "afterstate_dynamics"):
-            self.world_model.afterstate_dynamics.initialize(initializer)
+        self.world_model.initialize(initializer)
 
         self.prediction_backbone.initialize(initializer)
         self.value_head.initialize(initializer)
@@ -179,7 +97,6 @@ class AgentNetwork(nn.Module):
 
         if self.config.stochastic:
             self.afterstate_value_head.initialize(initializer)
-            self.encoder.initialize(initializer)
 
         # Initialize projector?
 
@@ -309,7 +226,6 @@ class AgentNetwork(nn.Module):
             reward_h_states=reward_h_states,
             reward_c_states=reward_c_states,
             preprocess_fn=preprocess_fn,
-            agent_network=self,  # Pass self for encoder/afterstate access
         )
 
         latent_states = physics_output["latent_states"]
@@ -403,7 +319,3 @@ class AgentNetwork(nn.Module):
             return proj
         else:
             return proj.detach()
-
-
-# Compat alias
-Network = AgentNetwork
