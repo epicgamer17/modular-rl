@@ -5,6 +5,7 @@ from configs.modules.backbones.dense import DenseConfig
 from configs.modules.backbones.conv import ConvConfig
 from configs.modules.backbones.recurrent import RecurrentConfig
 from configs.modules.backbones.transformer import TransformerConfig
+from configs.modules.backbones.identity import IdentityConfig
 from configs.modules.backbones.base import BackboneConfig
 
 
@@ -18,10 +19,14 @@ class BackboneConfigFactory:
         "conv": ConvConfig,
         "recurrent": RecurrentConfig,
         "transformer": TransformerConfig,
+        "identity": IdentityConfig,
     }
 
     @classmethod
     def create(cls, config_dict: dict) -> BackboneConfig:
+        if config_dict is None:
+            return None
+
         if "type" not in config_dict:
             # Default to resnet if filters is present, or dense if widths is present
             if "filters" in config_dict:

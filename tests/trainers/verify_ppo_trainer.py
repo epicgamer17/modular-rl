@@ -58,6 +58,21 @@ class MinimalPPOConfig:
         self.model_name = "ppo_smoke_test"
         self.training_steps = 3
         self.steps_per_epoch = 100
+
+        # Architecture Config
+        from configs.modules.architecture_config import ArchitectureConfig
+        from configs.modules.backbones.dense import DenseConfig
+        from configs.modules.heads.base import HeadConfig
+
+        self.arch = ArchitectureConfig({"activation": "relu", "norm_type": "none"})
+        self.backbone = DenseConfig({"widths": [64], "activation": "relu"})
+        self.policy_head = HeadConfig(
+            {"neck": None, "output_strategy": {"type": "categorical"}}
+        )
+        self.value_head = HeadConfig(
+            {"neck": None, "output_strategy": {"type": "scalar"}}
+        )
+
         self.train_policy_iterations = 2
         self.train_value_iterations = 2
         self.minibatch_size = 32
@@ -92,14 +107,14 @@ class MinimalPPOConfig:
 
 def test_ppo_trainer_init():
     """Test that PPOTrainer initializes without errors."""
-    from trainers.ppo_trainer import PPOTrainer
+    from agents.trainers.ppo_trainer import PPOTrainer
 
     config = MinimalPPOConfig()
     device = torch.device("cpu")
 
     trainer = PPOTrainer(
         config=config,
-        env=make_cartpole,
+        env=make_cartpole(),
         device=device,
     )
 
@@ -127,7 +142,7 @@ def test_ppo_learner_store():
 
     model = PPONetwork(
         config=config,
-        input_shape=(32, 4),
+        input_shape=(4,),
         output_size=2,
         discrete=True,
     )
@@ -167,7 +182,7 @@ def test_ppo_learner_finish_trajectory():
 
     model = PPONetwork(
         config=config,
-        input_shape=(32, 4),
+        input_shape=(4,),
         output_size=2,
         discrete=True,
     )
@@ -215,7 +230,7 @@ def test_ppo_learner_step():
 
     model = PPONetwork(
         config=config,
-        input_shape=(32, 4),
+        input_shape=(4,),
         output_size=2,
         discrete=True,
     )
@@ -253,7 +268,7 @@ def test_ppo_learner_step():
 
 def test_ppo_policy_action():
     """Test that PPOPolicy can compute actions."""
-    from trainers.ppo_trainer import PPOPolicy
+    from agents.trainers.ppo_trainer import PPOPolicy
     from agents.action_selectors.selectors import CategoricalSelector
     from modules.agent_nets.ppo import PPONetwork
     import numpy as np
@@ -263,7 +278,7 @@ def test_ppo_policy_action():
 
     model = PPONetwork(
         config=config,
-        input_shape=(32, 4),
+        input_shape=(4,),
         output_size=2,
         discrete=True,
     )

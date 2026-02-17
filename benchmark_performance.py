@@ -9,7 +9,7 @@ sys.path.append(os.path.abspath("custom_gym_envs_pkg"))
 
 from game_configs.catan_config import CatanConfig
 from game_configs.tictactoe_config import TicTacToeConfig
-from agent_configs.muzero_config import MuZeroConfig
+from configs.agents.muzero import MuZeroConfig
 from agents.policies.search_policy import SearchPolicy
 from search.search_factories import create_mcts
 from modules.world_models.muzero_world_model import MuzeroWorldModel

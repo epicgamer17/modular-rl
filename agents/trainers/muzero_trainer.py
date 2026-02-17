@@ -64,7 +64,7 @@ class MuZeroTrainer:
         self.model = Network(
             config=config,
             num_actions=num_actions,
-            input_shape=torch.Size((self.config.minibatch_size,) + obs_dim),
+            input_shape=obs_dim,  # Exclude batch dim per new standard
             channel_first=True,
             **kwargs,
         )

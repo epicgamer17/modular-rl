@@ -1,4 +1,4 @@
-from .base_config import (
+from agent_configs.base_config import (
     ConfigBase,
     OptimizationConfig,
     ReplayConfig,

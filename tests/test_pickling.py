@@ -2,7 +2,7 @@ import torch
 import torch.optim as optim
 import pickle
 from modules.utils import get_lr_scheduler
-from agent_configs.muzero_config import MuZeroConfig
+from configs.agents.muzero import MuZeroConfig
 from game_configs.cartpole_config import CartPoleConfig
 from unittest.mock import MagicMock
 

@@ -1,6 +1,6 @@
 import torch
 from trainers.muzero_trainer import MuZeroTrainer
-from agent_configs.muzero_config import MuZeroConfig
+from configs.agents.muzero import MuZeroConfig
 from game_configs.cartpole_config import CartPoleConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from losses.basic_losses import CategoricalCrossentropyLoss

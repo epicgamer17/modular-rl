@@ -117,8 +117,8 @@ class ResidualStack(BaseStack):
             f"kernel_sizes({len(kernel_sizes)}), strides({len(strides)})"
         )
 
-        current_input_channels = input_shape[1]
-        curr_h, curr_w = input_shape[2], input_shape[3]
+        current_input_channels = input_shape[0]
+        curr_h, curr_w = input_shape[1], input_shape[2]
 
         for i in range(len(filters)):
             out_channels = filters[i]

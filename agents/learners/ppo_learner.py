@@ -57,18 +57,18 @@ class PPOLearner:
         self._init_buffers()
 
         # 2. Initialize Optimizers (separate for actor and critic)
-        self.actor_optimizer = self._create_optimizer(
-            self.model.actor.parameters(),
+        self.policy_optimizer = self._create_optimizer(
+            self.model.policy.parameters(),
             config.actor,
         )
-        self.critic_optimizer = self._create_optimizer(
-            self.model.critic.parameters(),
+        self.value_optimizer = self._create_optimizer(
+            self.model.value.parameters(),
             config.critic,
         )
 
         # 3. Initialize LR Schedulers
-        self.actor_scheduler = get_lr_scheduler(self.actor_optimizer, config)
-        self.critic_scheduler = get_lr_scheduler(self.critic_optimizer, config)
+        self.policy_scheduler = get_lr_scheduler(self.policy_optimizer, config)
+        self.value_scheduler = get_lr_scheduler(self.value_optimizer, config)
 
     def _create_optimizer(self, params, sub_config) -> torch.optim.Optimizer:
         """Creates optimizer based on config."""
@@ -239,15 +239,15 @@ class PPOLearner:
                     batch_obs, batch_actions, batch_old_log_probs, batch_advantages
                 )
 
-                self.actor_optimizer.zero_grad(set_to_none=True)
+                self.policy_optimizer.zero_grad(set_to_none=True)
                 actor_loss.backward()
 
                 if self.config.actor.clipnorm > 0:
                     clip_grad_norm_(
-                        self.model.actor.parameters(), self.config.actor.clipnorm
+                        self.model.policy.parameters(), self.config.actor.clipnorm
                     )
 
-                self.actor_optimizer.step()
+                self.policy_optimizer.step()
 
                 actor_losses.append(actor_loss.detach().item())
                 kl_divergences.append(kl_div.detach().item())
@@ -272,21 +272,21 @@ class PPOLearner:
 
                 critic_loss = self._critic_loss(batch_obs, batch_returns)
 
-                self.critic_optimizer.zero_grad(set_to_none=True)
+                self.value_optimizer.zero_grad(set_to_none=True)
                 critic_loss.backward()
 
                 if self.config.critic.clipnorm > 0:
                     clip_grad_norm_(
-                        self.model.critic.parameters(), self.config.critic.clipnorm
+                        self.model.value.parameters(), self.config.critic.clipnorm
                     )
 
-                self.critic_optimizer.step()
+                self.value_optimizer.step()
 
                 critic_losses.append(critic_loss.detach().item())
 
         # Step schedulers
-        self.actor_scheduler.step()
-        self.critic_scheduler.step()
+        self.policy_scheduler.step()
+        self.value_scheduler.step()
 
         # Clear buffer for next epoch
         self._clear_buffer()
@@ -325,10 +325,10 @@ class PPOLearner:
         """
         # Get current policy distribution
         if self.discrete_action_space:
-            probs = self.model.actor(observations)
+            probs = self.model.policy(observations)
             distribution = torch.distributions.Categorical(probs=probs)
         else:
-            mean, std = self.model.actor(observations)
+            mean, std = self.model.policy(observations)
             distribution = torch.distributions.Normal(mean, std)
 
         # New log probabilities
@@ -366,7 +366,7 @@ class PPOLearner:
         Returns:
             Critic loss tensor.
         """
-        values = self.model.critic(observations).squeeze(-1)
+        values = self.model.value(observations).squeeze(-1)
         critic_loss = self.config.critic_coefficient * ((returns - values) ** 2).mean()
         return critic_loss
 

@@ -120,7 +120,7 @@ def build_dense(in_features: int, out_features: int, sigma: float = 0):
     if sigma == 0:
         return Dense(in_features, out_features)
     else:
-        return NoisyDense(in_features, out_features)
+        return NoisyDense(in_features, out_features, initial_sigma=sigma)
 
 
 # modules/dense_stack.py

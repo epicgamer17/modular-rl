@@ -21,4 +21,5 @@ class CartPoleConfig(GameConfig):
             num_players=1,
             # has_intermediate_rewards=True,
             make_env=make_env,
+            num_actions=2,
         )

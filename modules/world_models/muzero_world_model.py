@@ -4,12 +4,13 @@ from torch import Tensor
 import torch
 from modules.action_encoder import ActionEncoder
 from modules.dense import build_dense
-from modules.heads import CategoricalHead, ScalarHead
-from modules.network_block import NetworkBlock
 from modules.backbones.factory import BackboneFactory
+from modules.heads.to_play import ToPlayHead
+from modules.heads.reward import RewardHead
+from modules.output_strategy_factory import OutputStrategyFactory
 from modules.utils import _normalize_hidden_state, scale_gradient
 from modules.world_models.world_model import WorldModelInterface
-from agent_configs.muzero_config import MuZeroConfig
+from configs.agents.muzero import MuZeroConfig
 
 from torch import nn
 import torch.nn.functional as F
@@ -65,8 +66,9 @@ class BaseDynamics(nn.Module):
         )
 
         # 2. Fusion Layer (Move from ActionEncoder to Dynamics)
-        if len(input_shape) == 4:
-            self.num_channels = input_shape[1]
+        if len(input_shape) == 3:
+            # Image input (C, H, W)
+            self.num_channels = input_shape[0]
             in_channels = self.num_channels + self.action_embedding_dim
             out_channels = self.num_channels
             self.fusion = nn.Conv2d(
@@ -74,7 +76,8 @@ class BaseDynamics(nn.Module):
             )
             self.fusion_bn = nn.BatchNorm2d(out_channels)
         else:
-            self.input_size = input_shape[1]
+            # Vector input (C,) or (D,)
+            self.input_size = input_shape[0]
             in_features = self.input_size + self.action_embedding_dim
             out_features = self.input_size
             self.fusion = nn.Linear(in_features, out_features, bias=False)
@@ -130,17 +133,23 @@ class Dynamics(BaseDynamics):
             config, input_shape, num_actions, action_embedding_dim, "dynamics"
         )
         # 3. Heads
-        # Reward Head: Has its own modular backbone define in config
-        self.reward_head = ScalarHead(
-            config, self.output_shape, backbone_config=config.reward_backbone
+        # Reward Head
+        r_strategy = OutputStrategyFactory.create(config.reward_head.output_strategy)
+        self.reward_head = RewardHead(
+            arch_config=config.arch,
+            input_shape=self.output_shape,
+            strategy=r_strategy,
+            neck_config=config.reward_head.neck,
         )
 
-        # To-Play Head: Has its own modular backbone defined in config
-        self.to_play_head = CategoricalHead(
-            config,
-            self.output_shape,
-            output_size=config.game.num_players,
-            backbone_config=config.to_play_backbone,
+        # To-Play Head
+        tp_strategy = OutputStrategyFactory.create(config.to_play_head.output_strategy)
+        self.to_play_head = ToPlayHead(
+            arch_config=config.arch,
+            input_shape=self.output_shape,
+            num_players=config.game.num_players,
+            neck_config=config.to_play_head.neck,
+            strategy=tp_strategy,
         )
 
         # LSTM Support for Value Prefix
@@ -158,8 +167,8 @@ class Dynamics(BaseDynamics):
 
     def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
         super().initialize(initializer)
-        self.reward_head.initialize(initializer)
-        self.to_play_head.initialize(initializer)
+        self.reward_head.initialize()
+        self.to_play_head.initialize()
 
     def forward(
         self,
@@ -173,7 +182,7 @@ class Dynamics(BaseDynamics):
         next_hidden_state = self._fuse_and_process(hidden_state, action)
 
         # Predict reward and to_play
-        r_x = self.reward_head._process_backbone(next_hidden_state)
+        r_x = self.reward_head.process_input(next_hidden_state)
 
         if self.config.value_prefix:
             r_x = r_x.unsqueeze(0)
@@ -182,9 +191,9 @@ class Dynamics(BaseDynamics):
         else:
             new_reward_hidden = reward_hidden
 
-        reward = self.reward_head.output_layer(r_x)
-        if self.reward_head.is_probabilistic:
-            reward = reward.softmax(dim=-1)
+        reward_logits = self.reward_head.output_layer(r_x)
+        # TODO: should this be here or in the agent? probably the agent for target and prediction calculations in unroll right?
+        reward = self.reward_head.strategy.logits_to_scalar(reward_logits)
 
         # To Play
         to_play = self.to_play_head(next_hidden_state)
@@ -361,7 +370,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 self.config.support_range * 2 + 1,
             )
         else:
-            reward_shape = (self.config.minibatch_size, 1)
+            reward_shape = (self.config.minibatch_size,)
 
         values = [initial_values]
         rewards = [

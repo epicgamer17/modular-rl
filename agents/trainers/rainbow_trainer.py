@@ -71,7 +71,9 @@ class RainbowTrainer:
         num_actions = self._get_num_actions(env)
 
         # 1. Initialize Networks
-        input_shape = torch.Size((config.minibatch_size,) + obs_dim)
+        # input_shape = torch.Size((config.minibatch_size,) + obs_dim)
+        # New standard: input_shape excludes batch dimension
+        input_shape = obs_dim
         self.model = RainbowNetwork(
             config=config,
             output_size=num_actions,

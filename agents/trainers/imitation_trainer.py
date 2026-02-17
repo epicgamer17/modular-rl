@@ -80,7 +80,9 @@ class ImitationTrainer:
         self.num_actions = num_actions
 
         # 1. Initialize Network
-        input_shape = torch.Size((config.minibatch_size,) + obs_dim)
+        # input_shape = torch.Size((config.minibatch_size,) + obs_dim)
+        # New standard: input_shape excludes batch dimension
+        input_shape = obs_dim
         self.model = SupervisedNetwork(
             config=config,
             output_size=num_actions,

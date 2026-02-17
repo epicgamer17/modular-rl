@@ -11,12 +11,13 @@ class GameConfig:
         multi_agent,
         num_players,
         # has_intermediate_rewards,
+        num_actions,
         make_env=None,
     ):
         self.max_score = max_score
         self.min_score = min_score
         self.is_discrete = is_discrete  # can just check the action space type instead of setting manually if the env is passed in (ALSO COULD DO THIS IN THE BASE GAME CONFIG)
-        # self.num_actions = num_actions
+        self.num_actions = num_actions
         # self.observation_space = observation_space
         self.is_image = is_image
         self.is_deterministic = is_deterministic

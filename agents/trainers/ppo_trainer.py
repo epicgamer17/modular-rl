@@ -72,7 +72,9 @@ class PPOTrainer:
         self.num_actions = num_actions
 
         # 1. Initialize Network
-        input_shape = torch.Size((config.minibatch_size,) + obs_dim)
+        # input_shape = torch.Size((config.minibatch_size,) + obs_dim)
+        # New standard: input_shape excludes batch dimension
+        input_shape = obs_dim
         self.model = PPONetwork(
             config=config,
             output_size=num_actions,
@@ -207,7 +209,7 @@ class PPOTrainer:
                     else:
                         with torch.inference_mode():
                             obs = self.learner.preprocess(state)
-                            last_value = self.model.critic(obs).item()
+                            last_value = self.model.value(obs).item()
 
                     self.learner.finish_trajectory(last_value)
 
@@ -338,10 +340,10 @@ class PPOTrainer:
             "training_step": self.training_step,
             "model_name": self.model_name,
             "model": self.model.state_dict(),
-            "actor_optimizer": self.learner.actor_optimizer.state_dict(),
-            "critic_optimizer": self.learner.critic_optimizer.state_dict(),
-            "actor_scheduler": self.learner.actor_scheduler.state_dict(),
-            "critic_scheduler": self.learner.critic_scheduler.state_dict(),
+            "policy_optimizer": self.learner.policy_optimizer.state_dict(),
+            "value_optimizer": self.learner.value_optimizer.state_dict(),
+            "policy_scheduler": self.learner.policy_scheduler.state_dict(),
+            "value_scheduler": self.learner.value_scheduler.state_dict(),
         }
         torch.save(checkpoint, weights_path)
 
@@ -480,7 +482,8 @@ class PPOPolicy(DirectPolicy):
             ).unsqueeze(0)
         else:
             obs_tensor = obs.to(self.device)
-            if obs_tensor.dim() == len(self.model.actor.input_shape) - 1:
+            # If obs_tensor matches input_shape, it's a single observation -> unsqueeze.
+            if obs_tensor.dim() == len(self.model.policy.neck.input_shape):
                 obs_tensor = obs_tensor.unsqueeze(0)
 
         with torch.inference_mode():
@@ -509,13 +512,13 @@ class PPOPolicy(DirectPolicy):
             ).unsqueeze(0)
         else:
             obs_tensor = obs.to(self.device)
-            if obs_tensor.dim() == len(self.model.actor.input_shape) - 1:
+            if obs_tensor.dim() == len(self.model.policy.neck.input_shape):
                 obs_tensor = obs_tensor.unsqueeze(0)
 
         with torch.inference_mode():
             # Get actor probs and critic value
-            probs = self.model.actor(obs_tensor)
-            value = self.model.critic(obs_tensor)
+            probs = self.model.policy(obs_tensor)
+            value = self.model.value(obs_tensor)
 
         # Use the selector to get the action (sampling mode)
         # Note: action_selector is configured with from_logits=False in PPOTrainer

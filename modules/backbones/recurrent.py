@@ -12,9 +12,9 @@ class RecurrentBackbone(nn.Module):
         self.config = config
         self.input_shape = input_shape
 
-        # Input shape (B, Seq, Features) or (B, Features)
-        if len(input_shape) == 2:
-            input_dim = input_shape[1]
+        # Input shape (Seq, Features) or (Features)
+        if len(input_shape) == 1:
+            input_dim = input_shape[0]
         else:
             input_dim = input_shape[-1]
 
@@ -33,7 +33,7 @@ class RecurrentBackbone(nn.Module):
                 batch_first=True,
             )
 
-        self.output_shape = (input_shape[0], config.hidden_size)
+        self.output_shape = (config.hidden_size,)
 
     def forward(
         self, x: torch.Tensor, h: Optional[torch.Tensor] = None

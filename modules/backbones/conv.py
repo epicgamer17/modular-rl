@@ -23,14 +23,14 @@ class ConvBackbone(nn.Module):
             norm_type=config.norm_type,
         )
 
-        # Calculate output shape (B, C, H, W)
+        # Calculate output shape (C, H, W)
         # Conv2dStack uses padding='same' (via calculate_same_padding)
-        curr_h, curr_w = input_shape[2], input_shape[3]
+        curr_h, curr_w = input_shape[1], input_shape[2]
         for stride in config.strides:
             curr_h = (curr_h + stride - 1) // stride
             curr_w = (curr_w + stride - 1) // stride
 
-        self.output_shape = (input_shape[0], self.stack.output_channels, curr_h, curr_w)
+        self.output_shape = (self.stack.output_channels, curr_h, curr_w)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.stack(x)

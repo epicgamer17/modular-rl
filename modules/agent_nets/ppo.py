@@ -1,9 +1,10 @@
 from typing import Callable, Tuple
-from agent_configs.ppo_config import PPOConfig
+from configs.agents.ppo import PPOConfig
 from torch import Tensor
-from modules.actor import ActorNetwork
-from modules.critic import CriticNetwork
 import torch.nn as nn
+from modules.heads.policy import PolicyHead
+from modules.heads.value import ValueHead
+from modules.output_strategy_factory import OutputStrategyFactory
 
 
 class PPONetwork(nn.Module):
@@ -12,13 +13,56 @@ class PPONetwork(nn.Module):
         self, config: PPOConfig, input_shape: Tuple[int], output_size: int, discrete
     ):
         super().__init__()
-        # TODO: ADD SHARED LAYERS
-        self.critic = CriticNetwork(config, input_shape)
-        self.actor = ActorNetwork(config, input_shape, output_size)
+        # TODO: SHARED BACKBONE?
+        # Policy Head (Actor)
+        # Note: PolicyHeadConfig doesn't have an output strategy field yet in some contexts, but PolicyHead defaults to Categorical.
+        # If PPOConfig.policy_head has neck, it handles the backbone.
+        self.policy = PolicyHead(
+            arch_config=config.arch,  # PPOConfig inherits from Config -> Distributional/Noisy. Need to ensure .arch exists or pass config.
+            # BaseConfig usually doesn't have .arch. MuZeroConfig does.
+            # RainbowConfig didn't have .arch but we passed config.
+            # If BaseHead expects ArchitectureConfig interface, passing 'config' works IF it has the right props.
+            # Let's assume config has the mixins (NoisyConfig) which provides noisy_sigma.
+            input_shape=input_shape,
+            num_actions=output_size,
+            neck_config=config.policy_head.neck,
+        )
+
+        # Value Head (Critic)
+        val_strat = OutputStrategyFactory.create(config.value_head.output_strategy)
+        self.value = ValueHead(
+            arch_config=config.arch,
+            input_shape=input_shape,
+            strategy=val_strat,
+            neck_config=config.value_head.neck,
+        )
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
-        self.actor.initialize(initializer)
-        self.critic.initialize(initializer)
+        self.policy.initialize(initializer)
+        self.value.initialize(initializer)
 
     def forward(self, inputs: Tensor):
-        return self.actor(inputs), self.critic(inputs)
+        # PPOTrainer expects:
+        # dist = self.model.actor(obs)
+        # value = self.model.critic(obs)
+        # PolicyHead.forward returns dist object if return_probs is not used?
+        # Wait, PolicyHead.forward currently returns:
+        # logits = super().forward(x)
+        # if return_probs: return self.strategy.logits_to_probs(logits)
+        # return logits
+
+        # Original ActorNetwork returned a distribution object (Categorical/Normal)
+        # because the trainer does `dist.log_prob(actions)`.
+        # The new PolicyHead currently returns PROBS or LOGITS tensor. It does NOT return a torch Distribution object yet.
+        # THIS IS A BREAKING CHANGE if we don't fix PolicyHead or wrap it.
+        # But typically PPO trainers want the distribution to sample/log_prob.
+
+        # StandardCategoricalHead / PolicyHead logic needs to be verified.
+        # In modules/heads/policy.py: 'strategy = Categorical(num_classes=num_actions)'
+        # Categorical strategy: logits_to_probs returns softmax.
+
+        # If the trainer does `dist = self.model.actor(obs)`, we need to return something that has `.log_prob`.
+        # The generic PolicyHead returns a Tensor.
+
+        # Let's check modules/heads/policy.py again.
+        return self.policy(inputs), self.value(inputs)

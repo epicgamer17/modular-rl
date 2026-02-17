@@ -1,21 +1,18 @@
-from agent_configs.dqn.rainbow_config import RainbowConfig
+from configs.agents.rainbow_dqn import RainbowConfig
 
 
-class DQNConfig(RainbowConfig):
+class NStepDQNConfig(RainbowConfig):
     def __init__(self, config_dict, game_config):
-        super(DQNConfig, self).__init__(config_dict, game_config)
+        super(NStepDQNConfig, self).__init__(config_dict, game_config)
 
         self.noisy_sigma: float = 0
         self.deuling: bool = False
 
         self.soft_update: bool = False
         self.transfer_interval: int = 1
-
-        # Zeroing out PER/N-step params inherited from Config/Rainbow
         self.per_alpha: float = 0
         self.per_beta: float = 0
-        self.per_epsilon: float = 0.001
-        self.n_step: int = 1
+        self.per_epsilon: float = 0
         self.atom_size: int = 1
 
         # assert not (

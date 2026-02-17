@@ -36,4 +36,5 @@ class TicTacToeConfig(GameConfig):
             num_players=2,
             # has_intermediate_rewards=False,
             make_env=make_env,
+            num_actions=9,
         )

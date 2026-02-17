@@ -1,13 +1,14 @@
-from agent_configs.dqn.rainbow_config import RainbowConfig
+from configs.agents.rainbow_dqn import RainbowConfig
 
 
-class DoubleDQNConfig(RainbowConfig):
+class NoisyDQNConfig(RainbowConfig):
     def __init__(self, config_dict, game_config):
-        super(DoubleDQNConfig, self).__init__(config_dict, game_config)
+        super(NoisyDQNConfig, self).__init__(config_dict, game_config)
 
-        self.noisy_sigma: float = 0
         self.deuling: bool = False
 
+        self.soft_update: bool = False
+        self.transfer_interval: int = 1
         self.per_alpha: float = 0
         self.per_beta: float = 0
         self.per_epsilon: float = 0

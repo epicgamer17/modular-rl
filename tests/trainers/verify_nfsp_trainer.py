@@ -15,9 +15,9 @@ import numpy as np
 
 from agents.trainers.nfsp_trainer import NFSPTrainer
 from agents.policies.nfsp_policy import NFSPPolicy
-from agent_configs.dqn.nfsp_config import NFSPDQNConfig
-from agent_configs.dqn.rainbow_config import RainbowConfig
-from agent_configs.sl_config import SupervisedConfig
+from configs.agents.nfsp import NFSPDQNConfig
+from configs.agents.rainbow_dqn import RainbowConfig
+from configs.agents.supervised import SupervisedConfig
 from losses.basic_losses import MSELoss
 
 

@@ -1,10 +1,6 @@
-from typing import Callable
-
-from torch import Tensor
-
-# from muzero.muzero_world_model import MuzeroWorldModel
-from .base_config import (
-    Config,
+from typing import Callable, Type, Optional, List, Dict
+from .base import AgentConfig
+from agent_configs.base_config import (
     SearchConfig,
     ValuePrefixConfig,
     ConsistencyConfig,
@@ -13,13 +9,22 @@ from .base_config import (
 )
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.backbones.factory import BackboneConfigFactory
+from configs.modules.heads.to_play import ToPlayHeadConfig
+from configs.modules.heads.specialized import (
+    PolicyHeadConfig,
+    ChanceProbabilityHeadConfig,
+    ValueHeadConfig,
+    RewardHeadConfig,
+)
+from configs.modules.heads.base import HeadConfig
+from configs.modules.architecture_config import ArchitectureConfig
 from losses.basic_losses import CategoricalCrossentropyLoss, MSELoss
 from utils.utils import tointlists
 import copy
 
 
 class MuZeroConfig(
-    Config,
+    AgentConfig,
     SearchConfig,
     ValuePrefixConfig,
     ConsistencyConfig,
@@ -29,11 +34,27 @@ class MuZeroConfig(
     def __init__(self, config_dict, game_config):
         super(MuZeroConfig, self).__init__(config_dict, game_config)
 
+        # Initialize Architecture Config handled by AgentConfig
+        # self.arch = ArchitectureConfig(config_dict.get("architecture", {}))
+
         self.world_model_cls = self.parse_field("world_model_cls", None, required=True)
         # self.norm_type parsed in Config
         # SAME AS VMIN AND VMAX?
         self.known_bounds = self.parse_field(
             "known_bounds", default=None, required=False
+        )
+
+        # Mixin: Distributional (Support Range) - Parse early for head validation
+        self.parse_distributional_params()
+
+        self.stochastic: bool = self.parse_field("stochastic", False)
+        self.use_true_chance_codes: bool = self.parse_field(
+            "use_true_chance_codes", False
+        )
+        self.num_chance: int = self.parse_field("num_chance", 32)
+        self.sigma_loss = self.parse_field("sigma_loss", CategoricalCrossentropyLoss())
+        self.vqvae_commitment_cost_factor: float = self.parse_field(
+            "vqvae_commitment_cost_factor", 1.0
         )
 
         # Backbone Configurations
@@ -52,11 +73,60 @@ class MuZeroConfig(
         self.chance_encoder_backbone: BackboneConfig = self.parse_backbone_config(
             "chance_encoder_backbone"
         )
-        self.reward_backbone: BackboneConfig = self.parse_backbone_config(
-            "reward_backbone"
+        self.reward_head: RewardHeadConfig = self.parse_head_config(
+            "reward_head", RewardHeadConfig
         )
-        self.to_play_backbone: BackboneConfig = self.parse_backbone_config(
-            "to_play_backbone"
+
+        # Value Head - Enforce strategy if distributional
+        value_dict = self.parse_field("value_head", default={}, required=False) or {}
+        if self.atom_size > 1:
+            val_strat = value_dict.get("output_strategy", None)
+            if val_strat is None:
+                raise ValueError(
+                    f"Distributional MuZero (atom_size={self.atom_size}) requires an explicit output_strategy for the value head."
+                )
+            # Force num_classes to be atom_size
+            val_strat["num_classes"] = self.atom_size
+            value_dict["output_strategy"] = val_strat
+
+        self.value_head: ValueHeadConfig = ValueHeadConfig(value_dict)
+        # To Play Head - Custom parsing to inject num_players from game config
+        tp_dict = self.parse_field("to_play_head", default={}, required=False) or {}
+        if "num_players" not in tp_dict:
+            tp_dict["num_players"] = self.game.num_players
+
+        # Ensure output_strategy has num_classes (needed for CategoricalConfig)
+        tp_strat = tp_dict.get("output_strategy", {"type": "categorical"})
+        if "num_classes" not in tp_strat:
+            tp_strat["num_classes"] = self.game.num_players
+        tp_dict["output_strategy"] = tp_strat
+
+        self.to_play_head: ToPlayHeadConfig = ToPlayHeadConfig(tp_dict)
+        # Policy Head - Inject num_classes from game
+        poly_dict = self.parse_field("policy_head", default={}, required=False) or {}
+        # Determine num_actions dynamically
+        num_actions = self.game.num_actions
+
+        if num_actions is not None:
+            pol_strat = poly_dict.get("output_strategy", {"type": "categorical"})
+            if "num_classes" not in pol_strat:
+                pol_strat["num_classes"] = num_actions
+            poly_dict["output_strategy"] = pol_strat
+
+        self.policy_head: PolicyHeadConfig = PolicyHeadConfig(poly_dict)
+
+        # Chance Probability Head - Inject num_chance
+        chance_dict = (
+            self.parse_field("chance_probability_head", default={}, required=False)
+            or {}
+        )
+        chance_strat = chance_dict.get("output_strategy", {"type": "categorical"})
+        if "num_classes" not in chance_strat:
+            chance_strat["num_classes"] = self.num_chance
+        chance_dict["output_strategy"] = chance_strat
+
+        self.chance_probability_head: ChanceProbabilityHeadConfig = (
+            ChanceProbabilityHeadConfig(chance_dict)
         )
 
         # Actor/Critic Backbones (for Prediction Head)
@@ -140,8 +210,7 @@ class MuZeroConfig(
 
         # self.per_alpha, beta, epsilon etc parsed in Config
 
-        # Mixin: Distributional (Support Range)
-        self.parse_distributional_params()
+        # Mixin: Distributional (Support Range) - Moved to top
 
         self.multi_process: bool = self.parse_field("multi_process", True)
         self.num_workers: int = self.parse_field("num_workers", 4)
@@ -171,15 +240,7 @@ class MuZeroConfig(
 
         self.q_estimation_method: str = self.parse_field("q_estimation_method", "v_mix")
 
-        self.stochastic: bool = self.parse_field("stochastic", False)
-        self.use_true_chance_codes: bool = self.parse_field(
-            "use_true_chance_codes", False
-        )
-        self.num_chance: int = self.parse_field("num_chance", 32)
-        self.sigma_loss = self.parse_field("sigma_loss", CategoricalCrossentropyLoss())
-        self.vqvae_commitment_cost_factor: float = self.parse_field(
-            "vqvae_commitment_cost_factor", 1.0
-        )
+        # Moved up (stochastic, num_chance, etc.)
 
         self.action_embedding_dim = self.parse_field("action_embedding_dim", 32)
         self.single_action_plane = self.parse_field("single_action_plane", False)
@@ -197,3 +258,13 @@ class MuZeroConfig(
         if bb_dict is None:
             return None
         return BackboneConfigFactory.create(bb_dict)
+
+    def parse_head_config(
+        self, field_name: str, head_cfg_cls: Type[HeadConfig]
+    ) -> HeadConfig:
+        head_dict = self.parse_field(field_name, default=None, required=False)
+        if head_dict is None:
+            # Return a default config for that head type if not specified?
+            # Or just empty dict
+            return head_cfg_cls({})
+        return head_cfg_cls(head_dict)

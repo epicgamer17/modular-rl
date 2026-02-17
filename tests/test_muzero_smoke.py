@@ -1,7 +1,7 @@
 import torch
 import pytest
 from agents.trainers.muzero_trainer import MuZeroTrainer
-from agent_configs.muzero_config import MuZeroConfig
+from configs.agents.muzero import MuZeroConfig
 from game_configs.cartpole_config import CartPoleConfig
 from game_configs.tictactoe_config import TicTacToeConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel

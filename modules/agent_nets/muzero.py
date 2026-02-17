@@ -1,6 +1,6 @@
 from typing import Callable, Tuple
 
-from agent_configs.muzero_config import MuZeroConfig
+from configs.agents.muzero import MuZeroConfig
 from torch import nn, Tensor
 from modules.action_encoder import ActionEncoder
 from modules.actor import ActorNetwork
@@ -8,6 +8,11 @@ from modules.critic import CriticNetwork
 from modules.network_block import NetworkBlock
 from modules.backbones.factory import BackboneFactory
 from modules.sim_siam_projector_predictor import Projector
+from modules.heads.to_play import ToPlayHead
+from modules.heads.value import ValueHead
+from modules.heads.policy import PolicyHead
+from modules.heads.reward import RewardHead
+from modules.output_strategy_factory import OutputStrategyFactory
 from modules.utils import _normalize_hidden_state, zero_weights_initializer
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from utils.utils import to_lists
@@ -22,43 +27,48 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class PredictionHead(nn.Module):
-    """
-    Combines the final network block output with the Actor and Critic heads.
-    This replaces the 'prediction' logic from the old Prediction class forward.
-    """
-
-    def __init__(self, config: MuZeroConfig, input_shape: Tuple[int], output_size: int):
-        super().__init__()
-        self.critic = CriticNetwork(config, input_shape)
-        self.actor = ActorNetwork(config, input_shape, output_size)
-
-    def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
-        self.actor.initialize(initializer)
-        self.critic.initialize(initializer)
-
-    def forward(self, S: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        return self.critic(S), self.actor(S)
-
-
 class Prediction(nn.Module):
-    def __init__(self, config: MuZeroConfig, output_size: int, input_shape: Tuple[int]):
+    def __init__(
+        self,
+        backbone_config,
+        value_config,
+        policy_config,
+        output_size: int,
+        input_shape: Tuple[int],
+        arch_config,
+        game_is_discrete: bool = True,
+    ):
         super().__init__()
-        assert (
-            config.game.is_discrete
-        ), "AlphaZero only works for discrete action space games (board games)"
-        self.config = config
 
-        self.net = BackboneFactory.create(config.prediction_backbone, input_shape)
-        self.head = PredictionHead(config, self.net.output_shape, output_size)
+        self.net = BackboneFactory.create(backbone_config, input_shape)
+
+        # Value
+        val_strategy = OutputStrategyFactory.create(value_config.output_strategy)
+        self.value_head = ValueHead(
+            arch_config=arch_config,
+            input_shape=self.net.output_shape,
+            strategy=val_strategy,
+            neck_config=value_config.neck,
+        )
+
+        # Policy (or Chance)
+        pol_strategy = OutputStrategyFactory.create(policy_config.output_strategy)
+        self.policy_head = PolicyHead(
+            arch_config=arch_config,
+            input_shape=self.net.output_shape,
+            num_actions=output_size,
+            neck_config=policy_config.neck,
+            strategy=pol_strategy,
+        )
 
     def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
         self.net.initialize(initializer)
-        self.head.initialize(initializer)
+        self.value_head.initialize()
+        self.policy_head.initialize()
 
     def forward(self, inputs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         S = self.net(inputs)
-        return self.head(S)
+        return self.value_head(S), self.policy_head(S)
 
 
 class Encoder(nn.Module):
@@ -83,14 +93,11 @@ class Encoder(nn.Module):
 
         # Output head: maps backbone output to num_codes
         backbone_output_shape = self.net.output_shape
-        if len(backbone_output_shape) == 4:
-            flat_dim = (
-                backbone_output_shape[1]
-                * backbone_output_shape[2]
-                * backbone_output_shape[3]
-            )
-        else:
-            flat_dim = backbone_output_shape[1]
+        # Output head: maps backbone output to num_codes
+        backbone_output_shape = self.net.output_shape
+        flat_dim = 1
+        for d in backbone_output_shape:
+            flat_dim *= d
 
         self.fc = nn.Linear(flat_dim, num_codes)
 
@@ -197,19 +204,35 @@ class Network(nn.Module):
         hidden_state_shape = self.world_model.representation.output_shape
         print("Hidden state shape:", hidden_state_shape)
 
-        self.prediction = Prediction(config, num_actions, hidden_state_shape)
+        self.prediction = Prediction(
+            backbone_config=config.prediction_backbone,
+            value_config=config.value_head,
+            policy_config=config.policy_head,
+            output_size=num_actions,
+            input_shape=hidden_state_shape,
+            arch_config=config.arch,
+            game_is_discrete=config.game.is_discrete,
+        )
         if self.config.stochastic:
             self.afterstate_prediction = Prediction(
-                config, config.num_chance, hidden_state_shape
+                backbone_config=config.prediction_backbone,
+                value_config=config.value_head,
+                policy_config=config.chance_probability_head,
+                output_size=config.num_chance,
+                input_shape=hidden_state_shape,
+                arch_config=config.arch,
+                game_is_discrete=config.game.is_discrete,
             )
 
         # --- 4. EFFICIENT ZERO Projector ---
         # The flat hidden dimension is simply the total size of the hidden state
-        self.flat_hidden_dim = torch.Size(hidden_state_shape[1:]).numel()
+        self.flat_hidden_dim = torch.Size(hidden_state_shape).numel()
         self.projector = Projector(self.flat_hidden_dim, config)
 
         encoder_input_shape = list(input_shape)
-        encoder_input_shape[1] = input_shape[1] * 2
+        # Input is (C, H, W) or (D,)
+        # We concatenate two observations, so channels/feature dim doubles
+        encoder_input_shape[0] = input_shape[0] * 2
         encoder_input_shape = tuple(encoder_input_shape)
         print("encoder input shape", encoder_input_shape)
         self.encoder = Encoder(

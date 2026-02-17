@@ -2,7 +2,7 @@ from typing import Callable, Tuple
 from torch import nn, Tensor
 from modules.network_block import NetworkBlock
 from modules.backbones.factory import BackboneFactory
-from modules.heads import ScalarHead
+from modules.legacy_heads import ScalarHead
 from agent_configs.base_config import Config
 
 

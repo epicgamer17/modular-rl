@@ -1,4 +1,4 @@
-from agent_configs.dqn.rainbow_config import RainbowConfig
+from configs.agents.rainbow_dqn import RainbowConfig
 
 
 class DuelingDQNConfig(RainbowConfig):

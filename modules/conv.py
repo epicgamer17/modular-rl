@@ -43,11 +43,11 @@ class Conv2dStack(BaseStack):
         self.input_shape = input_shape
         # ... (assertions)
 
-        current_input_channels = input_shape[1]
+        current_input_channels = input_shape[0]
         for i in range(len(filters)):
 
             # Use utility for padding
-            h, w = input_shape[2], input_shape[3]
+            h, w = input_shape[1], input_shape[2]
             manual_padding, torch_padding = calculate_same_padding(
                 (h, w), kernel_sizes[i], strides[i]
             )
@@ -117,7 +117,7 @@ class ConvTranspose2dStack(BaseStack):
         if output_padding is None:
             output_padding = [0] * len(filters)
 
-        current_input_channels = input_shape[1]
+        current_input_channels = input_shape[0]
         for i in range(len(filters)):
 
             # Note: Padding calculation for Transpose is inverse of Conv.

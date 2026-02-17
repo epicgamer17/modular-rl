@@ -120,13 +120,13 @@ class NFSPTrainer:
         # RL Network (Best Response)
         self.br_model = RainbowNetwork(
             config=rl_config,
-            input_shape=torch.Size((rl_config.minibatch_size,) + obs_dim),
+            input_shape=obs_dim,  # Exclude batch dim
             output_size=num_actions,
         ).to(self.device)
 
         self.br_target_model = RainbowNetwork(
             config=rl_config,
-            input_shape=torch.Size((rl_config.minibatch_size,) + obs_dim),
+            input_shape=obs_dim,  # Exclude batch dim
             output_size=num_actions,
         ).to(self.device)
         self.br_target_model.load_state_dict(self.br_model.state_dict())
@@ -135,7 +135,7 @@ class NFSPTrainer:
         self.avg_model = SupervisedNetwork(
             config=sl_config,
             output_size=num_actions,
-            input_shape=torch.Size((sl_config.minibatch_size,) + obs_dim),
+            input_shape=obs_dim,  # Exclude batch dim
         ).to(self.device)
 
         if self.config.multi_process:
@@ -192,12 +192,12 @@ class NFSPTrainer:
             # BR Network
             br_model = RainbowNetwork(
                 config=rl_config,
-                input_shape=torch.Size((rl_config.minibatch_size,) + obs_dim),
+                input_shape=obs_dim,  # Exclude batch dim
                 output_size=num_actions,
             ).to(self.device)
             br_target = RainbowNetwork(
                 config=rl_config,
-                input_shape=torch.Size((rl_config.minibatch_size,) + obs_dim),
+                input_shape=obs_dim,  # Exclude batch dim
                 output_size=num_actions,
             ).to(self.device)
             br_target.load_state_dict(br_model.state_dict())
@@ -206,7 +206,7 @@ class NFSPTrainer:
             avg_model = SupervisedNetwork(
                 config=sl_config,
                 output_size=num_actions,
-                input_shape=torch.Size((sl_config.minibatch_size,) + obs_dim),
+                input_shape=obs_dim,  # Exclude batch dim
             ).to(self.device)
 
             if self.config.multi_process:

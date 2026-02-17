@@ -6,7 +6,7 @@ import shutil
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from agent_configs.muzero_config import MuZeroConfig
+from configs.agents.muzero import MuZeroConfig
 from agents.muzero import MuZeroAgent
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from game_configs.cartpole_config import CartPoleConfig

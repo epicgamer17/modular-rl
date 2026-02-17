@@ -12,9 +12,9 @@ class TransformerBackbone(nn.Module):
         self.config = config
         self.input_shape = input_shape
 
-        # input_shape: (B, Seq, Features) or (B, Features)
-        if len(input_shape) == 2:
-            input_dim = input_shape[1]
+        # input_shape: (Seq, Features) or (Features)
+        if len(input_shape) == 1:
+            input_dim = input_shape[0]
         else:
             input_dim = input_shape[-1]
 
@@ -36,7 +36,7 @@ class TransformerBackbone(nn.Module):
             encoder_layer, num_layers=config.num_layers
         )
 
-        self.output_shape = (input_shape[0], config.d_model)
+        self.output_shape = (config.d_model,)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, L, D) or (B, D)

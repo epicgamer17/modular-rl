@@ -14,10 +14,12 @@ class DenseBackbone(nn.Module):
         self.input_shape = input_shape
 
         # Determine initial width
-        if len(input_shape) == 4:
-            initial_width = input_shape[1] * input_shape[2] * input_shape[3]
+        if len(input_shape) == 3:
+            # Flattened image input (C, H, W)
+            initial_width = input_shape[0] * input_shape[1] * input_shape[2]
         else:
-            initial_width = input_shape[1]
+            # Vector input (D,)
+            initial_width = input_shape[0]
 
         self.stack = DenseStack(
             initial_width=initial_width,
@@ -27,7 +29,7 @@ class DenseBackbone(nn.Module):
             norm_type=config.norm_type,
         )
 
-        self.output_shape = (input_shape[0], self.stack.output_width)
+        self.output_shape = (self.stack.output_width,)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.dim() == 4:

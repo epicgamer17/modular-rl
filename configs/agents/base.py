@@ -1,0 +1,89 @@
+from typing import Optional, Dict, Any, TypeVar, Type
+import torch
+from configs.modules.architecture_config import ArchitectureConfig
+from agent_configs.base_config import (
+    ConfigBase,
+    OptimizationConfig,
+    ReplayConfig,
+    RecordConfig,
+    DistributionalConfig,
+    NoisyConfig,
+)
+from losses.basic_losses import MSELoss
+from modules.utils import prepare_activations, prepare_kernel_initializers
+from game_configs.game_config import GameConfig
+
+
+def kernel_initializer_wrapper(x):
+    if x is None:
+        return x
+    elif isinstance(x, str):
+        return prepare_kernel_initializers(x)
+    else:
+        assert callable(x)
+        return x
+
+
+class AgentConfig(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig):
+    """
+    Base configuration for all agents.
+    Inherits from various mixins to provide standard capabilities.
+    Also manages the 'arch' attribute for modular network components.
+    """
+
+    def __init__(self, config_dict: dict, game_config: GameConfig) -> None:
+        # Initialize ConfigBase
+        super().__init__(config_dict)
+
+        self.game = game_config
+        self._verify_game()
+
+        self.model_name = self.parse_field("model_name", default="agent")
+
+        # Initialize Mixins
+        self.parse_optimization_params()
+        self.parse_replay_params()
+        self.parse_record_params()
+        self.multi_process: bool = self.parse_field("multi_process", False)
+
+        # Core/Common Params
+        self.save_intermediate_weights: bool = self.parse_field(
+            "save_intermediate_weights", False
+        )
+
+        # Loss & Activation
+        self.loss_function = self.parse_field("loss_function", MSELoss())
+        self.activation = self.parse_field(
+            "activation", "relu", wrapper=prepare_activations
+        )
+
+        # Initializers
+        self.kernel_initializer = self.parse_field(
+            "kernel_initializer",
+            None,
+            required=False,
+            wrapper=kernel_initializer_wrapper,
+        )
+        self.prob_layer_initializer = self.parse_field(
+            "prob_layer_initializer",
+            None,
+            required=False,
+            wrapper=kernel_initializer_wrapper,
+        )
+
+        # Architecture Config (The 'arch' attribute)
+        # This provides a unified view of architecture params for heads/backbones
+        self.arch = ArchitectureConfig(config_dict)
+
+        # Legacy/Compatibility params (handled by mixins usually, but some were in Config)
+        self.norm_type: str = self.parse_field("norm_type", "none")
+        self.soft_update: bool = self.parse_field("soft_update", False)
+        self.min_max_epsilon: float = self.parse_field("min_max_epsilon", 0.01)
+
+    def _verify_game(self):
+        assert (
+            self.game is not None
+        ), "Config requires a game config to be provided in 'game' field"
+        assert (
+            self.game.make_env is not None
+        ), "Game config must provide a valid environment factory (make_env)"
