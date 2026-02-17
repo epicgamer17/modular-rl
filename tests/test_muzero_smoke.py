@@ -2,8 +2,8 @@ import torch
 import pytest
 from agents.trainers.muzero_trainer import MuZeroTrainer
 from configs.agents.muzero import MuZeroConfig
-from configs.games.cartpole_config import CartPoleConfig
-from configs.games.tictactoe_config import TicTacToeConfig
+from configs.games.cartpole import CartPoleConfig
+from configs.games.tictactoe import TicTacToeConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from losses.basic_losses import CategoricalCrossentropyLoss, MSELoss
 
@@ -61,9 +61,9 @@ def test_muzero_cartpole_smoke():
         "games_per_generation": 1,
         "learning_rate": 0.001,
         "action_function": action_as_onehot,
-        "value_loss_function": CategoricalCrossentropyLoss(),
-        "reward_loss_function": CategoricalCrossentropyLoss(),
-        "policy_loss_function": CategoricalCrossentropyLoss(),
+        "value_loss_function": CategoricalCrossentropyLoss(from_logits=True),
+        "reward_loss_function": CategoricalCrossentropyLoss(from_logits=True),
+        "policy_loss_function": CategoricalCrossentropyLoss(from_logits=True),
         "support_range": 31,
         "model_name": "smoke_test_cartpole",
     }
@@ -108,7 +108,7 @@ def test_muzero_tictactoe_smoke():
         "action_function": action_as_plane,
         "value_loss_function": MSELoss(),
         "reward_loss_function": MSELoss(),
-        "policy_loss_function": CategoricalCrossentropyLoss(),
+        "policy_loss_function": CategoricalCrossentropyLoss(from_logits=True),
         "support_range": None,
         "model_name": "smoke_test_tictactoe",
     }

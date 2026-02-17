@@ -10,12 +10,10 @@ from configs.base import (
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.backbones.factory import BackboneConfigFactory
 from configs.modules.heads.to_play import ToPlayHeadConfig
-from configs.modules.heads.specialized import (
-    PolicyHeadConfig,
-    ChanceProbabilityHeadConfig,
-    ValueHeadConfig,
-    RewardHeadConfig,
-)
+from configs.modules.heads.policy import PolicyHeadConfig
+from configs.modules.heads.chance_probability import ChanceProbabilityHeadConfig
+from configs.modules.heads.value import ValueHeadConfig
+from configs.modules.heads.reward import RewardHeadConfig, ValuePrefixRewardHeadConfig
 from configs.modules.heads.base import HeadConfig
 from configs.modules.architecture_config import ArchitectureConfig
 from losses.basic_losses import CategoricalCrossentropyLoss, MSELoss
@@ -57,6 +55,9 @@ class MuZeroConfig(
             "vqvae_commitment_cost_factor", 1.0
         )
 
+        # Mixin: Value Prefix
+        self.parse_value_prefix_params()
+
         # Backbone Configurations
         self.representation_backbone: BackboneConfig = self.parse_backbone_config(
             "representation_backbone"
@@ -73,18 +74,37 @@ class MuZeroConfig(
         self.chance_encoder_backbone: BackboneConfig = self.parse_backbone_config(
             "chance_encoder_backbone"
         )
-        self.reward_head: RewardHeadConfig = self.parse_head_config(
-            "reward_head", RewardHeadConfig
+
+        reward_head_cls = (
+            ValuePrefixRewardHeadConfig if self.value_prefix else RewardHeadConfig
         )
+        # Inject LSTM params into reward head dict if using Value Prefix
+        # Helper to process reward dict
+        rh_dict = self.parse_field("reward_head", default={}, required=False) or {}
+
+        if self.value_prefix:
+            if "lstm_hidden_size" not in rh_dict:
+                rh_dict["lstm_hidden_size"] = self.lstm_hidden_size
+            if "lstm_horizon_len" not in rh_dict:
+                rh_dict["lstm_horizon_len"] = self.lstm_horizon_len
+
+        # Enforce strategy if distributional
+        if self.atom_size > 1:
+            rew_strat = rh_dict.get("output_strategy", None)
+            if rew_strat is None:
+                rew_strat = {"type": "muzero", "support_range": self.support_range}
+            # Force num_classes to be atom_size
+            rew_strat["num_classes"] = self.atom_size
+            rh_dict["output_strategy"] = rew_strat
+
+        self.reward_head: RewardHeadConfig = reward_head_cls(rh_dict)
 
         # Value Head - Enforce strategy if distributional
         value_dict = self.parse_field("value_head", default={}, required=False) or {}
         if self.atom_size > 1:
             val_strat = value_dict.get("output_strategy", None)
             if val_strat is None:
-                raise ValueError(
-                    f"Distributional MuZero (atom_size={self.atom_size}) requires an explicit output_strategy for the value head."
-                )
+                val_strat = {"type": "muzero", "support_range": self.support_range}
             # Force num_classes to be atom_size
             val_strat["num_classes"] = self.atom_size
             value_dict["output_strategy"] = val_strat
@@ -197,11 +217,11 @@ class MuZeroConfig(
         self.reward_loss_function = self.parse_field("reward_loss_function", MSELoss())
 
         self.policy_loss_function = self.parse_field(
-            "policy_loss_function", CategoricalCrossentropyLoss()
+            "policy_loss_function", CategoricalCrossentropyLoss(from_logits=True)
         )
 
         self.to_play_loss_function = self.parse_field(
-            "to_play_loss_function", CategoricalCrossentropyLoss()
+            "to_play_loss_function", CategoricalCrossentropyLoss(from_logits=True)
         )
 
         # self.n_step parsed in Config
@@ -236,7 +256,7 @@ class MuZeroConfig(
         self.mask_absorbing = self.parse_field("mask_absorbing", False)
 
         # Mixin: Value Prefix
-        self.parse_value_prefix_params()
+        # Moved up
 
         self.q_estimation_method: str = self.parse_field("q_estimation_method", "v_mix")
 

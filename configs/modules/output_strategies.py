@@ -8,15 +8,28 @@ class OutputStrategyConfig(ConfigBase):
     pass
 
 
-class RegressionConfig(OutputStrategyConfig):
+class ScalarStrategyConfig(OutputStrategyConfig):
     def __init__(self, config_dict: dict = None):
         super().__init__(config_dict or {})
+
+
+# Alias for backward compatibility
+RegressionConfig = ScalarStrategyConfig
 
 
 class CategoricalConfig(OutputStrategyConfig):
     def __init__(self, config_dict: dict):
         super().__init__(config_dict)
         self.num_classes: int = self.parse_field("num_classes", required=True)
+
+
+class GaussianConfig(OutputStrategyConfig):
+    def __init__(self, config_dict: dict = None):
+        super().__init__(config_dict or {})
+        d = config_dict or {}
+        self.action_dim = d.get("action_dim")
+        self.min_log_std = d.get("min_log_std", -20.0)
+        self.max_log_std = d.get("max_log_std", 2.0)
 
 
 class MuZeroSupportConfig(OutputStrategyConfig):
@@ -44,14 +57,17 @@ class OutputStrategyConfigFactory:
     @staticmethod
     def create(config_dict: dict) -> OutputStrategyConfig:
         if config_dict is None:
-            return RegressionConfig({})
+            return ScalarStrategyConfig({})
 
-        strategy_type = config_dict.get("type", "regression")
+        strategy_type = config_dict.get("type", "scalar")
 
-        if strategy_type == "regression":
-            return RegressionConfig(config_dict)
+        # Handle legacy "regression" type
+        if strategy_type == "regression" or strategy_type == "scalar":
+            return ScalarStrategyConfig(config_dict)
         elif strategy_type == "categorical":
             return CategoricalConfig(config_dict)
+        elif strategy_type == "gaussian" or strategy_type == "continuous":
+            return GaussianConfig(config_dict)
         elif strategy_type == "muzero":
             return MuZeroSupportConfig(config_dict)
         elif strategy_type == "c51":
@@ -59,4 +75,4 @@ class OutputStrategyConfigFactory:
         elif strategy_type == "dreamer":
             return DreamerSupportConfig(config_dict)
         else:
-            return RegressionConfig(config_dict)
+            return ScalarStrategyConfig(config_dict)

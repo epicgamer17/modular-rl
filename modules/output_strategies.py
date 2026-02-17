@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
 import torch
 from torch import nn, Tensor
+import torch.nn.functional as F
 from modules.utils import support_to_scalar, scalar_to_support
+from modules.distributions import Deterministic
 
 
 class OutputStrategy(nn.Module, ABC):
@@ -10,52 +12,69 @@ class OutputStrategy(nn.Module, ABC):
     Handles converting logits to probabilities, scalars, and distributions.
     """
 
-    @abstractmethod
-    def logits_to_probs(self, logits: Tensor) -> Tensor:
-        """Converts raw logits to a probability distribution."""
-        pass
-
-    @abstractmethod
-    def logits_to_scalar(self, logits: Tensor) -> Tensor:
-        """Converts raw logits from the head to a scalar output."""
-        pass
-
-    @abstractmethod
-    def scalar_to_target(self, scalar: Tensor) -> Tensor:
-        """Converts a ground-truth scalar to a target probability distribution."""
-        pass
-
     @property
     @abstractmethod
     def num_bins(self) -> int:
         """The required output size for the dense layer in the head."""
         pass
 
+    @abstractmethod
+    def compute_loss(self, predictions: Tensor, targets: Tensor) -> Tensor:
+        """Computes the loss between network predictions and targets."""
+        pass
 
-class Regression(OutputStrategy):
-    """Pure regression: identity transform."""
+    @abstractmethod
+    def get_distribution(
+        self, network_output: Tensor
+    ) -> torch.distributions.Distribution | Deterministic:
+        """Used by Policy Heads for action selection."""
+        pass
+
+    @abstractmethod
+    def to_expected_value(self, network_output: Tensor) -> Tensor:
+        """Used by Value/Reward Heads to get the actual scalar number."""
+        pass
+
+    @abstractmethod
+    def scalar_to_target(self, scalar: Tensor) -> Tensor:
+        """Converts a ground-truth scalar to a target format (distribution/scalar)."""
+        pass
+
+    # Deprecated / Aliased methods for compatibility during refactor
+    def logits_to_scalar(self, logits: Tensor) -> Tensor:
+        return self.to_expected_value(logits)
+
+
+class ScalarStrategy(OutputStrategy):
+    """Pure regression: identity transform. Formerly 'Regression'."""
 
     def __init__(self, output_size: int = 1):
         super().__init__()
         self._output_size = output_size
 
-    def logits_to_probs(self, logits: Tensor) -> Tensor:
-        # Not applicable, but returning identity/sigmoid if needed?
-        # For regression, we usually don't have probs.
-        return logits
+    @property
+    def num_bins(self) -> int:
+        return self._output_size
 
-    def logits_to_scalar(self, logits: Tensor) -> Tensor:
-        # Assumes logits is already a scalar or has size 1 on last dim
-        if logits.shape[-1] == 1:
-            return logits.squeeze(-1)
-        return logits
+    def compute_loss(self, predictions: Tensor, targets: Tensor) -> Tensor:
+        return F.mse_loss(predictions, targets, reduction="none")
+
+    def to_expected_value(self, network_output: Tensor) -> Tensor:
+        # For pure regression, the network output IS the expected value!
+        if network_output.shape[-1] == 1:
+            return network_output.squeeze(-1)
+        return network_output
+
+    def get_distribution(self, network_output: Tensor):
+        """Wraps the deterministic output so Action Selectors can still call .sample()"""
+        return Deterministic(network_output)
 
     def scalar_to_target(self, scalar: Tensor) -> Tensor:
         return scalar
 
-    @property
-    def num_bins(self) -> int:
-        return self._output_size
+
+# Alias for backward compatibility if needed, though we should migrate config
+Regression = ScalarStrategy
 
 
 class Categorical(OutputStrategy):
@@ -65,27 +84,40 @@ class Categorical(OutputStrategy):
         super().__init__()
         self._num_classes = num_classes
 
-    def logits_to_probs(self, logits: Tensor) -> Tensor:
-        return torch.softmax(logits, dim=-1)
+    @property
+    def num_bins(self) -> int:
+        return self._num_classes
 
-    def logits_to_scalar(self, logits: Tensor) -> Tensor:
+    def compute_loss(self, predictions: Tensor, targets: Tensor) -> Tensor:
+        # Targets are expected to be one-hot or indices?
+        # If targets are indices:
+        if targets.dim() == predictions.dim() - 1:
+            targets = targets.long()
+        # If targets are one-hot (float):
+        if targets.is_floating_point():
+            # cross_entropy expects class indices usually, but can take probs with recent pytorch
+            # or use KLDivLoss. But standard is CrossEntropyLoss which supports probabilities in newer versions.
+            # For robustness, we assume targets might be one-hot probability distributions (like from MCTS)
+            return F.cross_entropy(predictions, targets, reduction="none")
+        else:
+            return F.cross_entropy(predictions, targets, reduction="none")
+
+    def get_distribution(
+        self, network_output: Tensor
+    ) -> torch.distributions.Distribution:
+        return torch.distributions.Categorical(logits=network_output)
+
+    def to_expected_value(self, network_output: Tensor) -> Tensor:
         # Could return argmax or expectation if classes have numerical meaning
-        # For most cases, this isn't strictly used as a "scalar value"
-        return torch.argmax(logits, dim=-1).float()
+        # For most cases (like policy), we don't strictly use this as a value
+        # But if used for value, maybe return max prob index?
+        return torch.argmax(network_output, dim=-1).float()
 
     def scalar_to_target(self, scalar: Tensor) -> Tensor:
         # Convert class indices to one-hot
         return torch.nn.functional.one_hot(
             scalar.long(), num_classes=self._num_classes
         ).float()
-
-    @property
-    def num_bins(self) -> int:
-        return self._num_classes
-
-    @property
-    def is_probabilistic(self) -> bool:
-        return True
 
 
 class MuZeroSupport(OutputStrategy):
@@ -96,19 +128,25 @@ class MuZeroSupport(OutputStrategy):
         self.support_range = support_range
         self.eps = eps
 
-    def logits_to_probs(self, logits: Tensor) -> Tensor:
-        return torch.softmax(logits, dim=-1)
+    @property
+    def num_bins(self) -> int:
+        return 2 * self.support_range + 1
 
-    def logits_to_scalar(self, logits: Tensor) -> Tensor:
-        probs = self.logits_to_probs(logits)
+    def compute_loss(self, predictions: Tensor, targets: Tensor) -> Tensor:
+        # MuZero uses cross entropy between projected support and logits
+        return F.cross_entropy(predictions, targets, reduction="none")
+
+    def get_distribution(
+        self, network_output: Tensor
+    ) -> torch.distributions.Distribution:
+        return torch.distributions.Categorical(logits=network_output)
+
+    def to_expected_value(self, network_output: Tensor) -> Tensor:
+        probs = torch.softmax(network_output, dim=-1)
         return support_to_scalar(probs, self.support_range, self.eps)
 
     def scalar_to_target(self, scalar: Tensor) -> Tensor:
         return scalar_to_support(scalar, self.support_range, self.eps)
-
-    @property
-    def num_bins(self) -> int:
-        return 2 * self.support_range + 1
 
 
 class C51Support(OutputStrategy):
@@ -122,11 +160,22 @@ class C51Support(OutputStrategy):
         self.register_buffer("support", torch.linspace(v_min, v_max, num_atoms))
         self.delta_z = (v_max - v_min) / (num_atoms - 1)
 
-    def logits_to_probs(self, logits: Tensor) -> Tensor:
-        return torch.softmax(logits, dim=-1)
+    @property
+    def num_bins(self) -> int:
+        return self._num_atoms
 
-    def logits_to_scalar(self, logits: Tensor) -> Tensor:
-        probs = self.logits_to_probs(logits)
+    def compute_loss(self, predictions: Tensor, targets: Tensor) -> Tensor:
+        # C51 typically uses KL Divergence, but CrossEntropy is mathematically equivalent
+        # when targets are fixed distributions (ignoring entropy constant)
+        return F.cross_entropy(predictions, targets, reduction="none")
+
+    def get_distribution(
+        self, network_output: Tensor
+    ) -> torch.distributions.Distribution:
+        return torch.distributions.Categorical(logits=network_output)
+
+    def to_expected_value(self, network_output: Tensor) -> Tensor:
+        probs = torch.softmax(network_output, dim=-1)
         return (probs * self.support).sum(dim=-1)
 
     def scalar_to_target(self, scalar: Tensor) -> Tensor:
@@ -146,11 +195,6 @@ class C51Support(OutputStrategy):
             (*scalar.shape, self._num_atoms), device=scalar.device, dtype=scalar.dtype
         )
 
-        # We need to use scatter or similar to distribute weights
-        # For simplicity in this implementation:
-        # res[l] += (u - b); res[u] += (b - l)
-
-        # Flatten for easy indexing if batch is multi-dim
         flat_res = res.view(-1, self._num_atoms)
         flat_scalar = b.view(-1)
         flat_l = l.view(-1)
@@ -168,10 +212,6 @@ class C51Support(OutputStrategy):
 
         return res
 
-    @property
-    def num_bins(self) -> int:
-        return self._num_atoms
-
 
 class DreamerSupport(OutputStrategy):
     """DreamerV2/V3 support: Symlog transform + categorical buckets."""
@@ -185,17 +225,26 @@ class DreamerSupport(OutputStrategy):
             torch.linspace(-support_range, support_range, 2 * support_range + 1),
         )
 
+    @property
+    def num_bins(self) -> int:
+        return 2 * self.support_range + 1
+
+    def compute_loss(self, predictions: Tensor, targets: Tensor) -> Tensor:
+        return F.cross_entropy(predictions, targets, reduction="none")
+
+    def get_distribution(
+        self, network_output: Tensor
+    ) -> torch.distributions.Distribution:
+        return torch.distributions.Categorical(logits=network_output)
+
     def symlog(self, x: Tensor) -> Tensor:
         return torch.sign(x) * torch.log(torch.abs(x) + 1.0)
 
     def symexp(self, x: Tensor) -> Tensor:
         return torch.sign(x) * (torch.exp(torch.abs(x)) - 1.0)
 
-    def logits_to_probs(self, logits: Tensor) -> Tensor:
-        return torch.softmax(logits, dim=-1)
-
-    def logits_to_scalar(self, logits: Tensor) -> Tensor:
-        probs = self.logits_to_probs(logits)
+    def to_expected_value(self, network_output: Tensor) -> Tensor:
+        probs = torch.softmax(network_output, dim=-1)
         val = (probs * self.support).sum(dim=-1)
         return self.symexp(val)
 
@@ -204,7 +253,7 @@ class DreamerSupport(OutputStrategy):
         # Project onto buckets
         val = val.clamp(-self.support_range, self.support_range)
         floor = val.floor()
-        prob = val - floor
+        # prob = val - floor # Unused locally
 
         res = torch.zeros(
             (*scalar.shape, 2 * self.support_range + 1),
@@ -226,6 +275,46 @@ class DreamerSupport(OutputStrategy):
 
         return res
 
+
+class GaussianStrategy(OutputStrategy):
+    """
+    Gaussian distribution for continuous actions.
+    Network outputs mean and log_std for each action dimension.
+    """
+
+    def __init__(
+        self, action_dim: int, min_log_std: float = -20.0, max_log_std: float = 2.0
+    ):
+        super().__init__()
+        self.action_dim = action_dim
+        self.min_log_std = min_log_std
+        self.max_log_std = max_log_std
+
     @property
     def num_bins(self) -> int:
-        return 2 * self.support_range + 1
+        return 2 * self.action_dim
+
+    def compute_loss(self, predictions: Tensor, targets: Tensor) -> Tensor:
+        # predictions are (mean, log_std)
+        # targets are continuous values
+        # Negative Log Likelihood
+        dist = self.get_distribution(predictions)
+        return -dist.log_prob(targets).sum(dim=-1)
+
+    def get_distribution(
+        self, network_output: Tensor
+    ) -> torch.distributions.Distribution:
+        mu, log_std = network_output.chunk(2, dim=-1)
+        mu = torch.tanh(mu)
+        log_std = torch.clamp(log_std, self.min_log_std, self.max_log_std)
+        std = log_std.exp()
+        return torch.distributions.Normal(mu, std)
+
+    def to_expected_value(self, network_output: Tensor) -> Tensor:
+        # Return deterministic mean (squashed)
+        mu, _ = network_output.chunk(2, dim=-1)
+        return torch.tanh(mu)
+
+    def scalar_to_target(self, scalar: Tensor) -> Tensor:
+        # Target is already the continuous action
+        return scalar

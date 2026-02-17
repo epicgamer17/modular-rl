@@ -1,4 +1,4 @@
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
 from .base import BaseHead
 from modules.output_strategies import OutputStrategy
@@ -21,8 +21,13 @@ class ValueHead(BaseHead):
     ):
         super().__init__(arch_config, input_shape, strategy, neck_config)
 
-    def forward(self, x: Tensor, return_scalar: bool = True) -> Tensor:
-        logits = super().forward(x)
+    def forward(
+        self,
+        x: Tensor,
+        state: Optional[Dict[str, Any]] = None,
+        return_scalar: bool = True,
+    ) -> Tuple[Tensor, Dict[str, Any]]:
+        logits, new_state = super().forward(x, state)
         if return_scalar:
-            return self.strategy.logits_to_scalar(logits)
-        return logits
+            return self.strategy.to_expected_value(logits), new_state
+        return logits, new_state

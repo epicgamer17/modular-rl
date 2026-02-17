@@ -66,7 +66,9 @@ class Prediction(nn.Module):
 
     def forward(self, inputs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         S = self.net(inputs)
-        return self.value_head(S), self.policy_head(S)
+        value, _ = self.value_head(S, return_scalar=False)
+        policy, _ = self.policy_head(S)
+        return value, policy
 
 
 class Encoder(nn.Module):
@@ -200,7 +202,6 @@ class Network(nn.Module):
         self.world_model = world_model_cls(config, input_shape, num_actions)
 
         hidden_state_shape = self.world_model.representation.output_shape
-        print("Hidden state shape:", hidden_state_shape)
 
         self.prediction = Prediction(
             backbone_config=config.prediction_backbone,
@@ -232,7 +233,7 @@ class Network(nn.Module):
         # We concatenate two observations, so channels/feature dim doubles
         encoder_input_shape[0] = input_shape[0] * 2
         encoder_input_shape = tuple(encoder_input_shape)
-        print("encoder input shape", encoder_input_shape)
+
         self.encoder = Encoder(
             config,
             encoder_input_shape,
@@ -274,6 +275,9 @@ class Network(nn.Module):
 
         afterstate = wm_output.afterstate_features
         value, sigma = self.afterstate_prediction(afterstate)
+        # Prediction.forward now returns (value, policy/sigma) tensors, state is dropped inside Prediction.forward
+        # So this should be correct if Prediction.forward unpacks properly.
+        # Wait, self.afterstate_prediction IS a Prediction instance.
         return afterstate, value, sigma
 
     def project(self, hidden_state: Tensor, grad=True) -> Tensor:

@@ -168,7 +168,8 @@ class PPOTrainer(BaseTrainer):
                     else:
                         with torch.inference_mode():
                             obs = self.learner.preprocess(state)
-                            last_value = self.model.value(obs).item()
+                            last_value, _ = self.model.value(obs)
+                            last_value = last_value.item()
 
                     self.learner.finish_trajectory(last_value)
 

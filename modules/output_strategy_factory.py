@@ -7,6 +7,7 @@ from configs.modules.output_strategies import (
     MuZeroSupportConfig,
     C51SupportConfig,
     DreamerSupportConfig,
+    GaussianConfig,
 )
 from modules.output_strategies import (
     OutputStrategy,
@@ -15,6 +16,7 @@ from modules.output_strategies import (
     MuZeroSupport,
     C51Support,
     DreamerSupport,
+    GaussianStrategy,
 )
 
 
@@ -27,6 +29,7 @@ class OutputStrategyFactory:
         MuZeroSupportConfig: MuZeroSupport,
         C51SupportConfig: C51Support,
         DreamerSupportConfig: DreamerSupport,
+        GaussianConfig: GaussianStrategy,
     }
 
     @classmethod
@@ -41,6 +44,12 @@ class OutputStrategyFactory:
             return Categorical(num_classes=config.num_classes)
         elif isinstance(config, MuZeroSupportConfig):
             return MuZeroSupport(support_range=config.support_range, eps=config.eps)
+        elif isinstance(config, GaussianConfig):
+            return GaussianStrategy(
+                action_dim=config.action_dim if config.action_dim else 0,
+                min_log_std=config.min_log_std,
+                max_log_std=config.max_log_std,
+            )
         elif isinstance(config, C51SupportConfig):
             return C51Support(
                 v_min=config.v_min, v_max=config.v_max, num_atoms=config.num_atoms

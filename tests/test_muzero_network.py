@@ -3,7 +3,7 @@ import gymnasium as gym
 from configs.agents.muzero import MuZeroConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from modules.agent_nets.muzero import Network
-from configs.games.game_config import GameConfig
+from configs.games.game import GameConfig
 
 
 class MockEnv:

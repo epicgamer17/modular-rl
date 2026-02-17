@@ -64,10 +64,12 @@ class MinimalPPOConfig:
         from configs.modules.backbones.dense import DenseConfig
         from configs.modules.heads.base import HeadConfig
 
+        from configs.modules.heads.policy import PolicyHeadConfig
+
         self.arch = ArchitectureConfig({"activation": "relu", "norm_type": "none"})
         self.backbone = DenseConfig({"widths": [64], "activation": "relu"})
-        self.policy_head = HeadConfig(
-            {"neck": None, "output_strategy": {"type": "categorical"}}
+        self.policy_head = PolicyHeadConfig(
+            {"neck": None, "output_strategy": {"type": "categorical", "num_classes": 2}}
         )
         self.value_head = HeadConfig(
             {"neck": None, "output_strategy": {"type": "scalar"}}

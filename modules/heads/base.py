@@ -1,4 +1,4 @@
-from typing import Tuple, Optional, Callable
+from typing import Tuple, Optional, Callable, Dict, Any
 import torch
 from torch import nn, Tensor
 from modules.backbones.factory import BackboneFactory
@@ -18,7 +18,7 @@ class BaseHead(nn.Module):
         self,
         arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
-        strategy: OutputStrategy,
+        strategy: Optional[OutputStrategy] = None,
         neck_config: Optional[BackboneConfig] = None,
     ):
         super().__init__()
@@ -31,11 +31,12 @@ class BaseHead(nn.Module):
         self.flat_dim = self._get_flat_dim(self.output_shape)
 
         # 2. Final Output Layer
-        self.output_layer = build_dense(
-            in_features=self.flat_dim,
-            out_features=self.strategy.num_bins,
-            sigma=self.arch_config.noisy_sigma,
-        )
+        if self.strategy is not None:
+            self.output_layer = build_dense(
+                in_features=self.flat_dim,
+                out_features=self.strategy.num_bins,
+                sigma=self.arch_config.noisy_sigma,
+            )
 
     def _get_flat_dim(self, shape: Tuple[int, ...]) -> int:
         flat = 1
@@ -76,11 +77,19 @@ class BaseHead(nn.Module):
         if hasattr(self, "output_layer") and hasattr(self.output_layer, "reset_noise"):
             self.output_layer.reset_noise()
 
-    def forward(self, x: Tensor) -> Tensor:
+    def get_initial_state(
+        self, batch_size: int, device: torch.device
+    ) -> Dict[str, Any]:
+        """Returns the initial state for the head."""
+        return {}
+
+    def forward(
+        self, x: Tensor, state: Optional[Dict[str, Any]] = None
+    ) -> Tuple[Tensor, Dict[str, Any]]:
         """Standard forward pass: neck -> output_layer -> strategy."""
         x = self.process_input(x)
         logits = self.output_layer(x)
-        return logits
+        return logits, {}
 
     def process_input(self, x: Tensor) -> Tensor:
         """Helper to pass input through neck and flatten it."""

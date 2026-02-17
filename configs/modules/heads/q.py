@@ -2,7 +2,7 @@ from typing import List, Optional
 from .base import HeadConfig
 from configs.modules.output_strategies import (
     OutputStrategyConfig,
-    RegressionConfig,
+    ScalarStrategyConfig,
     OutputStrategyConfigFactory,
 )
 

@@ -93,3 +93,33 @@ class OneHotDist(td.OneHotCategorical):
         probs = self.probs
         # y = hard + (soft - soft.detach())
         return one_hot + probs - probs.detach()
+
+
+class Deterministic:
+    """A mock PyTorch Distribution for deterministic continuous policies."""
+
+    def __init__(self, value: torch.Tensor):
+        self.value = value
+
+    def sample(self, sample_shape=torch.Size()):
+        # Sampling a deterministic distribution just returns the exact value
+        # Must handle sample_shape if provided (though internal logic usually handles it)
+        if sample_shape:
+            return self.value.expand(sample_shape + self.value.shape)
+        return self.value
+
+    def rsample(self, sample_shape=torch.Size()):
+        # Enables the reparameterization trick for gradients
+        if sample_shape:
+            return self.value.expand(sample_shape + self.value.shape)
+        return self.value
+
+    def log_prob(self, action: torch.Tensor):
+        # The log probability of the exact action is 0 (log(1)).
+        # Anything else is negative infinity.
+        # We use a small epsilon match or strict equality?
+        # Typically for deterministic policies in RL (like DDPG), log_prob isn't used
+        # or is considered undefined/Dirac.
+        # But to be safe:
+        is_match = (action == self.value).all(dim=-1, keepdim=True)
+        return torch.where(is_match, torch.zeros_like(self.value), -torch.inf)

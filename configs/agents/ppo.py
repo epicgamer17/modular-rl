@@ -1,7 +1,8 @@
 from typing import Type
 from .base import AgentConfig
 from configs.base import DistributionalConfig, NoisyConfig
-from configs.modules.heads.specialized import PolicyHeadConfig, ValueHeadConfig
+from configs.modules.heads.policy import PolicyHeadConfig
+from configs.modules.heads.value import ValueHeadConfig
 from configs.modules.heads.base import HeadConfig
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.backbones.factory import BackboneConfigFactory

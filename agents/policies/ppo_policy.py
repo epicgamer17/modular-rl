@@ -27,7 +27,7 @@ class PPOPolicy(DirectPolicy):
 
         with torch.inference_mode():
             # Get current policy distribution
-            distribution = self.model.policy.get_distribution(obs_tensor)
+            distribution, _ = self.model.policy.get_distribution(obs_tensor)
 
         if exploration:
             action = distribution.sample()
@@ -64,8 +64,8 @@ class PPOPolicy(DirectPolicy):
 
         with torch.inference_mode():
             # Get current policy distribution and critic value
-            distribution = self.model.policy.get_distribution(obs_tensor)
-            value = self.model.value(obs_tensor)
+            distribution, _ = self.model.policy.get_distribution(obs_tensor)
+            value, _ = self.model.value(obs_tensor)
 
         # Sample action from distribution
         action = distribution.sample()

@@ -198,6 +198,8 @@ class DistributionalConfig:
         self.support_range: int = self.parse_field(
             "support_range", None, required=False
         )
+        if self.support_range is not None and self.atom_size == 1:
+            self.atom_size = self.support_range * 2 + 1
         game_min = (
             getattr(self.game, "min_score", None)
             if hasattr(self, "game") and self.game

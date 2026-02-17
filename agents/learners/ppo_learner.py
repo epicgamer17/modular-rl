@@ -323,7 +323,7 @@ class PPOLearner:
         Returns:
             Tuple of (actor_loss, kl_divergence).
         """
-        distribution = self.model.policy.get_distribution(observations)
+        distribution, _ = self.model.policy.get_distribution(observations)
 
         # New log probabilities
         new_log_probs = distribution.log_prob(actions)
@@ -360,7 +360,8 @@ class PPOLearner:
         Returns:
             Critic loss tensor.
         """
-        values = self.model.value(observations).squeeze(-1)
+        values, _ = self.model.value(observations)
+        values = values.squeeze(-1)
         critic_loss = self.config.critic_coefficient * ((returns - values) ** 2).mean()
         return critic_loss
 

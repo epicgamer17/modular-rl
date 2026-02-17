@@ -19,8 +19,12 @@ class HeadConfig(ConfigBase):
         )
 
 
-class RegressionHeadConfig(HeadConfig):
-    """Configuration for RegressionHead."""
+class ScalarHeadConfig(HeadConfig):
+    """Configuration for ScalarHead."""
 
     def __init__(self, config_dict: dict = None):
         super().__init__(config_dict or {})
+
+
+# Alias for backward compatibility
+RegressionHeadConfig = ScalarHeadConfig

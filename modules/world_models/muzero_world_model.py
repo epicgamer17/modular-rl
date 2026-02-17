@@ -5,6 +5,7 @@ import torch
 from modules.action_encoder import ActionEncoder
 from modules.dense import build_dense
 from modules.backbones.factory import BackboneFactory
+from modules.heads.factory import HeadFactory
 from modules.heads.to_play import ToPlayHead
 from modules.heads.reward import RewardHead
 from modules.output_strategy_factory import OutputStrategyFactory
@@ -135,11 +136,11 @@ class Dynamics(BaseDynamics):
         # 3. Heads
         # Reward Head
         r_strategy = OutputStrategyFactory.create(config.reward_head.output_strategy)
-        self.reward_head = RewardHead(
-            arch_config=config.arch,
+        self.reward_head = HeadFactory.create(
+            config.reward_head,
+            config.arch,
             input_shape=self.output_shape,
             strategy=r_strategy,
-            neck_config=config.reward_head.neck,
         )
 
         # To-Play Head
@@ -152,18 +153,8 @@ class Dynamics(BaseDynamics):
             strategy=tp_strategy,
         )
 
-        # LSTM Support for Value Prefix
-        if self.config.value_prefix:
-            self.lstm = nn.LSTM(
-                input_size=self.reward_head.input_flat_dim,
-                hidden_size=self.config.lstm_hidden_size,
-            )
-            # Re-build reward output layer to match LSTM size
-            self.reward_head.output_layer = self.reward_head.output_layer = build_dense(
-                self.config.lstm_hidden_size,
-                self.reward_head.output_size,
-                self.config.noisy_sigma,
-            )
+        # LSTM Support for Value Prefix is now handled inside ValuePrefixRewardHead
+        # if config.reward_head is a ValuePrefixRewardHeadConfig.
 
     def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
         super().initialize(initializer)
@@ -181,22 +172,19 @@ class Dynamics(BaseDynamics):
 
         next_hidden_state = self._fuse_and_process(hidden_state, action)
 
-        # Predict reward and to_play
-        r_x = self.reward_head.process_input(next_hidden_state)
+        # Predict reward (and handle state if ValuePrefixRewardHead)
+        # We pass the full state dict, knowing RewardHead will look for "reward_hidden"
+        # and return a new state dict with "reward_hidden" if updated.
+        state = {"reward_hidden": reward_hidden}
+        reward, new_state = self.reward_head(
+            next_hidden_state, state=state, return_scalar=False
+        )
 
-        if self.config.value_prefix:
-            r_x = r_x.unsqueeze(0)
-            r_x, new_reward_hidden = self.lstm(r_x, reward_hidden)
-            r_x = r_x.squeeze(0)
-        else:
-            new_reward_hidden = reward_hidden
-
-        reward_logits = self.reward_head.output_layer(r_x)
-        # TODO: should this be here or in the agent? probably the agent for target and prediction calculations in unroll right?
-        reward = self.reward_head.strategy.logits_to_scalar(reward_logits)
+        # Extract new reward hidden state or use the old one if not updated
+        new_reward_hidden = new_state.get("reward_hidden", reward_hidden)
 
         # To Play
-        to_play = self.to_play_head(next_hidden_state)
+        to_play, _ = self.to_play_head(next_hidden_state, return_probs=False)
         return reward, next_hidden_state, to_play, new_reward_hidden
 
 
@@ -232,7 +220,6 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         self.num_chance = config.num_chance
 
         hidden_state_shape = self.representation.output_shape
-        print("Hidden state shape:", hidden_state_shape)
 
         # --- 3. Dynamics and Prediction Networks ---
         if self.config.stochastic:
@@ -370,7 +357,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 self.config.support_range * 2 + 1,
             )
         else:
-            reward_shape = (self.config.minibatch_size,)
+            reward_shape = (self.config.minibatch_size, 1)
 
         values = [initial_values]
         rewards = [

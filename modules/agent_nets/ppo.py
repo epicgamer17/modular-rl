@@ -1,4 +1,4 @@
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Dict, Any
 from configs.agents.ppo import PPOConfig
 from torch import Tensor
 import torch.nn as nn
@@ -17,15 +17,24 @@ class PPONetwork(nn.Module):
         # Policy Head (Actor)
         # Note: PolicyHeadConfig doesn't have an output strategy field yet in some contexts, but PolicyHead defaults to Categorical.
         # If PPOConfig.policy_head has neck, it handles the backbone.
+
+        # We need to ensure we pass a strategy to PolicyHead or let it create one.
+        # PPOConfig.policy_head should have the strategy config.
+        # But here we are passing 'output_size' manually.
+        # Let's see if config.policy_head has output_strategy.
+
+        strategy = None
+        if hasattr(config.policy_head, "output_strategy"):
+            strategy = OutputStrategyFactory.create(config.policy_head.output_strategy)
+
         self.policy = PolicyHead(
-            arch_config=config.arch,  # PPOConfig inherits from Config -> Distributional/Noisy. Need to ensure .arch exists or pass config.
-            # BaseConfig usually doesn't have .arch. MuZeroConfig does.
-            # RainbowConfig didn't have .arch but we passed config.
-            # If BaseHead expects ArchitectureConfig interface, passing 'config' works IF it has the right props.
-            # Let's assume config has the mixins (NoisyConfig) which provides noisy_sigma.
+            arch_config=config.arch,
             input_shape=input_shape,
-            num_actions=output_size,
+            # Pass output_size/num_actions or strategy
+            num_actions=output_size if discrete else None,
+            output_size=output_size if not discrete else None,
             neck_config=config.policy_head.neck,
+            strategy=strategy,
         )
 
         # Value Head (Critic)
