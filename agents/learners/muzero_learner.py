@@ -200,9 +200,9 @@ class MuZeroLearner:
         # Stochastic MuZero extra fields (if present in UnrollOutput extras or main fields)
         if self.config.stochastic and network_output.extras:
             if "encoder_softmaxes" in network_output.extras:
-                predictions_tensor["encoder_softmaxes"] = torch.stack(
-                    network_output.extras["encoder_softmaxes"], dim=1
-                )
+                predictions_tensor["encoder_softmaxes"] = network_output.extras[
+                    "encoder_softmaxes"
+                ]
 
         targets_tensor = {
             "values": target_values,
@@ -215,9 +215,9 @@ class MuZeroLearner:
             targets_tensor["chance_values"] = torch.zeros_like(target_values)
             targets_tensor["chance_values"][:, 1:] = target_values[:, :-1]
             if network_output.extras and "encoder_onehots" in network_output.extras:
-                targets_tensor["encoder_onehots"] = torch.stack(
-                    network_output.extras["encoder_onehots"], dim=1
-                )
+                targets_tensor["encoder_onehots"] = network_output.extras[
+                    "encoder_onehots"
+                ]
 
         gradient_scales_tensor = torch.tensor(
             gradient_scales, device=self.device

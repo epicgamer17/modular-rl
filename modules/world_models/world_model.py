@@ -5,24 +5,7 @@ from torch import Tensor
 from typing import Tuple, Dict, Any
 from torch import nn
 import torch
-
-
-@dataclass
-class WorldModelOutput:
-    """
-    Represents the Agent's Hypothesis (Predictions).
-    Shape: (B, Unroll+1, ...)
-    """
-
-    features: torch.Tensor = None
-    reward: torch.Tensor = None
-    to_play: torch.Tensor = None
-
-    head_state: Any = None
-    instant_reward: torch.Tensor = None
-
-    afterstate_features: torch.Tensor = None
-    chance: torch.Tensor = None
+from modules.world_models.inference_output import WorldModelOutput
 
 
 class WorldModelInterface(ABC):
@@ -53,10 +36,10 @@ class WorldModelInterface(ABC):
         pass
 
     @abstractmethod
-    def unroll_sequence(
+    def unroll_physics(
         self,
         actions,
-    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+    ) -> "PhysicsOutput":
         """
         Unrolls a sequence of actions from the current hidden state. Returns all network output seqeunces from this unrolling.
         """

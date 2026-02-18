@@ -17,7 +17,12 @@ from modules.heads.reward import RewardHead
 from modules.heads.strategy_factory import OutputStrategyFactory
 from modules.utils import _normalize_hidden_state, zero_weights_initializer
 from modules.world_models.muzero_world_model import MuzeroWorldModel
-from modules.world_models.inference_output import InferenceOutput, UnrollOutput
+from modules.world_models.inference_output import (
+    InferenceOutput,
+    UnrollOutput,
+    PhysicsOutput,
+    WorldModelOutput,
+)
 from utils.utils import to_lists
 
 from modules.blocks.conv import Conv2dStack
@@ -248,7 +253,7 @@ class AgentNetwork(nn.Module):
         latent = initial_network_state["dynamics"]
         head_state = initial_network_state.get("heads")
         # 1. Unroll Physics
-        physics_output = self.world_model.unroll_sequence(
+        physics_output = self.world_model.unroll_physics(  # Changed to unroll_physics
             initial_latent_state=latent,
             actions=actions,
             target_observations=target_observations,
@@ -257,10 +262,8 @@ class AgentNetwork(nn.Module):
             preprocess_fn=preprocess_fn,
         )
 
-        latent_states = physics_output["latent_states"]
-        # List of Tensors. Stack them.
-        # latent_states is [hidden_0, hidden_1, ... hidden_K]
-        stacked_latents = torch.stack(latent_states, dim=1)  # (B, K+1, ...)
+        # PhysicsOutput now contains STACKED tensors
+        stacked_latents = physics_output.latents
 
         # 2. Pass sequence through Agent Heads
         # We can crush time dimension to batch dimension for efficiency
@@ -277,34 +280,23 @@ class AgentNetwork(nn.Module):
         raw_values = raw_values.view(B, T, -1)
         raw_policies = raw_policies.view(B, T, -1)
 
-        # Rewards and ToPlays are already lists of tensors from unroll_physics
-        stacked_rewards = (
-            torch.stack(physics_output["rewards"], dim=1)
-            if len(physics_output["rewards"]) > 0
-            else torch.empty(0)
-        )
-        stacked_toplays = (
-            torch.stack(physics_output["to_plays"], dim=1)
-            if len(physics_output["to_plays"]) > 0
-            else torch.empty(0)
-        )
+        # Rewards and ToPlays are already stacked tensors from unroll_physics
+        stacked_rewards = physics_output.rewards
+        stacked_toplays = physics_output.to_plays
 
         # Handle Stochastic Extra Outputs
         chance_values = None
         chance_logits = None
         latents_afterstates = None
 
-        if self.config.stochastic:
-            # 1. Stack Afterstates (Dynamics Output)
-            stacked_afterstates = torch.stack(
-                physics_output["latent_afterstates"], dim=1
-            )
+        if self.config.stochastic and physics_output.latents_afterstates is not None:
+            # 1. Stack Afterstates (Dynamics Output) - Already stacked
+            stacked_afterstates = physics_output.latents_afterstates
             latents_afterstates = stacked_afterstates
 
-            # 2. Extract Shared Backbone Features (Already computed in physics loop)
-            stacked_backbone_features = torch.stack(
-                physics_output["afterstate_backbone_features"], dim=1
-            )
+            # 2. Extract Shared Backbone Features (Already computed in physics loop) - Already stacked
+            stacked_backbone_features = physics_output.afterstate_backbone_features
+
             B_as, T_as = stacked_backbone_features.shape[:2]
             flat_backbone = stacked_backbone_features.view(
                 B_as * T_as, *stacked_backbone_features.shape[2:]
@@ -315,9 +307,14 @@ class AgentNetwork(nn.Module):
             chance_values = raw_chance_values.view(B_as, T_as, -1)
 
             # 4. Use Chance Logits directly from physics loop
-            chance_logits = torch.stack(
-                physics_output["latent_code_probabilities"], dim=1
-            )
+            chance_logits = physics_output.chance_logits
+
+        # Create extras dict for stochastic outputs
+        extras = {}
+        if physics_output.encoder_softmaxes is not None:
+            extras["encoder_softmaxes"] = physics_output.encoder_softmaxes
+        if physics_output.encoder_onehots is not None:
+            extras["encoder_onehots"] = physics_output.encoder_onehots
 
         return UnrollOutput(
             values=raw_values,
@@ -328,7 +325,7 @@ class AgentNetwork(nn.Module):
             latents_afterstates=latents_afterstates,
             chance_logits=chance_logits,
             chance_values=chance_values,
-            extras=physics_output,  # Still pass physics output for encoder stats/onehots
+            extras=extras if extras else None,
         )
 
     def project(self, hidden_state: Tensor, grad=True) -> Tensor:

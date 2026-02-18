@@ -12,7 +12,8 @@ from modules.heads.to_play import ToPlayHead
 from modules.heads.reward import RewardHead
 from modules.heads.strategy_factory import OutputStrategyFactory
 from modules.utils import scale_gradient
-from modules.world_models.world_model import WorldModelInterface, WorldModelOutput
+from modules.world_models.inference_output import WorldModelOutput, PhysicsOutput
+from modules.world_models.world_model import WorldModelInterface
 
 from modules.world_models.components.representation import Representation
 from modules.world_models.components.dynamics import Dynamics, AfterstateDynamics
@@ -206,7 +207,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             chance=chance_logits,  # Environment chance rules
         )
 
-    def unroll_sequence(
+    def unroll_physics(
         self,
         initial_latent_state: Tensor,
         actions: Tensor,
@@ -214,10 +215,10 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         target_chance_codes: Tensor,
         initial_reward_state: Any,
         preprocess_fn: Callable[[Tensor], Tensor],
-    ) -> Dict[str, List[Tensor]]:
+    ) -> PhysicsOutput:
         """
         Unrolls the dynamics for K steps given actions.
-        Returns a dictionary containing lists of predictions for each step.
+        Returns a PhysicsOutput containing STACKED tensors for each step.
         """
         batch_size = actions.shape[0]
         device = initial_latent_state.device
@@ -373,16 +374,35 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             latent_code_probabilities.append(dummy_chance)
             afterstate_backbone_features.append(dummy_backbone)
 
-        return {
-            "rewards": rewards,
-            "to_plays": to_plays,
-            "latent_states": latent_states,
-            "latent_afterstates": latent_afterstates,
-            "latent_code_probabilities": latent_code_probabilities,
-            "afterstate_backbone_features": afterstate_backbone_features,
-            "encoder_softmaxes": encoder_softmaxes,
-            "encoder_onehots": encoder_onehots,
-        }
+        # --- 6. Stack and Return PhysicsOutput ---
+        # Stack everything here to avoid returning lists of tensors
+        stacked_latents = torch.stack(latent_states, dim=1)
+        stacked_rewards = torch.stack(rewards, dim=1) if rewards else torch.empty(0)
+        stacked_to_plays = torch.stack(to_plays, dim=1) if to_plays else torch.empty(0)
+
+        stacked_afterstates = None
+        stacked_chance_logits = None
+        stacked_backbone = None
+        stacked_softmaxes = None
+        stacked_onehots = None
+
+        if self.config.stochastic:
+            stacked_afterstates = torch.stack(latent_afterstates, dim=1)
+            stacked_chance_logits = torch.stack(latent_code_probabilities, dim=1)
+            stacked_backbone = torch.stack(afterstate_backbone_features, dim=1)
+            stacked_softmaxes = torch.stack(encoder_softmaxes, dim=1)
+            stacked_onehots = torch.stack(encoder_onehots, dim=1)
+
+        return PhysicsOutput(
+            latents=stacked_latents,
+            rewards=stacked_rewards,
+            to_plays=stacked_to_plays,
+            latents_afterstates=stacked_afterstates,
+            chance_logits=stacked_chance_logits,
+            afterstate_backbone_features=stacked_backbone,
+            encoder_softmaxes=stacked_softmaxes,
+            encoder_onehots=stacked_onehots,
+        )
 
     def get_networks(self) -> Dict[str, nn.Module]:
         return {

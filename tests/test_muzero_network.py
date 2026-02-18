@@ -68,16 +68,17 @@ def test_muzero_network_structure():
 
     # Check Recurrent Inference (New Signature)
     print("Checking Recurrent Inference (New Signature)...")
-    network_state = {
-        "dynamics": hidden,
-        "reward_hidden": (
-            outputs.extras.get("reward_hidden") if outputs.extras else None
-        ),
-    }
-    dummy_action = torch.nn.functional.one_hot(
-        torch.tensor([0]), num_classes=10
-    ).float()
-    rec_out = net.recurrent_inference(network_state, dummy_action)
+
+    if config.stochastic:
+        dummy_action_rec = torch.nn.functional.one_hot(
+            torch.tensor([0]), num_classes=10
+        ).float()
+    else:
+        dummy_action_rec = torch.nn.functional.one_hot(
+            torch.tensor([0]), num_classes=5
+        ).float()
+
+    rec_out = net.recurrent_inference(outputs.network_state, dummy_action_rec)
     if isinstance(rec_out.reward, torch.Tensor):
         print(f"Recurrent Reward shape: {rec_out.reward.shape}")
 
