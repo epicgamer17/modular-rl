@@ -1,4 +1,4 @@
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict, Any, List
 from torch import Tensor
 from torch import nn
 import torch
@@ -25,13 +25,30 @@ class RewardHead(BaseHead):
     ):
         super().__init__(arch_config, input_shape, strategy, neck_config)
 
+    def get_initial_state(
+        self, batch_size: int, device: torch.device
+    ) -> Dict[str, Any]:
+        """
+        Returns the initial opaque state for the reward head.
+        Base implementation returns a default structure.
+        """
+        return {
+            "reward_hidden": (None, None),
+            "step_count": torch.zeros(batch_size, 1, device=device),
+            "cumulative_reward": torch.zeros(batch_size, 1, device=device),
+        }
+
     def forward(
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Tensor, Dict[str, Any]]:
-        logits, new_state = super().forward(x, state)
-        return logits, new_state
+    ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
+        state = state if state is not None else {}
+        logits, _ = super().forward(x, state)
+
+        # Default instant reward is strategy conversion of logits
+        instant_reward = self.strategy.to_expected_value(logits)
+        return logits, state, instant_reward
 
 
 class ValuePrefixRewardHead(RewardHead):
@@ -77,14 +94,16 @@ class ValuePrefixRewardHead(RewardHead):
             "reward_hidden": (
                 torch.zeros(1, batch_size, self.lstm_hidden_size, device=device),
                 torch.zeros(1, batch_size, self.lstm_hidden_size, device=device),
-            )
+            ),
+            "step_count": torch.zeros(batch_size, 1, device=device),
+            "cumulative_reward": torch.zeros(batch_size, 1, device=device),
         }
 
     def forward(
         self,
         x: Tensor,
-        state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Tensor, Dict[str, Any]]:
+        state: Dict[str, Any],
+    ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
         # Process neck
         x = self.process_input(x)  # (B, flat_dim)
 
@@ -92,7 +111,36 @@ class ValuePrefixRewardHead(RewardHead):
         x = x.unsqueeze(1)
 
         # Retrieve state
-        hidden = state.get("reward_hidden") if state else None
+        hidden = state.get("reward_hidden")
+        step_count = state.get("step_count")
+        parent_cumulative = state.get(
+            "cumulative_reward", torch.zeros(x.shape[0], 1, device=x.device)
+        )
+
+        if step_count is None:
+            batch_size = x.shape[0]
+            step_count = torch.zeros(batch_size, 1, device=x.device)
+
+        # Horizon Logic: Reset hidden state for elements where horizon is reached
+        effective_parent_cumulative = parent_cumulative.clone()
+        effective_step_count = step_count.clone()
+
+        if hidden is not None:
+            h, c = hidden
+            # Identify indices that need reset
+            # step_count > 0 and step_count % horizon == 0
+            reset_mask = (step_count > 0) & (step_count % self.lstm_horizon_len == 0)
+
+            if reset_mask.any():
+                # Reset corresponding batch elements in h and c
+                mask_idx = reset_mask.view(-1)
+                h[:, mask_idx] = 0.0
+                c[:, mask_idx] = 0.0
+                hidden = (h, c)
+
+                # USER FIX: Reset effective parent and step count for subtraction/accumulation
+                effective_parent_cumulative[reset_mask] = 0.0
+                effective_step_count[reset_mask] = 0.0
 
         # LSTM step
         output, (h_n, c_n) = self.lstm(x, hidden)
@@ -100,10 +148,21 @@ class ValuePrefixRewardHead(RewardHead):
         # Output is (B, 1, Hidden)
         output = output.squeeze(1)
 
-        # New state
-        new_state = {"reward_hidden": (h_n, c_n)}
-
-        # Final projection
+        # Final projection: Predicted Cumulative Reward (Value Prefix)
         logits = self.output_layer(output)
+        expected_cumulative = self.strategy.to_expected_value(logits)
 
-        return logits, new_state
+        # GET INSTANT REWARD: subtract (potentially reset) parent cumulative
+        instant_reward = expected_cumulative - effective_parent_cumulative
+
+        # New state: Preserve all existing keys and update internal ones
+        new_state = state.copy()
+        new_state.update(
+            {
+                "reward_hidden": (h_n, c_n),
+                "step_count": effective_step_count + 1,
+                "cumulative_reward": expected_cumulative,
+            }
+        )
+
+        return logits, new_state, instant_reward

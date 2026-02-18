@@ -14,14 +14,12 @@ class WorldModelOutput:
     Shape: (B, Unroll+1, ...)
     """
 
-    # Core MuZero
     features: torch.Tensor = None
     reward: torch.Tensor = None
     to_play: torch.Tensor = None
-    done: torch.Tensor = None
-    rnn_hidden: torch.Tensor = None
 
-    reward_hidden: torch.Tensor = None
+    head_state: Any = None
+    instant_reward: torch.Tensor = None
 
     afterstate_features: torch.Tensor = None
     chance: torch.Tensor = None

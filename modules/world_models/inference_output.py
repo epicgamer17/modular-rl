@@ -17,7 +17,9 @@ class InferenceOutput:
     reward: Optional[float | torch.Tensor] = None  # Expected Reward (Scalar)
     chance: Optional[Distribution] = None  # Chance Distribution (for Stochastic MuZero)
     to_play: Optional[int | torch.Tensor] = None  # To Play (Scalar/Class Index)
-    extras: Optional[dict] = None  # Opaque extras (reward_hidden, etc.)
+    extras: Optional[dict] = (
+        None  # Opaque extras (e.g., for logging or specialized heads)
+    )
 
 
 @dataclass

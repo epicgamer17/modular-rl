@@ -487,6 +487,12 @@ class ConsistencyLoss(LossModule):
         initial_out = self.predict_initial_inference(real_obs, model=self.model)
         real_latents = initial_out.network_state
 
+        # If opaque state, unpack dynamics
+        if isinstance(real_latents, dict):
+            real_latents = real_latents["dynamics"]
+        if isinstance(latent_states_k, dict):
+            latent_states_k = latent_states_k["dynamics"]
+
         # may be unecessary but better safe than sorry
         real_latents = real_latents.detach()
 

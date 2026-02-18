@@ -49,17 +49,15 @@ class ChanceNode:
     def expand(
         self,
         to_play,
-        afterstate,
+        network_state,
         network_value,
         code_probs,
-        reward_hidden=None,
     ):
         """
         Called when the Dynamics Network is run on (parent_state, action).
         """
         self.to_play = to_play
-        self.afterstate = afterstate
-        self.reward_hidden = reward_hidden
+        self.network_state = network_state
 
         self.network_value = network_value
         # code_probs should be a dict or array mapping code_index -> probability
@@ -229,8 +227,7 @@ class DecisionNode:
         self.children = {}
         self.value_sum = 0
         self.children = {}
-        self.hidden_state = None
-        self.reward_hidden = None
+        self.network_state = None
 
         self.reward = 0
         self.parent = parent
@@ -249,17 +246,13 @@ class DecisionNode:
         to_play,
         priors,
         network_policy,
-        hidden_state,
+        network_state,
         reward,
         value=None,
-        reward_hidden=None,
-        is_reset=True,
     ):
         self.to_play = to_play
         self.reward = reward
-        self.hidden_state = hidden_state
-        self.reward_hidden = reward_hidden
-        self.is_reset = is_reset
+        self.network_state = network_state
 
         self.network_policy = network_policy.detach().cpu()
         self.network_value = value
@@ -336,16 +329,9 @@ class DecisionNode:
 
     def child_reward(self, child):
         # assert isinstance(child, DecisionNode)
-        if self.value_prefix:
-            assert child.expanded()
-            if child.is_reset:
-                return child.reward
-            else:
-                return child.reward - self.reward
-        else:
-            true_reward = child.reward
-
-        assert true_reward is not None
+        # Value Prefix subtraction is now handled by the AgentNetwork (Composer)
+        # and passed as an instant reward in InferenceOutput.
+        true_reward = child.reward
         return true_reward
 
     def get_v_mix(self):

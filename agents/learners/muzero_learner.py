@@ -156,20 +156,7 @@ class MuZeroLearner:
         initial_out: InferenceOutput = self.predict_initial_inference_fn(inputs)
         initial_values = initial_out.value
         initial_policies = initial_out.policy
-        hidden_states = initial_out.network_state
-
-        reward_h_states = torch.zeros(
-            1,
-            self.config.minibatch_size,
-            self.config.lstm_hidden_size,
-            device=self.device,
-        )
-        reward_c_states = torch.zeros(
-            1,
-            self.config.minibatch_size,
-            self.config.lstm_hidden_size,
-            device=self.device,
-        )
+        network_state = initial_out.network_state
 
         gradient_scales = [1.0] + [
             1.0 / self.config.unroll_steps
@@ -179,14 +166,10 @@ class MuZeroLearner:
 
         # Call AgentNetwork.unroll_sequence (returns UnrollOutput with stacked tensors)
         network_output: UnrollOutput = self.model.unroll_sequence(
-            initial_hidden_state=hidden_states,
-            initial_values=initial_values,
-            initial_policies=initial_policies,
+            initial_network_state=network_state,
             actions=actions,
             target_observations=target_observations,
             target_chance_codes=target_chance_codes,
-            reward_h_states=reward_h_states,
-            reward_c_states=reward_c_states,
             preprocess_fn=self.preprocess_fn,
         )
 

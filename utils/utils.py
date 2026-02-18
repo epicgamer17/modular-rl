@@ -429,3 +429,69 @@ def numpy_dtype_to_torch_dtype(np_dtype):
     temp_np_array = np.empty([], dtype=np_dtype)
     # Convert it to a PyTorch tensor and extract its dtype
     return torch.from_numpy(temp_np_array).dtype
+
+
+def recursive_batch(states: list | dict | torch.Tensor | tuple):
+    if not states:
+        return states
+    if isinstance(states[0], dict):
+        return {k: recursive_batch([s[k] for s in states]) for k in states[0].keys()}
+    if isinstance(states[0], tuple):
+        return tuple(
+            recursive_batch([s[i] for s in states]) for i in range(len(states[0]))
+        )
+    if isinstance(states[0], torch.Tensor):
+        # Handle LSTM states (L, 1, H) vs standard states
+        if states[0].dim() == 3 and states[0].shape[1] == 1:
+            return torch.cat(states, dim=1)
+        # Handle states that already have a leading dimension of 1 (from SearchPolicy or previous unrolls)
+        # Combine them into a single batch instead of stacking to (B, 1, ...)
+        # TODO: is this safe?
+        if states[0].dim() > 1 and states[0].shape[0] == 1:
+            return torch.cat(states, dim=0)
+        return torch.stack(states, dim=0)
+    return states
+
+
+def recursive_unbatch(batched_state: dict | torch.Tensor | tuple):
+    if isinstance(batched_state, dict):
+        keys = list(batched_state.keys())
+        if not keys:
+            return [{}]
+        unbatched_values = [recursive_unbatch(batched_state[k]) for k in keys]
+        # Find the intended batch size (max of unbatched sub-components)
+        batch_size = max(len(v) for v in unbatched_values)
+        return [
+            {
+                k: (
+                    unbatched_values[i][j]
+                    if len(unbatched_values[i]) > 1
+                    else unbatched_values[i][0]
+                )
+                for i, k in enumerate(keys)
+            }
+            for j in range(batch_size)
+        ]
+    if isinstance(batched_state, tuple):
+        unbatched_items = [recursive_unbatch(t) for t in batched_state]
+        if not unbatched_items:
+            return [()]
+        batch_size = max(len(v) for v in unbatched_items)
+        return [
+            tuple(
+                (
+                    unbatched_items[i][j]
+                    if len(unbatched_items[i]) > 1
+                    else unbatched_items[i][0]
+                )
+                for i in range(len(batched_state))
+            )
+            for j in range(batch_size)
+        ]
+    if isinstance(batched_state, torch.Tensor):
+        # Handle LSTM states (L, B, H)
+        if batched_state.dim() == 3:
+            return [batched_state[:, i : i + 1] for i in range(batched_state.shape[1])]
+        # Return tensors with size-1 batch dimension to maintain consistency with initial_inference
+        return [batched_state[i : i + 1] for i in range(batched_state.shape[0])]
+    return [batched_state]

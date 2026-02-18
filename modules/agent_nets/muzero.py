@@ -101,6 +101,18 @@ class AgentNetwork(nn.Module):
 
         # Initialize projector?
 
+    def batch_reward_states(self, states: List[Dict[str, Any]]) -> Dict[str, Any]:
+        from utils.utils import recursive_batch
+
+        return recursive_batch(states)
+
+    def unbatch_reward_states(
+        self, batched_state: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        from utils.utils import recursive_unbatch
+
+        return recursive_unbatch(batched_state)
+
     @torch.no_grad()
     def initial_inference(self, obs: Tensor) -> InferenceOutput:
         """Actor/MCTS API: Translates latent states into expected values."""
@@ -109,45 +121,63 @@ class AgentNetwork(nn.Module):
         wm_output = self.world_model.initial_inference(obs)
         hidden_state = wm_output.features
 
-        # Pass hidden state through shared prediction backbone
+        # Pass through prediction backbone
         pred_features = self.prediction_backbone(hidden_state)
 
-        # Ask Agent Heads for opinions
+        # Ask Agent Heads
         raw_value, _ = self.value_head(pred_features)
         raw_policy, _ = self.policy_head(pred_features)
 
-        # Translate to MCTS-ready math
+        # Translate
+        expected_value = self.value_head.strategy.to_expected_value(raw_value)
+        policy_dist = self.policy_head.strategy.get_distribution(raw_policy)
+
+        # Initial Reward State
+        reward_hidden = self.world_model.reward_head.get_initial_state(
+            batch_size=obs.shape[0], device=obs.device
+        )
+
+        # Wrap everything in a unique opaque state
+        network_state = {
+            "dynamics": hidden_state,
+            "heads": reward_hidden,
+        }
+
         return InferenceOutput(
-            network_state=hidden_state,
-            value=self.value_head.strategy.to_expected_value(raw_value),
-            policy=self.policy_head.strategy.get_distribution(raw_policy),
+            network_state=network_state,
+            value=expected_value,
+            policy=policy_dist,
             reward=None,  # Initial inference has no reward
-            chance=None,
-            to_play=None,  # Initial inference doesn't usually return to_play, or does it?
-            # Root to_play is usually from environment.
+            to_play=wm_output.to_play,
+            extras={},
         )
 
     @torch.no_grad()
     def recurrent_inference(
         self,
-        network_state: Dict[str, Tensor],
+        network_state: Dict[str, Tensor | dict],
         action: Tensor,
     ) -> InferenceOutput:
 
         # 1. Unpack opaque state
-        hidden_state = network_state["dynamics"]
-        reward_hidden = network_state.get("reward_hidden")
+        dynamics_state = network_state["dynamics"]
+        reward_state = network_state["heads"]
 
-        # Ask World Model for next physics state
-        wm_output = self.world_model.recurrent_inference(
-            hidden_state, action, reward_hidden
+        # Use world model dynamics and heads
+        wm_output: WorldModelOutput = self.world_model.recurrent_inference(
+            hidden_state=dynamics_state,
+            action=action,
+            recurrent_state=reward_state,
         )
 
-        next_hidden = wm_output.features
-        raw_reward = wm_output.reward
-        raw_to_play = wm_output.to_play
+        # TRUST THE HEAD: The RewardHead now returns the instant reward directly,
+        # handling its own value prefix subtraction and horizon reset internally.
+        instant_reward = wm_output.instant_reward
 
-        # Pass next hidden state through shared prediction backbone
+        next_hidden = wm_output.features
+        raw_to_play = wm_output.to_play
+        next_reward_state = wm_output.head_state
+        # reward_hidden = reward_state.get("reward_hidden")  # No longer needed to extract internally here if we trust the heads state through shared prediction backbone
         pred_features = self.prediction_backbone(next_hidden)
 
         # Ask Agent Heads
@@ -155,50 +185,34 @@ class AgentNetwork(nn.Module):
         raw_policy, _ = self.policy_head(pred_features)
 
         # Translate
-        # Note: reward and to_play come from WorldModel (Dynamics), so we need their strategies too.
-        # But strategies are attached to heads inside WorldModel?
-        # Yes, WorldModel owns RewardHead. We access it via wm.dynamics.reward_head.strategy?
-        # Or we duplicate the strategy logic here?
-        # Ideally WorldModel heads allow access to strategy.
-
         expected_value = self.value_head.strategy.to_expected_value(raw_value)
-        expected_reward = (
-            self.world_model.dynamics.reward_head.strategy.to_expected_value(raw_reward)
-        )
 
         # To Play
-        # to_play is usually categorical probs or logits.
-        to_play_dist = self.world_model.dynamics.to_play_head.strategy.get_distribution(
+        to_play_dist = self.world_model.to_play_head.strategy.get_distribution(
             raw_to_play
         )
-        # MCTS expects to_play as int usually? Or distribution?
-        # The new InferenceOutput has to_play as Optional[int | Tensor].
-        # Let's return the most likely player for now or the distribution?
-        # ModularSearch likely wants the integer to flip nodes.
-        # But let's check modular_search.py usage. It uses argmax.
+
+        next_network_state = {
+            "dynamics": next_hidden,
+            "heads": next_reward_state,
+        }
 
         return InferenceOutput(
-            network_state=next_hidden,  # This might need to be wrapped if we want symmetry? But caller will wrap it or MCTS handles it?
-            # MCTS expects "network_state" to be the hidden_state usually, but wait.
-            # If I pass `network_state={"dynamics": ...}` in, I should probably return a similar structure/contract?
-            # The previous implementation returned `network_state=next_hidden` and `extras={"reward_hidden": ...}`.
-            # If I want to be opaque, `network_state` in InferenceOutput should probably act as the unique state descriptor.
-            # usage in MCTS: `hidden_state = outputs.network_state`.
-            # And `reward_hidden = outputs.extras["reward_hidden"]`.
-            # If I change MCTS to use `outputs.network_state["dynamics"]`, that would be cleaner divergence.
-            # But let's look at `initial_inference`.
+            network_state=next_network_state,
             value=expected_value,
             policy=self.policy_head.strategy.get_distribution(raw_policy),
-            reward=expected_reward,
+            reward=instant_reward,
             to_play=raw_to_play,
-            extras={"reward_hidden": wm_output.reward_hidden},
+            extras={},
         )
 
     @torch.no_grad()
-    def afterstate_recurrent_inference(self, hidden_state, action) -> InferenceOutput:
+    def afterstate_recurrent_inference(
+        self, network_state: Any, action
+    ) -> InferenceOutput:
         # Ask World Model for afterstate and shared features
         wm_output = self.world_model.afterstate_recurrent_inference(
-            hidden_state, action
+            network_state, action
         )
         shared_features = wm_output.features
         chance_logits = wm_output.chance
@@ -206,8 +220,14 @@ class AgentNetwork(nn.Module):
         # Piggyback on shared features for value prediction
         raw_value, _ = self.afterstate_value_head(shared_features)
 
+        # Wrap everything in a unique opaque state
+        network_state_after = {
+            "dynamics": wm_output.afterstate_features,
+            "heads": network_state["heads"],
+        }
+
         return InferenceOutput(
-            network_state=wm_output.afterstate_features,
+            network_state=network_state_after,
             value=self.afterstate_value_head.strategy.to_expected_value(raw_value),
             policy=self.world_model.sigma_head.strategy.get_distribution(chance_logits),
             chance=self.world_model.sigma_head.strategy.get_distribution(chance_logits),
@@ -216,26 +236,24 @@ class AgentNetwork(nn.Module):
 
     def unroll_sequence(
         self,
-        initial_hidden_state: Tensor,
-        initial_values: Tensor,  # Unused?
-        initial_policies: Tensor,  # Unused?
+        initial_network_state: Any,
         actions: Tensor,
         target_observations: Tensor,
         target_chance_codes: Tensor,
-        reward_h_states: Tensor,
-        reward_c_states: Tensor,
         preprocess_fn: Callable[[Tensor], Tensor],
     ) -> UnrollOutput:
         """Learner API: Returns pure logits for loss computation."""
 
+        # 1. Unpack Opaque State if provided
+        latent = initial_network_state["dynamics"]
+        head_state = initial_network_state.get("heads")
         # 1. Unroll Physics
         physics_output = self.world_model.unroll_sequence(
-            initial_hidden_state=initial_hidden_state,
+            initial_latent_state=latent,
             actions=actions,
             target_observations=target_observations,
             target_chance_codes=target_chance_codes,
-            reward_h_states=reward_h_states,
-            reward_c_states=reward_c_states,
+            initial_reward_state=head_state,
             preprocess_fn=preprocess_fn,
         )
 
@@ -277,31 +295,29 @@ class AgentNetwork(nn.Module):
         latents_afterstates = None
 
         if self.config.stochastic:
-            # 1. Stack Afterstates
+            # 1. Stack Afterstates (Dynamics Output)
             stacked_afterstates = torch.stack(
                 physics_output["latent_afterstates"], dim=1
             )
             latents_afterstates = stacked_afterstates
 
-            # 2. Extract Shared Features (Backbone output stored in chance_out dictionary for convenience or re-computed?)
-            # Currently physics_output doesn't return stacked shared features.
-            # We can re-run the backbone or update unroll_physics to return them.
-            # Re-running is safer for now if we didn't store them.
-
-            B_as, T_as = stacked_afterstates.shape[:2]
-            flat_afterstates = stacked_afterstates.view(
-                B_as * T_as, *stacked_afterstates.shape[2:]
+            # 2. Extract Shared Backbone Features (Already computed in physics loop)
+            stacked_backbone_features = torch.stack(
+                physics_output["afterstate_backbone_features"], dim=1
+            )
+            B_as, T_as = stacked_backbone_features.shape[:2]
+            flat_backbone = stacked_backbone_features.view(
+                B_as * T_as, *stacked_backbone_features.shape[2:]
             )
 
-            shared_features = self.world_model.shared_backbone(flat_afterstates)
-
-            # 3. Predict Afterstate Values (Agent Objective)
-            raw_chance_values, _ = self.afterstate_value_head(shared_features)
+            # 3. Predict Afterstate Values
+            raw_chance_values, _ = self.afterstate_value_head(flat_backbone)
             chance_values = raw_chance_values.view(B_as, T_as, -1)
 
-            # 4. Predict Chance Logits (Environment Rules - piggyback)
-            raw_chance_logits, _ = self.world_model.sigma_head(shared_features)
-            chance_logits = raw_chance_logits.view(B_as, T_as, -1)
+            # 4. Use Chance Logits directly from physics loop
+            chance_logits = torch.stack(
+                physics_output["latent_code_probabilities"], dim=1
+            )
 
         return UnrollOutput(
             values=raw_values,

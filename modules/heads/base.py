@@ -89,7 +89,7 @@ class BaseHead(nn.Module):
         """Standard forward pass: neck -> output_layer -> strategy."""
         x = self.process_input(x)
         logits = self.output_layer(x)
-        return logits, {}
+        return logits, state if state is not None else {}
 
     def process_input(self, x: Tensor) -> Tensor:
         """Helper to pass input through neck and flatten it."""
