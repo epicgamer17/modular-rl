@@ -323,7 +323,8 @@ class PPOLearner:
         Returns:
             Tuple of (actor_loss, kl_divergence).
         """
-        distribution, _ = self.model.policy.get_distribution(observations)
+        logits, _ = self.model.policy(observations)
+        distribution = self.model.policy.strategy.get_distribution(logits)
 
         # New log probabilities
         new_log_probs = distribution.log_prob(actions)

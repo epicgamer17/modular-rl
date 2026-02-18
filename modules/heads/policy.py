@@ -29,13 +29,3 @@ class PolicyHead(BaseHead):
     ) -> Tuple[Tensor, Dict[str, Any]]:
         logits, new_state = super().forward(x, state)
         return logits, new_state
-
-    def get_distribution(
-        self, x: Tensor, state: Optional[Dict[str, Any]] = None
-    ) -> Tuple[torch.distributions.Distribution, Optional[Dict[str, Any]]]:
-        logits, new_state = super().forward(x, state)  # Should we use self.forward?
-        # BaseHead forward calls neck then head.
-        # If we use self.forward, it calls super().forward.
-        # So yes, we can call self.forward or super().forward.
-        # But get_distribution usually takes observations 'x'.
-        return self.strategy.get_distribution(logits), new_state

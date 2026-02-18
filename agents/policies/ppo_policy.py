@@ -27,7 +27,8 @@ class PPOPolicy(DirectPolicy):
 
         with torch.inference_mode():
             # Get current policy distribution
-            distribution, _ = self.model.policy.get_distribution(obs_tensor)
+            logits, _ = self.model.policy(obs_tensor)
+            distribution = self.model.policy.strategy.get_distribution(logits)
 
         if exploration:
             action = distribution.sample()
@@ -61,10 +62,10 @@ class PPOPolicy(DirectPolicy):
             # We assume model.policy.neck exists if using modular heads
             if obs_tensor.dim() == len(self.model.policy.neck.input_shape):
                 obs_tensor = obs_tensor.unsqueeze(0)
-
         with torch.inference_mode():
             # Get current policy distribution and critic value
-            distribution, _ = self.model.policy.get_distribution(obs_tensor)
+            logits, _ = self.model.policy(obs_tensor)
+            distribution = self.model.policy.strategy.get_distribution(logits)
             value, _ = self.model.value(obs_tensor)
 
         # Sample action from distribution
