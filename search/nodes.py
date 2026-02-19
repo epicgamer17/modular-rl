@@ -37,6 +37,7 @@ class ChanceNode:
         self.to_play = parent.to_play
         # Children are DecisionNodes, indexed by code
         self.children = {}
+        self.network_state = None
 
         # Vectorized child stats
         self.child_visits = None

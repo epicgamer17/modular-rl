@@ -202,7 +202,7 @@ class PPOTrainer(BaseTrainer):
                 avg_score = 0.0
 
             # 3. Learning step
-            loss_stats = self.learner.step(self.stats)
+            loss_stats = self.learner.step(self.stats, self.training_step)
             if loss_stats:
                 for key, val in loss_stats.items():
                     self.stats.append(key, val)

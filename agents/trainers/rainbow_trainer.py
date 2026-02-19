@@ -265,7 +265,7 @@ class RainbowTrainer(BaseTrainer):
 
                     # BETTER: Use the selector mechanism but update params?
                     # Doing manual argmax mimics DirectPolicy behavior for test.
-                    net_out = self.model.initial_inference(state)
+                    net_out = self.model.obs_inference(state)
                     action = net_out.q_values.argmax(dim=-1)
 
                     action_val = action.item() if hasattr(action, "item") else action
@@ -313,7 +313,7 @@ class RainbowTrainer(BaseTrainer):
     def select_test_action(self, state, info, env) -> Any:
         """Greedy action for testing."""
         # Manual greedy selection using model
-        net_out = self.model.initial_inference(state)
+        net_out = self.model.obs_inference(state)
         action = net_out.q_values.argmax(dim=-1)
         return action.item()
 

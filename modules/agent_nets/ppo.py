@@ -6,12 +6,15 @@ import torch.nn as nn
 from modules.heads.policy import PolicyHead
 from modules.heads.value import ValueHead
 from modules.heads.strategy_factory import OutputStrategyFactory
+from modules.agent_nets.base import BaseAgentNetwork
+from modules.world_models.inference_output import LearningOutput
 
 
-class PPONetwork(nn.Module):
+class PPONetwork(BaseAgentNetwork):
     # This combines the two new base modules
     def __init__(self, config: PPOConfig, input_shape: Tuple[int]):
         super().__init__()
+        self.config = config
         self.input_shape = input_shape
         # TODO: SHARED BACKBONE?
         # Policy Head (Actor)
@@ -47,7 +50,7 @@ class PPONetwork(nn.Module):
         self.policy.initialize(initializer)
         self.value.initialize(initializer)
 
-    def initial_inference(self, inputs: Tensor) -> "InferenceOutput":
+    def obs_inference(self, inputs: Tensor) -> "InferenceOutput":
         from modules.world_models.inference_output import InferenceOutput
 
         # Ensure inputs is a tensor
@@ -67,6 +70,32 @@ class PPONetwork(nn.Module):
             inputs
         )
 
-        return InferenceOutput(
-            policy=policy_dist, policy_logits=policy_logits, value=value
+        # Translate to expected value if needed
+        # ValueHead output is already 'value' logits potentially?
+        # ValueHead usually returns (logits, state)
+        # We need expected value.
+        expected_value = self.value.strategy.to_expected_value(value)
+
+        return InferenceOutput(policy=policy_dist, value=expected_value)
+
+    def learner_inference(self, batch: Any) -> LearningOutput:
+        """
+        Calculates pure logits for both policy and value heads given a batch of observations.
+        """
+        # Ensure batch has 'obs'
+        obs = batch["observations"]
+
+        obs = obs.to(self.device)
+
+        # Forward pass
+        # Note: If PPO has shared backbone, optimize to only run it once.
+        # Currently PPO has separate heads implicitly handling their own backbones logic inside?
+        # Architecture in init shows PolicyHead and ValueHead taking initial input.
+
+        (policy_logits, _, _), (value_logits, _) = self.policy(obs), self.value(obs)
+
+        return UnrollOutput(
+            values=value_logits,
+            policies=policy_logits,
+            rewards=torch.zeros((obs.shape[0], 1), device=self.device),  # Dummy
         )

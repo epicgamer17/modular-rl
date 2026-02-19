@@ -33,8 +33,15 @@ class MockNetworkOutput:
 
 
 class MockNetwork(nn.Module):
-    def initial_inference(self, obs):
-        return InferenceOutput(value=torch.tensor([0.0]), policy=None)
+    def obs_inference(self, obs):
+        return InferenceOutput(
+            value=torch.tensor([0.0]),
+            policy=None,
+            reward=None,
+            to_play=None,
+            network_state=None,
+            q_values=None,
+        )
 
 
 class TestActionSelectors(unittest.TestCase):
@@ -57,20 +64,37 @@ class TestActionSelectors(unittest.TestCase):
 
     def test_argmax_selector(self):
         selector = ArgmaxSelector()
-        output = InferenceOutput(value=self.value, policy=None)
+        # ArgmaxSelector looks for q_values
+        output = InferenceOutput(
+            value=self.value,
+            policy=None,
+            reward=None,
+            to_play=None,
+            network_state=None,
+            q_values=self.logits,  # reusing logits as q_values for test
+        )
         action, meta = selector.select_action(
             self.agent_network, self.obs, network_output=output
         )
-        self.assertEqual(action.item(), 1)  # argmax of [0.5, 0.8, 0.1] is index 1
+        self.assertEqual(
+            action.item(), 2
+        )  # argmax of logits [1.0, 2.0, 3.0] is index 2
 
     def test_epsilon_greedy_selector(self):
-        # Test greedy choice (epsilon=0)
-        selector = EpsilonGreedySelector(epsilon=0.0)
-        output = InferenceOutput(value=self.value, policy=None)
+        selector = EpsilonGreedySelector(epsilon=0.0)  # Greedy
+        # Provide q_values explicitly
+        output = InferenceOutput(
+            value=self.value,
+            policy=None,
+            reward=None,
+            to_play=None,
+            network_state=None,
+            q_values=self.logits,  # reusing logits as q_values
+        )
         action, meta = selector.select_action(
             self.agent_network, self.obs, network_output=output
         )
-        self.assertEqual(action.item(), 1)
+        self.assertEqual(action.item(), 2)  # argmax of [1.0, 2.0, 3.0] is index 2
 
     def test_ppo_decorator(self):
         base_selector = CategoricalSelector(exploration=False)

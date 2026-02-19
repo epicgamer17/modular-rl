@@ -184,12 +184,13 @@ class PPOLearner:
 
         self.trajectory_start_index = self.pointer
 
-    def step(self, stats=None) -> Optional[Dict[str, float]]:
+    def step(self, stats=None, step=None) -> Optional[Dict[str, float]]:
         """
         Performs PPO training iterations over collected data.
 
         Args:
             stats: Optional StatTracker for logging metrics.
+            step: Optional global training step (used for scheduling).
 
         Returns:
             Dictionary of loss statistics.
@@ -304,52 +305,40 @@ class PPOLearner:
         if self.device.type == "mps" and self.training_step % 100 == 0:
             torch.mps.empty_cache()
 
-        return {
-            "actor_loss": float(np.mean(actor_losses)) if actor_losses else 0.0,
-            "critic_loss": float(np.mean(critic_losses)) if critic_losses else 0.0,
-            "kl_divergence": float(np.mean(kl_divergences)) if kl_divergences else 0.0,
-        }
-
     def _actor_loss(
         self,
-        observations: torch.Tensor,
+        obs: torch.Tensor,
         actions: torch.Tensor,
         old_log_probs: torch.Tensor,
         advantages: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Computes PPO clipped surrogate actor loss.
+        Computes PPO actor loss.
 
         Returns:
-            Tuple of (actor_loss, kl_divergence).
+            Tuple of (policy_loss, approx_kl)
         """
-        logits, _, distribution = self.model.policy(observations)
+        # Get current distribution
+        # self.model.obs_inference returns InferenceOutput with policy distribution
+        output = self.model.obs_inference(obs)
+        dist = output.policy
 
-        # New log probabilities
-        new_log_probs = distribution.log_prob(actions)
+        log_probs = dist.log_prob(actions)
 
-        # Probability ratio
-        log_ratios = new_log_probs - old_log_probs
-        ratios = torch.exp(log_ratios)
-
-        # Clipped surrogate objective
-        clipped_ratios = torch.clamp(
-            ratios, 1 - self.config.clip_param, 1 + self.config.clip_param
+        ratio = torch.exp(log_probs - old_log_probs)
+        surr1 = ratio * advantages
+        surr2 = (
+            torch.clamp(
+                ratio, 1.0 - self.config.clip_param, 1.0 + self.config.clip_param
+            )
+            * advantages
         )
+        policy_loss = -torch.min(surr1, surr2).mean()
 
-        # PPO loss (maximize advantage, so negate for minimization)
-        surrogate_loss = torch.min(ratios * advantages, clipped_ratios * advantages)
-        actor_loss = -surrogate_loss.mean()
-
-        # Entropy bonus (encourages exploration)
-        entropy_loss = distribution.entropy().mean()
-        actor_loss = actor_loss - self.config.entropy_coefficient * entropy_loss
-
-        # KL divergence for early stopping (approximation)
         with torch.no_grad():
-            approx_kl = ((ratios - 1) - log_ratios).mean()
+            approx_kl = (old_log_probs - log_probs).mean()
 
-        return actor_loss, approx_kl
+        return policy_loss, approx_kl
 
     def _critic_loss(
         self, observations: torch.Tensor, returns: torch.Tensor

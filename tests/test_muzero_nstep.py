@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import pytest
-from replay_buffers.processors import MuZeroUnrollOutputProcessor
+from modules.world_models.inference_output import LearningOutput
 
 
 def test_nstep_value_single_player():

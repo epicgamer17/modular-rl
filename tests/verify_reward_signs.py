@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from replay_buffers.processors import MuZeroUnrollOutputProcessor
+from modules.world_models.inference_output import LearningOutputProcessor
 
 
 def test_reward_flipping():

@@ -7,13 +7,13 @@ import sys
 # Ensure custom_gym_envs_pkg is in path
 sys.path.append(os.path.abspath("custom_gym_envs_pkg"))
 
-from configs.games.catan_config import CatanConfig
-from configs.games.tictactoe_config import TicTacToeConfig
+from configs.games.catan import CatanConfig
+from configs.games.tictactoe import TicTacToeConfig
 from configs.agents.muzero import MuZeroConfig
 from agents.policies.search_policy import SearchPolicy
 from search.search_factories import create_mcts
 from modules.world_models.muzero_world_model import MuzeroWorldModel
-from modules.agent_nets.muzero import Network
+from modules.agent_nets.muzero import MuZeroNetwork as Network
 
 
 def benchmark_env(game_name, make_env_fn, num_steps=100):
@@ -95,7 +95,11 @@ def benchmark_policy(game_name, game_config, num_simulations=25, num_calls=10):
     }
 
     config = MuZeroConfig(params, game_config)
-    device = torch.device("cpu")
+    device = (
+        torch.device("mps")
+        if torch.backends.mps.is_available()
+        else torch.device("cpu")
+    )
 
     env = game_config.make_env()
     env.reset()

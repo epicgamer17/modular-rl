@@ -7,7 +7,7 @@ from agents.action_selectors.selectors import CategoricalSelector
 from agents.action_selectors.decorators import MCTSDecorator
 from search.search_factories import create_mcts
 from agents.actors.actors import get_actor_class
-from modules.agent_nets.muzero import AgentNetwork
+from modules.agent_nets.muzero import MuZeroNetwork
 from stats.stats import StatTracker, PlotType
 
 
@@ -27,9 +27,10 @@ class MuZeroTrainer(BaseTrainer):
         super().__init__(config, env, device, stats, test_agents)
         # 1. Initialize Network
         # ... (network initialization)
-        from modules.agent_nets.muzero import AgentNetwork as Network
+        # The local import `from modules.agent_nets.muzero import AgentNetwork as Network` is removed
+        # as MuZeroNetwork is already imported at the top and will be used directly.
 
-        self.model = Network(
+        self.model = MuZeroNetwork(
             config,
             input_shape=self.obs_dim,
             num_actions=self.num_actions,
@@ -82,19 +83,20 @@ class MuZeroTrainer(BaseTrainer):
         from agents.executors.local_executor import LocalExecutor
         from agents.executors.torch_mp_executor import TorchMPExecutor
 
-        if getattr(config, "multi_process", False):
+        if config.multi_process:
             self.executor = TorchMPExecutor()
         else:
             self.executor = LocalExecutor()
 
         # Launch workers
-        num_workers = getattr(config, "num_workers", 1)
+        num_workers = config.num_workers
         worker_args = (
             config.game.make_env,
             self.model,
             self.action_selector,
             config.game.num_players,
             config,
+            self.device,  # TODO: fix this device management for workers
         )
         from agents.actors.actors import get_actor_class
 

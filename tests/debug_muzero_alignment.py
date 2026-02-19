@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from replay_buffers.sequence import Sequence
+from modules.world_models.inference_output import LearningOutput
 from replay_buffers.processors import (
     MuZeroSequenceInputProcessor,
     MuZeroUnrollOutputProcessor,

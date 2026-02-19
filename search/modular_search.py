@@ -69,7 +69,7 @@ class SearchAlgorithm:
         # 1. Inference
         assert not root.expanded()
 
-        outputs: InferenceOutput = inference_fns["initial"](observation)
+        outputs: InferenceOutput = inference_fns["obs"](observation)
 
         val_raw = outputs.value
         policy = (
@@ -308,7 +308,7 @@ class SearchAlgorithm:
         #     print("WRONG TO PLAY", onehot_to_play)
         if isinstance(node, DecisionNode):
             if isinstance(parent, DecisionNode):
-                outputs: InferenceOutput = inference_fns["recurrent"](
+                outputs: InferenceOutput = inference_fns["hidden_state"](
                     parent.network_state,
                     torch.as_tensor([action_or_code], device=self.device),
                 )
@@ -356,7 +356,7 @@ class SearchAlgorithm:
                 action_t = action_t.long()
                 one_hot_code = F.one_hot(action_t, num_classes=num_codes)
 
-                outputs: InferenceOutput = inference_fns["recurrent"](
+                outputs: InferenceOutput = inference_fns["hidden_state"](
                     parent.network_state,
                     one_hot_code.unsqueeze(0).float(),
                 )
@@ -691,6 +691,9 @@ class SearchAlgorithm:
 
             if isinstance(node, DecisionNode):
                 state = parent.network_state
+                assert (
+                    state is not None
+                ), f"Parent node {type(parent)} at search path index {len(d['path'])-2} has network_state=None. Node type: {type(node)}"
 
                 recurrent_inputs.append(
                     {
@@ -700,9 +703,13 @@ class SearchAlgorithm:
                     }
                 )
             elif isinstance(node, ChanceNode):
+                state = parent.network_state
+                assert (
+                    state is not None
+                ), f"Parent node {type(parent)} has network_state=None for ChanceNode expansion. Parent to_play: {parent.to_play}"
                 afterstate_inputs.append(
                     {
-                        "state": parent.network_state,
+                        "state": state,
                         "action": action,
                         "idx": i,
                     }
@@ -734,7 +741,7 @@ class SearchAlgorithm:
             actions = torch.cat(act_list, dim=0)
 
             # 3. Inference
-            outputs: InferenceOutput = inference_fns["recurrent"](
+            outputs: InferenceOutput = inference_fns["hidden_state"](
                 batched_states,
                 actions,
             )

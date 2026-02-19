@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from modules.agent_nets.muzero import AgentNetwork
+from modules.agent_nets.muzero import MuZeroNetwork
 from configs.agents.muzero import MuZeroConfig
 from configs.games.tictactoe import TicTacToeConfig
 from search.modular_search import SearchAlgorithm
@@ -25,7 +25,8 @@ def test_batched_search():
         "value_head": {},
         "reward_head": {},
         "policy_head": {},
-        "to_play_head": {},
+        "policy_loss_function": nn.CrossEntropyLoss(),
+        "action_selector": {"base": {"type": "categorical", "kwargs": {}}},
     }
     config = MuZeroConfig(config_dict, game_config)
     device = torch.device("cpu")
@@ -33,7 +34,8 @@ def test_batched_search():
     # Corrected AgentNetwork initialization
     num_actions = 9
     input_shape = (5, 3, 3)  # Handled by TicTacToe env wrappers
-    model = AgentNetwork(config, num_actions, input_shape)
+    # Create shared network
+    model = MuZeroNetwork(config, num_actions, input_shape)
 
     # 2. Setup Search Algorithm
     search = SearchAlgorithm(
@@ -57,15 +59,15 @@ def test_batched_search():
     obs = torch.zeros((1, *input_shape))  # Single observation with batch dim
     info = {"legal_moves": [list(range(num_actions))]}
 
-    def predict_initial_inference(state, model=None):
-        return model.initial_inference(state)
+    def predict_initial_inference(state):
+        return model.obs_inference(state)
 
-    def predict_recurrent_inference(network_state, actions, model=None):
-        return model.recurrent_inference(network_state, actions)
+    def predict_recurrent_inference(network_state, actions):
+        return model.hidden_state_inference(network_state, actions)
 
     inference_fns = {
-        "initial": predict_initial_inference,
-        "recurrent": predict_recurrent_inference,
+        "obs": predict_initial_inference,
+        "hidden_state": predict_recurrent_inference,
     }
 
     # 4. Run Search - This should no longer raise ValueError

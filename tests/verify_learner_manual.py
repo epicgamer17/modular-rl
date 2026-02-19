@@ -1,9 +1,9 @@
 import torch
 import torch.nn.functional as F
-from agents.muzero_learner import MuZeroLearner
+from agents.learners.muzero_learner import MuZeroLearner
 from configs.agents.muzero import MuZeroConfig
-from configs.games.cartpole_config import CartPoleConfig
-from modules.agent_nets.muzero import AgentNetwork
+from configs.games.cartpole import CartPoleConfig
+from modules.agent_nets.muzero import MuZeroNetwork
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from losses.basic_losses import CategoricalCrossentropyLoss
 from torch.optim import Adam
@@ -46,6 +46,15 @@ def test_learner_directly():
         "reward_loss_function": CategoricalCrossentropyLoss(),
         "policy_loss_function": CategoricalCrossentropyLoss(),
         "support_range": 31,
+        "action_selector": {"base": {"type": "categorical", "kwargs": {}}},
+        "representation_backbone": {"type": "dense", "widths": [64]},
+        "dynamics_backbone": {"type": "dense", "widths": [64]},
+        "prediction_backbone": {"type": "dense", "widths": [64]},
+        "afterstate_dynamics_backbone": {"type": "dense", "widths": [64]},
+        "projector_hidden_dim": 64,
+        "projector_output_dim": 64,
+        "predictor_hidden_dim": 64,
+        "predictor_output_dim": 64,
     }
     config = MuZeroConfig(config_dict, game_config)
 
@@ -55,44 +64,51 @@ def test_learner_directly():
     support_size = config.support_range * 2 + 1 if config.support_range else 1
 
     print("Initializing model...")
-    model = Network(
+    model = MuZeroNetwork(
         config=config,
         num_actions=num_actions,
-        input_shape=torch.Size((config.minibatch_size, 4)),
+        input_shape=torch.Size(
+            (4,)
+        ),  # input_shape usually doesn't include batch in config, handled inside
         channel_first=True,
-        world_model_cls=config.world_model_cls,
+        world_model_cls=MuzeroWorldModel,
     )
 
-    # Mock some functions required for loss pipeline
-    def predict_initial_inference_fn(x, model):
-        B = x.shape[0]
-        return (
-            F.softmax(torch.randn(B, support_size), dim=-1),  # values
-            F.softmax(torch.randn(B, num_actions), dim=-1),  # policies
-            torch.randn(B, 64),  # hidden
+    # Mock learner_inference to return dummy output so we don't need real weights/forward pass
+    from modules.world_models.inference_output import LearningOutput
+
+    def mock_learner_inference(batch):
+        if isinstance(batch, dict):
+            if "obs" in batch:
+                B = batch["obs"].shape[0]
+            elif "observation" in batch:
+                B = batch["observation"].shape[0]
+            else:
+                # fallback or error
+                B = list(batch.values())[0].shape[0]
+        else:
+            B = batch.obs.shape[0] if hasattr(batch, "obs") else batch.shape[0]
+        T = config.unroll_steps
+
+        return LearningOutput(
+            values=F.softmax(torch.randn(B, T + 1, support_size), dim=-1),
+            policies=F.softmax(torch.randn(B, T + 1, num_actions), dim=-1),
+            # Pad rewards: (B, T+1, support). First step is dummy.
+            rewards=F.softmax(torch.randn(B, T + 1, support_size), dim=-1),
+            to_plays=torch.randn(B, T + 1, 1),
+            latents=torch.randn(B, T + 1, 64),
         )
 
-    def predict_recurrent_inference_fn(
-        states, actions_or_codes, reward_h_states=None, reward_c_states=None, model=None
-    ):
-        B = states.shape[0]
-        return (
-            F.softmax(torch.randn(B, support_size), dim=-1),  # rewards
-            torch.randn(B, 64),  # next_hidden
-            F.softmax(torch.randn(B, support_size), dim=-1),  # values
-            F.softmax(torch.randn(B, num_actions), dim=-1),  # policies
-            torch.randn(B, 1),  # to_play
-            reward_h_states,
-            reward_c_states,
+    model.learner_inference = mock_learner_inference
+    model.obs_inference = MagicMock(
+        return_value=MagicMock(
+            network_state={"dynamics": torch.randn(2, 64), "heads": None}
         )
-
-    def predict_afterstate_recurrent_inference_fn(hidden_states, actions, model):
-        B = hidden_states.shape[0]
-        return (
-            torch.randn(B, 64),
-            F.softmax(torch.randn(B, support_size), dim=-1),
-            F.softmax(torch.randn(B, 2), dim=-1),
-        )
+    )
+    model.hidden_state_inference = MagicMock()
+    model.afterstate_inference = MagicMock()
+    # Mocking check for afterstate inference capability
+    model.afterstate_inference = MagicMock()
 
     preprocess_fn = lambda x: x if torch.is_tensor(x) else torch.tensor(x)
 
@@ -104,10 +120,6 @@ def test_learner_directly():
         num_actions=num_actions,
         observation_dimensions=observation_dimensions,
         observation_dtype=torch.float32,
-        predict_initial_inference_fn=predict_initial_inference_fn,
-        predict_recurrent_inference_fn=predict_recurrent_inference_fn,
-        predict_afterstate_recurrent_inference_fn=predict_afterstate_recurrent_inference_fn,
-        preprocess_fn=preprocess_fn,
     )
 
     print("Populating buffer...")
@@ -128,7 +140,9 @@ def test_learner_directly():
     print(f"Buffer size: {learner.replay_buffer.size}")
 
     print("Running learner step...")
+    # The learner.step() method samples from the buffer and calls self.model.learner_inference(batch)
     stats = learner.step()
+
     print(f"Learner step completed! Stats: {stats}")
 
 

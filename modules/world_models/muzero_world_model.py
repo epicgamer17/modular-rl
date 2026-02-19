@@ -163,18 +163,8 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
 
         next_hidden_state = self.dynamics(hidden_state, action)
 
-        # Heads
-        if isinstance(recurrent_state, dict):
-            # Assume it's the opaque state dict
-            state = recurrent_state
-        else:
-            # Legacy: wrap tuple/tensor in dict
-            state = (
-                {"head_state": recurrent_state} if recurrent_state is not None else {}
-            )
-
         reward_logits, new_state, instant_reward = self.reward_head(
-            next_hidden_state, state=state
+            next_hidden_state, state=recurrent_state
         )
         # For return, we might want to return the full opaque state as "head_state" field
         # or separate fields? properties of WorldModelOutput are flexible?
@@ -197,10 +187,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         action,
     ) -> WorldModelOutput:
         # Unpack if opaque dictionary
-        if isinstance(network_state, dict):
-            latent_state = network_state["dynamics"]
-        else:
-            latent_state = network_state
+        latent_state = network_state["dynamics"]
 
         # 1. Transition to Afterstate
         action = action.view(-1).to(latent_state.device)
@@ -229,16 +216,16 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         self,
         initial_latent_state: Tensor,
         actions: Tensor,
-        target_observations: Tensor,
-        target_chance_codes: Tensor,
-        initial_reward_state: Any,
-        preprocess_fn: Callable[[Tensor], Tensor],
+        encoder_inputs: Tensor,
+        true_chance_codes: Tensor,
+        head_state: Any,
     ) -> PhysicsOutput:
         """
         Unrolls the dynamics for K steps given actions.
         Returns a PhysicsOutput containing STACKED tensors for each step.
         """
         batch_size = actions.shape[0]
+        unroll_steps = self.config.unroll_steps
         device = initial_latent_state.device
 
         # --- 2. Prepare Storage ---
@@ -253,32 +240,22 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         hidden_states = initial_latent_state
         # Initialize opaque reward state
         # We assume start of unroll is step 0 for horizon purposes
-        current_reward_state = initial_reward_state
+        current_head_state = head_state
 
         # Add initial states to lists
         latent_states.append(hidden_states)
 
+        # Predict initial player
+        initial_to_play, _ = self.to_play_head(hidden_states)
+        to_plays.append(initial_to_play)
+
         # Stochastic MuZero specific storage
         if self.config.stochastic:
-            latent_afterstates.append(torch.zeros_like(hidden_states).to(device))
-            latent_code_probabilities = [
-                torch.zeros(
-                    (batch_size, self.config.num_chance),
-                    device=device,
-                )
-            ]
-            encoder_softmaxes = [
-                torch.zeros(
-                    (batch_size, self.config.num_chance),
-                    device=device,
-                )
-            ]
-            encoder_onehots = [
-                torch.zeros(
-                    (batch_size, self.config.num_chance),
-                    device=device,
-                )
-            ]
+            latent_afterstates = []
+            latent_code_probabilities = []
+            encoder_softmaxes = []
+            encoder_onehots = []
+            afterstate_backbone_features = []
         else:
             latent_afterstates = []
             latent_code_probabilities = []
@@ -286,34 +263,15 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             encoder_softmaxes = []
             encoder_onehots = []
 
-        if self.config.support_range is not None:
-            reward_shape = (
-                batch_size,
-                self.config.support_range * 2 + 1,
-            )
-        else:
-            reward_shape = (batch_size, 1)
-
-        rewards = [torch.zeros(reward_shape, device=device)]  # R_t = 0 (Placeholder)
-
-        to_plays = [
-            torch.zeros(
-                (batch_size, self.config.game.num_players),
-                device=device,
-            )
-        ]
+        # Rewards: MuZero unrolls usually return T rewards for T actions.
+        # PhysicsOutput says rewards: [B, T, ...]
+        rewards = []
 
         # --- 4. Unroll Loop ---
-        for k in range(self.config.unroll_steps):
+        for k in range(unroll_steps):
             actions_k = actions[:, k]
 
             if self.config.stochastic:
-                target_observations_k = target_observations[:, k]
-                target_observations_k_plus_1 = target_observations[:, k + 1]
-                real_obs_k = preprocess_fn(target_observations_k)
-                real_obs_k_plus_1 = preprocess_fn(target_observations_k_plus_1)
-                encoder_input = torch.concat([real_obs_k, real_obs_k_plus_1], dim=1)
-
                 # 1. Afterstate Inference
                 afterstate_out = self.afterstate_recurrent_inference(
                     hidden_states, actions_k
@@ -323,11 +281,11 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 chance_logits_k = afterstate_out.chance
 
                 # 3. Encoder Inference
-                encoder_softmax_k, encoder_onehot_k = self.encoder(encoder_input)
+                encoder_softmax_k, encoder_onehot_k = self.encoder(encoder_inputs[:, k])
 
                 if self.config.use_true_chance_codes:
                     codes_k = F.one_hot(
-                        target_chance_codes[:, k + 1].squeeze(-1).long(),
+                        true_chance_codes[:, k + 1].squeeze(-1).long(),
                         self.config.num_chance,
                     )
                     encoder_onehot_k = codes_k.float()
@@ -344,10 +302,10 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 next_hidden_state = self.dynamics(afterstates, encoder_onehot_k)
 
                 # Heads
-                reward_logits, new_state, instant_reward = self.reward_head(  # Changed
-                    next_hidden_state, state=current_reward_state
+                reward_logits, new_state, instant_reward = self.reward_head(
+                    next_hidden_state, state=current_head_state
                 )
-                current_reward_state = new_state
+                current_head_state = new_state
 
                 to_play, _ = self.to_play_head(next_hidden_state)
 
@@ -362,14 +320,14 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 wm_output = self.recurrent_inference(
                     hidden_states,
                     actions_k,
-                    current_reward_state,
+                    current_head_state,
                 )
                 rewards_k = wm_output.reward
                 hidden_states = wm_output.features
                 to_plays_k = wm_output.to_play
 
                 # wm_output.head_state is now the opaque dict
-                current_reward_state = wm_output.head_state
+                current_head_state = wm_output.head_state
                 instant_rewards_k = wm_output.instant_reward  # New
 
             latent_states.append(hidden_states)
@@ -381,21 +339,19 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
 
             # Horizon logic is now handled inside ValuePrefixRewardHead via step_count
 
-        # --- 5. Pad Stochastic Outputs for K+1 steps ---
-        if self.config.stochastic:
-            # We have K afterstates (0 to K-1). Pad to K+1 for loss alignment.
-            dummy_afterstate = torch.zeros_like(latent_states[0])
-            dummy_chance = torch.zeros_like(latent_code_probabilities[0])
-            dummy_backbone = torch.zeros_like(afterstate_backbone_features[0])
-
-            latent_afterstates.append(dummy_afterstate)
-            latent_code_probabilities.append(dummy_chance)
-            afterstate_backbone_features.append(dummy_backbone)
+        # --- 5. No Padding needed for K steps alignment ---
 
         # --- 6. Stack and Return PhysicsOutput ---
         # Stack everything here to avoid returning lists of tensors
         stacked_latents = torch.stack(latent_states, dim=1)
-        stacked_rewards = torch.stack(rewards, dim=1) if rewards else torch.empty(0)
+
+        # Pad rewards to length T+1 (add dummy at index 0)
+        if rewards:
+            rew_pad = torch.zeros_like(rewards[0]).unsqueeze(1)
+            stacked_rewards = torch.cat([rew_pad, torch.stack(rewards, dim=1)], dim=1)
+        else:
+            stacked_rewards = torch.empty(0)
+
         stacked_to_plays = torch.stack(to_plays, dim=1) if to_plays else torch.empty(0)
 
         stacked_afterstates = None
@@ -405,11 +361,18 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         stacked_onehots = None
 
         if self.config.stochastic:
-            stacked_afterstates = torch.stack(latent_afterstates, dim=1)
-            stacked_chance_logits = torch.stack(latent_code_probabilities, dim=1)
-            stacked_backbone = torch.stack(afterstate_backbone_features, dim=1)
-            stacked_softmaxes = torch.stack(encoder_softmaxes, dim=1)
-            stacked_onehots = torch.stack(encoder_onehots, dim=1)
+            # Pad stochastic fields as well (add dummy at index 0)
+            def pad_stochastic(tensor_list):
+                if not tensor_list:
+                    return None
+                pad = torch.zeros_like(tensor_list[0]).unsqueeze(1)
+                return torch.cat([pad, torch.stack(tensor_list, dim=1)], dim=1)
+
+            stacked_afterstates = pad_stochastic(latent_afterstates)
+            stacked_chance_logits = pad_stochastic(latent_code_probabilities)
+            stacked_backbone = pad_stochastic(afterstate_backbone_features)
+            stacked_softmaxes = pad_stochastic(encoder_softmaxes)
+            stacked_onehots = pad_stochastic(encoder_onehots)
 
         return PhysicsOutput(
             latents=stacked_latents,

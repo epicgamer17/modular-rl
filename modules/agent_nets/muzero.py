@@ -1,4 +1,5 @@
 from typing import Callable, Tuple, Dict, List, Optional, Any
+from modules.agent_nets.base import BaseAgentNetwork
 
 from configs.agents.muzero import MuZeroConfig
 from torch import nn, Tensor
@@ -6,7 +7,6 @@ import torch
 import torch.nn.functional as F
 
 
-from modules.network_block import NetworkBlock
 from modules.backbones.factory import BackboneFactory
 
 from modules.projectors.sim_siam import Projector
@@ -19,18 +19,18 @@ from modules.utils import _normalize_hidden_state, zero_weights_initializer
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from modules.world_models.inference_output import (
     InferenceOutput,
-    UnrollOutput,
+    LearningOutput,
     PhysicsOutput,
     WorldModelOutput,
 )
-from utils.utils import to_lists
+from utils.utils import to_lists, normalize_images, recursive_batch
 
 from modules.blocks.conv import Conv2dStack
 from modules.blocks.dense import DenseStack, build_dense
 from modules.blocks.residual import ResidualStack
 
 
-class AgentNetwork(nn.Module):
+class MuZeroNetwork(BaseAgentNetwork):
     """
     The Composer: Wires a Physics Engine (WorldModel) to an Agent's Objectives (Heads).
     """
@@ -43,7 +43,7 @@ class AgentNetwork(nn.Module):
         channel_first: bool = True,
         world_model_cls=MuzeroWorldModel,
     ):
-        super(AgentNetwork, self).__init__()
+        super().__init__()
         self.config = config
         self.channel_first = channel_first
         self.num_actions = num_actions
@@ -116,8 +116,6 @@ class AgentNetwork(nn.Module):
         # Initialize projector?
 
     def batch_reward_states(self, states: List[Dict[str, Any]]) -> Dict[str, Any]:
-        from utils.utils import recursive_batch
-
         return recursive_batch(states)
 
     def unbatch_reward_states(
@@ -128,8 +126,8 @@ class AgentNetwork(nn.Module):
         return recursive_unbatch(batched_state)
 
     @torch.no_grad()
-    def initial_inference(self, obs: Tensor) -> "InferenceOutput":
-        """Actor/MCTS API: Translates latent states into expected values."""
+    def obs_inference(self, obs: Tensor) -> "InferenceOutput":
+        """Actor API: Translates latent states into expected values."""
 
         # Ensure obs is a tensor
         if not torch.is_tensor(obs):
@@ -155,29 +153,25 @@ class AgentNetwork(nn.Module):
         expected_value = self.value_head.strategy.to_expected_value(raw_value)
         # policy_dist is already computed by PolicyHead
 
-        # Initial Reward State
-        reward_hidden = self.world_model.reward_head.get_initial_state(
-            batch_size=obs.shape[0], device=obs.device
-        )
-
         # Wrap everything in a unique opaque state
+        # wm_output.head_state now contains all World Model internal states
         network_state = {
             "dynamics": hidden_state,
-            "heads": reward_hidden,
+            "wm_memory": wm_output.head_state,
         }
 
         return InferenceOutput(
             network_state=network_state,
             value=expected_value,
             policy=policy_dist,
-            policy_logits=raw_policy,
+            # Removed policy_logits
             reward=None,  # Initial inference has no reward
             to_play=wm_output.to_play,
             extras={},
         )
 
     @torch.no_grad()
-    def recurrent_inference(
+    def hidden_state_inference(
         self,
         network_state: Dict[str, Tensor | dict],
         action: Tensor,
@@ -185,56 +179,45 @@ class AgentNetwork(nn.Module):
 
         # 1. Unpack opaque state
         dynamics_state = network_state["dynamics"]
-        reward_state = network_state["heads"]
+        wm_memory = network_state.get("wm_memory")
 
         # Use world model dynamics and heads
         wm_output: WorldModelOutput = self.world_model.recurrent_inference(
             hidden_state=dynamics_state,
             action=action,
-            recurrent_state=reward_state,
+            recurrent_state=wm_memory,
         )
 
-        # TRUST THE HEAD: The RewardHead now returns the instant reward directly,
-        # handling its own value prefix subtraction and horizon reset internally.
         instant_reward = wm_output.instant_reward
-
         next_hidden = wm_output.features
         raw_to_play = wm_output.to_play
-        next_reward_state = wm_output.head_state
-        # reward_hidden = reward_state.get("reward_hidden")  # No longer needed to extract internally here if we trust the heads state through shared prediction backbone
+        next_wm_memory = wm_output.head_state
+
         pred_features = self.prediction_backbone(next_hidden)
 
         # Ask Agent Heads
         raw_value, _ = self.value_head(pred_features)
-        raw_policy, _, policy_dist = self.policy_head(pred_features)
+        _, _, policy_dist = self.policy_head(pred_features)
 
         # Translate
         expected_value = self.value_head.strategy.to_expected_value(raw_value)
 
-        # To Play
-        to_play_dist = self.world_model.to_play_head.strategy.get_distribution(
-            raw_to_play
-        )
-
         next_network_state = {
             "dynamics": next_hidden,
-            "heads": next_reward_state,
+            "wm_memory": next_wm_memory,
         }
 
         return InferenceOutput(
             network_state=next_network_state,
             value=expected_value,
             policy=policy_dist,
-            policy_logits=raw_policy,
             reward=instant_reward,
             to_play=raw_to_play,
             extras={},
         )
 
     @torch.no_grad()
-    def afterstate_recurrent_inference(
-        self, network_state: Any, action
-    ) -> InferenceOutput:
+    def afterstate_inference(self, network_state: Any, action) -> InferenceOutput:
         # Ask World Model for afterstate and shared features
         wm_output = self.world_model.afterstate_recurrent_inference(
             network_state, action
@@ -248,7 +231,7 @@ class AgentNetwork(nn.Module):
         # Wrap everything in a unique opaque state
         network_state_after = {
             "dynamics": wm_output.afterstate_features,
-            "heads": network_state["heads"],
+            "wm_memory": network_state.wm_memory,  # Pass through memory
         }
 
         return InferenceOutput(
@@ -259,33 +242,41 @@ class AgentNetwork(nn.Module):
             reward=None,
         )
 
-    def unroll_sequence(
+    def learner_inference(
         self,
-        initial_network_state: Any,
-        actions: Tensor,
-        target_observations: Tensor,
-        target_chance_codes: Tensor,
-        preprocess_fn: Callable[[Tensor], Tensor],
-    ) -> UnrollOutput:
+        batch: Any,
+    ) -> LearningOutput:
         """Learner API: Returns pure logits for loss computation."""
 
-        # 1. Unpack Opaque State if provided
-        latent = initial_network_state["dynamics"]
-        head_state = initial_network_state.get("heads")
-        # 1. Unroll Physics
-        physics_output = self.world_model.unroll_physics(  # Changed to unroll_physics
-            initial_latent_state=latent,
-            actions=actions,
-            target_observations=target_observations,
-            target_chance_codes=target_chance_codes,
-            initial_reward_state=head_state,
-            preprocess_fn=preprocess_fn,
+        # 1. Prepare Inputs
+        initial_observation = batch["observations"]
+        actions = batch["actions"]
+        target_chance_codes = batch.get("target_chance_codes")
+
+        if initial_observation is None or actions is None:
+            raise ValueError("Batch must contain 'observations' and 'actions'.")
+
+        # 2. Get Initial State
+        wm_output = self.world_model.initial_inference(initial_observation)
+        latent = wm_output.features
+        head_state = wm_output.head_state
+
+        # TODO: MAKE SURE THIS IS CORRECT
+        encoder_inputs = torch.concat(
+            [initial_observation[:, :-1], initial_observation[:, 1:]], dim=1
         )
 
-        # PhysicsOutput now contains STACKED tensors
-        stacked_latents = physics_output.latents
+        # 3. Unroll Physics
+        physics_output = self.world_model.unroll_physics(
+            initial_latent_state=latent,
+            actions=actions,
+            encoder_inputs=encoder_inputs,
+            true_chance_codes=target_chance_codes,
+            head_state=head_state,
+        )
 
-        # 2. Pass sequence through Agent Heads
+        # 4. Pass sequence through Agent Heads
+        stacked_latents = physics_output.latents
         # We can crush time dimension to batch dimension for efficiency
         B, T = stacked_latents.shape[:2]
         flat_latents = stacked_latents.reshape(B * T, *stacked_latents.shape[2:])
@@ -310,11 +301,10 @@ class AgentNetwork(nn.Module):
         latents_afterstates = None
 
         if self.config.stochastic and physics_output.latents_afterstates is not None:
-            # 1. Stack Afterstates (Dynamics Output) - Already stacked
-            stacked_afterstates = physics_output.latents_afterstates
-            latents_afterstates = stacked_afterstates
+            # 1. Stack Afterstates - Already stacked in physics_output
+            latents_afterstates = physics_output.latents_afterstates
 
-            # 2. Extract Shared Backbone Features (Already computed in physics loop) - Already stacked
+            # 2. Extract Shared Backbone Features - Already stacked
             stacked_backbone_features = physics_output.afterstate_backbone_features
 
             B_as, T_as = stacked_backbone_features.shape[:2]
@@ -336,7 +326,7 @@ class AgentNetwork(nn.Module):
         if physics_output.encoder_onehots is not None:
             extras["encoder_onehots"] = physics_output.encoder_onehots
 
-        return UnrollOutput(
+        return LearningOutput(
             values=raw_values,
             policies=raw_policies,
             rewards=stacked_rewards,

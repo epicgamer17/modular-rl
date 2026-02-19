@@ -25,7 +25,7 @@ class PPODecorator(BaseActionSelector):
 
         # 1. Ensure we have network output
         if network_output is None:
-            network_output = agent_network.initial_inference(obs)
+            network_output = agent_network.obs_inference(obs)
 
         # 2. Delegate selection to the inner selector
         action, metadata = self.inner_selector.select_action(
@@ -110,21 +110,13 @@ class MCTSDecorator(BaseActionSelector):
         episode_step = kwargs.get("episode_step", 0)
         curr_temp = self._get_current_temperature(episode_step)
 
-        # 2. Define inference wrapper functions that bind the model
-        def predict_initial_inference(states):
-            return agent_network.initial_inference(states)
-
-        def predict_recurrent_inference(network_state, actions):
-            return agent_network.recurrent_inference(network_state, actions)
-
-        # Handle stochastic MuZero if applicable
-        def predict_afterstate_recurrent_inference(hidden_states, actions):
-            return agent_network.afterstate_recurrent_inference(hidden_states, actions)
-
         inference_fns = {
-            "initial": predict_initial_inference,
-            "recurrent": predict_recurrent_inference,
-            "afterstate": predict_afterstate_recurrent_inference,
+            "obs": agent_network.obs_inference,
+            "hidden_state": agent_network.hidden_state_inference,
+            "afterstate": agent_network.afterstate_inference,  # Key 'afterstate' preserved for simplicity? User asked for afterstate_inference.
+            # Actually user said "search_afterstate should become afterstate_inference".
+            # In modular_search.py I use "search" and "afterstate" as keys.
+            # Let's change keys to match method names for clarity: "hidden_state", "afterstate"
         }
 
         # 3. Run MCTS
@@ -135,25 +127,7 @@ class MCTSDecorator(BaseActionSelector):
             )
         )
 
-        # 4. Context for inner selector (e.g. TemperatureSelector)
-        # Inner selector chooses from 'exploratory_policy' (counts/probs)
-        # We need to adapt the interface: BaseActionSelector.select_action usually takes 'agent_network' and 'obs'
-        # But here we want it to select from 'exploratory_policy'.
-        #
-        # Interface mismatch! BaseActionSelector expects (network, obs).
-        # TemperatureSelector and CategoricalSelector usually work on Distributions from network.
-        # Here we have a Distribution (exploratory_policy) explicitly.
-        #
-        # OPTION A: Create a dummy InferenceOutput wrapping the policy and pass it to inner.
-        # OPTION B: Inner selector knows how to handle 'policy' kwarg.
-
-        # We will use Option A/B hybrid: Pass 'network_output' with policy set to exploratory_policy.
         from modules.world_models.inference_output import InferenceOutput
-
-        # Mocking a distribution object if exploratory_policy is just probs?
-        # Typically MCTS 'exploratory_policy' is a tensor of probs or counts.
-        # If it's counts, we might need to normalize or let selector handle it.
-        # Assuming normalized probs for now or selector handles it.
 
         # Apply temperature to probabilities
         # exploratory_policy is a tensor of probabilities (from MCTS)
@@ -165,11 +139,6 @@ class MCTSDecorator(BaseActionSelector):
             mcts_policy_dist = Categorical(probs=heated_probs)
         else:
             mcts_policy_dist = Categorical(probs=exploratory_policy)
-
-        # Use a dummy wrapper or struct
-        class DictOutput:
-            def __init__(self, policy):
-                self.policy = policy
 
         # We can construct a InferenceOutput-like object
         # MCTS returns probs usually.
@@ -215,8 +184,6 @@ class MCTSDecorator(BaseActionSelector):
         }
 
         return action, metadata
-
-    # Removed reset() - Stateless
 
     def update_parameters(self, params_dict: Dict[str, Any]) -> None:
         if hasattr(self.inner_selector, "update_parameters"):

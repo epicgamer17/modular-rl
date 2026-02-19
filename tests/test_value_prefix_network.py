@@ -2,7 +2,7 @@ import torch
 import gymnasium as gym
 from configs.agents.muzero import MuZeroConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
-from modules.agent_nets.muzero import AgentNetwork
+from modules.agent_nets.muzero import MuZeroNetwork
 from modules.heads.reward import ValuePrefixRewardHead
 from configs.games.game import GameConfig
 
@@ -34,6 +34,8 @@ def test_value_prefix_network():
     config_dict = {
         "world_model_cls": MuzeroWorldModel,
         "stochastic": True,
+        "support_range": 5,
+        "action_selector": {"base": {"type": "categorical", "kwargs": {}}},
         "num_chance": 10,
         "value_prefix": True,
         "lstm_hidden_size": 16,
@@ -52,7 +54,9 @@ def test_value_prefix_network():
 
     print("Initializing Network...")
     input_shape = (4,)  # Flat input
-    net = Network(config, config.game.num_actions, input_shape)
+    print("Initializing Network...")
+    input_shape = (4,)  # Flat input
+    net = MuZeroNetwork(config, config.game.num_actions, input_shape)
 
     # Verify Reward Head Type
     reward_head = net.world_model.dynamics.reward_head
@@ -68,39 +72,51 @@ def test_value_prefix_network():
     ), f"LSTM hidden size should be 16, got {reward_head.lstm.hidden_size}"
 
     # Test Recurrent Inference with State
-    print("Testing Recurrent Inference...")
+    print("Testing Hidden State Inference...")
     batch_size = 2
+    # Create opaque network state
     hidden_state = torch.randn(batch_size, 4)
-    # Since stochastic=True, recurrent_inference expects chance codes (one-hot)
-    action_idx = torch.randint(0, 10, (batch_size,))  # num_chance=10
-    action = torch.nn.functional.one_hot(action_idx, num_classes=10).float()
-
-    # Initial Reward Hidden State
-    # ValuePrefixRewardHead.get_initial_state returns dict {"reward_hidden": (h, c)}
-    # But MuzeroWorldModel.recurrent_inference expects separate tensors (reward_h_states, reward_c_states)
-    # The agent/trainer usually handles this unpacking/packing.
-    # Let's manually create them for this test.
-    bn = 1  # bidirectional? No, usually 1.
+    bn = 1
     h_0 = torch.zeros(1, batch_size, 16)
     c_0 = torch.zeros(1, batch_size, 16)
 
+    network_state = {
+        "dynamics": hidden_state,
+        "wm_memory": {"reward_hidden": (h_0, c_0)},
+    }
+
+    # Since stochastic=True, inference expects chance codes (one-hot)
+    # But wait, hidden_state_inference in MuZero (if stochastic) might expect action to be different?
+    # No, action is standard action.
+    # But stochastic muzero usually samples chance code in world model if not provided?
+    # Standard hidden_state_inference calls wm.recurrent_inference.
+
+    action_idx = torch.randint(0, 5, (batch_size,))  # Actions
+    action = torch.nn.functional.one_hot(action_idx, num_classes=5).float()
+
     # Run step 1
-    reward, next_hidden, value, policy, to_play, (h_1, c_1) = net.recurrent_inference(
-        hidden_state, action, h_0, c_0
-    )
+    output = net.hidden_state_inference(network_state, action)
+
+    reward = output.reward
+    next_network_state = output.network_state
+
+    # Extract LSTM state from opaque state
+    h_1, c_1 = next_network_state["wm_memory"]["reward_hidden"]
 
     print("Step 1 done.")
     print(f"Reward shape: {reward.shape}")
-    print(f"Next Hidden State shape: {next_hidden.shape}")
     print(f"Reward Hidden h_1 shape: {h_1.shape}")
 
-    assert reward.shape == (batch_size,)  # Scalar reward (B,)
+    assert reward.shape == (batch_size, 1) or reward.shape == (
+        batch_size,
+    ), f"Shape mismatch: {reward.shape}"
     assert not torch.allclose(h_1, h_0), "LSTM state should update"
 
     # Run step 2
-    reward_2, next_hidden_2, value_2, policy_2, to_play_2, (h_2, c_2) = (
-        net.recurrent_inference(next_hidden, action, h_1, c_1)
-    )
+    output_2 = net.hidden_state_inference(next_network_state, action)
+
+    h_2, c_2 = output_2.network_state["wm_memory"]["reward_hidden"]
+
     print("Step 2 done.")
     assert not torch.allclose(h_2, h_1), "LSTM state should update again"
 

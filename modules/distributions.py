@@ -95,31 +95,28 @@ class OneHotDist(td.OneHotCategorical):
         return one_hot + probs - probs.detach()
 
 
-class Deterministic:
-    """A mock PyTorch Distribution for deterministic continuous policies."""
+class Deterministic(td.Distribution):
+    """
+    A deterministic 'distribution' that always returns the same value.
+    Useful for wrapping deterministic outputs in an interface that expects distributions.
+    """
 
-    def __init__(self, value: torch.Tensor):
+    def __init__(self, value: torch.Tensor, validate_args=None):
         self.value = value
+        batch_shape = value.shape[:-1]
+        event_shape = value.shape[-1:]
+        super().__init__(batch_shape, event_shape, validate_args=validate_args)
 
     def sample(self, sample_shape=torch.Size()):
-        # Sampling a deterministic distribution just returns the exact value
-        # Must handle sample_shape if provided (though internal logic usually handles it)
-        if sample_shape:
-            return self.value.expand(sample_shape + self.value.shape)
+        return self.value.expand(sample_shape + self.value.shape)
+
+    def log_prob(self, value):
+        raise NotImplementedError
+
+    @property
+    def mode(self):
         return self.value
 
-    def rsample(self, sample_shape=torch.Size()):
-        # Enables the reparameterization trick for gradients
-        if sample_shape:
-            return self.value.expand(sample_shape + self.value.shape)
+    @property
+    def mean(self):
         return self.value
-
-    def log_prob(self, action: torch.Tensor):
-        # The log probability of the exact action is 0 (log(1)).
-        # Anything else is negative infinity.
-        # We use a small epsilon match or strict equality?
-        # Typically for deterministic policies in RL (like DDPG), log_prob isn't used
-        # or is considered undefined/Dirac.
-        # But to be safe:
-        is_match = (action == self.value).all(dim=-1, keepdim=True)
-        return torch.where(is_match, torch.zeros_like(self.value), -torch.inf)

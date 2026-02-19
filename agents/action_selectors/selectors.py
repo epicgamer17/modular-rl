@@ -77,7 +77,7 @@ class CategoricalSelector(BaseActionSelector):
         **kwargs,
     ):
         if network_output is None:
-            network_output = agent_network.initial_inference(obs)
+            network_output = agent_network.obs_inference(obs)
 
         # Resolve exploration flag
         # If explicitly passed, use it. Otherwise use default from init.
@@ -94,12 +94,7 @@ class CategoricalSelector(BaseActionSelector):
             action = network_output.policy.sample()
         else:
             # Assumes policy has 'probs' attribute, usually true for Categorical distribution
-            if hasattr(network_output.policy, "probs"):
-                action = torch.argmax(network_output.policy.probs, dim=-1)
-            else:
-                # Fallback if it's just logits or raw distribution without probs exposed
-                # Though torch.distributions.Categorical has .probs
-                action = network_output.policy.probs.argmax(dim=-1)
+            action = torch.argmax(network_output.policy.probs, dim=-1)
 
         return action, {}  # Returns empty metadata!
 
@@ -118,7 +113,7 @@ class EpsilonGreedySelector(BaseActionSelector):
         **kwargs,
     ):
         if network_output is None:
-            network_output = agent_network.initial_inference(obs)
+            network_output = agent_network.obs_inference(obs)
 
         # Check if legal moves are provided
         legal_moves = None
@@ -180,7 +175,7 @@ class ArgmaxSelector(BaseActionSelector):
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
 
         if network_output is None:
-            network_output = agent_network.initial_inference(obs)
+            network_output = agent_network.obs_inference(obs)
 
         # Check for legal moves
         legal_moves = None

@@ -2,6 +2,7 @@ import torch
 from replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
 from replay_buffers.concurrency import LocalBackend, TorchMPBackend, ConcurrencyBackend
 from typing import Optional
+from modules.world_models.inference_output import LearningOutput
 from replay_buffers.processors import (
     InputProcessor,
     IdentityInputProcessor,

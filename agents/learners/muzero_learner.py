@@ -9,7 +9,7 @@ from replay_buffers.buffer_factories import create_muzero_buffer
 from losses.losses import create_muzero_loss_pipeline
 from modules.utils import get_lr_scheduler
 from replay_buffers.utils import update_per_beta
-from modules.world_models.inference_output import UnrollOutput
+from modules.world_models.inference_output import LearningOutput
 
 
 class MuZeroLearner:
@@ -38,12 +38,12 @@ class MuZeroLearner:
 
         # Extracted functions for convenience
         # Now we wrap model methods directly or define them here
-        self.predict_initial_inference_fn = self.model.initial_inference
-        self.predict_recurrent_inference_fn = self.model.recurrent_inference
+        self.predict_initial_inference_fn = self.model.obs_inference
+        self.predict_recurrent_inference_fn = self.model.hidden_state_inference
 
-        if hasattr(self.model, "afterstate_recurrent_inference"):
+        if hasattr(self.model, "afterstate_inference"):
             self.predict_afterstate_recurrent_inference_fn = (
-                self.model.afterstate_recurrent_inference
+                self.model.afterstate_inference
             )
         else:
             self.predict_afterstate_recurrent_inference_fn = None
@@ -189,10 +189,9 @@ class MuZeroLearner:
         has_valid_obs_mask = ~shifted_dones
 
         inputs = self.preprocess_fn(observations)
-        initial_out: InferenceOutput = self.predict_initial_inference_fn(inputs)
-        initial_values = initial_out.value
-        initial_policies = initial_out.policy
-        network_state = initial_out.network_state
+        # Initial state computation is now handled inside learner_inference
+        # Update samples with preprocessed observations for the network
+        samples["observations"] = inputs
 
         gradient_scales = [1.0] + [
             1.0 / self.config.unroll_steps
@@ -200,14 +199,8 @@ class MuZeroLearner:
 
         # AgentProxy is no longer needed as AgentNetwork handles head application.
 
-        # Call AgentNetwork.unroll_sequence (returns UnrollOutput with stacked tensors)
-        network_output: UnrollOutput = self.model.unroll_sequence(
-            initial_network_state=network_state,
-            actions=actions,
-            target_observations=target_observations,
-            target_chance_codes=target_chance_codes,
-            preprocess_fn=self.preprocess_fn,
-        )
+        # 2. Run Unroll (Learner Inference)
+        network_output = self.model.learner_inference(samples)
 
         # Map UnrollOutput fields to predictions dictionary expected by loss pipeline
         predictions_tensor = {

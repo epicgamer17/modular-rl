@@ -172,12 +172,31 @@ def test_rainbow_c51_training():
     print("C51 training test passed!", flush=True)
 
 
+def test_rainbow_trainer_test_loop():
+    """Test that RainbowTrainer.test() runs without error."""
+    print("Testing evaluation loop (test())...", flush=True)
+    config = build_minimal_config()
+    env = config.game.make_env()
+    trainer = RainbowTrainer(config, env, torch.device("cpu"), stats=MockStats())
+
+    # Run a short test
+    scores = trainer.test(num_trials=1)
+
+    assert scores is not None, "Test results should not be None"
+    assert "score" in scores, "Test results should contain 'score'"
+
+    trainer.executor.stop()
+    env.close()
+    print("Evaluation loop test passed!", flush=True)
+
+
 if __name__ == "__main__":
     print("Starting RainbowTrainer verification...", flush=True)
     try:
         test_rainbow_trainer_init()
         test_rainbow_trainer_epsilon_update()
         test_rainbow_c51_training()
+        test_rainbow_trainer_test_loop()
         print("All tests passed!", flush=True)
     except Exception as e:
         print(f"Verification failed: {e}", flush=True)

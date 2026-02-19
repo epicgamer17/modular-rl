@@ -434,6 +434,33 @@ def numpy_dtype_to_torch_dtype(np_dtype):
 def recursive_batch(states: list | dict | torch.Tensor | tuple):
     if not states:
         return states
+
+    # Check for mixed None and non-None states
+    non_none_states = [s for s in states if s is not None]
+    if not non_none_states:
+        return states  # All elements are None
+
+    if len(non_none_states) < len(states):
+        # We have a mix. If we have dictionaries, we can recursively batch their keys.
+        if isinstance(non_none_states[0], dict):
+            # Use the union of keys from all non-None dictionaries
+            all_keys = set()
+            for s in non_none_states:
+                all_keys.update(s.keys())
+            return {
+                k: recursive_batch(
+                    [s.get(k) if s is not None else None for s in states]
+                )
+                for k in all_keys
+            }
+        # For other types (Tensor, Tuple), mixing with None is usually a bug.
+        # We'll let it fall through to existing logic which will likely fail with a better error message,
+        # or we could add an explicit assertion here.
+        if isinstance(non_none_states[0], torch.Tensor):
+            raise AssertionError(
+                f"Cannot batch mixed None and Tensor values. Batch size: {len(states)}, Non-None count: {len(non_none_states)}"
+            )
+
     if isinstance(states[0], dict):
         return {k: recursive_batch([s[k] for s in states]) for k in states[0].keys()}
     if isinstance(states[0], tuple):

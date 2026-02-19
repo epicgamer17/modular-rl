@@ -215,10 +215,11 @@ class RainbowLearner:
         Returns:
             Q-distribution (logits) or Q-values tensor.
         """
-        out = self.model.initial_inference(states)
+        batch = {"observations": states}
+        out = self.model.learner_inference(batch)
         if self.config.atom_size > 1:
             # Distributional RL: Return LOGITS for numerically stable loss calculation (log_softmax)
-            return out.policy_logits  # (B, actions, atoms) - LOGITS
+            return out.q_logits  # (B, actions, atoms) - LOGITS
         return out.q_values  # (B, actions)
 
     def predict_target(self, states: torch.Tensor) -> torch.Tensor:
@@ -231,10 +232,11 @@ class RainbowLearner:
         Returns:
             Q-distribution (logits) or Q-values tensor.
         """
-        out = self.target_model.initial_inference(states)
+        batch = {"observations": states}
+        out = self.target_model.learner_inference(batch)
         if self.config.atom_size > 1:
             # Distributional RL: Return LOGITS for numerically stable loss calculation (log_softmax)
-            return out.policy_logits  # (B, actions, atoms) - LOGITS
+            return out.q_logits  # (B, actions, atoms) - LOGITS
         return out.q_values  # (B, actions)
 
     def preprocess(self, observation: Any) -> torch.Tensor:

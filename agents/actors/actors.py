@@ -24,6 +24,7 @@ class BaseActor(ABC):
         action_selector: BaseActionSelector,
         num_players: Optional[int] = None,
         config: Optional[Any] = None,
+        device: Optional[torch.device] = None,
         worker_id: int = 0,
     ):
         """
@@ -41,6 +42,7 @@ class BaseActor(ABC):
         self.config = config
         self.worker_id = worker_id
         self.env = env_factory()
+        self.device = device
 
         # Determine num_players if not provided
         if num_players is not None:
@@ -90,8 +92,6 @@ class BaseActor(ABC):
         self._state, self._info = self._reset_env()
         if self._info is None:
             self._info = {}
-        # if hasattr(self.selector, "reset"):
-        #      self.selector.reset(self._state, self._info)
         self._done = False
         self._episode_reward = 0.0
         self._episode_length = 0
@@ -119,61 +119,59 @@ class BaseActor(ABC):
         Returns:
             A dictionary containing transition details.
         """
-        if self._done:
-            self.reset()
+        with torch.inference_mode():  # ADD THIS
+            if self._done:
+                self.reset()
 
-        # Get player_id for multi-player environments (if available)
-        player_id = getattr(self.env, "agent_selection", None)
+            # Get player_id for multi-player environments (if available)
+            player_id = getattr(self.env, "agent_selection", None)
 
-        # Convert observation to tensor
-        device = (
-            next(self.agent_network.parameters()).device
-            if list(self.agent_network.parameters())
-            else torch.device("cpu")
-        )
-        obs_tensor = torch.as_tensor(self._state, dtype=torch.float32, device=device)
+            # Convert observation to tensor
+            obs_tensor = torch.as_tensor(
+                self._state, dtype=torch.float32, device=self.device
+            )
 
-        # Determine expected input shape
-        expected_shape = self.agent_network.input_shape
-        if obs_tensor.dim() == len(expected_shape):
-            obs_tensor = obs_tensor.unsqueeze(0)
+            # Determine expected input shape
+            expected_shape = self.agent_network.input_shape
+            if obs_tensor.dim() == len(expected_shape):
+                obs_tensor = obs_tensor.unsqueeze(0)
 
-        action, metadata = self.selector.select_action(
-            agent_network=self.agent_network,
-            obs=obs_tensor,
-            info=self._info,
-            player_id=player_id,
-            episode_step=self._episode_length,  # Pass loop state
-        )
-        action_val = action.item() if torch.is_tensor(action) else action
+            action, metadata = self.selector.select_action(
+                agent_network=self.agent_network,
+                obs=obs_tensor,
+                info=self._info,
+                player_id=player_id,
+                episode_step=self._episode_length,  # Pass loop state
+            )
+            action_val = action.item() if torch.is_tensor(action) else action
 
-        next_obs, reward, term, trunc, next_info = self._step_env(action_val)
+            next_obs, reward, term, trunc, next_info = self._step_env(action_val)
 
-        if next_info is None:
-            next_info = {}
+            if next_info is None:
+                next_info = {}
 
-        self._done = term or trunc
-        self._episode_reward += reward
-        self._episode_length += 1
+            self._done = term or trunc
+            self._episode_reward += reward
+            self._episode_length += 1
 
-        # policy_info = self.policy.get_info() if hasattr(self.policy, "get_info") else {}
+            # policy_info = self.policy.get_info() if hasattr(self.policy, "get_info") else {}
 
-        transition_info = {
-            "state": self._state,
-            "action": action_val,
-            "reward": reward,
-            "next_state": next_obs,
-            "done": self._done,
-            "info": self._info,
-            "next_info": next_info,
-            "player_id": player_id,
-            "metadata": metadata,
-        }
+            transition_info = {
+                "state": self._state,
+                "action": action_val,
+                "reward": reward,
+                "next_state": next_obs,
+                "done": self._done,
+                "info": self._info,
+                "next_info": next_info,
+                "player_id": player_id,
+                "metadata": metadata,
+            }
 
-        self._state = next_obs
-        self._info = next_info
+            self._state = next_obs
+            self._info = next_info
 
-        return transition_info
+            return transition_info
 
     def play_sequence(self, stats_tracker: Optional[Any] = None) -> Sequence:
         """
@@ -357,10 +355,7 @@ class PettingZooActor(BaseActor):
     """Actor specialized for PettingZoo AEC multi-player environments."""
 
     def _detect_num_players(self) -> int:
-        # Assumes PettingZoo env has possible_agents
-        if hasattr(self.env, "possible_agents"):
-            return len(self.env.possible_agents)
-        return 2  # Default fallback for multi-player
+        return len(self.env.possible_agents)
 
     def _reset_env(self) -> Tuple[Any, Dict[str, Any]]:
         self.env.reset()
