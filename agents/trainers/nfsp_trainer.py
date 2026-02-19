@@ -590,11 +590,11 @@ class NFSPTrainer(BaseTrainer):
                 self.br_model.load_state_dict(checkpoint["br_model"])
             if "avg_model" in checkpoint:
                 self.avg_model.load_state_dict(checkpoint["avg_model"])
-            if "rl_optimizer" in checkpoint and hasattr(self, "learner"):
+            if "rl_optimizer" in checkpoint:
                 self.learner.rl_learner.optimizer.load_state_dict(
                     checkpoint["rl_optimizer"]
                 )
-            if "sl_optimizer" in checkpoint and hasattr(self, "learner"):
+            if "sl_optimizer" in checkpoint:
                 self.learner.sl_optimizer.load_state_dict(checkpoint["sl_optimizer"])
         else:
             if "br_models" in checkpoint:

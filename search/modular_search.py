@@ -364,13 +364,7 @@ class SearchAlgorithm:
                 reward = outputs.reward
                 network_state = outputs.network_state
                 value = outputs.value
-                policy = (
-                    outputs.policy.probs
-                    if hasattr(outputs.policy, "probs")
-                    else outputs.policy.logits
-                )
-                if hasattr(outputs.policy, "probs"):
-                    policy = outputs.policy.probs
+                policy = outputs.policy.probs
 
                 to_play = outputs.to_play
 
@@ -416,11 +410,7 @@ class SearchAlgorithm:
 
             network_state = outputs.network_state
             value = outputs.value
-            if hasattr(outputs.policy, "probs"):
-                code_probs = outputs.policy.probs
-            else:
-                # Should not happen for chance head
-                code_probs = outputs.policy.logits
+            code_probs = outputs.policy.probs
 
             if isinstance(value, torch.Tensor):
                 value = value.item()

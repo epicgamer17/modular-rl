@@ -94,7 +94,7 @@ class BaseTrainer:
         elif callable(env.action_space):  # PettingZoo
             player_id = getattr(self, "_player_id", "player_0")
             return int(env.action_space(player_id).n)
-        elif hasattr(self.config.game, "num_actions"):
+        elif self.config.game.num_actions:
             return self.config.game.num_actions
         else:
             # Box/Continuous
@@ -106,7 +106,7 @@ class BaseTrainer:
             return len(env.possible_agents)
         elif hasattr(env, "agents"):
             return len(env.agents)
-        elif hasattr(self.config.game, "num_players"):
+        elif self.config.game.num_players:
             return self.config.game.num_players
         return 1
 

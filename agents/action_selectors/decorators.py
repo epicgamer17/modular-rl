@@ -39,11 +39,8 @@ class PPODecorator(BaseActionSelector):
 
         # 3. Inject PPO metadata
         # We assume network_output.policy is a Distribution or has log_prob
-        if hasattr(network_output.policy, "log_prob"):
-            # PPO usually needs log_prob of the chosen action
-            metadata["log_prob"] = network_output.policy.log_prob(action).detach().cpu()
-        if hasattr(network_output, "value"):
-            metadata["value"] = network_output.value.detach().cpu()
+        metadata["log_prob"] = network_output.policy.log_prob(action).detach().cpu()
+        metadata["value"] = network_output.value.detach().cpu()
 
         return action, metadata
 
@@ -51,8 +48,7 @@ class PPODecorator(BaseActionSelector):
         """
         Pass parameter updates down to the inner selector.
         """
-        if hasattr(self.inner_selector, "update_parameters"):
-            self.inner_selector.update_parameters(params_dict)
+        self.inner_selector.update_parameters(params_dict)
 
 
 class MCTSDecorator(BaseActionSelector):
@@ -186,5 +182,4 @@ class MCTSDecorator(BaseActionSelector):
         return action, metadata
 
     def update_parameters(self, params_dict: Dict[str, Any]) -> None:
-        if hasattr(self.inner_selector, "update_parameters"):
-            self.inner_selector.update_parameters(params_dict)
+        self.inner_selector.update_parameters(params_dict)

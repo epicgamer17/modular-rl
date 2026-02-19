@@ -108,17 +108,13 @@ class NFSPPolicy(Policy):
 
         # Reset noise in models
         if self.shared_weights:
-            if hasattr(self.br_model, "reset_noise"):
-                self.br_model.reset_noise()
-            if hasattr(self.avg_model, "reset_noise"):
-                self.avg_model.reset_noise()
+            self.br_model.reset_noise()
+            self.avg_model.reset_noise()
         else:
             br_model = self.br_models.get(player_id)
             avg_model = self.avg_models.get(player_id)
-            if br_model and hasattr(br_model, "reset_noise"):
-                br_model.reset_noise()
-            if avg_model and hasattr(avg_model, "reset_noise"):
-                avg_model.reset_noise()
+            br_model.reset_noise()
+            avg_model.reset_noise()
 
     def compute_action(
         self,

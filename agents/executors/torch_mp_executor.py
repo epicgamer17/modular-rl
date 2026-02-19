@@ -44,28 +44,18 @@ class TorchMPExecutor(BaseExecutor):
     def _worker_loop(worker_cls, args, worker_id, stop_flag, result_queue, error_queue):
         try:
             worker = worker_cls(*args, worker_id=worker_id)
-            if hasattr(worker, "setup"):
-                worker.setup()
+            worker.setup()
 
             while not stop_flag.value:
-                if hasattr(worker, "play_sequence"):
-                    data = worker.play_sequence()
-                    result_queue.put(data)
-                else:
-                    raise AttributeError(
-                        f"Worker {worker_cls} must implement play_sequence()"
-                    )
+                data = worker.play_sequence()
+                result_queue.put(data)
         except Exception as e:
             error_queue.put((e, traceback.format_exc()))
             # We don't re-raise here to avoid polluting stdout,
             # the main process will catch it.
         finally:
             # Ensure resources are cleaned up if worker has a close method
-            if (
-                "worker" in locals()
-                and hasattr(worker, "env")
-                and hasattr(worker.env, "close")
-            ):
+            if "worker" in locals():
                 worker.env.close()
 
     def _fetch_available_results(self) -> List[Any]:
@@ -89,19 +79,18 @@ class TorchMPExecutor(BaseExecutor):
             raise err
 
         # 2. Check if all workers are still alive
-        if hasattr(self, "workers"):
-            for i, w in enumerate(self.workers):
-                if not w.is_alive():
-                    # Check if it exited with code 0 (clean stop) or not
-                    if (
-                        w.exitcode != 0
-                        and w.exitcode is not None
-                        and self.stop_flag.value == 0
-                    ):
-                        self.stop()
-                        raise RuntimeError(
-                            f"Worker process {i} died unexpectedly with exit code {w.exitcode}"
-                        )
+        for i, w in enumerate(self.workers):
+            if not w.is_alive():
+                # Check if it exited with code 0 (clean stop) or not
+                if (
+                    w.exitcode != 0
+                    and w.exitcode is not None
+                    and self.stop_flag.value == 0
+                ):
+                    self.stop()
+                    raise RuntimeError(
+                        f"Worker process {i} died unexpectedly with exit code {w.exitcode}"
+                    )
 
     def update_weights(self, state_dict: Dict[str, Any]):
         # In TorchMP with shared memory, weights are often updated in-place

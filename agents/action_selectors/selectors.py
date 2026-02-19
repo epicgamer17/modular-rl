@@ -191,6 +191,8 @@ class ArgmaxSelector(BaseActionSelector):
                 values = network_output.policy.probs
             elif hasattr(network_output.policy, "logits"):
                 values = network_output.policy.logits
+        else:
+            raise ValueError("No values found in network output")
         # DOES NOT HANDLE VALUE, VALUE IS A SCALAR FOR THE CURRENT STATE
         if legal_moves is not None and len(legal_moves) > 0:
             from utils.utils import action_mask

@@ -41,12 +41,7 @@ class MuZeroLearner:
         self.predict_initial_inference_fn = self.model.obs_inference
         self.predict_recurrent_inference_fn = self.model.hidden_state_inference
 
-        if hasattr(self.model, "afterstate_inference"):
-            self.predict_afterstate_recurrent_inference_fn = (
-                self.model.afterstate_inference
-            )
-        else:
-            self.predict_afterstate_recurrent_inference_fn = None
+        self.predict_afterstate_recurrent_inference_fn = self.model.afterstate_inference
 
         self.preprocess_fn = self._preprocess_observation
         self.training_step = 0

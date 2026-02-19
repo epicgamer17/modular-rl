@@ -169,8 +169,7 @@ class ImitationLearner:
             self.lr_scheduler.step()
 
             # 5. Reset noise if applicable
-            if hasattr(self.model, "reset_noise"):
-                self.model.reset_noise()
+            self.model.reset_noise()
 
             losses[i] = loss.detach().item()
 

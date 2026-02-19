@@ -154,8 +154,6 @@ class BaseActor(ABC):
             self._episode_reward += reward
             self._episode_length += 1
 
-            # policy_info = self.policy.get_info() if hasattr(self.policy, "get_info") else {}
-
             transition_info = {
                 "state": self._state,
                 "action": action_val,
@@ -301,8 +299,7 @@ class BaseActor(ABC):
         Updates the internal parameters of the actor's components.
         Forwards updates to the action selector.
         """
-        if hasattr(self.selector, "update_parameters"):
-            self.selector.update_parameters(params_dict)
+        self.selector.update_parameters(params_dict)
 
 
 def get_actor_class(env: Any) -> type[BaseActor]:

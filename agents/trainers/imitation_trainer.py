@@ -154,9 +154,6 @@ class ImitationTrainer(BaseTrainer):
         Args:
             sequence: Sequence object with observation_history, action_history, info_history.
         """
-        if not hasattr(sequence, "action_history") or not sequence.action_history:
-            return
-
         for i in range(len(sequence.action_history)):
             obs = sequence.observation_history[i]
             info = sequence.info_history[i] if sequence.info_history else {}
