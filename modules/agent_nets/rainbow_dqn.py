@@ -1,4 +1,5 @@
 from typing import Callable, Tuple
+import torch
 from torch import nn, Tensor
 from configs.agents.rainbow_dqn import RainbowConfig
 from modules.backbones.factory import BackboneFactory
@@ -21,6 +22,7 @@ class RainbowNetwork(nn.Module):
         self.config = config
         self.output_size = output_size
         self.atom_size = config.atom_size
+        self.input_shape = input_shape
 
         # 1. Core Feature Extraction (Uses modular backbones)
         self.feature_block = BackboneFactory.create(config.backbone, input_shape)
@@ -51,23 +53,48 @@ class RainbowNetwork(nn.Module):
                 neck_config=config.head.neck,
             )
 
+    @property
+    def device(self) -> torch.device:
+        return (
+            next(self.parameters()).device
+            if list(self.parameters())
+            else torch.device("cpu")
+        )
+
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         self.feature_block.initialize(initializer)
         self.head.initialize(initializer)
-
-    def forward(self, inputs: Tensor) -> Tensor:
-        # Pass through core layers
-        x = self.feature_block(inputs)
-
-        # Head outputs (B, actions, atoms)
-        Q = self.head(x)
-
-        if self.atom_size == 1:
-            return Q.squeeze(-1)
-        else:
-            return Q.softmax(dim=-1)
 
     def reset_noise(self):
         if self.config.noisy_sigma != 0:
             self.feature_block.reset_noise()
             self.head.reset_noise()
+
+    def initial_inference(self, inputs: Tensor) -> "InferenceOutput":
+        from modules.world_models.inference_output import InferenceOutput
+
+        # Ensure inputs is a tensor
+        if not torch.is_tensor(inputs):
+            inputs = torch.as_tensor(inputs, dtype=torch.float32, device=self.device)
+
+        # Ensure inputs have batch dimension
+        if inputs.dim() == len(self.input_shape):
+            inputs = inputs.unsqueeze(0)
+
+        # Forward pass
+        x = self.feature_block(inputs)
+        Q = self.head(x)  # (B, actions, atoms) or (B, actions)
+
+        # Q is (B, actions, atoms) or (B, actions)
+        # Use strategy to convert to expected value (B, actions)
+        q_vals = self.head.strategy.to_expected_value(Q)
+
+        # For DQN, state value is max(Q)
+        state_value = q_vals.max(dim=-1)[0]
+
+        return InferenceOutput(
+            value=state_value,
+            q_values=q_vals,
+            policy_logits=Q,  # Distributional data (B, actions, atoms) or raw logits (B, actions)
+            policy=self.head.strategy.get_distribution(Q),
+        )

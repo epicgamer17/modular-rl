@@ -1,3 +1,4 @@
+from typing import Any, Dict, List, Optional, Tuple
 import torch
 import numpy as np
 from torch.optim.sgd import SGD
@@ -25,7 +26,7 @@ class MuZeroLearner:
         num_actions,
         observation_dimensions,
         observation_dtype,
-        policy,
+        # policy, # REMOVED
     ):
         self.config = config
         self.model = model
@@ -33,15 +34,21 @@ class MuZeroLearner:
         self.num_actions = num_actions
         self.observation_dimensions = observation_dimensions
         self.observation_dtype = observation_dtype
-        self.policy = policy
+        # self.policy = policy # REMOVED
 
         # Extracted functions for convenience
-        self.predict_initial_inference_fn = policy.predict_initial_inference
-        self.predict_recurrent_inference_fn = policy.predict_recurrent_inference
-        self.predict_afterstate_recurrent_inference_fn = (
-            policy.predict_afterstate_recurrent_inference
-        )
-        self.preprocess_fn = policy.preprocess
+        # Now we wrap model methods directly or define them here
+        self.predict_initial_inference_fn = self.model.initial_inference
+        self.predict_recurrent_inference_fn = self.model.recurrent_inference
+
+        if hasattr(self.model, "afterstate_recurrent_inference"):
+            self.predict_afterstate_recurrent_inference_fn = (
+                self.model.afterstate_recurrent_inference
+            )
+        else:
+            self.predict_afterstate_recurrent_inference_fn = None
+
+        self.preprocess_fn = self._preprocess_observation
         self.training_step = 0
 
         # 1. Initialize Replay Buffer
@@ -93,6 +100,35 @@ class MuZeroLearner:
             preprocess_fn=self.preprocess_fn,
             model=self.model,
         )
+
+    def _preprocess_observation(self, states: Any) -> torch.Tensor:
+        """
+        Converts states to torch tensors on the correct device.
+        Adds batch dimension if input is a single observation.
+        """
+        if torch.is_tensor(states):
+            if states.device == self.device and states.dtype == torch.float32:
+                prepared_state = states
+            else:
+                prepared_state = states.to(self.device, dtype=torch.float32)
+        else:
+            np_states = np.array(states, copy=False)
+            prepared_state = torch.tensor(
+                np_states, dtype=torch.float32, device=self.device
+            )
+
+        if prepared_state.ndim == 0:
+            prepared_state = prepared_state.unsqueeze(0)
+
+        # states might be a single observation without batch dim
+        # But for Learner, we expect batch of samples.
+        # If the input shape matches single observation, unsqueeze?
+        # Replay buffer samples are usually batched: [B, ...]
+        # So we probably don't need the strict unsqueeze check for single item unless 'states' is a single step from pipeline?
+        # The original SearchPolicy.preprocess handled both.
+        # Here we usually get [B, *obs_shape].
+
+        return prepared_state
 
     def step(self, stats=None):
         """

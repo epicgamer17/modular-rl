@@ -46,9 +46,11 @@ class InferenceOutput(NamedTuple):
     Contains semantic, interpreted values (Expected Value, Distributions).
     """
 
-    network_state: Any  # Opaque state (hidden_state, reward_hidden, etc.)
-    value: float | torch.Tensor  # Expected Value (Scalar)
-    policy: Distribution  # Action Distribution
+    network_state: Any = None  # Opaque state (hidden_state, reward_hidden, etc.)
+    value: float | torch.Tensor = 0.0  # Expected Value (Scalar) V(s)
+    q_values: Optional[torch.Tensor] = None  # Action Values Q(s, a)
+    policy_logits: Optional[torch.Tensor] = None  # Raw Policy Output (Logits/Params)
+    policy: Optional[Distribution | Any] = None  # Action Distribution
     reward: Optional[float | torch.Tensor] = None  # Expected Reward (Scalar)
     chance: Optional[Distribution] = None  # Chance Distribution (for Stochastic MuZero)
     to_play: Optional[int | torch.Tensor] = None  # To Play (Scalar/Class Index)

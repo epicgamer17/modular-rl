@@ -23,6 +23,7 @@ class BaseHead(nn.Module):
     ):
         super().__init__()
         self.arch_config = arch_config
+        self.input_shape = input_shape
         self.strategy = strategy
 
         # 1. Neck (optional modular backbone associated with the head)

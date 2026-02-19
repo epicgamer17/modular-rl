@@ -132,7 +132,12 @@ class ImitationLearner:
             targets = sample["target_policies"].to(self.device)
 
             # 2. Forward pass
-            predictions = self.model(observations)
+            # initial_inference returns Categorical policy.
+            # We need logits for CrossEntropyLoss usually, or we can use NLLLoss with log_probs.
+            # If we used Categorical(logits=...), .logits attribute exists.
+            # If we used Categorical(probs=...), .logits is computed.
+            inf_out = self.model.initial_inference(observations)
+            predictions = inf_out.policy.logits
 
             # Accumulate average policy for plotting
             with torch.inference_mode():

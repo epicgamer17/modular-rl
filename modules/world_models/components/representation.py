@@ -13,6 +13,7 @@ class Representation(nn.Module):
             config.game.is_discrete
         ), "AlphaZero only works for discrete action space games (board games)"
         self.config = config
+        self.input_shape = input_shape
         self.net = BackboneFactory.create(config.representation_backbone, input_shape)
         self.output_shape = self.net.output_shape
 

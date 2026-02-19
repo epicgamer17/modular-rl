@@ -3,8 +3,7 @@ from typing import Optional, List, Dict, Any, Tuple
 
 from agents.trainers.base_trainer import BaseTrainer
 from agents.learners.imitation_learner import ImitationLearner
-from agents.policies.direct_policy import DirectPolicy
-from agents.action_selectors.selectors import CategoricalSelector, ArgmaxSelector
+from agents.action_selectors.factory import SelectorFactory
 from agents.actors.actors import get_actor_class
 from modules.agent_nets.policy_imitation import SupervisedNetwork
 from stats.stats import StatTracker, PlotType
@@ -44,18 +43,12 @@ class ImitationTrainer(BaseTrainer):
             self.model.share_memory()
 
         # 2. Initialize Action Selector
-        if use_categorical:
-            # SupervisedNetwork outputs softmax probabilities (not logits)
-            self.action_selector = CategoricalSelector(from_logits=False)
-        else:
-            self.action_selector = ArgmaxSelector()
-
-        # 3. Initialize Policy
-        self.policy = DirectPolicy(
-            model=self.model,
-            action_selector=self.action_selector,
-            device=device,
+        self.action_selector = SelectorFactory.create(
+            config.action_selector.config_dict
         )
+
+        # 3. Initialize Policy - REMOVED
+        # self.policy = DirectPolicy(...)
 
         # 4. Initialize Learner
         self.learner = ImitationLearner(
@@ -69,16 +62,18 @@ class ImitationTrainer(BaseTrainer):
         self.buffer = self.learner.replay_buffer
 
         # 5. Initialize Executor
-        if getattr(config, "multi_process", False):
+        if config.multi_process:
             self.executor = TorchMPExecutor()
         else:
             self.executor = LocalExecutor()
 
         # Launch workers (default to 1 worker if not specified)
-        num_workers = getattr(config, "num_workers", 1)
+        num_workers = config.num_workers
         worker_args = (
             config.game.make_env,
-            self.policy,
+            config.game.make_env,
+            self.model,
+            self.action_selector,
             config.game.num_players,
             config,
         )
@@ -194,7 +189,31 @@ class ImitationTrainer(BaseTrainer):
 
     def select_test_action(self, state, info, env) -> Any:
         """Select action for testing (from model)."""
-        return self.policy.compute_action(state, info).item()
+
+    def select_test_action(self, state, info, env) -> Any:
+        """Select action for testing (from model)."""
+        # SupervisedNetwork doesn't implement initial_inference yet?
+        # It inherits from nn.Module. I might need to add it or do manual forward.
+        # But wait, BaseTrainer -> load_checkpoint_weights ... test ...
+        # If I use action_selector, it needs NetworkOutput.
+        # I should add initial_inference to SupervisedNetwork too.
+        # Or manual:
+        # logits = self.model(torch.tensor(state).unsqueeze(0).to(self.device))
+        # action = logits.argmax().item()
+
+        # Better: use selector but we need network output.
+        # If I assume SupervisedNetwork doesn't have initial_inference yet (checking file content is needed).
+        # Assuming it doesn't.
+        # Implemeting manual greedy here.
+        obs = torch.as_tensor(state, device=self.device, dtype=torch.float32).unsqueeze(
+            0
+        )
+        with torch.inference_mode():
+            # probs = self.model(obs)
+            inf_out = self.model.initial_inference(obs)
+            probs = inf_out.policy.probs
+        action = probs.argmax(dim=-1).item()
+        return action
 
     def _setup_stats(self) -> None:
         """Initializes the stat tracker with required keys and plot types."""

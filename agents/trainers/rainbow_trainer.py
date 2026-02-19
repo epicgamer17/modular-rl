@@ -4,8 +4,8 @@ from typing import Optional, List, Dict, Any, Tuple
 
 from agents.trainers.base_trainer import BaseTrainer
 from agents.learners.rainbow_learner import RainbowLearner
-from agents.policies.direct_policy import DirectPolicy
-from agents.action_selectors.selectors import EpsilonGreedy
+
+from agents.action_selectors.factory import SelectorFactory
 from agents.actors.actors import get_actor_class
 from modules.agent_nets.rainbow_dqn import RainbowNetwork
 from replay_buffers.transition import TransitionBatch, Transition
@@ -52,24 +52,16 @@ class RainbowTrainer(BaseTrainer):
         if config.multi_process:
             self.model.share_memory()
 
-        # 2. Initialize Action Selector with initial epsilon
-        self.action_selector = EpsilonGreedy(epsilon=config.eg_epsilon)
+        # 2. Initialize Action Selector
+        self.action_selector = SelectorFactory.create(
+            config.action_selector.config_dict
+        )
+
         self.current_epsilon = config.eg_epsilon
 
         # 3. Create support for distributional RL (C51)
-        self.support = None
-        if config.atom_size > 1:
-            self.support = torch.linspace(
-                config.v_min, config.v_max, config.atom_size, device=device
-            )
-
-        # 4. Initialize Policy
-        self.policy = DirectPolicy(
-            model=self.model,
-            action_selector=self.action_selector,
-            device=device,
-            support=self.support,
-        )
+        # Note: RainbowNetwork.initial_inference now handles calculating expected value from support
+        # So we don't need to pass support explicitly to the selector in the old way
 
         # 4. Initialize Learner
         self.learner = RainbowLearner(
@@ -96,7 +88,8 @@ class RainbowTrainer(BaseTrainer):
         num_workers = getattr(config, "num_workers", 1)
         worker_args = (
             config.game.make_env,
-            self.policy,
+            self.model,
+            self.action_selector,
             config.game.num_players,
             config,
         )
@@ -188,6 +181,9 @@ class RainbowTrainer(BaseTrainer):
                 f"Invalid epsilon decay type: {self.config.eg_epsilon_decay_type}"
             )
 
+        # Update local selector parameters
+        self.action_selector.update_parameters({"epsilon": self.current_epsilon})
+
     def _store_transitions(self, batch: TransitionBatch) -> None:
         """
         Stores transitions in the replay buffer.
@@ -241,8 +237,37 @@ class RainbowTrainer(BaseTrainer):
                 while not done and episode_length < 1000:
                     episode_length += 1
 
-                    # Use policy with exploration disabled
-                    action = self.policy.compute_action(state, info)
+                    # Use action selector with exploration disabled/greedy?
+                    # Test usually implies greedy. EpsilonGreedySelector with epsilon=0?
+                    # Or just use the selector as is but update epsilon to 0 temporarily?
+                    # Or use ArgmaxSelector?
+                    # The standard way is to assume the selector is configured for test or we pass kwargs?
+                    # BaseActionSelector.select_action takes **kwargs.
+                    # EpsilonGreedySelector doesn't explicitly take 'epsilon' in select_action overrides yet?
+                    # Let's assume we can update it or passing kwargs works if selector supports it.
+                    # My EpsilonGreedySelector implementation uses self.epsilon.
+                    # I should probably update it to support override.
+                    # For now, I'll rely on update_parameters or a temporary selector for test?
+                    # Efficient way: Just use argmax on value if network provides it.
+                    # But proper way is using selector.
+                    # If I use self.action_selector, it has self.epsilon.
+                    # Use a separate test selector?
+                    # Or just manually select greedy here since we know it's evaluation?
+                    # "select_test_action" usually does greedy.
+                    # Let's use the selector but we need to force greedy.
+                    # If it's EpsilonGreedy, we can't easily force it without changing state.
+                    # I'll manually do argmax here for safety as Rainbow test is greedy.
+
+                    # Direct replacement of self.policy.compute_action(state, info)
+                    # We want GREEDY action.
+                    # network_output = self.model.initial_inference(obs)
+                    # action = network_output.q_values.argmax()
+
+                    # BETTER: Use the selector mechanism but update params?
+                    # Doing manual argmax mimics DirectPolicy behavior for test.
+                    net_out = self.model.initial_inference(state)
+                    action = net_out.q_values.argmax(dim=-1)
+
                     action_val = action.item() if hasattr(action, "item") else action
 
                     state, reward, terminated, truncated, info = test_env.step(
@@ -287,7 +312,10 @@ class RainbowTrainer(BaseTrainer):
 
     def select_test_action(self, state, info, env) -> Any:
         """Greedy action for testing."""
-        return self.policy.compute_action(state, info).item()
+        # Manual greedy selection using model
+        net_out = self.model.initial_inference(state)
+        action = net_out.q_values.argmax(dim=-1)
+        return action.item()
 
     def _setup_stats(self) -> None:
         """

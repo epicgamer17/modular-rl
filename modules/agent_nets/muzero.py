@@ -47,6 +47,7 @@ class AgentNetwork(nn.Module):
         self.config = config
         self.channel_first = channel_first
         self.num_actions = num_actions
+        self.input_shape = input_shape
 
         # 1. The Physics Engine
         self.world_model = world_model_cls(config, input_shape, num_actions)
@@ -94,6 +95,14 @@ class AgentNetwork(nn.Module):
         self.flat_hidden_dim = torch.Size(hidden_state_shape).numel()
         self.projector = Projector(self.flat_hidden_dim, config)
 
+    @property
+    def device(self) -> torch.device:
+        return (
+            next(self.parameters()).device
+            if list(self.parameters())
+            else torch.device("cpu")
+        )
+
     def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
         self.world_model.initialize(initializer)
 
@@ -119,8 +128,17 @@ class AgentNetwork(nn.Module):
         return recursive_unbatch(batched_state)
 
     @torch.no_grad()
-    def initial_inference(self, obs: Tensor) -> InferenceOutput:
+    def initial_inference(self, obs: Tensor) -> "InferenceOutput":
         """Actor/MCTS API: Translates latent states into expected values."""
+
+        # Ensure obs is a tensor
+        if not torch.is_tensor(obs):
+            obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+
+        # Ensure obs has batch dim
+        # Assuming input_shape from config does NOT include batch
+        if obs.dim() == len(self.input_shape):
+            obs = obs.unsqueeze(0)
 
         # Ask World Model for physics state
         wm_output = self.world_model.initial_inference(obs)
@@ -131,11 +149,11 @@ class AgentNetwork(nn.Module):
 
         # Ask Agent Heads
         raw_value, _ = self.value_head(pred_features)
-        raw_policy, _ = self.policy_head(pred_features)
+        raw_policy, _, policy_dist = self.policy_head(pred_features)
 
         # Translate
         expected_value = self.value_head.strategy.to_expected_value(raw_value)
-        policy_dist = self.policy_head.strategy.get_distribution(raw_policy)
+        # policy_dist is already computed by PolicyHead
 
         # Initial Reward State
         reward_hidden = self.world_model.reward_head.get_initial_state(
@@ -152,6 +170,7 @@ class AgentNetwork(nn.Module):
             network_state=network_state,
             value=expected_value,
             policy=policy_dist,
+            policy_logits=raw_policy,
             reward=None,  # Initial inference has no reward
             to_play=wm_output.to_play,
             extras={},
@@ -187,7 +206,7 @@ class AgentNetwork(nn.Module):
 
         # Ask Agent Heads
         raw_value, _ = self.value_head(pred_features)
-        raw_policy, _ = self.policy_head(pred_features)
+        raw_policy, _, policy_dist = self.policy_head(pred_features)
 
         # Translate
         expected_value = self.value_head.strategy.to_expected_value(raw_value)
@@ -205,7 +224,8 @@ class AgentNetwork(nn.Module):
         return InferenceOutput(
             network_state=next_network_state,
             value=expected_value,
-            policy=self.policy_head.strategy.get_distribution(raw_policy),
+            policy=policy_dist,
+            policy_logits=raw_policy,
             reward=instant_reward,
             to_play=raw_to_play,
             extras={},
@@ -274,7 +294,7 @@ class AgentNetwork(nn.Module):
         pred_features = self.prediction_backbone(flat_latents)
 
         raw_values, _ = self.value_head(pred_features)
-        raw_policies, _ = self.policy_head(pred_features)
+        raw_policies, _, _ = self.policy_head(pred_features)
 
         # Uncrush
         raw_values = raw_values.view(B, T, -1)

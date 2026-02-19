@@ -7,10 +7,12 @@ from agents.trainers.base_trainer import BaseTrainer
 from agents.executors.local_executor import LocalExecutor
 from agents.executors.torch_mp_executor import TorchMPExecutor
 from agents.learners.ppo_learner import PPOLearner
-from agents.action_selectors.selectors import CategoricalSelector
+from agents.learners.ppo_learner import PPOLearner
+from agents.action_selectors.factory import SelectorFactory
 from agents.actors.actors import get_actor_class
 from modules.agent_nets.ppo import PPONetwork
-from agents.policies.ppo_policy import PPOPolicy
+
+# from agents.policies.ppo_policy import PPOPolicy # REMOVED
 from stats.stats import StatTracker, PlotType
 
 
@@ -53,20 +55,15 @@ class PPOTrainer(BaseTrainer):
         if config.kernel_initializer is not None:
             self.model.initialize(config.kernel_initializer)
 
-        if getattr(config, "multi_process", False):
+        if config.multi_process:
             self.model.share_memory()
 
-        # 2. Initialize Action Selector (Categorical for stochastic policy)
-        self.action_selector = CategoricalSelector(from_logits=False)
-
-        # 3. Initialize Policy
-        self.policy = PPOPolicy(
-            model=self.model,
-            action_selector=self.action_selector,
-            device=device,
+        # 2. Initialize Action Selector
+        self.action_selector = SelectorFactory.create(
+            config.action_selector.config_dict
         )
 
-        # 4. Initialize Learner
+        # 3. Initialize Learner
         self.learner = PPOLearner(
             config=config,
             model=self.model,
@@ -77,20 +74,21 @@ class PPOTrainer(BaseTrainer):
         )
 
         # 5. Initialize Executor
-        if getattr(config, "multi_process", False):
+        if config.multi_process:
             self.executor = TorchMPExecutor()
         else:
             self.executor = LocalExecutor()
 
         # Launch workers (default to 1 worker if not specified)
-        num_workers = getattr(config, "num_workers", 1)
+        num_workers = config.num_workers
+        actor_cls = get_actor_class(env)
         worker_args = (
             config.game.make_env,
-            self.policy,
+            self.model,
+            self.action_selector,
             config.game.num_players,
             config,
         )
-        actor_cls = get_actor_class(env)
         self.executor.launch(actor_cls, worker_args, num_workers)
 
     def train(self) -> None:
@@ -125,9 +123,20 @@ class PPOTrainer(BaseTrainer):
 
                     while not done and steps_collected < self.config.steps_per_epoch:
                         # Compute action and value
-                        action, log_prob, value = self.policy.compute_action_with_info(
-                            state, info
+                        # action, log_prob, value = self.policy.compute_action_with_info(state, info)
+                        obs_tensor = torch.tensor(
+                            state, dtype=torch.float32, device=self.device
                         )
+                        action, metadata = self.action_selector.select_action(
+                            agent_network=self.model,
+                            obs=obs_tensor,
+                            info=info,
+                            exploration=True,
+                        )
+
+                        log_prob = metadata.get("log_prob")
+                        value = metadata.get("value")
+
                         action_val = (
                             action.item() if hasattr(action, "item") else action
                         )
@@ -256,7 +265,13 @@ class PPOTrainer(BaseTrainer):
 
     def select_test_action(self, state, info, env) -> Any:
         # PPO usually tests with its policy (which might be greedy depending on compute_action implementation)
-        action = self.policy.compute_action(state, info)
+        # We enforce greedy/non-exploratory for test if possible, or sample if that's standard PPO (usually stochastic)
+        # But for 'score' we usually want best effort.
+        # CategoricalSelector has 'exploration' kwarg.
+        obs_tensor = torch.tensor(state, dtype=torch.float32, device=self.device)
+        action, _ = self.action_selector.select_action(
+            self.model, obs_tensor, info, exploration=False
+        )
         return action.item() if hasattr(action, "item") else action
 
     def _setup_stats(self):

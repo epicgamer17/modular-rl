@@ -15,7 +15,7 @@ from configs.agents.rainbow_dqn import RainbowConfig
 from configs.games.cartpole import CartPoleConfig
 
 
-def build_minimal_config():
+def build_minimal_config(atom_size=1):
     """Build a minimal RainbowConfig using CartPole game."""
     game_config = CartPoleConfig()
 
@@ -36,7 +36,9 @@ def build_minimal_config():
         "value_hidden_layer_widths": [16],
         "advantage_hidden_layer_widths": [16],
         # DQN-specific
-        "atom_size": 1,  # Non-distributional for simplicity
+        "atom_size": atom_size,
+        "v_min": -10,
+        "v_max": 10,
         "transfer_interval": 1,
         "replay_interval": 1,
         # Epsilon greedy
@@ -44,6 +46,9 @@ def build_minimal_config():
         "eg_epsilon_final": 0.05,
         "eg_epsilon_final_step": 1000,
         "eg_epsilon_decay_type": "linear",
+        "action_selector": {
+            "base": {"type": "epsilon_greedy", "kwargs": {"epsilon": 0.05}}
+        },
     }
 
     return RainbowConfig(config_dict, game_config)
@@ -104,7 +109,6 @@ def test_rainbow_trainer_init():
     assert trainer.learner is not None, "Learner should be initialized"
     assert trainer.executor is not None, "Executor should be initialized"
     assert trainer.buffer is not None, "Buffer should be initialized"
-    assert trainer.policy is not None, "Policy should be initialized"
     assert trainer.action_selector is not None, "ActionSelector should be initialized"
 
     trainer.executor.stop()
@@ -136,11 +140,44 @@ def test_rainbow_trainer_epsilon_update():
     print("Epsilon schedule test passed!", flush=True)
 
 
+def test_rainbow_c51_training():
+    """Test that RainbowTrainer can run training steps with C51."""
+    print("Testing C51 training loop...", flush=True)
+    config = build_minimal_config(atom_size=51)
+    env = config.game.make_env()
+    trainer = RainbowTrainer(config, env, torch.device("cpu"), stats=MockStats())
+
+    # Mock some data collection to avoid environment issues in smoke test
+    # but we want to test learner.step which calls the loss pipeline
+    from replay_buffers.transition import TransitionBatch, Transition
+    import numpy as np
+
+    obs = np.random.randn(4)  # CartPole
+    next_obs = np.random.randn(4)
+    batch = TransitionBatch(
+        [Transition(obs, 0, 1.0, next_obs, False, {}) for _ in range(10)]
+    )
+    trainer._store_transitions(batch)
+
+    assert trainer.buffer.size >= config.min_replay_buffer_size
+
+    print("Running trainer.learner.step()...", flush=True)
+    # This will trigger the C51Loss and the predict() call that was failing
+    loss_stats = trainer.learner.step(trainer.stats)
+    assert loss_stats is not None
+    assert "loss" in loss_stats
+
+    trainer.executor.stop()
+    env.close()
+    print("C51 training test passed!", flush=True)
+
+
 if __name__ == "__main__":
     print("Starting RainbowTrainer verification...", flush=True)
     try:
         test_rainbow_trainer_init()
         test_rainbow_trainer_epsilon_update()
+        test_rainbow_c51_training()
         print("All tests passed!", flush=True)
     except Exception as e:
         print(f"Verification failed: {e}", flush=True)

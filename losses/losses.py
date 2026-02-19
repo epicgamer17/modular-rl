@@ -3,6 +3,7 @@ import torch.nn.functional as F
 from abc import ABC, abstractmethod
 from typing import Dict, Optional, Tuple, Union
 import numpy as np
+from modules.world_models.inference_output import InferenceOutput
 
 
 class LossModule(ABC):
@@ -115,11 +116,15 @@ class StandardDQNLoss(LossModule):
                 # Select actions batch-wise
                 next_actions = []
                 for i in range(self.config.minibatch_size):
-                    action = self.action_selector.select(
-                        curr_next_q[i : i + 1], exploration=False, info=next_infos[i]
+                    action, _ = self.action_selector.select_action(
+                        agent_network=agent.model,
+                        obs=next_obs[i : i + 1],
+                        network_output=InferenceOutput(q_values=curr_next_q[i : i + 1]),
+                        exploration=False,
+                        info=next_infos[i],
                     )
                     next_actions.append(action)
-                next_actions = torch.stack(next_actions)
+                next_actions = torch.stack(next_actions).squeeze()
             else:
                 # Fallback: simple greedy with masking
                 from utils.utils import action_mask
@@ -216,25 +221,29 @@ class C51Loss(LossModule):
             ]
 
             # 1. Select Actions (Online Net) - Double DQN: online net picks action
-            online_next_dist = agent.predict(next_obs)
+            online_next_logits = agent.predict(next_obs)
+            online_next_probs = torch.softmax(online_next_logits, dim=-1)
 
             # Convert distributions to Q-values for action selection
-            online_q_values = (online_next_dist * self.support).sum(dim=-1)
+            online_q_values = (online_next_probs * self.support).sum(dim=-1)
 
             # Use action selector if provided, otherwise use argmax
             next_actions = []
             for i in range(self.config.minibatch_size):
-                action = self.action_selector.select(
-                    online_q_values[i : i + 1],
+                action, _ = self.action_selector.select_action(
+                    agent_network=agent.model,
+                    obs=next_obs[i : i + 1],
+                    network_output=InferenceOutput(q_values=online_q_values[i : i + 1]),
                     exploration=False,
                     info=next_infos[i],
                 )
                 next_actions.append(action)
-            next_actions = torch.stack(next_actions)
+            next_actions = torch.stack(next_actions).squeeze()
 
             # 2. Get Target Distributions (Target Net) - Target net evaluates the action
-            target_next_dist = agent.predict_target(next_obs)
-            probabilities = target_next_dist[
+            target_next_logits = agent.predict_target(next_obs)
+            target_next_probs = torch.softmax(target_next_logits, dim=-1)
+            probabilities = target_next_probs[
                 range(self.config.minibatch_size), next_actions
             ]
 
@@ -270,12 +279,14 @@ class C51Loss(LossModule):
         targets: dict = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """C51-style: Returns (scalar_loss, elementwise_loss)"""
-        preds = context["online_dist"]
-        targets_vals = context["target_dist"]
+        logit_preds = context["online_dist"]  # Now contains Logits
+        targets_vals = context["target_dist"]  # Contains Probs (m)
         weights = context["weights"].to(torch.float32).to(self.device)
 
-        # Cross Entropy: -Sum(target * log(pred))
-        elementwise = -torch.sum(targets_vals * torch.log(preds + 1e-8), dim=1)
+        # Cross Entropy: -Sum(target * log_softmax(pred))
+        # This is numerically stable
+        log_probs = F.log_softmax(logit_preds, dim=1)
+        elementwise = -torch.sum(targets_vals * log_probs, dim=1)
 
         loss = (elementwise * weights).mean()
 
@@ -484,7 +495,7 @@ class ConsistencyLoss(LossModule):
         # We pass model=self.model to ensure it uses the correct network instance
         # We use a detached real_latent for the consistency target
         # Note: We can reuse the `predict_initial_inference` function if it only calls the representation/project models.
-        initial_out = self.predict_initial_inference(real_obs, model=self.model)
+        initial_out = self.predict_initial_inference(real_obs)
         real_latents = initial_out.network_state
 
         # If opaque state, unpack dynamics

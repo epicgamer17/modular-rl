@@ -69,9 +69,7 @@ class SearchAlgorithm:
         # 1. Inference
         assert not root.expanded()
 
-        outputs: InferenceOutput = inference_fns["initial"](
-            observation, model=inference_model
-        )
+        outputs: InferenceOutput = inference_fns["initial"](observation)
 
         val_raw = outputs.value
         policy = (
@@ -313,7 +311,6 @@ class SearchAlgorithm:
                 outputs: InferenceOutput = inference_fns["recurrent"](
                     parent.network_state,
                     torch.as_tensor([action_or_code], device=self.device),
-                    model=inference_model,
                 )
 
                 reward = outputs.reward
@@ -362,7 +359,6 @@ class SearchAlgorithm:
                 outputs: InferenceOutput = inference_fns["recurrent"](
                     parent.network_state,
                     one_hot_code.unsqueeze(0).float(),
-                    model=inference_model,
                 )
 
                 reward = outputs.reward
@@ -416,7 +412,6 @@ class SearchAlgorithm:
                     device=self.device,
                     dtype=torch.float,
                 ),
-                model=inference_model,
             )
 
             network_state = outputs.network_state
@@ -742,7 +737,6 @@ class SearchAlgorithm:
             outputs: InferenceOutput = inference_fns["recurrent"](
                 batched_states,
                 actions,
-                model=inference_model,
             )
 
             # 4. Unbatch everything recursively
@@ -784,7 +778,7 @@ class SearchAlgorithm:
             )
 
             outputs: InferenceOutput = inference_fns["afterstate"](
-                batched_after_states, actions, model=inference_model
+                batched_after_states, actions
             )
 
             # 2. Unbatch opaque states

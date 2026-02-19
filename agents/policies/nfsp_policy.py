@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import random
 from agents.policies.policy import Policy
-from agents.action_selectors.selectors import ActionSelector
+from agents.action_selectors.selectors import BaseActionSelector as ActionSelector
 
 
 class NFSPPolicy(Policy):
@@ -164,19 +164,23 @@ class NFSPPolicy(Policy):
         with torch.inference_mode():
             if policy_mode == "best_response":
                 if self.shared_weights:
-                    predictions = self.br_model(obs_tensor)
+                    net_out = self.br_model.initial_inference(obs_tensor)
                 else:
-                    predictions = self.br_models[player_id](obs_tensor)
+                    net_out = self.br_models[player_id].initial_inference(obs_tensor)
                 selector = self.best_response_selector
             else:
                 if self.shared_weights:
-                    predictions = self.avg_model(obs_tensor)
+                    net_out = self.avg_model.initial_inference(obs_tensor)
                 else:
-                    predictions = self.avg_models[player_id](obs_tensor)
+                    net_out = self.avg_models[player_id].initial_inference(obs_tensor)
                 selector = self.average_selector
 
         # Pass exploration flag to selector for proper sampling behavior
-        action = selector.select(predictions, info=info, exploration=exploration)
+        # selector.select_action expects (agent_network, state, info, network_output, **kwargs)
+        # We pass None as agent_network since we already computed key_output
+        action, _ = selector.select_action(
+            None, obs, info=info, network_output=net_out, exploration=exploration
+        )
 
         # Squeeze out batch dimension if single observation
         if (

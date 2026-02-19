@@ -26,12 +26,12 @@ class LocalExecutor(BaseExecutor):
         self, state_dict: Dict[str, Any], params: Optional[Dict[str, Any]] = None
     ):
         for worker in self.workers:
-            # Assumes worker has a policy with a model
-            if hasattr(worker, "policy") and hasattr(worker.policy, "model"):
-                worker.policy.model.load_state_dict(state_dict)
-                # Forward additional params to policy (e.g., epsilon updates)
-                if params is not None and hasattr(worker.policy, "update_parameters"):
-                    worker.policy.update_parameters(params)
+            # 1. Update model weights
+            # Try worker.agent_network first (BaseActor standard)
+            worker.agent_network.load_state_dict(state_dict)
+            # 2. Update parameters (scalars like epsilon)
+            if params is not None:
+                worker.update_parameters(params)
 
     def stop(self):
         self.workers = []

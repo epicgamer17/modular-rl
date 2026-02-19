@@ -24,6 +24,7 @@ class Transition:
     done: bool
     info: Optional[dict] = None
     next_info: Optional[dict] = None
+    metadata: Optional[dict] = None
 
 
 @dataclass

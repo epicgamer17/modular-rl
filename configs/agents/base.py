@@ -12,6 +12,7 @@ from configs.base import (
 from losses.basic_losses import MSELoss
 from modules.utils import prepare_activations, prepare_kernel_initializers
 from configs.games.game import GameConfig
+from configs.selectors import SelectorConfig
 
 
 def kernel_initializer_wrapper(x):
@@ -45,6 +46,8 @@ class AgentConfig(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig):
         self.parse_replay_params()
         self.parse_record_params()
         self.multi_process: bool = self.parse_field("multi_process", False)
+        self.num_workers: int = self.parse_field("num_workers", 1)
+        self.num_envs: int = self.parse_field("num_envs", 1)
 
         # Core/Common Params
         self.save_intermediate_weights: bool = self.parse_field(
@@ -79,6 +82,11 @@ class AgentConfig(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig):
         self.norm_type: str = self.parse_field("norm_type", "none")
         self.soft_update: bool = self.parse_field("soft_update", False)
         self.min_max_epsilon: float = self.parse_field("min_max_epsilon", 0.01)
+
+        # Action Selector
+        # NO DEFAULT SELECTORS ALL AGENTS SHOULD DEFINE THEIR OWN IN THEIR CONFIGS
+        selector_dict = self.parse_field("action_selector", required=True)
+        self.action_selector = SelectorConfig(selector_dict)
 
     def _verify_game(self):
         assert (

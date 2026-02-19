@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple, Union
 import torch
 import numpy as np
 
@@ -7,23 +7,47 @@ import numpy as np
 DEFAULT_EPSILON = 0.05
 
 
-class ActionSelector(ABC):
-    """
-    Abstract interface for action selection logic.
-    All action selectors should inherit from this class.
-    """
-
+# TODO: remove default exploration from select_action, no more self.exploration on these.
+class BaseActionSelector(ABC):
     @abstractmethod
-    def select(self, values: Any, **kwargs) -> Any:
+    def select_action(
+        self,
+        agent_network: torch.nn.Module,
+        obs: Any,
+        info: Optional[Dict[str, Any]] = None,
+        network_output: Optional[Any] = None,
+        exploration: Optional[bool] = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        # Ensure obs is a tensor
+        if not torch.is_tensor(obs):
+            # Try to convert if it's a numpy array, but ideally caller handles this
+            if isinstance(obs, np.ndarray):
+                obs = torch.as_tensor(
+                    obs,
+                    device=next(agent_network.parameters()).device,
+                    dtype=torch.float32,
+                )
+                if obs.dim() == len(agent_network.config.backbone.input_shape):
+                    obs = obs.unsqueeze(0)
+            else:
+                raise ValueError(f"Observation must be a torch.Tensor, got {type(obs)}")
         """
-        Selects an action based on model values/logits.
+        Selects an action based on the agent network and observation.
 
         Args:
-            values: Model output (logits, probabilities, or q-values).
-            **kwargs: Additional parameters for selection (e.g., temperature, exploration).
+            agent_network: The neural network used to compute values/logits.
+            obs: The current observation.
+            info: Optional dictionary containing additional information (e.g., legal moves).
+            network_output: Optional pre-computed network output to avoid re-computation.
+            exploration: Whether to use exploration policies (e.g. sampling, epsilon-greedy).
+                         If False, should return deterministic/greedy action.
+            **kwargs: Additional parameters for selection.
 
         Returns:
-            The selected action(s).
+            A tuple containing:
+            - action: The selected action tensor.
+            - metadata: A dictionary containing metadata (e.g., log_probs, q_values).
         """
         pass
 
@@ -37,232 +61,151 @@ class ActionSelector(ABC):
         pass
 
 
-class EpsilonGreedy(ActionSelector):
-    """
-    Performs epsilon-greedy exploration.
-    """
+class CategoricalSelector(BaseActionSelector):
+    def __init__(self, exploration: bool = True):
+        # We keep this for backward compatibility with SelectorFactory/Configs that might pass it,
+        # but select_action argument takes precedence.
+        self.default_exploration = exploration
 
-    def __init__(self, epsilon: float = DEFAULT_EPSILON):
-        """
-        Initializes the EpsilonGreedy selector.
+    def select_action(
+        self,
+        agent_network,
+        obs,
+        info: Optional[Dict[str, Any]] = None,
+        network_output: Optional[Any] = None,
+        exploration: Optional[bool] = None,
+        **kwargs,
+    ):
+        if network_output is None:
+            network_output = agent_network.initial_inference(obs)
 
-        Args:
-            epsilon: Probability of taking a random action.
-        """
+        # Resolve exploration flag
+        # If explicitly passed, use it. Otherwise use default from init.
+        # If neither (e.g. None passed and config didn't specify), default to True?
+        # Typically PPO config specifies 'exploration': True in kwargs.
+        should_explore = (
+            exploration if exploration is not None else self.default_exploration
+        )
+
+        # (Action masking logic would go here...)
+        # TODO: Implement action masking support if network_output.policy doesn't handle it
+
+        if should_explore:
+            action = network_output.policy.sample()
+        else:
+            # Assumes policy has 'probs' attribute, usually true for Categorical distribution
+            if hasattr(network_output.policy, "probs"):
+                action = torch.argmax(network_output.policy.probs, dim=-1)
+            else:
+                # Fallback if it's just logits or raw distribution without probs exposed
+                # Though torch.distributions.Categorical has .probs
+                action = network_output.policy.probs.argmax(dim=-1)
+
+        return action, {}  # Returns empty metadata!
+
+
+class EpsilonGreedySelector(BaseActionSelector):
+    def __init__(self, epsilon: float = 0.05):
         self.epsilon = epsilon
 
-    def select(
+    def select_action(
         self,
-        values: torch.Tensor,
-        exploration: bool = True,
+        agent_network,
+        obs,
         info: Optional[Dict[str, Any]] = None,
-    ) -> torch.Tensor:
-        """
-        Performs epsilon-greedy on values.
+        network_output: Optional[Any] = None,
+        exploration: Optional[bool] = None,
+        **kwargs,
+    ):
+        if network_output is None:
+            network_output = agent_network.initial_inference(obs)
 
-        Args:
-            values: Q-values or logits.
-            exploration: Whether to use epsilon-greedy exploration.
-            info: Optional dict with 'legal_moves' for action masking.
-
-        Returns:
-            Action tensor.
-        """
-        from utils.utils import action_mask
-
-        # Check for valid legal moves (non-empty, non-None)
+        # Check if legal moves are provided
         legal_moves = None
-        if info is not None and "legal_moves" in info:
-            moves = info.get("legal_moves")
-            if moves is not None and len(moves) > 0:
-                legal_moves = moves
+        if info is not None:
+            legal_moves = info.get("legal_moves")
 
-        # Apply action masking if legal moves provided
-        if legal_moves is not None:
-            if exploration and np.random.rand() < self.epsilon:
-                # Random action from legal moves only
-                return torch.tensor(np.random.choice(legal_moves), device=values.device)
-            # Greedy with masking
-            masked_values = action_mask(
-                values, legal_moves, mask_value=-float("inf"), device=values.device
-            )
-            return masked_values.argmax(dim=-1).squeeze()
+        # Determine effective epsilon
+        # Default exploration to True if None (EpsilonGreedy is usually exploratory)
+        should_explore = exploration if exploration is not None else True
+        effective_epsilon = self.epsilon if should_explore else 0.0
 
-        # No legal move constraints - standard epsilon-greedy
-        if exploration and np.random.rand() < self.epsilon:
-            # Random action - scalar for single obs
-            return torch.randint(0, values.shape[-1], (), device=values.device)
+        # Epsilon-greedy logic
+        if np.random.rand() < effective_epsilon:
+            # Random action
+            if legal_moves is not None and len(legal_moves) > 0:
+                action = torch.tensor(np.random.choice(legal_moves), device=obs.device)
+            else:
+                # Assumes q_values is [B, A]
+                action = torch.randint(
+                    0, network_output.q_values.shape[-1], (), device=obs.device
+                )
+        else:
+            # Greedy action
+            # Apply masking if needed
+            if legal_moves is not None and len(legal_moves) > 0:
+                from utils.utils import action_mask
 
-        # Greedy action
-        return values.argmax(dim=-1).squeeze()
+                masked_values = action_mask(
+                    network_output.q_values,
+                    legal_moves,
+                    mask_value=-float("inf"),
+                    device=obs.device,
+                )
+                action = masked_values.argmax(dim=-1)
+            else:
+                action = network_output.q_values.argmax(dim=-1)
+
+        return action, {}
 
     def update_parameters(self, params: Dict[str, Any]) -> None:
-        """
-        Updates the epsilon parameter if present in params.
-        """
         if "epsilon" in params:
-            assert isinstance(
-                params["epsilon"], (float, int)
-            ), "Epsilon must be a number"
             self.epsilon = float(params["epsilon"])
 
 
-class ArgmaxSelector(ActionSelector):
+class ArgmaxSelector(BaseActionSelector):
     """
     Selects the action with the highest value/logit.
+    Essentially EpsilonGreedy with epsilon=0.
     """
 
-    def select(
+    def select_action(
         self,
-        values: torch.Tensor,
-        exploration: bool = False,
+        agent_network: torch.nn.Module,
+        obs: Any,
         info: Optional[Dict[str, Any]] = None,
-    ) -> torch.Tensor:
-        """
-        Selects the action with the highest value.
-
-        Args:
-            values: Q-values or logits tensor.
-            exploration: Ignored for argmax (always greedy).
-            info: Optional dict with 'legal_moves' for action masking.
-        """
-        from utils.utils import action_mask
-
-        q_values = values
-
-        # Only apply masking if we have valid legal_moves
-        if info is not None and "legal_moves" in info:
-            legal_moves = info.get("legal_moves")
-            # Handle various cases where legal_moves is None, empty, or not constraining
-            if legal_moves is not None and len(legal_moves) > 0:
-                q_values = action_mask(
-                    q_values,
-                    legal_moves,
-                    mask_value=-float("inf"),
-                    device=q_values.device,
-                )
-            # If legal_moves is empty or None, just use all actions (no masking needed)
-
-        return q_values.argmax(dim=-1).squeeze()
-
-
-class CategoricalSelector(ActionSelector):
-    """
-    Samples an action from a categorical distribution, logits, or probabilities.
-    """
-
-    def __init__(self, from_logits: bool = True):
-        """
-        Initializes the CategoricalSelector.
-
-        Args:
-            from_logits: Whether the input values are raw logits (True) or
-                         probabilities that sum to 1 (False).
-        """
-        self.from_logits = from_logits
-
-    def select(
-        self,
-        values: Any,
-        exploration: bool = True,
-        info: Optional[Dict[str, Any]] = None,
+        network_output: Optional[Any] = None,
+        exploration: Optional[bool] = None,
         **kwargs,
-    ) -> torch.Tensor:
-        """
-        Samples or selects the best action.
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
 
-        Args:
-            values: Model output (logits or probabilities).
-            exploration: Whether to sample (True) or take argmax (False).
-            info: Optional dict for action masking.
-        """
-        if isinstance(values, torch.distributions.Distribution):
-            return (
-                values.sample() if exploration else torch.argmax(values.probs, dim=-1)
-            )
+        if network_output is None:
+            network_output = agent_network.initial_inference(obs)
 
-        # Handle tensor input
-        if self.from_logits:
-            probs = torch.softmax(values, dim=-1)
-        else:
-            probs = values
+        # Check for legal moves
+        legal_moves = None
+        if info is not None:
+            legal_moves = info.get("legal_moves")
 
-        # Handle Action Masking if provided
-        if info is not None and "legal_moves" in info:
+        # Priority: q_values > policy probs > policy logits
+        values = None
+        if hasattr(network_output, "q_values") and network_output.q_values is not None:
+            values = network_output.q_values
+        elif hasattr(network_output, "policy") and network_output.policy is not None:
+            if hasattr(network_output.policy, "probs"):
+                values = network_output.policy.probs
+            elif hasattr(network_output.policy, "logits"):
+                values = network_output.policy.logits
+        # DOES NOT HANDLE VALUE, VALUE IS A SCALAR FOR THE CURRENT STATE
+        if legal_moves is not None and len(legal_moves) > 0:
             from utils.utils import action_mask
 
-            legal_moves = info.get("legal_moves")
-            if legal_moves is not None and len(legal_moves) > 0:
-                # Masking usually done on logits.
-                # If we have probs, we set illegal to 0.0
-                if self.from_logits:
-                    values = action_mask(
-                        values,
-                        legal_moves,
-                        mask_value=-float("inf"),
-                        device=values.device,
-                    )
-                    probs = torch.softmax(values, dim=-1)
-                else:
-                    probs = action_mask(
-                        probs, legal_moves, mask_value=0.0, device=probs.device
-                    )
-                    # Re-normalize if we masked probs
-                    probs = probs / (probs.sum(dim=-1, keepdim=True) + 1e-10)
+            values = action_mask(
+                values,
+                legal_moves,
+                mask_value=-float("inf"),
+                device=values.device,
+            )
 
-        if not exploration:
-            return probs.argmax(dim=-1).squeeze()
-
-        # Ensure probs for multinomial (B, num_actions)
-        if probs.dim() == 1:
-            probs = probs.unsqueeze(0)
-            return torch.multinomial(probs, 1).squeeze()
-
-        return torch.multinomial(probs, 1).squeeze(-1)
-
-
-class TemperatureSelector(ActionSelector):
-    """
-    Samples an action based on search policy and temperature using the power rule.
-    Used by MuZero-style search agents.
-    """
-
-    def select(self, values: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
-        """
-        Samples an action using the power rule: probs = values ** (1/temp).
-
-        Args:
-            values: Probabilities (e.g., visit counts normalized).
-            temperature: Temperature for sampling. Higher values mean more exploration.
-
-        Returns:
-            Action tensor.
-        """
-        if temperature == 0:
-            return values.argmax(dim=-1)
-
-        assert temperature > 0, f"Temperature must be non-negative, got {temperature}"
-
-        # Apply power rule: [B, A]
-        # We divide by the max value for numerical stability before applying the power
-        max_vals = values.max(dim=-1, keepdim=True).values
-        # Avoid division by zero if all values are 0
-        safe_values = values / (max_vals + 1e-10)
-        probs = safe_values.pow(1.0 / temperature)
-
-        # Normalize to get valid probabilities
-        probs = probs / probs.sum(dim=-1, keepdim=True)
-
-        # Sample: [B, A] -> [B, 1] -> [B]
-        action = torch.multinomial(probs, 1).squeeze(-1)
-        return action
-
-    def update_parameters(self, params: Dict[str, Any]) -> None:
-        """
-        Updates the temperature parameter if present in params.
-        """
-        if "temperature" in params:
-            assert isinstance(
-                params["temperature"], (float, int)
-            ), "Temperature must be a number"
-            self.temperature = float(params["temperature"])
+        action = values.argmax(dim=-1)
+        return action, {}

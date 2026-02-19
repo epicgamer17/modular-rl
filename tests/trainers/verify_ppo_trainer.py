@@ -38,6 +38,8 @@ class MinimalActorConfig:
         self.optimizer = Adam
         self.hidden_layers = [64, 64]
         self.clipnorm = 0.5
+        self.learning_rate = 0.0003
+        self.adam_epsilon = 1e-7
 
 
 class MinimalCriticConfig:
@@ -49,6 +51,8 @@ class MinimalCriticConfig:
         self.optimizer = Adam
         self.hidden_layers = [64, 64]
         self.clipnorm = 0.5
+        self.learning_rate = 0.0003
+        self.adam_epsilon = 1e-7
 
 
 class MinimalPPOConfig:
@@ -73,6 +77,17 @@ class MinimalPPOConfig:
         )
         self.value_head = HeadConfig(
             {"neck": None, "output_strategy": {"type": "scalar"}}
+        )
+
+        from configs.selectors import SelectorConfig
+
+        self.action_selector = SelectorConfig(
+            {
+                "base": {
+                    "type": "categorical",
+                    "kwargs": {"exploration": True},
+                }
+            }
         )
 
         self.train_policy_iterations = 2
@@ -107,6 +122,37 @@ class MinimalPPOConfig:
         self.critic = MinimalCriticConfig()
 
 
+def test_ppo_inference():
+    """Test that PPOTrainer select_test_action works with numpy inputs."""
+    from agents.trainers.ppo_trainer import PPOTrainer
+
+    config = MinimalPPOConfig()
+    # Ensure multi_process is False for simple testing
+    config.multi_process = False
+
+    device = torch.device("cpu")
+    trainer = PPOTrainer(
+        config=config,
+        env=make_cartpole(),
+        device=device,
+    )
+
+    print("Running trainer.test(1)...")
+    # This calls select_test_action internally, which should handle numpy conversion
+    results = trainer.test(1)
+
+    # Explicitly test select_test_action with numpy array to be sure
+    import numpy as np
+
+    obs = np.random.randn(4)  # CartPole shape
+    print("Testing explicit select_test_action with numpy array...")
+    action = trainer.select_test_action(obs, {}, None)
+
+    assert results is not None, "Test results should not be None"
+    assert "score" in results, "Test results should contain score"
+    print("✓ test_ppo_inference passed")
+
+
 def test_ppo_trainer_init():
     """Test that PPOTrainer initializes without errors."""
     from agents.trainers.ppo_trainer import PPOTrainer
@@ -123,7 +169,7 @@ def test_ppo_trainer_init():
     # Check components are initialized
     assert trainer.model is not None, "Model should be initialized"
     assert trainer.learner is not None, "Learner should be initialized"
-    assert trainer.policy is not None, "Policy should be initialized"
+
     assert trainer.action_selector is not None, "Action selector should be initialized"
 
     # Clean up
@@ -256,46 +302,10 @@ def test_ppo_learner_step():
     loss_stats = learner.step()
 
     assert loss_stats is not None, "Loss stats should be returned"
-    assert "actor_loss" in loss_stats, "Actor loss should be tracked"
-    assert "critic_loss" in loss_stats, "Critic loss should be tracked"
+    assert "policy_loss" in loss_stats, "Policy loss should be tracked"
+    assert "value_loss" in loss_stats, "Value loss should be tracked"
     assert "kl_divergence" in loss_stats, "KL divergence should be tracked"
     print("✓ test_ppo_learner_step passed")
-
-
-def test_ppo_policy_action():
-    """Test that PPOPolicy can compute actions."""
-    from agents.policies.ppo_policy import PPOPolicy
-    from agents.action_selectors.selectors import CategoricalSelector
-    from modules.agent_nets.ppo import PPONetwork
-    import numpy as np
-
-    config = MinimalPPOConfig()
-    device = torch.device("cpu")
-
-    model = PPONetwork(
-        config=config,
-        input_shape=(4,),
-    )
-
-    policy = PPOPolicy(
-        model=model,
-        action_selector=CategoricalSelector(),
-        device=device,
-    )
-
-    # Test action computation
-    obs = np.random.randn(4)
-    action = policy.compute_action(obs)
-
-    assert action is not None, "Action should be returned"
-    assert 0 <= action.item() <= 1, f"Action should be valid, got {action.item()}"
-
-    # Test action with info
-    action, log_prob, value = policy.compute_action_with_info(obs)
-    assert action is not None, "Action should be returned"
-    assert log_prob is not None, "Log prob should be returned"
-    assert value is not None, "Value should be returned"
-    print("✓ test_ppo_policy_action passed")
 
 
 if __name__ == "__main__":
@@ -305,8 +315,8 @@ if __name__ == "__main__":
     test_ppo_learner_store()
     test_ppo_learner_finish_trajectory()
     test_ppo_learner_step()
-    test_ppo_policy_action()
     test_ppo_trainer_init()
+    test_ppo_inference()
 
     print()
     print("All PPO Trainer tests passed! ✓")

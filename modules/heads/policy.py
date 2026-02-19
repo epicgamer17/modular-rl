@@ -26,6 +26,9 @@ class PolicyHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Tensor, Dict[str, Any]]:
+    ) -> Tuple[Tensor, Dict[str, Any], Optional[torch.distributions.Distribution]]:
         logits, new_state = super().forward(x, state)
-        return logits, new_state
+        dist = None
+        if self.strategy is not None:
+            dist = self.strategy.get_distribution(logits)
+        return logits, new_state, dist

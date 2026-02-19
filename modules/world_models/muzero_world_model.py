@@ -110,6 +110,14 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             self.dynamics.output_shape == self.representation.output_shape
         ), f"{self.dynamics.output_shape} = {self.representation.output_shape}"
 
+    @property
+    def device(self) -> torch.device:
+        return (
+            next(self.parameters()).device
+            if list(self.parameters())
+            else torch.device("cpu")
+        )
+
     def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
         self.representation.initialize(initializer)
         self.dynamics.initialize(initializer)
@@ -125,6 +133,16 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             self.encoder.initialize(initializer)
 
     def initial_inference(self, observation: Tensor) -> WorldModelOutput:
+        # Ensure observation is a tensor
+        if not torch.is_tensor(observation):
+            observation = torch.as_tensor(
+                observation, dtype=torch.float32, device=self.device
+            )
+
+        # Ensure observation has batch dim
+        if observation.dim() == len(self.representation.input_shape):
+            observation = observation.unsqueeze(0)
+
         hidden_state = self.representation(observation)
         return WorldModelOutput(features=hidden_state)
 

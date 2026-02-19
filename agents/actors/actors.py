@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from replay_buffers.sequence import Sequence
 from replay_buffers.transition import Transition, TransitionBatch
 from agents.policies.policy import Policy
+from agents.action_selectors.selectors import BaseActionSelector
 from wrappers import wrap_recording
 
 
@@ -19,7 +20,8 @@ class BaseActor(ABC):
     def __init__(
         self,
         env_factory: Callable[[], Any],
-        policy: Policy,
+        agent_network: Any,
+        action_selector: BaseActionSelector,
         num_players: Optional[int] = None,
         config: Optional[Any] = None,
         worker_id: int = 0,
@@ -29,11 +31,13 @@ class BaseActor(ABC):
 
         Args:
             env_factory: Factory function to create the environment.
-            policy: Policy object for action selection.
+            agent_network: Neural network for value/policy estimation.
+            action_selector: Strategy for selecting actions from network output.
             num_players: Number of players.
         """
         self.env_factory = env_factory
-        self.policy = policy
+        self.agent_network = agent_network
+        self.selector = action_selector
         self.config = config
         self.worker_id = worker_id
         self.env = env_factory()
@@ -86,7 +90,8 @@ class BaseActor(ABC):
         self._state, self._info = self._reset_env()
         if self._info is None:
             self._info = {}
-        self.policy.reset(self._state)
+        # if hasattr(self.selector, "reset"):
+        #      self.selector.reset(self._state, self._info)
         self._done = False
         self._episode_reward = 0.0
         self._episode_length = 0
@@ -120,8 +125,25 @@ class BaseActor(ABC):
         # Get player_id for multi-player environments (if available)
         player_id = getattr(self.env, "agent_selection", None)
 
-        action = self.policy.compute_action(
-            self._state, self._info, player_id=player_id
+        # Convert observation to tensor
+        device = (
+            next(self.agent_network.parameters()).device
+            if list(self.agent_network.parameters())
+            else torch.device("cpu")
+        )
+        obs_tensor = torch.as_tensor(self._state, dtype=torch.float32, device=device)
+
+        # Determine expected input shape
+        expected_shape = self.agent_network.input_shape
+        if obs_tensor.dim() == len(expected_shape):
+            obs_tensor = obs_tensor.unsqueeze(0)
+
+        action, metadata = self.selector.select_action(
+            agent_network=self.agent_network,
+            obs=obs_tensor,
+            info=self._info,
+            player_id=player_id,
+            episode_step=self._episode_length,  # Pass loop state
         )
         action_val = action.item() if torch.is_tensor(action) else action
 
@@ -134,7 +156,7 @@ class BaseActor(ABC):
         self._episode_reward += reward
         self._episode_length += 1
 
-        policy_info = self.policy.get_info() if hasattr(self.policy, "get_info") else {}
+        # policy_info = self.policy.get_info() if hasattr(self.policy, "get_info") else {}
 
         transition_info = {
             "state": self._state,
@@ -145,7 +167,7 @@ class BaseActor(ABC):
             "info": self._info,
             "next_info": next_info,
             "player_id": player_id,
-            "policy_info": policy_info,
+            "metadata": metadata,
         }
 
         self._state = next_obs
@@ -174,13 +196,14 @@ class BaseActor(ABC):
             player_id = getattr(self.env, "agent_selection", None)
             transition = self.step()
 
-            p_info = transition["policy_info"]
+            metadata = transition["metadata"]
 
-            # Extract policy mode (handling multi-agent variants like NFSP)
-            if "policies" in p_info and player_id:
-                policy_mode = p_info["policies"].get(player_id, p_info.get("policy"))
-            else:
-                policy_mode = p_info.get("policy")
+            # Extract policies/values from metadata if available
+            # This logic depends on what decorators inject
+            policy_mode = metadata.get("policy", None)
+            # If multi-agent policy info is nested
+            if "policies" in metadata and player_id:
+                policy_mode = metadata["policies"].get(player_id, policy_mode)
 
             sequence.append(
                 observation=transition["next_state"],
@@ -188,7 +211,7 @@ class BaseActor(ABC):
                 action=transition["action"],
                 reward=transition["reward"],
                 policy=policy_mode,
-                value=p_info.get("value"),
+                value=metadata.get("value"),
                 player_id=player_id,
             )
 
@@ -234,6 +257,7 @@ class BaseActor(ABC):
                     done=transition["done"],
                     info=transition["info"],
                     next_info=transition["next_info"],
+                    metadata=transition.get("metadata"),
                 )
             )
 
@@ -273,6 +297,14 @@ class BaseActor(ABC):
         stats_tracker.append("score", score)
         stats_tracker.append("episode_length", len(sequence))
         stats_tracker.increment_steps(len(sequence))
+
+    def update_parameters(self, params_dict: Dict[str, Any]) -> None:
+        """
+        Updates the internal parameters of the actor's components.
+        Forwards updates to the action selector.
+        """
+        if hasattr(self.selector, "update_parameters"):
+            self.selector.update_parameters(params_dict)
 
 
 def get_actor_class(env: Any) -> type[BaseActor]:

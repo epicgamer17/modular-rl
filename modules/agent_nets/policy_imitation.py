@@ -41,7 +41,14 @@ class SupervisedNetwork(nn.Module):
         self.backbone.initialize(initializer)
         self.output_layer.initialize(initializer)
 
-    def forward(self, inputs: Tensor):
+    def initial_inference(self, inputs: Tensor) -> "InferenceOutput":
+        from modules.world_models.inference_output import InferenceOutput
+        from torch.distributions import Categorical
+
+        # Ensure inputs have batch dimension
+        if inputs.dim() == len(self.config.backbone.input_shape):
+            inputs = inputs.unsqueeze(0)
+
         x = self.backbone(inputs)
 
         if x.dim() > 2:
@@ -49,12 +56,44 @@ class SupervisedNetwork(nn.Module):
 
         x: Tensor = self.output_layer(x).view(-1, self.output_size)
 
-        if self.return_logits:
-            return x
-        return x.softmax(dim=-1)
+        logits = x
 
-    def reset_noise(self):
+        if self.return_logits:
+            # If return_logits is True, we construct Categorical from logits
+            dist = Categorical(logits=logits)
+        else:
+            # If previously it returned softmax, now we handle it.
+            # But 'x' is just output of dense layer (logits usually).
+            # Previous forward() did x.softmax(dim=-1) if not return_logits.
+            # So if we want Categorical, passing logits is stable.
+            # We should ignore self.return_logits for Categorical construction?
+            # Or if return_logits was meant for loss computation?
+            # For InferenceOutput, we want a Distribution.
+            # Categorical(logits=logits) is standard.
+            dist = Categorical(logits=logits)
+
+        return InferenceOutput(policy=dist)
         if hasattr(self.backbone, "reset_noise"):
             self.backbone.reset_noise()
         if hasattr(self.output_layer, "reset_noise"):
             self.output_layer.reset_noise()
+
+    def initial_inference(self, inputs: Tensor) -> "InferenceOutput":
+        from modules.world_models.inference_output import InferenceOutput
+        from torch.distributions import Categorical
+
+        # Ensure inputs have batch dimension
+        if inputs.dim() == len(self.config.backbone.input_shape):
+            inputs = inputs.unsqueeze(0)
+
+        logits = self.forward(inputs)
+        # Check if forward returns logits or probs based on self.return_logits
+        # If probs, convert to log_probs for numerical stability or just use probs in Categorical?
+        # Categorical can take probs or logits.
+
+        if self.return_logits:
+            dist = Categorical(logits=logits)
+        else:
+            dist = Categorical(probs=logits)
+
+        return InferenceOutput(policy=dist)
