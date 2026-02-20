@@ -358,25 +358,11 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         stacked_onehots = None
 
         if self.config.stochastic:
-            stacked_afterstates = (
-                torch.stack(latent_afterstates, dim=1) if latent_afterstates else None
-            )
-            stacked_chance_logits = (
-                torch.stack(latent_code_probabilities, dim=1)
-                if latent_code_probabilities
-                else None
-            )
-            stacked_backbone = (
-                torch.stack(afterstate_backbone_features, dim=1)
-                if afterstate_backbone_features
-                else None
-            )
-            stacked_softmaxes = (
-                torch.stack(encoder_softmaxes, dim=1) if encoder_softmaxes else None
-            )
-            stacked_onehots = (
-                torch.stack(encoder_onehots, dim=1) if encoder_onehots else None
-            )
+            stacked_afterstates = torch.stack(latent_afterstates, dim=1)
+            stacked_chance_logits = torch.stack(latent_code_probabilities, dim=1)
+            stacked_backbone = torch.stack(afterstate_backbone_features, dim=1)
+            stacked_softmaxes = torch.stack(encoder_softmaxes, dim=1)
+            stacked_onehots = torch.stack(encoder_onehots, dim=1)
 
         # 7. Compute target latents for consistency loss if requested
         stacked_target_latents = None

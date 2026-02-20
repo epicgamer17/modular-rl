@@ -301,16 +301,16 @@ class PPOLearner:
                 fps = num_samples / duration
                 stats.append("learner_fps", fps)
 
+        # MPS cache clearing
+        if self.device.type == "mps" and self.training_step % 100 == 0:
+            torch.mps.empty_cache()
+
         # track loss metrics
         return {
             "policy_loss": np.mean(actor_losses) if actor_losses else 0,
             "value_loss": np.mean(critic_losses) if critic_losses else 0,
             "kl_divergence": np.mean(kl_divergences) if kl_divergences else 0,
         }
-
-        # MPS cache clearing
-        if self.device.type == "mps" and self.training_step % 100 == 0:
-            torch.mps.empty_cache()
 
     def _actor_loss(
         self,
@@ -344,7 +344,11 @@ class PPOLearner:
             )
             * advantages
         )
-        policy_loss = -torch.min(surr1, surr2).mean()
+
+        entropy = dist.entropy().mean()
+        policy_loss = (
+            -torch.min(surr1, surr2).mean() - self.config.entropy_coefficient * entropy
+        )
 
         with torch.no_grad():
             approx_kl = (old_log_probs - log_probs).mean()
