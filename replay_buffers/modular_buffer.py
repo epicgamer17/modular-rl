@@ -52,15 +52,13 @@ class ModularReplayBuffer:
         self.write_lock = self.backend.create_lock()
         self.priority_lock = self.backend.create_lock()
 
-        # MuZero specific counters (only initialized if shared context is detected/needed)
-        # You could also make this a specific config option
-        if self.is_shared:
-            self._next_id = self.backend.create_tensor(
-                (1,), dtype=torch.int64, fill_value=0
-            )
-            self._next_game_id = self.backend.create_tensor(
-                (1,), dtype=torch.int64, fill_value=0
-            )
+        # MuZero specific counters
+        self._next_id = self.backend.create_tensor(
+            (1,), dtype=torch.int64, fill_value=0
+        )
+        self._next_game_id = self.backend.create_tensor(
+            (1,), dtype=torch.int64, fill_value=0
+        )
 
         self.sampler = sampler if sampler is not None else UniformSampler()
         self.writer = writer if writer is not None else CircularWriter(max_size)
@@ -162,7 +160,12 @@ class ModularReplayBuffer:
         # We need to know how many items to write to reserve space
         # We assume the input processor returns a dict where values are arrays/tensors of equal length
         # or it returns a 'n_states' key (like MuZeroGameInputProcessor)
-        n_items = data.get("n_states", len(next(iter(data.values()))))
+        n_items = data.get("n_states")
+        if n_items is None:
+            raise KeyError(
+                "process_sequence must return 'n_states' key. "
+                "This is required to determine the number of items to store."
+            )
         priorities = kwargs.get("priorities", [None] * n_items)
 
         with self.priority_lock:
@@ -171,7 +174,7 @@ class ModularReplayBuffer:
                 slices = self.writer.store_batch(n_items)
 
                 # 3. Handle IDs (MuZero specific logic - integrated generally)
-                if self.is_shared and "ids" in self.buffers:
+                if "ids" in self.buffers:
                     start_id = int(self._next_id.item())
                     self._next_id[0] = start_id + n_items
 
@@ -181,7 +184,7 @@ class ModularReplayBuffer:
                         start_id + 1, start_id + n_items + 1, dtype=torch.int64
                     )
 
-                if self.is_shared and "game_ids" in self.buffers:
+                if "game_ids" in self.buffers:
                     start_game_id = int(self._next_game_id.item()) + 1
                     self._next_game_id[0] = start_game_id
                     data["game_ids"] = torch.full(
@@ -285,8 +288,9 @@ class ModularReplayBuffer:
                 for buf in self.buffers.values():
                     buf.zero_()
 
-                if self.is_shared:
+                if "ids" in self.buffers:
                     self._next_id.zero_()
+                if "game_ids" in self.buffers:
                     self._next_game_id.zero_()
 
     # Accessors for properties required by some utils (like beta)
