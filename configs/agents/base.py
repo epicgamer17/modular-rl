@@ -9,7 +9,7 @@ from configs.base import (
     DistributionalConfig,
     NoisyConfig,
 )
-from losses.basic_losses import MSELoss
+import torch.nn.functional as F
 from modules.utils import prepare_activations, prepare_kernel_initializers
 from configs.games.game import GameConfig
 from configs.selectors import SelectorConfig
@@ -55,7 +55,7 @@ class AgentConfig(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig):
         )
 
         # Loss & Activation
-        self.loss_function = self.parse_field("loss_function", MSELoss())
+        self.loss_function = self.parse_field("loss_function", F.mse_loss)
         self.activation = self.parse_field(
             "activation", "relu", wrapper=prepare_activations
         )

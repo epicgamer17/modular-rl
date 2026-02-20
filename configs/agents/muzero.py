@@ -16,7 +16,7 @@ from configs.modules.heads.value import ValueHeadConfig
 from configs.modules.heads.reward import RewardHeadConfig, ValuePrefixRewardHeadConfig
 from configs.modules.heads.base import HeadConfig
 from configs.modules.architecture_config import ArchitectureConfig
-from losses.basic_losses import CategoricalCrossentropyLoss, MSELoss
+import torch.nn.functional as F
 from utils.utils import tointlists
 import copy
 
@@ -45,9 +45,7 @@ class MuZeroConfig(
             "use_true_chance_codes", False
         )
         self.num_chance: int = self.parse_field("num_chance", 32)
-        self.sigma_loss = self.parse_field(
-            "sigma_loss", CategoricalCrossentropyLoss(from_logits=True)
-        )
+        self.sigma_loss = self.parse_field("sigma_loss", F.cross_entropy)
         self.vqvae_commitment_cost_factor: float = self.parse_field(
             "vqvae_commitment_cost_factor", 1.0
         )
@@ -199,16 +197,13 @@ class MuZeroConfig(
 
         self.clip_low_prob: float = self.parse_field("clip_low_prob", 0.0)
 
-        self.value_loss_function = self.parse_field("value_loss_function", MSELoss())
-
-        self.reward_loss_function = self.parse_field("reward_loss_function", MSELoss())
-
+        self.value_loss_function = self.parse_field("value_loss_function", F.mse_loss)
+        self.reward_loss_function = self.parse_field("reward_loss_function", F.mse_loss)
         self.policy_loss_function = self.parse_field(
-            "policy_loss_function", CategoricalCrossentropyLoss(from_logits=True)
+            "policy_loss_function", F.cross_entropy
         )
-
         self.to_play_loss_function = self.parse_field(
-            "to_play_loss_function", CategoricalCrossentropyLoss(from_logits=True)
+            "to_play_loss_function", F.cross_entropy
         )
 
         self.unroll_steps: int = self.parse_field("unroll_steps", 5)

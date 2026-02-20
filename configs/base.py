@@ -4,7 +4,7 @@ from modules.utils import (
     prepare_kernel_initializers,
     prepare_activations,
 )
-from losses.basic_losses import MSELoss
+import torch.nn.functional as F
 from configs.games.game import GameConfig
 
 
@@ -244,7 +244,7 @@ class Config(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig):
         self.parse_optimization_params()
         self.parse_replay_params()
         self.parse_record_params()
-        self.loss_function = self.parse_field("loss_function", MSELoss())
+        self.loss_function = self.parse_field("loss_function", F.mse_loss)
         self.activation = self.parse_field(
             "activation", "relu", wrapper=prepare_activations
         )
