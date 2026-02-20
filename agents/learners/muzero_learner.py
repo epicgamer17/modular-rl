@@ -36,14 +36,6 @@ class MuZeroLearner:
         self.observation_dtype = observation_dtype
         # self.policy = policy # REMOVED
 
-        # Extracted functions for convenience
-        # Now we wrap model methods directly or define them here
-        self.predict_initial_inference_fn = self.model.obs_inference
-        self.predict_recurrent_inference_fn = self.model.hidden_state_inference
-
-        self.predict_afterstate_recurrent_inference_fn = self.model.afterstate_inference
-
-        self.preprocess_fn = self._preprocess_observation
         self.training_step = 0
 
         # 1. Initialize Replay Buffer
@@ -165,7 +157,7 @@ class MuZeroLearner:
         start_time = time.time()
 
         # 1. Preprocess observations
-        inputs = self.preprocess_fn(samples["observations"])
+        inputs = self._preprocess_observation(samples["observations"])
         samples["observations"] = inputs
 
         # 2. Extract Data and Masks
