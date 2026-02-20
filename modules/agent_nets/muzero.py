@@ -114,10 +114,10 @@ class MuZeroNetwork(BaseAgentNetwork):
 
         # Initialize projector?
 
-    def batch_reward_states(self, states: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def batch_network_states(self, states: List[Dict[str, Any]]) -> Dict[str, Any]:
         return recursive_batch(states)
 
-    def unbatch_reward_states(
+    def unbatch_network_states(
         self, batched_state: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
         from utils.utils import recursive_unbatch

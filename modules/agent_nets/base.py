@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import torch
 from torch import nn
 
@@ -79,6 +79,23 @@ class BaseAgentNetwork(nn.Module, ABC):
             NotImplementedError: If the agent does not support stochastic afterstates.
         """
         raise NotImplementedError("This agent does not support stochastic afterstates.")
+
+    def batch_network_states(self, states: List[Any]) -> Any:
+        """
+        Batches opaque network states for search-time recurrent inference.
+        The search algorithm must not inspect state structure; composers implement this.
+        """
+        raise NotImplementedError(
+            "batch_network_states not implemented for this AgentNetwork"
+        )
+
+    def unbatch_network_states(self, batched_state: Any) -> List[Any]:
+        """
+        Inverse of batch_network_states for opaque network states.
+        """
+        raise NotImplementedError(
+            "unbatch_network_states not implemented for this AgentNetwork"
+        )
 
     # ==========================================
     # 3. THE LEARNER'S API (Historical Batch Optimization)

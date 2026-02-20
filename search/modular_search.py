@@ -700,7 +700,7 @@ class SearchAlgorithm:
         if recurrent_inputs:
             # 1. Batch full opaque states recursively
             full_states = [x["state"] for x in recurrent_inputs]
-            batched_states = agent_network.batch_reward_states(full_states)
+            batched_states = agent_network.batch_network_states(full_states)
 
             # 2. Prepare actions
             act_list = []
@@ -729,7 +729,7 @@ class SearchAlgorithm:
             )
 
             # 4. Unbatch everything recursively
-            unbatched_next_states = agent_network.unbatch_reward_states(
+            unbatched_next_states = agent_network.unbatch_network_states(
                 outputs.network_state
             )
 
@@ -751,7 +751,9 @@ class SearchAlgorithm:
         if afterstate_inputs:
             # 1. Batch opaque states
             full_after_states = [x["state"] for x in afterstate_inputs]
-            batched_after_states = agent_network.batch_reward_states(full_after_states)
+            batched_after_states = agent_network.batch_network_states(
+                full_after_states
+            )
 
             actions = (
                 torch.tensor([x["action"] for x in afterstate_inputs])
@@ -765,7 +767,7 @@ class SearchAlgorithm:
             )
 
             # 2. Unbatch opaque states
-            unbatched_afterstates = agent_network.unbatch_reward_states(
+            unbatched_afterstates = agent_network.unbatch_network_states(
                 outputs.network_state
             )
 
