@@ -469,8 +469,16 @@ class PPOInputProcessor(InputProcessor):
 
         deltas = rewards[:-1] + self.gamma * values[1:] - values[:-1]
 
-        advantages = discounted_cumulative_sums(deltas, self.gamma * self.gae_lambda)
-        returns = discounted_cumulative_sums(rewards, self.gamma)[:-1]
+        # discounted_cumulative_sums uses scipy+numpy slicing; convert tensors explicitly.
+        deltas_np = deltas.detach().cpu().numpy()
+        rewards_np = rewards.detach().cpu().numpy()
+
+        advantages = torch.from_numpy(
+            discounted_cumulative_sums(deltas_np, self.gamma * self.gae_lambda).copy()
+        ).to(torch.float32)
+        returns = torch.from_numpy(
+            discounted_cumulative_sums(rewards_np, self.gamma).copy()
+        ).to(torch.float32)[:-1]
 
         return advantages, returns
 
