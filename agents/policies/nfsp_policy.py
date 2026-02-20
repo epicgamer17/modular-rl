@@ -160,15 +160,15 @@ class NFSPPolicy(Policy):
         with torch.inference_mode():
             if policy_mode == "best_response":
                 if self.shared_weights:
-                    net_out = self.br_model.initial_inference(obs_tensor)
+                    net_out = self.br_model.obs_inference(obs_tensor)
                 else:
-                    net_out = self.br_models[player_id].initial_inference(obs_tensor)
+                    net_out = self.br_models[player_id].obs_inference(obs_tensor)
                 selector = self.best_response_selector
             else:
                 if self.shared_weights:
-                    net_out = self.avg_model.initial_inference(obs_tensor)
+                    net_out = self.avg_model.obs_inference(obs_tensor)
                 else:
-                    net_out = self.avg_models[player_id].initial_inference(obs_tensor)
+                    net_out = self.avg_models[player_id].obs_inference(obs_tensor)
                 selector = self.average_selector
 
         # Pass exploration flag to selector for proper sampling behavior

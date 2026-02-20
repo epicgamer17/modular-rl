@@ -186,28 +186,12 @@ class ImitationTrainer(BaseTrainer):
 
     def select_test_action(self, state, info, env) -> Any:
         """Select action for testing (from model)."""
-
-    def select_test_action(self, state, info, env) -> Any:
-        """Select action for testing (from model)."""
-        # SupervisedNetwork doesn't implement initial_inference yet?
-        # It inherits from nn.Module. I might need to add it or do manual forward.
-        # But wait, BaseTrainer -> load_checkpoint_weights ... test ...
-        # If I use action_selector, it needs NetworkOutput.
-        # I should add initial_inference to SupervisedNetwork too.
-        # Or manual:
-        # logits = self.model(torch.tensor(state).unsqueeze(0).to(self.device))
-        # action = logits.argmax().item()
-
-        # Better: use selector but we need network output.
-        # If I assume SupervisedNetwork doesn't have initial_inference yet (checking file content is needed).
-        # Assuming it doesn't.
-        # Implemeting manual greedy here.
         obs = torch.as_tensor(state, device=self.device, dtype=torch.float32).unsqueeze(
             0
         )
         with torch.inference_mode():
             # probs = self.model(obs)
-            inf_out = self.model.initial_inference(obs)
+            inf_out = self.model.obs_inference(obs)
             probs = inf_out.policy.probs
         action = probs.argmax(dim=-1).item()
         return action

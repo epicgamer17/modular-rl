@@ -5,6 +5,8 @@ from modules.backbones.factory import BackboneFactory
 from modules.blocks.dense import build_dense
 import torch.nn as nn
 
+# TODO: UPDATE THIS TO THE BaseAgentNetwork
+
 
 class SupervisedNetwork(nn.Module):
     def __init__(

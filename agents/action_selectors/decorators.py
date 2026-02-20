@@ -106,21 +106,10 @@ class MCTSDecorator(BaseActionSelector):
         episode_step = kwargs.get("episode_step", 0)
         curr_temp = self._get_current_temperature(episode_step)
 
-        inference_fns = {
-            "obs": agent_network.obs_inference,
-            "hidden_state": agent_network.hidden_state_inference,
-            "afterstate": agent_network.afterstate_inference,  # Key 'afterstate' preserved for simplicity? User asked for afterstate_inference.
-            # Actually user said "search_afterstate should become afterstate_inference".
-            # In modular_search.py I use "search" and "afterstate" as keys.
-            # Let's change keys to match method names for clarity: "hidden_state", "afterstate"
-        }
-
         # 3. Run MCTS
-        # Search algorithms usually expect: run(state, info, to_play, inference_fns, inference_model)
+        # Search algorithms usually expect: run(state, info, to_play, agent_network)
         root_value, exploratory_policy, target_policy, best_action, search_metadata = (
-            self.search.run(
-                obs, info, to_play, inference_fns, inference_model=agent_network
-            )
+            self.search.run(obs, info, to_play, agent_network)
         )
 
         from modules.world_models.inference_output import InferenceOutput
