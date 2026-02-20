@@ -118,7 +118,7 @@ class SearchAlgorithm:
         root.expand(
             allowed_actions=selected_actions,
             to_play=to_play,
-            priors=policy.to(self.device),  # Send back to device if needed by Node
+            priors=policy,
             network_policy=network_policy,
             network_state=network_state,
             reward=0.0,
