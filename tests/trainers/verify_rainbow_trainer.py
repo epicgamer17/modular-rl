@@ -155,7 +155,17 @@ def test_rainbow_c51_training():
     obs = np.random.randn(4)  # CartPole
     next_obs = np.random.randn(4)
     batch = TransitionBatch(
-        [Transition(obs, 0, 1.0, next_obs, False, {}) for _ in range(10)]
+        [
+            Transition(
+                observation=obs,
+                action=0,
+                reward=1.0,
+                next_observation=next_obs,
+                done=False,
+                info={},
+            )
+            for _ in range(10)
+        ]
     )
     trainer._store_transitions(batch)
 

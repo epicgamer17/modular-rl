@@ -359,12 +359,18 @@ class MuZeroSequenceInputProcessor(InputProcessor):
         legal_masks.append(torch.zeros(self.num_actions, dtype=torch.bool))
         legal_masks_t = torch.stack(legal_masks)
 
-        # Dones (Terminated/Truncated)
-        # Assuming dones are stored in info or we can infer from sequence state
-        dones = [i.get("done", False) for i in sequence.info_history]
-        # Pad if needed
+        # Episode end signals per state
+        terminated = [i.get("terminated", False) for i in sequence.info_history]
+        truncated = [i.get("truncated", False) for i in sequence.info_history]
+        dones = [t or tr for t, tr in zip(terminated, truncated)]
+        if len(terminated) < n_states:
+            terminated = terminated + [False] * (n_states - len(terminated))
+        if len(truncated) < n_states:
+            truncated = truncated + [False] * (n_states - len(truncated))
         if len(dones) < n_states:
             dones = dones + [False] * (n_states - len(dones))
+        terminated_t = torch.tensor(terminated[:n_states], dtype=torch.bool)
+        truncated_t = torch.tensor(truncated[:n_states], dtype=torch.bool)
         dones_t = torch.tensor(dones[:n_states], dtype=torch.bool)
 
         return {
@@ -375,6 +381,8 @@ class MuZeroSequenceInputProcessor(InputProcessor):
             "values": vals_t,
             "to_plays": tps_t,
             "chances": chance_t,
+            "terminated": terminated_t,
+            "truncated": truncated_t,
             "dones": dones_t,
             "legal_masks": legal_masks_t,
             "n_states": n_states,
@@ -484,7 +492,17 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
         raw_chances = buffers["chances"][all_indices]
         raw_game_ids = buffers["game_ids"][all_indices]
         raw_legal_masks = buffers["legal_masks"][all_indices]
-        raw_dones = buffers["dones"][all_indices]
+        raw_terminated = (
+            buffers["terminated"][all_indices]
+            if "terminated" in buffers
+            else buffers["dones"][all_indices]
+        )
+        raw_truncated = (
+            buffers["truncated"][all_indices]
+            if "truncated" in buffers
+            else torch.zeros_like(raw_terminated)
+        )
+        raw_dones = raw_terminated | raw_truncated
 
         # 3. Validity Masks
         base_game_ids = raw_game_ids[:, 0].unsqueeze(1)
@@ -518,7 +536,8 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
             raw_rewards,
             raw_values,
             raw_to_plays,
-            raw_dones,
+            raw_terminated,
+            raw_truncated,
             dynamics_mask,
             device,
         )
@@ -606,7 +625,8 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
         raw_rewards,
         raw_values,
         raw_to_plays,
-        raw_dones,
+        raw_terminated,
+        raw_truncated,
         valid_mask,
         device,
     ):
@@ -630,6 +650,7 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
         # The length required for this is: num_windows + n_step - 1.
 
         required_len = num_windows + n_step - 1
+        raw_dones = raw_terminated | raw_truncated
 
         # Helper to pad if needed
         def safe_slice_unfold(tensor, length, size, step):
@@ -731,11 +752,18 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
         # If any 'done' & 'valid' occurred in window -> no bootstrap.
         # We can sum up (dones_windows & valid_steps_mask).
         # If > 0, then we hit a done.
-        hit_done_in_window = (dones_windows.float() * valid_steps_mask.float()).sum(
-            dim=2
-        ) > 0
+        terminated_windows = safe_slice_unfold(
+            raw_terminated, required_len, n_step, 1
+        )
+        hit_terminated_in_window = (
+            terminated_windows.float() * valid_steps_mask.float()
+        ).sum(dim=2) > 0
 
-        boot_is_valid = valid_mask[:, safe_boot_indices] & (~hit_done_in_window)
+        boot_is_valid = (
+            valid_mask[:, safe_boot_indices]
+            & (~hit_terminated_in_window)
+            & (~raw_terminated[:, safe_boot_indices])
+        )
 
         # Boot Sign
         boot_signs = torch.where(

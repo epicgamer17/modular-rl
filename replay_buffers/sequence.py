@@ -68,12 +68,17 @@ class Sequence:
         Yields Transition objects.
         """
         for i in range(len(self.action_history)):
+            next_info = self.info_history[i + 1] if self.info_history else None
+            terminated = bool(next_info.get("terminated", False)) if next_info else False
+            truncated = bool(next_info.get("truncated", False)) if next_info else False
             yield Transition(
                 observation=self.observation_history[i],
                 action=self.action_history[i],
                 reward=float(self.rewards[i]) if self.rewards else 0.0,
                 next_observation=self.observation_history[i + 1],
-                done=(i == len(self.action_history) - 1),
+                done=terminated or truncated,
+                terminated=terminated,
+                truncated=truncated,
                 info=self.info_history[i] if self.info_history else None,
-                next_info=self.info_history[i + 1] if self.info_history else None,
+                next_info=next_info,
             )

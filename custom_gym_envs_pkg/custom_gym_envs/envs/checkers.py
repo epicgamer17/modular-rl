@@ -372,8 +372,11 @@ class CheckersEnv(gym.Env):
                     )
                 ):
                     self._legal_moves = np.append(self._legal_moves, i * 8 + 3)
-        terminated = self.winner()
-        truncated = len(self._legal_moves) == 0
+        # No legal moves means game over in checkers, not a time-limit truncation.
+        has_winner = self.winner()
+        no_legal_moves = len(self._legal_moves) == 0
+        terminated = has_winner or no_legal_moves
+        truncated = False
         if terminated:
             if self._grid[2, 0, 0] == 0:
                 reward = [-1, 1]

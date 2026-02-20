@@ -112,9 +112,11 @@ class TicTacToeEnv(gym.Env):
         # encode turn as 1 or 0
         self._current_player = (self._current_player + 1) % 2
         self._grid[2, :, :] = 1 - self._grid[2, :, :]
-        # An episode is done iff there is a winner or the board is full
-        terminated = self.winner()
-        truncated = len(self._legal_moves) == 0
+        # Draw by full board is a true terminal game outcome, not a truncation.
+        has_winner = self.winner()
+        is_draw = len(self._legal_moves) == 0 and not has_winner
+        terminated = has_winner or is_draw
+        truncated = False
         if terminated:
             if self._current_player == 0:
                 reward = [-1, 1]

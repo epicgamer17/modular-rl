@@ -168,25 +168,23 @@ class BaseLearner(ABC):
             batch=batch,
             meta=last_result.meta,
         )
-        return self._prepare_stats(last_result.loss_dict, float(last_result.loss.item()))
+        return self._prepare_stats(
+            last_result.loss_dict, float(last_result.loss.item())
+        )
 
     @property
     def min_buffer_size(self) -> int:
-        return getattr(self.config, "min_replay_buffer_size", self.config.minibatch_size)
+        return self.config.min_replay_buffer_size
 
     @property
     def training_iterations(self) -> int:
-        return getattr(self.config, "training_iterations", 1)
+        return self.config.training_iterations
 
     @property
     def clipnorm(self) -> float:
-        return getattr(self.config, "clipnorm", 0.0)
+        return self.config.clipnorm
 
     def _update_per_beta(self) -> None:
-        if not hasattr(self.replay_buffer, "set_beta") or not hasattr(
-            self.replay_buffer, "beta"
-        ):
-            return
         self.replay_buffer.set_beta(
             update_per_beta(
                 self.replay_buffer.beta,
@@ -204,7 +202,9 @@ class BaseLearner(ABC):
         if is_mps and self.training_step % 100 == 0:
             torch.mps.empty_cache()
 
-    def _prepare_stats(self, loss_dict: Dict[str, float], total_loss: float) -> Dict[str, float]:
+    def _prepare_stats(
+        self, loss_dict: Dict[str, float], total_loss: float
+    ) -> Dict[str, float]:
         stats = dict(loss_dict)
         stats["loss"] = total_loss
         return stats

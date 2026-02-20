@@ -290,6 +290,8 @@ def create_muzero_buffer(
         BufferConfig(
             "training_steps", shape=(), dtype=torch.int64, is_shared=multi_process
         ),
+        BufferConfig("terminated", shape=(), dtype=torch.bool, is_shared=multi_process),
+        BufferConfig("truncated", shape=(), dtype=torch.bool, is_shared=multi_process),
         BufferConfig("dones", shape=(), dtype=torch.bool, is_shared=multi_process),
         BufferConfig(
             "legal_masks",

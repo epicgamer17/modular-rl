@@ -758,10 +758,12 @@ class LossPipeline:
 
         unroll_steps = gradient_scales.shape[1] - 1
 
+        expected_steps = unroll_steps + 1
+
         for k in range(unroll_steps + 1):
             # Extract predictions and targets for step k
-            preds_k = self._extract_step_data(predictions, k)
-            targets_k = self._extract_step_data(targets, k)
+            preds_k = self._extract_step_data(predictions, k, expected_steps)
+            targets_k = self._extract_step_data(targets, k, expected_steps)
 
             # --- 1. Priority Update (Only for k=0) ---
             if k == 0:
@@ -822,13 +824,26 @@ class LossPipeline:
 
         return loss_mean, loss_dict, priorities
 
-    def _extract_step_data(self, tensor_dict: dict, k: int) -> dict:
-        """Extract data for step k from tensors of shape (B, K+1, ...)."""
+    def _extract_step_data(self, tensor_dict: dict, k: int, expected_steps: int) -> dict:
+        """
+        Extract data for unroll step `k`.
+
+        Supports:
+        - state-aligned tensors with shape (B, K+1, ...)
+        - transition-aligned tensors with shape (B, K, ...), mapped by k -> k-1
+        """
         step_data = {}
         for key, tensor in tensor_dict.items():
-            if tensor is not None and torch.is_tensor(tensor) and tensor.ndim > 1:
-                assert tensor.shape[1] > k, f"Tensor for {key} has insufficient steps."
+            if tensor is None or not torch.is_tensor(tensor) or tensor.ndim <= 1:
+                continue
+
+            steps = tensor.shape[1]
+            if steps == expected_steps:
                 step_data[key] = tensor[:, k]
+            elif steps == expected_steps - 1:
+                # Transition-aligned tensors (e.g., rewards/chance) correspond to k in [1..K].
+                if k > 0:
+                    step_data[key] = tensor[:, k - 1]
         return step_data
 
     def _can_compute_module(self, module: LossModule, predictions: dict, targets: dict) -> bool:

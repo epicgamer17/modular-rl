@@ -33,6 +33,7 @@ def benchmark_n_step():
         0, num_players, (batch_size, horizon), dtype=torch.int16, device="cpu"
     )
     raw_dones = torch.zeros((batch_size, horizon), dtype=torch.bool, device="cpu")
+    raw_truncated = torch.zeros((batch_size, horizon), dtype=torch.bool, device="cpu")
     valid_mask = torch.ones((batch_size, horizon), dtype=torch.bool, device="cpu")
 
     # Warmup
@@ -44,6 +45,7 @@ def benchmark_n_step():
             raw_values,
             raw_to_plays,
             raw_dones,
+            raw_truncated,
             valid_mask,
             "cpu",
         )
@@ -58,6 +60,7 @@ def benchmark_n_step():
             raw_values,
             raw_to_plays,
             raw_dones,
+            raw_truncated,
             valid_mask,
             "cpu",
         )
