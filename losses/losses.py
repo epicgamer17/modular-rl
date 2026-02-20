@@ -101,6 +101,10 @@ class StandardDQNLoss(LossModule):
             rewards = context["rewards"].to(self.device)
             dones = context["dones"].to(self.device)
             terminated = context.get("terminated", dones).to(self.device)
+            bootstrap_on_truncated = bool(
+                getattr(self.config, "bootstrap_on_truncated", False)
+            )
+            terminal_mask = terminated if bootstrap_on_truncated else dones
 
             # Action Masking Logic
             next_masks = context["next_legal_moves_masks"].to(self.device)
@@ -150,7 +154,7 @@ class StandardDQNLoss(LossModule):
             max_q_next = target_next_q[range(self.config.minibatch_size), next_actions]
 
             # 3. Bellman Calculation
-            targets = rewards + self.config.discount_factor * (~terminated) * max_q_next
+            targets = rewards + self.config.discount_factor * (~terminal_mask) * max_q_next
 
         # POPULATE
         context["target_q_values"] = targets
@@ -209,6 +213,10 @@ class C51Loss(LossModule):
             rewards = context["rewards"].to(self.device).view(-1, 1)
             dones = context["dones"].to(self.device).view(-1, 1)
             terminated = context.get("terminated", dones).to(self.device).view(-1, 1)
+            bootstrap_on_truncated = bool(
+                getattr(self.config, "bootstrap_on_truncated", False)
+            )
+            terminal_mask = terminated if bootstrap_on_truncated else dones
 
             # Masking
             next_masks = context["next_legal_moves_masks"].to(self.device)
@@ -249,7 +257,7 @@ class C51Loss(LossModule):
                 self.config.atom_size - 1
             )
 
-            Tz = (rewards + discount * (~terminated) * self.support).clamp(
+            Tz = (rewards + discount * (~terminal_mask) * self.support).clamp(
                 self.config.v_min, self.config.v_max
             )
             b = (Tz - self.config.v_min) / delta_z

@@ -268,14 +268,48 @@ class ModularReplayBuffer:
                     "Updating priorities without IDs in a shared buffer may lead to incorrect updates."
                 )
 
-            # Support optional ID checking if 'ids' buffer exists
-            buffer_ids = None
-            if "ids" in self.buffers:
-                buffer_ids = self.buffers["ids"]
+            filtered_indices = indices
+            filtered_priorities = priorities
 
-            self.sampler.update_priorities(
-                indices, priorities, ids=ids, buffer_ids=buffer_ids
-            )
+            # If IDs are provided, filter out stale entries before delegating to the sampler.
+            if ids is not None:
+                assert len(indices) == len(priorities) == len(ids), (
+                    "indices, priorities, and ids must have the same length: "
+                    f"{len(indices)} != {len(priorities)} != {len(ids)}"
+                )
+
+                if "ids" in self.buffers:
+                    indices_np = np.asarray(indices, dtype=np.int64)
+                    priorities_np = (
+                        priorities.detach().cpu().numpy()
+                        if isinstance(priorities, torch.Tensor)
+                        else np.asarray(priorities)
+                    )
+                    ids_np = (
+                        ids.detach().cpu().numpy()
+                        if isinstance(ids, torch.Tensor)
+                        else np.asarray(ids)
+                    )
+
+                    valid_indices = []
+                    valid_priorities = []
+                    for idx, sample_id, priority in zip(
+                        indices_np, ids_np, priorities_np
+                    ):
+                        if int(self.buffers["ids"][int(idx)].item()) != int(sample_id):
+                            continue
+                        valid_indices.append(int(idx))
+                        valid_priorities.append(priority)
+
+                    if len(valid_indices) == 0:
+                        return
+
+                    filtered_indices = np.asarray(valid_indices, dtype=np.int64)
+                    filtered_priorities = np.asarray(valid_priorities)
+                else:
+                    warning("IDs provided, but buffer has no 'ids' tensor; skipping ID filtering.")
+
+            self.sampler.update_priorities(filtered_indices, filtered_priorities)
 
     def clear(self):
         with self.write_lock:

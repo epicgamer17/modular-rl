@@ -143,41 +143,19 @@ class PrioritizedSampler(Sampler):
         )
         self.max_priority = max(self.max_priority, priority)
 
-    def update_priorities(self, indices, priorities, ids=None, buffer_ids=None):
+    def update_priorities(self, indices, priorities, **kwargs):
         priorities = priorities + self.epsilon
-        if ids is not None:
-            assert (
-                len(priorities) == len(ids) == len(indices)
-                or priorities.shape == ids.shape == indices.shape
-            )
+        assert len(indices) == len(priorities)
+        for index, priority in zip(indices, priorities):
+            assert priority > 0, "Negative priority: {}".format(priority)
+            # TODO: ADD THIS ASSERT BACK SOME HOW
+            # assert 0 <= index < len(self)
 
-            for index, id, priority in zip(indices, ids, priorities):
-                assert (
-                    priority > 0
-                ), "Negative priority: {} \n All priorities {}".format(
-                    priority, priorities
-                )
-                # TODO: ADD THIS ASSERT BACK SOME HOW
-                # assert 0 <= index < len(self)
-
-                if buffer_ids[index] != id:
-                    continue
-
-                self.sum_tree[index] = priority**self.alpha
-                self.min_tree[index] = priority**self.alpha
-                self.max_priority = max(self.max_priority, priority)
-        else:
-            assert len(indices) == len(priorities)
-            for index, priority in zip(indices, priorities):
-                assert priority > 0, "Negative priority: {}".format(priority)
-                # TODO: ADD THIS ASSERT BACK SOME HOW
-                # assert 0 <= index < len(self)
-
-                self.sum_tree[index] = priority**self.alpha
-                self.min_tree[index] = priority**self.alpha
-                self.max_priority = max(
-                    self.max_priority, priority
-                )  # could remove and clip priorities in experience replay isntead
+            self.sum_tree[index] = priority**self.alpha
+            self.min_tree[index] = priority**self.alpha
+            self.max_priority = max(
+                self.max_priority, priority
+            )  # could remove and clip priorities in experience replay isntead
 
         return priorities**self.alpha
 
