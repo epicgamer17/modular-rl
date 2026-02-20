@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Tuple
 
 import torch
+import torch.nn.functional as F
 from torch.optim.adam import Adam
 from torch.optim.sgd import SGD
 
@@ -78,7 +79,6 @@ class MuZeroLearner(BaseLearner):
             config=config,
             device=device,
             model=model,
-            preprocess_fn=self._preprocess_observation,
         )
 
     @property
@@ -89,10 +89,24 @@ class MuZeroLearner(BaseLearner):
         return {
             "has_valid_obs_mask": batch["obs_mask"].to(self.device).bool(),
             "has_valid_action_mask": batch["action_mask"].to(self.device).bool(),
-            "target_observations": batch["unroll_observations"].to(self.device),
-            "model": self.model,
-            "preprocess_fn": self._preprocess_observation,
         }
+
+    def _prepare_consistency_targets(
+        self, unroll_observations: torch.Tensor
+    ) -> torch.Tensor:
+        """Build detached target embeddings for EfficientZero consistency loss."""
+        real_obs = self._preprocess_observation(unroll_observations)
+        batch_size, unroll_len = real_obs.shape[:2]
+        flat_obs = real_obs.flatten(0, 1)
+
+        initial_out = self.model.obs_inference(flat_obs)
+        real_latents = initial_out.network_state
+        if isinstance(real_latents, dict):
+            real_latents = real_latents["dynamics"]
+
+        proj_targets = self.model.project(real_latents, grad=False)
+        normalized_targets = F.normalize(proj_targets, p=2.0, dim=-1, eps=1e-5)
+        return normalized_targets.reshape(batch_size, unroll_len, -1).detach()
 
     def _gradient_scales(self) -> torch.Tensor:
         unroll_steps = self.config.unroll_steps
@@ -109,6 +123,9 @@ class MuZeroLearner(BaseLearner):
     def compute_step_result(self, batch: Dict[str, Any], stats=None) -> StepResult:
         batch["observations"] = self._preprocess_observation(batch["observations"])
         targets = self._prepare_targets(batch)
+        targets["consistency_targets"] = self._prepare_consistency_targets(
+            targets["unroll_observations"]
+        )
         predictions = self.model.learner_inference(targets)
 
         weights = targets["weights"].float()

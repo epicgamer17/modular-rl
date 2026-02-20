@@ -460,10 +460,10 @@ class ToPlayLoss(LossModule):
 class ConsistencyLoss(LossModule):
     """Consistency loss module (EfficientZero style)."""
 
-    def __init__(self, config, device, preprocess_fn):
+    def __init__(self, config, device, model):
         super().__init__(config, device)
         self.sequence_loss = True
-        self.preprocess = preprocess_fn
+        self.model = model
 
     def should_compute(self, k: int, context: dict) -> bool:
         return k > 0  # Only for k > 0
@@ -482,43 +482,17 @@ class ConsistencyLoss(LossModule):
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         latent_states_k = predictions["latent_states"]
-        target_observations_k = targets["unroll_observations"]
-        model = context["model"]
-
-        # TODO: CONSISTENCY LOSS FOR AFTERSTATES
-        # 1. Encode the real future observation (Target)
-        # We need to preprocess the raw target observation
-        real_obs = self.preprocess(target_observations_k)
-
-        # Use predict_initial_inference to get the latent state (s'_t+k)
-        # It uses the representation network and the projection network
-        # We pass model=self.model to ensure it uses the correct network instance
-        # We use a detached real_latent for the consistency target
-        # Note: We can reuse the `predict_initial_inference` function if it only calls the representation/project models.
-        initial_out = model.obs_inference(real_obs)
-        real_latents = initial_out.network_state
-
-        # If opaque state, unpack dynamics
-        if isinstance(real_latents, dict):
-            real_latents = real_latents["dynamics"]
+        target_features_k = targets["consistency_targets"]
         if isinstance(latent_states_k, dict):
             latent_states_k = latent_states_k["dynamics"]
 
-        # may be unecessary but better safe than sorry
-        real_latents = real_latents.detach()
-
-        # Project the target to the comparison space
-        proj_targets = model.project(real_latents, grad=False)
-        f1 = F.normalize(proj_targets, p=2.0, dim=-1, eps=1e-5)
-
-        # 2. Process the predicted latent (Prediction)
+        # Process the predicted latent (Prediction)
         # We project, then predict (SimSiam style predictor head)
-        # latent_states_tensor[k] is the output of the dynamics function
-        proj_preds = model.project(latent_states_k, grad=True)
+        proj_preds = self.model.project(latent_states_k, grad=True)
         f2 = F.normalize(proj_preds, p=2.0, dim=-1, eps=1e-5)
 
-        # 3. Calculate Negative Cosine Similarity: (B,)
-        current_consistency = -(f1 * f2).sum(dim=1)
+        # Compare against learner-precomputed target features.
+        current_consistency = -(target_features_k * f2).sum(dim=1)
         consistency_loss = self.config.consistency_loss_factor * current_consistency
 
         return consistency_loss
@@ -872,7 +846,7 @@ class LossPipeline:
             "PolicyLoss": {"policies"},
             "RewardLoss": {"rewards"},
             "ToPlayLoss": {"to_plays"},
-            "ConsistencyLoss": {"unroll_observations"},
+            "ConsistencyLoss": {"consistency_targets"},
             "ChanceQLoss": {"values"},
             "SigmaLoss": {"chance_codes"},
             "VQVAECommitmentLoss": {"chance_codes"},
@@ -906,14 +880,13 @@ def create_c51_loss_pipeline(config, device):
     return LossPipeline(modules)
 
 
-def create_muzero_loss_pipeline(config, device, preprocess_fn, model):
+def create_muzero_loss_pipeline(config, device, model):
     """
     Factory function to create the standard MuZero loss pipeline.
 
     Args:
         config: Configuration object
         device: Device to run on
-        preprocess_fn: Function for preprocessing observations (needed for consistency)
         model: Model instance (needed for consistency)
 
     Returns:
@@ -929,9 +902,7 @@ def create_muzero_loss_pipeline(config, device, preprocess_fn, model):
     if config.game.num_players != 1:
         modules.append(ToPlayLoss(config, device))
 
-    modules.append(
-        ConsistencyLoss(config, device, preprocess_fn)
-    )
+    modules.append(ConsistencyLoss(config, device, model))
 
     if config.stochastic:
         modules.extend(
