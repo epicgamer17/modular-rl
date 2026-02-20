@@ -74,8 +74,6 @@ def test_learner_directly():
     )
 
     # Mock learner_inference to return dummy output so we don't need real weights/forward pass
-    from modules.world_models.inference_output import LearningOutput
-
     def mock_learner_inference(batch):
         if isinstance(batch, dict):
             if "obs" in batch:
@@ -89,14 +87,14 @@ def test_learner_directly():
             B = batch.obs.shape[0] if hasattr(batch, "obs") else batch.shape[0]
         T = config.unroll_steps
 
-        return LearningOutput(
-            values=F.softmax(torch.randn(B, T + 1, support_size), dim=-1),
-            policies=F.softmax(torch.randn(B, T + 1, num_actions), dim=-1),
+        return {
+            "values": F.softmax(torch.randn(B, T + 1, support_size), dim=-1),
+            "policies": F.softmax(torch.randn(B, T + 1, num_actions), dim=-1),
             # Pad rewards: (B, T+1, support). First step is dummy.
-            rewards=F.softmax(torch.randn(B, T + 1, support_size), dim=-1),
-            to_plays=torch.randn(B, T + 1, 1),
-            latents=torch.randn(B, T + 1, 64),
-        )
+            "rewards": F.softmax(torch.randn(B, T + 1, support_size), dim=-1),
+            "to_plays": torch.randn(B, T + 1, 1),
+            "latent_states": torch.randn(B, T + 1, 64),
+        }
 
     model.learner_inference = mock_learner_inference
     model.obs_inference = MagicMock(

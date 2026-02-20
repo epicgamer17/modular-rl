@@ -14,9 +14,10 @@ from torch.optim.adam import Adam
 
 from modules.utils import get_lr_scheduler
 from replay_buffers.utils import discounted_cumulative_sums
+from agents.learners.base import BaseLearner, StepResult
 
 
-class PPOLearner:
+class PPOLearner(BaseLearner):
     """
     PPOLearner handles the training logic for PPO, including buffer management,
     optimizer stepping, and loss computation with clipped surrogate objective.
@@ -42,13 +43,14 @@ class PPOLearner:
             observation_dimensions: Shape of observations.
             observation_dtype: Dtype for observations.
         """
-        self.config = config
-        self.model = model
-        self.device = device
-        self.num_actions = num_actions
-        self.observation_dimensions = observation_dimensions
-        self.observation_dtype = observation_dtype
-        self.training_step = 0
+        super().__init__(
+            config=config,
+            model=model,
+            device=device,
+            num_actions=num_actions,
+            observation_dimensions=observation_dimensions,
+            observation_dtype=observation_dtype,
+        )
         self.discrete_action_space = (
             True  # PPO supports continuous too, but we focus on discrete
         )
@@ -391,17 +393,13 @@ class PPOLearner:
         Returns:
             Preprocessed tensor on the correct device.
         """
-        if isinstance(observation, torch.Tensor):
-            obs = observation.to(self.device, dtype=torch.float32)
-        else:
-            obs = torch.tensor(observation, device=self.device, dtype=torch.float32)
-
-        if obs.dim() == len(self.observation_dimensions):
-            obs = obs.unsqueeze(0)
-
-        return obs
+        return self._preprocess_observation(observation)
 
     @property
     def size(self) -> int:
         """Returns current number of stored transitions."""
         return self.pointer
+
+    # PPO keeps a custom optimization loop (dual optimizers, KL early stopping).
+    def compute_step_result(self, batch: Dict[str, Any], stats=None) -> StepResult:
+        raise NotImplementedError("PPOLearner uses a custom step implementation.")

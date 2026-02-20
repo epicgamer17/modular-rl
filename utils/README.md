@@ -2,7 +2,14 @@
 
 General utility functions and helpers used across the project.
 
-## Structure
+## Available Utilities
+
+| Category | File | Description |
+|----------|------|-------------|
+| Core | `utils.py` | Device, seed, checkpointing, logging |
+| LR Schedulers | `lr_schedulers/` | Learning rate schedules |
+
+## Directory Structure
 
 ```
 utils/

@@ -2,6 +2,14 @@
 
 Reusable neural network components and building blocks for RL agents. Provides modular architectures that can be composed for different algorithms.
 
+## Installation
+
+Modules are included in the main package:
+
+```bash
+pip install -e .
+```
+
 ## Structure
 
 ```
@@ -32,24 +40,24 @@ modules/
 ## Core Components
 
 ### Convolutional Layers (`conv.py`)
-- `ConvBlock` - Conv2d + BatchNorm + Activation
-- `ConvStack` - Stack of convolutional blocks
+- `ConvBlock` - Conv2d + BatchNorm + Activation ✅
+- `ConvStack` - Stack of convolutional blocks ✅
 - Supports common RL architectures (Nature DQN, IMPALA)
 
 ### Dense Layers (`dense.py`)
-- `MLP` - Multi-layer perceptron with configurable depth/width
-- `NoisyLinear` - Linear layer with learned noise (Noisy Nets)
-- `DuelingHead` - Separates value and advantage streams
+- `MLP` - Multi-layer perceptron with configurable depth/width ✅
+- `NoisyLinear` - Linear layer with learned noise (Noisy Nets) ✅
+- `DuelingHead` - Separates value and advantage streams ✅
 
 ### Residual Blocks (`residual.py`)
-- `ResidualBlock` - Standard residual connection
-- `ResNetStack` - Multiple residual blocks
+- `ResidualBlock` - Standard residual connection ✅
+- `ResNetStack` - Multiple residual blocks ✅
 - Used in IMPALA-style architectures
 
 ### Network Heads (`heads.py`)
-- `PolicyHead` - Outputs action probabilities/logits
-- `ValueHead` - Outputs state value
-- `CategoricalValueHead` - Outputs value distribution (C51)
+- `PolicyHead` - Outputs action probabilities/logits ✅
+- `ValueHead` - Outputs state value ✅
+- `CategoricalValueHead` - Outputs value distribution (C51) ✅
 
 ## Agent-Specific Networks
 

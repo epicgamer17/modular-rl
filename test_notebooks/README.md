@@ -2,14 +2,23 @@
 
 Interactive Jupyter notebooks for testing and debugging agents.
 
+## Installation
+
+Test notebooks require Jupyter:
+
+```bash
+pip install jupyter
+pip install -e .
+```
+
 ## Available Notebooks
 
-| Notebook | Purpose |
-|----------|---------|
-| `muzero.ipynb` | MuZero debugging and testing |
-| `rainbow.ipynb` | Rainbow DQN experiments |
-| `ppo.ipynb` | PPO agent testing |
-| `nfsp.ipynb` | NFSP multi-agent testing |
+| Notebook | Purpose | Status |
+|----------|---------|--------|
+| `muzero.ipynb` | MuZero debugging and testing | ✅ |
+| `rainbow.ipynb` | Rainbow DQN experiments | ✅ |
+| `ppo.ipynb` | PPO agent testing | ✅ |
+| `nfsp.ipynb` | NFSP multi-agent testing | ✅ |
 
 ## Usage
 

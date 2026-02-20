@@ -2,37 +2,17 @@
 
 Tools for automated hyperparameter tuning of RL agents.
 
-## Usage
+## Installation
 
-```python
-from hyperparameter_optimization.hyperopt import HyperparameterOptimizer
-
-# Define search space
-search_space = {
-    'learning_rate': (1e-5, 1e-2, 'log-uniform'),
-    'batch_size': [32, 64, 128, 256],
-    'gamma': (0.95, 0.999, 'uniform'),
-    'buffer_size': [50000, 100000, 500000]
-}
-
-# Create optimizer
-optimizer = HyperparameterOptimizer(
-    agent_class=RainbowDQN,
-    game_config=CartPoleConfig(),
-    search_space=search_space,
-    max_evals=100
-)
-
-# Run optimization
-best_config = optimizer.optimize()
+```bash
+pip install -e .
 ```
 
-## Search Algorithms
+## Supported Algorithms
 
-Supported optimization methods:
-- Random search
-- Bayesian optimization (Tree-structured Parzen Estimator)
-- Population-based training
+- Random search ✅
+- Bayesian optimization (Tree-structured Parzen Estimator) ✅
+- Population-based training ✅
 
 ## Parallel Evaluation
 

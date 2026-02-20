@@ -2,18 +2,26 @@
 
 Core RL agent implementations. Each agent inherits from `BaseAgent` and implements the standard interface for training and inference.
 
+## Installation
+
+Agents are installed automatically with the main package:
+
+```bash
+pip install -e .
+```
+
 ## Available Agents
 
-| Agent | File | Algorithm Type |
-|-------|------|----------------|
-| Rainbow DQN | `rainbow_dqn.py` | Value-based |
-| MuZero | `muzero.py` | Model-based planning |
-| MuZero Actor | `muzero_actor.py` | Distributed MuZero actor |
-| MuZero Learner | `muzero_learner.py` | Distributed MuZero learner |
-| NFSP | `nfsp.py` | Fictitious self-play |
-| PPO | `ppo.py` | Policy gradient |
-| Policy Imitation | `policy_imitation.py` | Behavioral cloning |
-| Random | `random.py` | Random baseline |
+| Agent | File | Type | Status |
+|-------|------|------|--------|
+| Rainbow DQN | `rainbow_dqn.py` | Value-based | ✅ |
+| MuZero | `muzero.py` | Model-based | ✅ |
+| MuZero Actor | `muzero_actor.py` | Distributed | ✅ |
+| MuZero Learner | `muzero_learner.py` | Distributed | ✅ |
+| NFSP | `nfsp.py` | Fictitious self-play | ✅ |
+| PPO | `ppo.py` | Policy gradient | ✅ |
+| Policy Imitation | `policy_imitation.py` | Behavioral cloning | ✅ |
+| Random | `random.py` | Baseline | ✅ |
 
 ## Base Agent Interface
 

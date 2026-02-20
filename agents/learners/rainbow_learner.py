@@ -3,22 +3,19 @@ RainbowLearner handles the Q-learning training logic, including buffer managemen
 optimizer stepping, loss computation, and target network updates.
 """
 
-import time
 from typing import Any, Dict, Optional, Tuple
 
 import torch
-import numpy as np
-from torch.nn.utils import clip_grad_norm_
 from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
 
 from replay_buffers.buffer_factories import create_dqn_buffer
-from replay_buffers.utils import update_per_beta
 from losses.losses import LossPipeline, StandardDQNLoss, C51Loss
 from modules.utils import get_lr_scheduler
+from agents.learners.base import BaseLearner, StepResult
 
 
-class RainbowLearner:
+class RainbowLearner(BaseLearner):
     """
     RainbowLearner handles the training logic for Rainbow DQN, including
     buffer management, optimizer stepping, and loss computation.
@@ -46,14 +43,15 @@ class RainbowLearner:
             observation_dimensions: Shape of observations.
             observation_dtype: Dtype for observations.
         """
-        self.config = config
-        self.model = model
+        super().__init__(
+            config=config,
+            model=model,
+            device=device,
+            num_actions=num_actions,
+            observation_dimensions=observation_dimensions,
+            observation_dtype=observation_dtype,
+        )
         self.target_model = target_model
-        self.device = device
-        self.num_actions = num_actions
-        self.observation_dimensions = observation_dimensions
-        self.observation_dtype = observation_dtype
-        self.training_step = 0
 
         # 1. Initialize Replay Buffer
         self.replay_buffer = create_dqn_buffer(
@@ -111,81 +109,17 @@ class RainbowLearner:
             device=device,
         )
 
-    def step(self, stats=None) -> Optional[Dict[str, float]]:
-        """
-        Performs a single training step.
-
-        Args:
-            stats: Optional StatTracker for logging metrics.
-
-        Returns:
-            Dictionary of loss statistics, or None if buffer is too small.
-        """
-        if self.replay_buffer.size < self.config.min_replay_buffer_size:
-            return None
-
-        start_time = time.time()
-
-        # Run training iterations
-        losses = np.zeros(self.config.training_iterations)
-
-        for i in range(self.config.training_iterations):
-            # 1. Sample from buffer
-            context = self.replay_buffer.sample()
-
-            # 2. Run loss pipeline
-            loss, elementwise_loss = self.loss_pipeline.run(self, context)
-
-            # 3. Backpropagation
-            self.optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-
-            if self.config.clipnorm > 0:
-                clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
-
-            self.optimizer.step()
-            self.lr_scheduler.step()
-
-            # 4. Update priorities (PER)
-            self.replay_buffer.update_priorities(
-                indices=context["indices"],
-                priorities=elementwise_loss.detach(),
-                ids=None,
-            )
-
-            # 5. Reset noise in NoisyNets
-            self.model.reset_noise()
-            self.target_model.reset_noise()
-
-            losses[i] = loss.detach().item()
-
-        # Update PER beta
-        self.replay_buffer.set_beta(
-            update_per_beta(
-                self.replay_buffer.beta,
-                self.config.per_beta_final,
-                self.config.training_steps,
-                self.config.per_beta,
-            )
+    def compute_step_result(self, batch, stats=None) -> StepResult:
+        loss, elementwise_loss = self.loss_pipeline.run(self, batch)
+        return StepResult(
+            loss=loss,
+            loss_dict={"td_loss": float(loss.detach().item())},
+            priorities=elementwise_loss.detach(),
         )
 
-        self.training_step += 1
-
-        # Track learner FPS
-        if stats is not None:
-            duration = time.time() - start_time
-            if duration > 0:
-                batch_size = (
-                    self.config.minibatch_size * self.config.training_iterations
-                )
-                fps = batch_size / duration
-                stats.append("learner_fps", fps)
-
-        # MPS cache clearing
-        if self.device.type == "mps" and self.training_step % 100 == 0:
-            torch.mps.empty_cache()
-
-        return {"loss": float(losses.mean())}
+    def after_optimizer_step(self, batch, step_result: StepResult, stats=None) -> None:
+        self.model.reset_noise()
+        self.target_model.reset_noise()
 
     def update_target_network(self) -> None:
         """

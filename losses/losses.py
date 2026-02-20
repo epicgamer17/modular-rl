@@ -163,15 +163,9 @@ class StandardDQNLoss(LossModule):
         targets: dict = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """DQN-style: Returns (scalar_loss, elementwise_loss)"""
-        from losses.basic_losses import HuberLoss, MSELoss
-
         preds = context["online_q_values"]
         targets_vals = context["target_q_values"]
         weights = context["weights"].to(torch.float32).to(self.device)
-
-        assert isinstance(self.config.loss_function, HuberLoss) or isinstance(
-            self.config.loss_function, MSELoss
-        )
 
         # Calculate Elementwise (MSE or Huber)
         elementwise = self.config.loss_function(preds, targets_vals)
@@ -456,14 +450,10 @@ class ToPlayLoss(LossModule):
 class ConsistencyLoss(LossModule):
     """Consistency loss module (EfficientZero style)."""
 
-    def __init__(
-        self, config, device, predict_initial_inference_fn, preprocess_fn, model
-    ):
+    def __init__(self, config, device, preprocess_fn):
         super().__init__(config, device)
         self.sequence_loss = True
-        self.predict_initial_inference = predict_initial_inference_fn
         self.preprocess = preprocess_fn
-        self.model = model
 
     def should_compute(self, k: int, context: dict) -> bool:
         return k > 0  # Only for k > 0
@@ -482,12 +472,12 @@ class ConsistencyLoss(LossModule):
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         latent_states_k = predictions["latent_states"]
-        target_observations = context["target_observations"]
+        target_observations_k = targets["unroll_observations"]
+        model = context["model"]
 
         # TODO: CONSISTENCY LOSS FOR AFTERSTATES
         # 1. Encode the real future observation (Target)
         # We need to preprocess the raw target observation
-        target_observations_k = target_observations[:, k]  # (B, C, H, W)
         real_obs = self.preprocess(target_observations_k)
 
         # Use predict_initial_inference to get the latent state (s'_t+k)
@@ -495,7 +485,7 @@ class ConsistencyLoss(LossModule):
         # We pass model=self.model to ensure it uses the correct network instance
         # We use a detached real_latent for the consistency target
         # Note: We can reuse the `predict_initial_inference` function if it only calls the representation/project models.
-        initial_out = self.predict_initial_inference(real_obs)
+        initial_out = model.obs_inference(real_obs)
         real_latents = initial_out.network_state
 
         # If opaque state, unpack dynamics
@@ -508,13 +498,13 @@ class ConsistencyLoss(LossModule):
         real_latents = real_latents.detach()
 
         # Project the target to the comparison space
-        proj_targets = self.model.project(real_latents, grad=False)
+        proj_targets = model.project(real_latents, grad=False)
         f1 = F.normalize(proj_targets, p=2.0, dim=-1, eps=1e-5)
 
         # 2. Process the predicted latent (Prediction)
         # We project, then predict (SimSiam style predictor head)
         # latent_states_tensor[k] is the output of the dynamics function
-        proj_preds = self.model.project(latent_states_k, grad=True)
+        proj_preds = model.project(latent_states_k, grad=True)
         f2 = F.normalize(proj_preds, p=2.0, dim=-1, eps=1e-5)
 
         # 3. Calculate Negative Cosine Similarity: (B,)
@@ -545,7 +535,8 @@ class ChanceQLoss(LossModule):
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         # Note: chance values are indexed at k-1 in the stochastic arrays
         chance_values_k = predictions["chance_values"]
-        target_chance_values_k = targets["chance_values"]
+        # Target is derived from replay values at k+1, not a separate learner target head.
+        target_chance_values_k = context["target_values_next"]
 
         # TODO: HAVE WE ALREADY RECOMPUTED TARGET Q IN THE CASE OF REANALYZE? I THINK WE HAVE
 
@@ -601,14 +592,20 @@ class SigmaLoss(LossModule):
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         # Note: indexed at k-1 in the stochastic arrays
-        latent_code_probabilities_k = predictions["latent_code_probabilities"]
-        encoder_onehot_k_plus_1 = targets["encoder_onehots"]
-
-        # σ^k is trained towards the one hot chance code c_t+k+1 = one hot (argmax_i(e((o^i)≤t+k+1))) produced by the encoder.
-        sigma_loss = self.config.sigma_loss(
-            latent_code_probabilities_k,
-            encoder_onehot_k_plus_1.detach(),
-        )
+        latent_code_probabilities_k = predictions["chance_codes"]
+        target_codes_k = targets["chance_codes"].squeeze(-1).long()
+        # Default config uses cross entropy (logits + class index). Keep one-hot fallback
+        # for custom losses expecting distribution targets.
+        if self.config.sigma_loss == F.cross_entropy:
+            sigma_loss = self.config.sigma_loss(latent_code_probabilities_k, target_codes_k)
+        else:
+            encoder_onehot_k_plus_1 = F.one_hot(
+                target_codes_k, num_classes=latent_code_probabilities_k.shape[-1]
+            ).float()
+            sigma_loss = self.config.sigma_loss(
+                latent_code_probabilities_k,
+                encoder_onehot_k_plus_1.detach(),
+            )
 
         return sigma_loss
 
@@ -640,7 +637,10 @@ class VQVAECommitmentLoss(LossModule):
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         # Note: indexed at k-1 in the stochastic arrays
         encoder_softmax_k_plus_1 = predictions["encoder_softmaxes"]
-        encoder_onehot_k_plus_1 = targets["encoder_onehots"]
+        target_codes_k = targets["chance_codes"].squeeze(-1).long()
+        encoder_onehot_k_plus_1 = F.one_hot(
+            target_codes_k, num_classes=encoder_softmax_k_plus_1.shape[-1]
+        ).float()
 
         # VQ-VAE commitment cost between c_t+k+1 and (c^e)_t+k+1 ||c_t+k+1 - (c^e)_t+k+1||^2
         # If using true chance codes, we can use them directly
@@ -721,8 +721,8 @@ class LossPipeline:
 
     def _run_sequence_pipeline(
         self,
-        predictions_tensor: dict,
-        targets_tensor: dict,
+        predictions: dict,
+        targets: dict,
         context: dict,
         weights: torch.Tensor,
         gradient_scales: torch.Tensor,
@@ -733,8 +733,8 @@ class LossPipeline:
         Run the loss pipeline across all unroll steps for sequence losses.
 
         Args:
-            predictions_tensor: Dict of tensors with shape (B, K+1, ...)
-            targets_tensor: Dict of tensors with shape (B, K+1, ...)
+            predictions: Dict of tensors with shape (B, K+1, ...)
+            targets: Dict of tensors with shape (B, K+1, ...)
             context: Additional context (masks, observations, etc.)
             weights: PER weights of shape (B,)
             gradient_scales: Gradient scales of shape (1, K+1)
@@ -760,8 +760,8 @@ class LossPipeline:
 
         for k in range(unroll_steps + 1):
             # Extract predictions and targets for step k
-            preds_k = self._extract_step_data(predictions_tensor, k)
-            targets_k = self._extract_step_data(targets_tensor, k)
+            preds_k = self._extract_step_data(predictions, k)
+            targets_k = self._extract_step_data(targets, k)
 
             # --- 1. Priority Update (Only for k=0) ---
             if k == 0:
@@ -779,9 +779,14 @@ class LossPipeline:
 
             # --- 2. Compute losses for this step ---
             step_loss = torch.zeros(config.minibatch_size, device=device)
+            if "values" in targets and k > 0 and targets["values"].shape[1] > k:
+                context["target_values_next"] = targets["values"][:, k]
 
             for module in self.modules:
                 if not module.should_compute(k, context):
+                    continue
+
+                if not self._can_compute_module(module, preds_k, targets_k):
                     continue
 
                 # Compute elementwise loss: (B,)
@@ -821,10 +826,38 @@ class LossPipeline:
         """Extract data for step k from tensors of shape (B, K+1, ...)."""
         step_data = {}
         for key, tensor in tensor_dict.items():
-            if tensor is not None:
+            if tensor is not None and torch.is_tensor(tensor) and tensor.ndim > 1:
                 assert tensor.shape[1] > k, f"Tensor for {key} has insufficient steps."
                 step_data[key] = tensor[:, k]
         return step_data
+
+    def _can_compute_module(self, module: LossModule, predictions: dict, targets: dict) -> bool:
+        required_predictions = {
+            "ValueLoss": {"values"},
+            "PolicyLoss": {"policies"},
+            "RewardLoss": {"rewards"},
+            "ToPlayLoss": {"to_plays"},
+            "ConsistencyLoss": {"latent_states"},
+            "ChanceQLoss": {"chance_values"},
+            "SigmaLoss": {"chance_codes"},
+            "VQVAECommitmentLoss": {"encoder_softmaxes"},
+        }
+        required_targets = {
+            "ValueLoss": {"values"},
+            "PolicyLoss": {"policies"},
+            "RewardLoss": {"rewards"},
+            "ToPlayLoss": {"to_plays"},
+            "ConsistencyLoss": {"unroll_observations"},
+            "ChanceQLoss": {"values"},
+            "SigmaLoss": {"chance_codes"},
+            "VQVAECommitmentLoss": {"chance_codes"},
+        }
+        module_name = module.__class__.__name__
+        pred_required = required_predictions.get(module_name, set())
+        target_required = required_targets.get(module_name, set())
+        return pred_required.issubset(predictions.keys()) and target_required.issubset(
+            targets.keys()
+        )
 
 
 # ============================================================================
@@ -848,16 +881,13 @@ def create_c51_loss_pipeline(config, device):
     return LossPipeline(modules)
 
 
-def create_muzero_loss_pipeline(
-    config, device, predict_initial_inference_fn, preprocess_fn, model
-):
+def create_muzero_loss_pipeline(config, device, preprocess_fn, model):
     """
     Factory function to create the standard MuZero loss pipeline.
 
     Args:
         config: Configuration object
         device: Device to run on
-        predict_initial_inference_fn: Function for initial inference (needed for consistency)
         preprocess_fn: Function for preprocessing observations (needed for consistency)
         model: Model instance (needed for consistency)
 
@@ -875,9 +905,7 @@ def create_muzero_loss_pipeline(
         modules.append(ToPlayLoss(config, device))
 
     modules.append(
-        ConsistencyLoss(
-            config, device, predict_initial_inference_fn, preprocess_fn, model
-        )
+        ConsistencyLoss(config, device, preprocess_fn)
     )
 
     if config.stochastic:

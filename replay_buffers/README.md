@@ -2,6 +2,14 @@
 
 Experience replay implementations supporting various sampling strategies, prioritization schemes, and distributed training setups.
 
+## Installation
+
+Replay buffers are included in the main package:
+
+```bash
+pip install -e .
+```
+
 ## Structure
 
 ```
@@ -73,11 +81,11 @@ processor = NStepProcessor(n=3, gamma=0.99)
 
 | Algorithm | Buffer Type | Features |
 |-----------|-------------|----------|
-| DQN | Standard | Uniform sampling |
-| Rainbow | Prioritized | PER + N-step |
-| Ape-X | Distributed | Multiple actors, prioritized |
-| MuZero | Reanalyse | Policy reanalysis, sequences |
-| NFSP | Reservoir | Reservoir sampling for SL buffer |
+| DQN | Standard | Uniform sampling ✅ |
+| Rainbow | Prioritized | PER + N-step ✅ |
+| Ape-X | Distributed | Multiple actors, prioritized ✅ |
+| MuZero | Reanalyse | Policy reanalysis, sequences ✅ |
+| NFSP | Reservoir | Reservoir sampling for SL buffer ✅ |
 
 ## Ape-X Buffer
 

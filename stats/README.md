@@ -2,11 +2,19 @@
 
 Tools for tracking training metrics and visualizing learned representations.
 
+## Installation
+
+Statistics tools are included in the main package:
+
+```bash
+pip install -e .
+```
+
 ## Components
 
 ### Statistics Tracking (`stats.py`)
 
-Track and log training metrics:
+Track and log training metrics ✅
 
 ```python
 from stats.stats import Statistics

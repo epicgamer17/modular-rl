@@ -2,6 +2,14 @@
 
 Modular loss function implementations for RL training objectives. Supports value losses, policy losses, and auxiliary losses.
 
+## Installation
+
+Losses are included in the main package:
+
+```bash
+pip install -e .
+```
+
 ## Structure
 
 ```
@@ -15,22 +23,22 @@ losses/
 ## Available Losses
 
 ### Value Losses
-- **MSELoss** - Mean squared error for value estimation
-- **SmoothL1Loss** - Huber loss (less sensitive to outliers)
-- **CategoricalCrossEntropy** - For distributional value learning (C51)
+- **MSELoss** - Mean squared error for value estimation ✅
+- **SmoothL1Loss** - Huber loss (less sensitive to outliers) ✅
+- **CategoricalCrossEntropy** - For distributional value learning (C51) ✅
 
 ### Policy Losses
-- **PolicyGradientLoss** - Vanilla policy gradient
-- **PPOLoss** - Proximal policy optimization with clipping
-- **CrossEntropyLoss** - For supervised policy learning
+- **PolicyGradientLoss** - Vanilla policy gradient ✅
+- **PPOLoss** - Proximal policy optimization with clipping ✅
+- **CrossEntropyLoss** - For supervised policy learning ✅
 
 ### MuZero Losses
-- **MuZeroLoss** - Combined value, policy, reward, and consistency loss
-- **ConsistencyLoss** - Observation reconstruction consistency
+- **MuZeroLoss** - Combined value, policy, reward, and consistency loss ✅
+- **ConsistencyLoss** - Observation reconstruction consistency ✅
 
 ### Auxiliary Losses
-- **EntropyBonus** - Entropy regularization for exploration
-- **L2Regularization** - Weight decay
+- **EntropyBonus** - Entropy regularization for exploration ✅
+- **L2Regularization** - Weight decay ✅
 
 ## Usage
 

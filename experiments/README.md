@@ -2,6 +2,14 @@
 
 Training runs, checkpoints, and results for different algorithm experiments.
 
+## Installation
+
+Experiments are included in the main package:
+
+```bash
+pip install -e .
+```
+
 ## Directory Structure
 
 ```
@@ -14,10 +22,10 @@ experiments/
 │   └── nfsp_testing.ipynb
 └── rainbowzero/          # Rainbow + MuZero experiments
     ├── paper_outline.tex # Research paper draft
-    ├── cartpole/         # CartPole results
+    ├── cartpole/         # CartPole results ✅
     ├── catan/            # Catan game results
     ├── slippery_grid/    # Grid world experiments
-    └── tictactoe/        # Tic-Tac-Toe experiments
+    └── tictactoe/        # Tic-Tac-Toe experiments ✅
         └── checkpoints/  # Training checkpoints
 ```
 

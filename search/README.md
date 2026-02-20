@@ -2,6 +2,14 @@
 
 Monte Carlo Tree Search (MCTS) and related planning algorithms. Provides modular components that can be combined for different search strategies.
 
+## Installation
+
+Search algorithms are included in the main package:
+
+```bash
+pip install -e .
+```
+
 ## Structure
 
 ```
@@ -10,7 +18,7 @@ search/
 ├── nodes.py                # Search tree node types
 ├── action_selectors.py     # Action selection strategies
 ├── scoring_methods.py      # Node scoring functions
-├── backpropogation.py      # Value backpropagation
+├── backpropagation.py         # Value backpropagation
 ├── root_policies.py        # Root action policies
 ├── initial_searchsets.py  # Initial action selection
 ├── prior_injectors.py      # Prior injection mechanisms
@@ -108,7 +116,7 @@ mcts = ModularMCTS(action_selector=selector, num_simulations=64)
 Update node statistics after simulation:
 
 ```python
-from search.backpropogation import StandardBackprop
+from search.backpropagation import StandardBackprop
 
 backprop = StandardBackprop(discount=0.997)
 backprop.update(search_path, value)
@@ -157,3 +165,5 @@ Run search algorithm tests:
 pytest tests/test_muzero_mcts_core.py
 pytest tests/test_batched_search.py
 ```
+
+> **Note:** Older implementations are available in `search/deprecated/`. Use the main `search/` module for new development.

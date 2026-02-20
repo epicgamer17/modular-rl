@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 import torch
 from torch import nn
 
-from modules.world_models.inference_output import InferenceOutput, LearningOutput
+from modules.world_models.inference_output import InferenceOutput
 
 
 class BaseAgentNetwork(nn.Module, ABC):
@@ -84,7 +84,7 @@ class BaseAgentNetwork(nn.Module, ABC):
     # 3. THE LEARNER'S API (Historical Batch Optimization)
     # ==========================================
     @abstractmethod
-    def learner_inference(self, batch: Any) -> "LearningOutput":
+    def learner_inference(self, batch: Any) -> Any:
         """
         Learner API: Pure logits for loss computation.
 
@@ -92,6 +92,6 @@ class BaseAgentNetwork(nn.Module, ABC):
             batch: Batch of data (observations, actions, etc.)
 
         Returns:
-            LearningOutput: NamedTuple containing raw logits (policies, values, rewards, etc.)
+            Algorithm-specific learner predictions (typically a flat dict).
         """
         pass

@@ -19,7 +19,6 @@ from modules.utils import _normalize_hidden_state, zero_weights_initializer
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from modules.world_models.inference_output import (
     InferenceOutput,
-    LearningOutput,
     PhysicsOutput,
     WorldModelOutput,
 )
@@ -245,14 +244,14 @@ class MuZeroNetwork(BaseAgentNetwork):
     def learner_inference(
         self,
         batch: Any,
-    ) -> LearningOutput:
-        """Learner API: Returns pure logits for loss computation."""
+    ) -> Dict[str, torch.Tensor]:
+        """Learner API: Returns flat predictions keyed for loss routing."""
 
         # 1. Prepare Inputs
         initial_observation = batch["observations"]
         actions = batch["actions"]
         target_observations = batch.get("unroll_observations")
-        target_chance_codes = batch.get("target_chance_codes")
+        target_chance_codes = batch.get("chance_codes")
 
         if initial_observation is None or actions is None:
             raise ValueError("Batch must contain 'observations' and 'actions'.")
@@ -324,25 +323,24 @@ class MuZeroNetwork(BaseAgentNetwork):
             # 4. Use Chance Logits directly from physics loop
             chance_logits = physics_output.chance_logits
 
-        # Create extras dict for stochastic outputs
-        extras = {}
-        if physics_output.encoder_softmaxes is not None:
-            extras["encoder_softmaxes"] = physics_output.encoder_softmaxes
-        if physics_output.encoder_onehots is not None:
-            extras["encoder_onehots"] = physics_output.encoder_onehots
+        predictions = {
+            "values": raw_values,
+            "policies": raw_policies,
+            "rewards": stacked_rewards,
+            "to_plays": stacked_toplays,
+            "latent_states": stacked_latents,
+        }
 
-        return LearningOutput(
-            values=raw_values,
-            policies=raw_policies,
-            rewards=stacked_rewards,
-            to_plays=stacked_toplays,
-            latents=stacked_latents,
-            latents_afterstates=latents_afterstates,
-            chance_logits=chance_logits,
-            chance_values=chance_values,
-            target_latents=physics_output.target_latents,
-            extras=extras if extras else None,
-        )
+        if latents_afterstates is not None:
+            predictions["latent_afterstates"] = latents_afterstates
+        if chance_logits is not None:
+            predictions["chance_codes"] = chance_logits
+        if chance_values is not None:
+            predictions["chance_values"] = chance_values
+        if physics_output.encoder_softmaxes is not None:
+            predictions["encoder_softmaxes"] = physics_output.encoder_softmaxes
+
+        return predictions
 
     def project(self, hidden_state: Tensor, grad=True) -> Tensor:
         """

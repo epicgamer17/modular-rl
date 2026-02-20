@@ -2,6 +2,12 @@
 
 ELO rating implementation for evaluating agent strength in competitive games.
 
+## Installation
+
+```bash
+pip install -e .
+```
+
 ## Usage
 
 ```python
@@ -11,7 +17,7 @@ from elo.elo import EloRating
 elo = EloRating(k_factor=32, initial_rating=1500)
 
 # Record match outcome
-elo.update_ratings(winner_rating, loser_rating)
+new_winner, new_loser = elo.update_ratings(winner_rating, loser_rating)
 
 # Or with draw
 new_r1, new_r2 = elo.update_ratings(r1, r2, result=0.5)

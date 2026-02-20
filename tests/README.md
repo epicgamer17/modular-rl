@@ -1,6 +1,14 @@
 # Tests
 
-Comprehensive test suite covering unit tests, integration tests, smoke tests, and verification scripts.
+Comprehensive test suite for unit tests, integration tests, smoke tests, and verification scripts.
+
+## Installation
+
+Tests require the main package and test dependencies:
+
+```bash
+pip install -e ".[test]"
+```
 
 ## Test Categories
 

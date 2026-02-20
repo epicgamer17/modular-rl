@@ -585,6 +585,8 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
         return dict(
             observations=buffers["observations"][indices_tensor],
             unroll_observations=unroll_observations,
+            obs_mask=obs_valid_mask,
+            action_mask=dynamics_mask[:, : self.unroll_steps + 1],
             rewards=target_rewards,
             policies=target_policies,
             values=target_values,
