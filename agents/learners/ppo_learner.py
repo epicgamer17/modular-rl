@@ -13,7 +13,7 @@ from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
 
 from modules.utils import get_lr_scheduler
-from replay_buffers.utils import discounted_cumulative_sums
+from replay_buffers.buffer_factories import create_ppo_buffer
 from agents.learners.base import BaseLearner, StepResult
 
 
@@ -55,8 +55,15 @@ class PPOLearner(BaseLearner):
             True  # PPO supports continuous too, but we focus on discrete
         )
 
-        # 1. Initialize Trajectory Buffer (on-policy, cleared each epoch)
-        self._init_buffers()
+        # 1. Initialize On-Policy Replay Buffer (stores one epoch of rollouts)
+        self.replay_buffer = create_ppo_buffer(
+            observation_dimensions=observation_dimensions,
+            max_size=config.replay_buffer_size,
+            gamma=config.discount_factor,
+            gae_lambda=config.gae_lambda,
+            num_actions=num_actions,
+            observation_dtype=observation_dtype,
+        )
 
         # 2. Initialize Optimizers (separate for actor and critic)
         self.policy_optimizer = self._create_optimizer(
@@ -91,101 +98,6 @@ class PPOLearner(BaseLearner):
         else:
             raise ValueError(f"Unsupported optimizer: {sub_config.optimizer}")
 
-    def _init_buffers(self) -> None:
-        """Initializes trajectory storage buffers."""
-        max_size = self.config.replay_buffer_size
-        obs_shape = self.observation_dimensions
-
-        self.observation_buffer = torch.zeros(
-            (max_size,) + obs_shape, dtype=torch.float32
-        )
-        self.action_buffer = torch.zeros(max_size, dtype=torch.int64)
-        self.reward_buffer = torch.zeros(max_size, dtype=torch.float32)
-        self.value_buffer = torch.zeros(max_size, dtype=torch.float32)
-        self.log_prob_buffer = torch.zeros(max_size, dtype=torch.float32)
-        self.advantage_buffer = torch.zeros(max_size, dtype=torch.float32)
-        self.return_buffer = torch.zeros(max_size, dtype=torch.float32)
-
-        self.pointer = 0
-        self.trajectory_start_index = 0
-
-    def store(
-        self,
-        observation: Any,
-        action: int,
-        value: float,
-        log_probability: float,
-        reward: float,
-    ) -> None:
-        """
-        Stores a single transition in the trajectory buffer.
-
-        Args:
-            observation: Current observation.
-            action: Action taken.
-            value: Value estimate from critic.
-            log_probability: Log probability of action under current policy.
-            reward: Reward received.
-        """
-        assert self.pointer < self.config.replay_buffer_size, "Buffer overflow"
-
-        if isinstance(observation, torch.Tensor):
-            self.observation_buffer[self.pointer] = observation.detach().cpu()
-        else:
-            self.observation_buffer[self.pointer] = torch.tensor(
-                observation, dtype=torch.float32
-            )
-
-        self.action_buffer[self.pointer] = action
-        self.reward_buffer[self.pointer] = reward
-        self.value_buffer[self.pointer] = value
-        self.log_prob_buffer[self.pointer] = log_probability
-        self.pointer += 1
-
-    def finish_trajectory(self, last_value: float = 0.0) -> None:
-        """
-        Computes GAE advantages and returns for the completed trajectory.
-
-        Args:
-            last_value: Bootstrap value (0 if terminal, else critic estimate).
-        """
-        trajectory_slice = slice(self.trajectory_start_index, self.pointer)
-
-        rewards = torch.cat(
-            [
-                self.reward_buffer[trajectory_slice],
-                torch.tensor([last_value], dtype=torch.float32),
-            ]
-        )
-        values = torch.cat(
-            [
-                self.value_buffer[trajectory_slice],
-                torch.tensor([last_value], dtype=torch.float32),
-            ]
-        )
-
-        # Convert to numpy for scipy-based discounted_cumulative_sums
-        rewards_np = rewards.detach().cpu().numpy()
-        values_np = values.detach().cpu().numpy()
-
-        # GAE-Lambda advantage calculation
-        deltas = (
-            rewards_np[:-1]
-            + self.config.discount_factor * values_np[1:]
-            - values_np[:-1]
-        )
-        advantages = discounted_cumulative_sums(
-            deltas, self.config.discount_factor * self.config.gae_lambda
-        )
-        returns = discounted_cumulative_sums(rewards_np, self.config.discount_factor)[
-            :-1
-        ]
-
-        self.advantage_buffer[trajectory_slice] = torch.from_numpy(advantages.copy())
-        self.return_buffer[trajectory_slice] = torch.from_numpy(returns.copy())
-
-        self.trajectory_start_index = self.pointer
-
     def step(self, stats=None, step=None) -> Optional[Dict[str, float]]:
         """
         Performs PPO training iterations over collected data.
@@ -197,26 +109,23 @@ class PPOLearner(BaseLearner):
         Returns:
             Dictionary of loss statistics.
         """
-        if self.pointer == 0:
+        if self.replay_buffer.size < self.replay_buffer.batch_size:
             return None
 
         start_time = time.time()
 
-        # Get all collected data
-        data_slice = slice(0, self.pointer)
-        observations = self.observation_buffer[data_slice].to(self.device)
-        actions = self.action_buffer[data_slice].to(self.device)
-        old_log_probs = self.log_prob_buffer[data_slice].to(self.device)
-        advantages = self.advantage_buffer[data_slice].to(self.device)
-        returns = self.return_buffer[data_slice].to(self.device)
-
-        # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        # Get current rollout batch from modular replay buffer.
+        batch = self.replay_buffer.sample()
+        observations = batch["observations"].to(self.device)
+        actions = batch["actions"].to(self.device)
+        old_log_probs = batch["log_probabilities"].to(self.device)
+        advantages = batch["advantages"].to(self.device)
+        returns = batch["returns"].to(self.device)
 
         # Training indices for minibatch sampling
-        num_samples = self.pointer
+        num_samples = observations.shape[0]
         indices = torch.randperm(num_samples, device=self.device)
-        minibatch_size = num_samples // self.config.num_minibatches
+        minibatch_size = max(1, num_samples // self.config.num_minibatches)
 
         actor_losses = []
         critic_losses = []
@@ -292,7 +201,7 @@ class PPOLearner(BaseLearner):
         self.value_scheduler.step()
 
         # Clear buffer for next epoch
-        self._clear_buffer()
+        self.replay_buffer.clear()
 
         self.training_step += 1
 
@@ -378,11 +287,6 @@ class PPOLearner(BaseLearner):
         critic_loss = self.config.critic_coefficient * ((returns - values) ** 2).mean()
         return critic_loss
 
-    def _clear_buffer(self) -> None:
-        """Resets buffer pointers for next epoch."""
-        self.pointer = 0
-        self.trajectory_start_index = 0
-
     def preprocess(self, observation: Any) -> torch.Tensor:
         """
         Preprocesses observation for network input.
@@ -398,7 +302,7 @@ class PPOLearner(BaseLearner):
     @property
     def size(self) -> int:
         """Returns current number of stored transitions."""
-        return self.pointer
+        return self.replay_buffer.size
 
     # PPO keeps a custom optimization loop (dual optimizers, KL early stopping).
     def compute_step_result(self, batch: Dict[str, Any], stats=None) -> StepResult:

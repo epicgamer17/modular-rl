@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from collections import deque
 from modules.world_models.inference_output import LearningOutput
 from utils.utils import legal_moves_mask
+from replay_buffers.utils import discounted_cumulative_sums
 
 # ==========================================
 # Base Classes
@@ -447,7 +448,7 @@ class PPOInputProcessor(InputProcessor):
 
     def process_single(self, *args, **kwargs):
         # PPO usually stores directly, then post-processes at end of trajectory.
-        return args
+        return kwargs
 
     def finish_trajectory(self, buffers, trajectory_slice, last_value=0):
         """
@@ -456,13 +457,13 @@ class PPOInputProcessor(InputProcessor):
         rewards = torch.cat(
             (
                 buffers["rewards"][trajectory_slice],
-                torch.tensor([last_value], dtype=torch.float16),
+                torch.tensor([last_value], dtype=torch.float32),
             )
         )
         values = torch.cat(
             (
                 buffers["values"][trajectory_slice],
-                torch.tensor([last_value], dtype=torch.float16),
+                torch.tensor([last_value], dtype=torch.float32),
             )
         )
 
@@ -872,28 +873,19 @@ class PPOOutputProcessor(OutputProcessor):
     """
 
     def process_batch(self, indices, buffers, **kwargs):
-        # In PPO 'indices' usually implies the whole buffer, or this is called after shuffling.
+        # In PPO we usually sample the whole filled rollout and then minibatch in the learner.
+        sl = slice(None) if indices is None else indices
 
-        # 1. Normalize Advantages
-        adv_buffer = buffers["adv"]
-        advantage_mean = torch.mean(torch.tensor(adv_buffer, dtype=torch.float32))
-        advantage_std = torch.std(torch.tensor(adv_buffer, dtype=torch.float32))
-
-        normalized_advantages = (adv_buffer - advantage_mean) / (advantage_std + 1e-10)
-
-        # 2. Return Dict (Assuming PPO typically samples everything)
-        # Note: If indices are provided, we slice.
-        if indices is None:
-            # Whole buffer
-            sl = slice(None)
-        else:
-            sl = indices
+        advantages = buffers["advantages"][sl].to(torch.float32)
+        advantage_mean = advantages.mean()
+        advantage_std = advantages.std()
+        normalized_advantages = (advantages - advantage_mean) / (advantage_std + 1e-10)
 
         return dict(
-            observations=buffers["obs"][sl],
-            actions=buffers["act"][sl],
-            advantages=normalized_advantages[sl],
-            returns=buffers["ret"][sl],
-            log_probabilities=buffers["log_prob"][sl],
-            legal_moves_masks=buffers["legal_mask"][sl],
+            observations=buffers["observations"][sl],
+            actions=buffers["actions"][sl],
+            advantages=normalized_advantages,
+            returns=buffers["returns"][sl],
+            log_probabilities=buffers["log_probabilities"][sl],
+            legal_moves_masks=buffers["legal_moves_masks"][sl],
         )

@@ -11,6 +11,7 @@ from agents.learners.ppo_learner import PPOLearner
 from agents.action_selectors.factory import SelectorFactory
 from agents.actors.actors import get_actor_class
 from modules.agent_nets.ppo import PPONetwork
+from replay_buffers.processors import PPOInputProcessor
 
 # from agents.policies.ppo_policy import PPOPolicy # REMOVED
 from stats.stats import StatTracker, PlotType
@@ -112,6 +113,7 @@ class PPOTrainer(BaseTrainer):
 
             # 2. Collect trajectory data (steps_per_epoch transitions)
             steps_collected = 0
+            trajectory_start_index = 0
 
             while steps_collected < self.config.steps_per_epoch:
                 with torch.no_grad():
@@ -148,12 +150,15 @@ class PPOTrainer(BaseTrainer):
                         done = terminated or truncated
 
                         # Store transition
-                        self.learner.store(
-                            observation=state,
-                            action=action_val,
-                            value=value,
-                            log_probability=log_prob,
-                            reward=reward,
+                        self.learner.replay_buffer.store(
+                            observations=state,
+                            actions=action_val,
+                            values=float(value.item() if torch.is_tensor(value) else value),
+                            log_probabilities=float(
+                                log_prob.item() if torch.is_tensor(log_prob) else log_prob
+                            ),
+                            rewards=reward,
+                            info=info,
                         )
 
                         state = next_state
@@ -178,7 +183,37 @@ class PPOTrainer(BaseTrainer):
                             last_value, _ = self.model.value(obs)
                             last_value = last_value.item()
 
-                    self.learner.finish_trajectory(last_value)
+                    trajectory_end_index = self.learner.replay_buffer.size
+                    trajectory_slice = slice(
+                        trajectory_start_index, trajectory_end_index
+                    )
+
+                    if trajectory_end_index > trajectory_start_index:
+                        ppo_input_processor = None
+                        input_processor = self.learner.replay_buffer.input_processor
+                        for processor in getattr(input_processor, "processors", []):
+                            if isinstance(processor, PPOInputProcessor):
+                                ppo_input_processor = processor
+                                break
+
+                        if ppo_input_processor is None:
+                            raise RuntimeError(
+                                "PPOInputProcessor not found in PPO replay buffer pipeline."
+                            )
+
+                        advantages, returns = ppo_input_processor.finish_trajectory(
+                            self.learner.replay_buffer.buffers,
+                            trajectory_slice,
+                            last_value=last_value,
+                        )
+                        self.learner.replay_buffer.buffers["advantages"][
+                            trajectory_slice
+                        ] = advantages
+                        self.learner.replay_buffer.buffers["returns"][
+                            trajectory_slice
+                        ] = returns
+
+                    trajectory_start_index = trajectory_end_index
 
             # Log collection stats
             if completed_scores:
