@@ -15,6 +15,7 @@ from search.prior_injectors import PriorInjector
 from search.root_policies import RootPolicyStrategy
 from utils.utils import action_mask, get_legal_moves
 from search.pruners import PruningMethod
+from modules.agent_nets.base import BaseAgentNetwork
 
 
 class SearchAlgorithm:
@@ -58,9 +59,8 @@ class SearchAlgorithm:
         observation: Any,
         info: Dict[str, Any],
         to_play: int,
-        inference_fns: Dict[str, Callable],
+        agent_network: BaseAgentNetwork,
         trajectory_action=None,
-        inference_model=None,
     ):
         self._set_node_configs()
         root = DecisionNode(0.0)
@@ -69,18 +69,14 @@ class SearchAlgorithm:
         # 1. Inference
         assert not root.expanded()
 
-        outputs: InferenceOutput = inference_fns["obs"](observation)
+        outputs: InferenceOutput = agent_network.obs_inference(observation)
 
         val_raw = outputs.value
-        policy = (
-            outputs.policy.probs
-            if hasattr(outputs.policy, "probs")
-            else outputs.policy.logits
-        )  # Assuming distribution.probs/logits
-
+        policy = outputs.policy.probs
         network_state = outputs.network_state
 
         # 3. Legal Moves
+        # TODO: MOVE THE MASKING INTO THE ACTOR
         legal_moves = get_legal_moves(info)
         # print("legal smoves", legal_moves)
         if legal_moves is None:
@@ -149,9 +145,8 @@ class SearchAlgorithm:
                 self._run_batched_simulations(
                     root,
                     min_max_stats,
-                    inference_fns,
-                    batch_size=search_batch_size,
-                    inference_model=inference_model,
+                    agent_network,
+                    search_batch_size,
                     current_sim_idx=i * search_batch_size,
                     pruning_context=pruning_context,
                 )
@@ -165,8 +160,7 @@ class SearchAlgorithm:
                 self._run_single_simulation(
                     root,
                     min_max_stats,
-                    inference_fns,
-                    inference_model=inference_model,
+                    agent_network,
                     # pruned_searchset=allowed_actions,
                     current_sim_idx=i,
                     pruning_context=pruning_context,
@@ -219,8 +213,7 @@ class SearchAlgorithm:
         self,
         root: DecisionNode,
         min_max_stats: MinMaxStats,
-        inference_fns,
-        inference_model=None,
+        agent_network,
         current_sim_idx=0,
         pruning_context=None,
     ):
@@ -308,7 +301,7 @@ class SearchAlgorithm:
         #     print("WRONG TO PLAY", onehot_to_play)
         if isinstance(node, DecisionNode):
             if isinstance(parent, DecisionNode):
-                outputs: InferenceOutput = inference_fns["hidden_state"](
+                outputs: InferenceOutput = agent_network.hidden_state_inference(
                     parent.network_state,
                     torch.as_tensor([action_or_code], device=self.device),
                 )
@@ -356,7 +349,7 @@ class SearchAlgorithm:
                 action_t = action_t.long()
                 one_hot_code = F.one_hot(action_t, num_classes=num_codes)
 
-                outputs: InferenceOutput = inference_fns["hidden_state"](
+                outputs: InferenceOutput = agent_network.hidden_state_inference(
                     parent.network_state,
                     one_hot_code.unsqueeze(0).float(),
                 )
@@ -399,7 +392,7 @@ class SearchAlgorithm:
             # 1. Get Afterstate Value & Code Priors (Expand ChanceNode)
             # 2. Sample a Code
             # 3. Get Next State & Reward (Create DecisionNode)
-            outputs: InferenceOutput = inference_fns["afterstate"](
+            outputs: InferenceOutput = agent_network.afterstate_inference(
                 parent.network_state,
                 torch.as_tensor(
                     [action_or_code],
@@ -431,9 +424,8 @@ class SearchAlgorithm:
         self,
         root: DecisionNode,
         min_max_stats: MinMaxStats,
-        inference_fns,
+        agent_network,
         batch_size,
-        inference_model=None,
         current_sim_idx=0,
         pruning_context=None,
     ):
@@ -708,7 +700,7 @@ class SearchAlgorithm:
         if recurrent_inputs:
             # 1. Batch full opaque states recursively
             full_states = [x["state"] for x in recurrent_inputs]
-            batched_states = inference_model.batch_reward_states(full_states)
+            batched_states = agent_network.batch_reward_states(full_states)
 
             # 2. Prepare actions
             act_list = []
@@ -731,23 +723,19 @@ class SearchAlgorithm:
             actions = torch.cat(act_list, dim=0)
 
             # 3. Inference
-            outputs: InferenceOutput = inference_fns["hidden_state"](
+            outputs: InferenceOutput = agent_network.hidden_state_inference(
                 batched_states,
                 actions,
             )
 
             # 4. Unbatch everything recursively
-            unbatched_next_states = inference_model.unbatch_reward_states(
+            unbatched_next_states = agent_network.unbatch_reward_states(
                 outputs.network_state
             )
 
             rewards = outputs.reward
             values = outputs.value
-            policies = (
-                outputs.policy.probs
-                if hasattr(outputs.policy, "probs")
-                else outputs.policy.logits
-            )
+            policies = outputs.policy.probs
             to_plays = outputs.to_play
 
             for local_i, x in enumerate(recurrent_inputs):
@@ -763,9 +751,7 @@ class SearchAlgorithm:
         if afterstate_inputs:
             # 1. Batch opaque states
             full_after_states = [x["state"] for x in afterstate_inputs]
-            batched_after_states = inference_model.batch_reward_states(
-                full_after_states
-            )
+            batched_after_states = agent_network.batch_reward_states(full_after_states)
 
             actions = (
                 torch.tensor([x["action"] for x in afterstate_inputs])
@@ -774,21 +760,17 @@ class SearchAlgorithm:
                 .unsqueeze(1)
             )
 
-            outputs: InferenceOutput = inference_fns["afterstate"](
+            outputs: InferenceOutput = agent_network.afterstate_inference(
                 batched_after_states, actions
             )
 
             # 2. Unbatch opaque states
-            unbatched_afterstates = inference_model.unbatch_reward_states(
+            unbatched_afterstates = agent_network.unbatch_reward_states(
                 outputs.network_state
             )
 
             values = outputs.value
-            code_probs_batch = (
-                outputs.policy.probs
-                if hasattr(outputs.policy, "probs")
-                else outputs.policy.logits
-            )
+            code_probs_batch = outputs.policy.probs
 
             for local_i, x in enumerate(afterstate_inputs):
                 idx = x["idx"]

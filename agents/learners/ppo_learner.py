@@ -301,6 +301,13 @@ class PPOLearner:
                 fps = num_samples / duration
                 stats.append("learner_fps", fps)
 
+        # track loss metrics
+        return {
+            "policy_loss": np.mean(actor_losses) if actor_losses else 0,
+            "value_loss": np.mean(critic_losses) if critic_losses else 0,
+            "kl_divergence": np.mean(kl_divergences) if kl_divergences else 0,
+        }
+
         # MPS cache clearing
         if self.device.type == "mps" and self.training_step % 100 == 0:
             torch.mps.empty_cache()
@@ -318,10 +325,14 @@ class PPOLearner:
         Returns:
             Tuple of (policy_loss, approx_kl)
         """
-        # Get current distribution
-        # self.model.obs_inference returns InferenceOutput with policy distribution
-        output = self.model.obs_inference(obs)
-        dist = output.policy
+        # Get current distribution using learner_inference
+        # learner_inference returns raw logits
+        batch = {"observations": obs}
+        output = self.model.learner_inference(batch)
+        logits = output.policies
+
+        # Apply strategy to get distribution from logits
+        dist = self.model.policy.strategy.get_distribution(logits)
 
         log_probs = dist.log_prob(actions)
 
@@ -349,8 +360,15 @@ class PPOLearner:
         Returns:
             Critic loss tensor.
         """
-        values, _ = self.model.value(observations)
-        values = values.squeeze(-1)
+        # Use learner_inference to get raw value logits
+        batch = {"observations": observations}
+        output = self.model.learner_inference(batch)
+        logits = output.values
+
+        # Use the strategy to extract expected scalar values (robust to support-based values)
+        values = self.model.value.strategy.to_expected_value(logits)
+
+        # values = values.squeeze(-1) # to_expected_value already handles squeezing if needed
         critic_loss = self.config.critic_coefficient * ((returns - values) ** 2).mean()
         return critic_loss
 

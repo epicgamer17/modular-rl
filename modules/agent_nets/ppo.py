@@ -94,8 +94,7 @@ class PPONetwork(BaseAgentNetwork):
 
         (policy_logits, _, _), (value_logits, _) = self.policy(obs), self.value(obs)
 
-        return UnrollOutput(
+        return LearningOutput(
             values=value_logits,
             policies=policy_logits,
-            rewards=torch.zeros((obs.shape[0], 1), device=self.device),  # Dummy
         )
