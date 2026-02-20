@@ -22,8 +22,8 @@ class Transition:
     reward: float
     next_observation: Any
     done: bool
-    terminated: bool = False
-    truncated: bool = False
+    terminated: bool
+    truncated: bool
     info: Optional[dict] = None
     next_info: Optional[dict] = None
     metadata: Optional[dict] = None

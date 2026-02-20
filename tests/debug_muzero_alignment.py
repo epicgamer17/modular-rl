@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from modules.world_models.inference_output import LearningOutput
+from replay_buffers.sequence import Sequence
 from replay_buffers.processors import (
     MuZeroSequenceInputProcessor,
     MuZeroUnrollOutputProcessor,
@@ -14,11 +15,16 @@ def debug_alignment():
     # 1. Simulate play_sequence exactly
     seq = Sequence(num_players)
     seq.append(
-        observation=np.array([0]), info={"player": 0, "legal_moves": [0], "done": False}
+        observation=np.array([0]),
+        info={"player": 0, "legal_moves": [0]},
+        terminated=False,
+        truncated=False,
     )
     seq.append(
         observation=np.array([1]),
-        info={"player": 0, "legal_moves": [0], "done": False},
+        info={"player": 0, "legal_moves": [0]},
+        terminated=False,
+        truncated=False,
         action=0,
         reward=10.0,
         policy=torch.tensor([1.0]),
@@ -26,7 +32,9 @@ def debug_alignment():
     )
     seq.append(
         observation=np.array([2]),
-        info={"player": 0, "legal_moves": [0], "done": False},
+        info={"player": 0, "legal_moves": [0]},
+        terminated=False,
+        truncated=False,
         action=0,
         reward=50.0,
         policy=torch.tensor([1.0]),
@@ -34,7 +42,9 @@ def debug_alignment():
     )
     seq.append(
         observation=np.array([3]),
-        info={"player": 0, "legal_moves": [], "done": True},
+        info={"player": 0, "legal_moves": []},
+        terminated=True,
+        truncated=False,
         action=0,
         reward=0.0,
         policy=torch.tensor([1.0]),

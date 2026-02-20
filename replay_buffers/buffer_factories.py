@@ -7,6 +7,7 @@ from replay_buffers.processors import (
     InputProcessor,
     IdentityInputProcessor,
     NStepInputProcessor,
+    TerminationFlagsInputProcessor,
     MuZeroSequenceInputProcessor,
     PPOInputProcessor,
     StackedInputProcessor,
@@ -70,6 +71,8 @@ def create_dqn_buffer(
         BufferConfig(
             "next_observations", shape=observation_dimensions, dtype=observation_dtype
         ),
+        BufferConfig("terminated", shape=(), dtype=torch.bool),
+        BufferConfig("truncated", shape=(), dtype=torch.bool),
         BufferConfig("dones", shape=(), dtype=torch.bool),
         BufferConfig("next_legal_moves_masks", shape=(num_actions,), dtype=torch.bool),
     ]
@@ -89,6 +92,11 @@ def create_dqn_buffer(
         input_stack = StackedInputProcessor(
             [
                 # RenameKeyInputProcessor(key_mapping),
+                TerminationFlagsInputProcessor(
+                    done_key="dones",
+                    terminated_key="terminated",
+                    truncated_key="truncated",
+                ),
                 NStepInputProcessor(
                     n_step=config.n_step,
                     gamma=config.discount_factor,
@@ -107,6 +115,8 @@ def create_dqn_buffer(
                         "actions",
                         "rewards",
                         "next_observations",
+                        "terminated",
+                        "truncated",
                         "dones",
                         "next_legal_moves_masks",
                     ]
@@ -128,6 +138,11 @@ def create_dqn_buffer(
         print("Creating standard DQN buffer")
         input_stack = StackedInputProcessor(
             [
+                TerminationFlagsInputProcessor(
+                    done_key="dones",
+                    terminated_key="terminated",
+                    truncated_key="truncated",
+                ),
                 LegalMovesInputProcessor(
                     num_actions,
                     info_key="next_infos",
@@ -139,6 +154,8 @@ def create_dqn_buffer(
                         "actions",
                         "rewards",
                         "next_observations",
+                        "terminated",
+                        "truncated",
                         "dones",
                         "next_legal_moves_masks",
                     ]

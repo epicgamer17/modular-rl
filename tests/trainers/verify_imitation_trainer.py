@@ -95,11 +95,18 @@ def test_imitation_trainer_train():
     # Manually push a mock sequence into the buffer since it needs data to train
     seq = Sequence(num_players=1)
     obs, info = trainer._env.reset()
-    seq.append(obs, info)
+    seq.append(obs, info, terminated=False, truncated=False)
     for _ in range(5):
         action = 0
         obs, reward, term, trunc, info = trainer._env.step(action)
-        seq.append(obs, info, action=action, reward=reward)
+        seq.append(
+            obs,
+            info,
+            terminated=term,
+            truncated=trunc,
+            action=action,
+            reward=reward,
+        )
 
     trainer._store_sequence_transitions(seq)
 

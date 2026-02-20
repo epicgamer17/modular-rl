@@ -11,7 +11,7 @@ def test_sequence_iterable():
     # Simulate a small game
     obs0 = np.zeros((4,))
     info0 = {"step": 0}
-    seq.append(obs0, info0)
+    seq.append(obs0, info0, terminated=False, truncated=False)
 
     actions = [1, 2, 3]
     rewards = [0.5, 1.0, -0.5]
@@ -21,6 +21,8 @@ def test_sequence_iterable():
         seq.append(
             observation=obs_list[i],
             info={"step": i + 1},
+            terminated=False,
+            truncated=False,
             action=actions[i],
             reward=rewards[i],
         )

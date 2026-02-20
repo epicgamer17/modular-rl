@@ -162,6 +162,8 @@ def test_rainbow_c51_training():
                 reward=1.0,
                 next_observation=next_obs,
                 done=False,
+                terminated=False,
+                truncated=False,
                 info={},
             )
             for _ in range(10)

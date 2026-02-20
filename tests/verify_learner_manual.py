@@ -123,10 +123,18 @@ def test_learner_directly():
     from replay_buffers.sequence import Sequence
 
     seq = Sequence(num_players=1)
+    seq.append(
+        observation=torch.randn(4),
+        info={},
+        terminated=False,
+        truncated=False,
+    )
     for _ in range(10):
         seq.append(
             observation=torch.randn(4),
             info={},
+            terminated=False,
+            truncated=False,
             reward=1.0,
             policy=torch.ones(2) / 2,
             value=0.0,

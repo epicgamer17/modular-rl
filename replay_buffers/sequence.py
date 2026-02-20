@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 from typing import NamedTuple, Optional, Any, Iterator
 
 
@@ -18,26 +19,27 @@ class TimeStep(NamedTuple):
     policy: Optional[Any] = None
 
 
+@dataclass
 class Sequence:
-    def __init__(
-        self, num_players: int
-    ):  # num_actions, discount=1.0, n_step=1, gamma=0.99
-        self.length = 0
-        self.observation_history = []
-        self.rewards = []
-        self.policy_history = []
-        self.value_history = []
-        self.action_history = []
-        self.info_history = []
-        self.player_id_history = []  # Track which player took each action
-
-        self.num_players = num_players
-        self.duration_seconds: float = 0.0  # For FPS tracking across processes
+    num_players: int
+    observation_history: list = field(default_factory=list)
+    rewards: list = field(default_factory=list)
+    policy_history: list = field(default_factory=list)
+    value_history: list = field(default_factory=list)
+    action_history: list = field(default_factory=list)
+    info_history: list = field(default_factory=list)
+    terminated_history: list = field(default_factory=list)
+    truncated_history: list = field(default_factory=list)
+    done_history: list = field(default_factory=list)
+    player_id_history: list = field(default_factory=list)  # per transition
+    duration_seconds: float = 0.0  # For FPS tracking across processes
 
     def append(
         self,
         observation,
         info,
+        terminated: bool,
+        truncated: bool,
         reward: int = None,
         policy=None,
         value=None,
@@ -46,6 +48,9 @@ class Sequence:
     ):
         self.observation_history.append(observation)
         self.info_history.append(info)
+        self.terminated_history.append(bool(terminated))
+        self.truncated_history.append(bool(truncated))
+        self.done_history.append(bool(terminated or truncated))
         if reward is not None:
             self.rewards.append(reward)
         if policy is not None:
@@ -67,10 +72,28 @@ class Sequence:
         Allows iterating over the sequence transitions.
         Yields Transition objects.
         """
+        n_states = len(self.observation_history)
+        if len(self.info_history) != n_states:
+            raise ValueError("info_history length must match observation_history length")
+        if len(self.terminated_history) != n_states:
+            raise ValueError(
+                "terminated_history length must match observation_history length"
+            )
+        if len(self.truncated_history) != n_states:
+            raise ValueError(
+                "truncated_history length must match observation_history length"
+            )
+        if len(self.done_history) != n_states:
+            raise ValueError("done_history length must match observation_history length")
+        if len(self.action_history) + 1 != n_states:
+            raise ValueError(
+                "observation_history must have exactly one more entry than action_history"
+            )
+
         for i in range(len(self.action_history)):
             next_info = self.info_history[i + 1] if self.info_history else None
-            terminated = bool(next_info.get("terminated", False)) if next_info else False
-            truncated = bool(next_info.get("truncated", False)) if next_info else False
+            terminated = bool(self.terminated_history[i + 1])
+            truncated = bool(self.truncated_history[i + 1])
             yield Transition(
                 observation=self.observation_history[i],
                 action=self.action_history[i],

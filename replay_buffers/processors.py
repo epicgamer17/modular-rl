@@ -215,6 +215,29 @@ class FilterKeysInputProcessor(InputProcessor):
         return {k: v for k, v in kwargs.items() if k in self.whitelisted_keys}
 
 
+class TerminationFlagsInputProcessor(InputProcessor):
+    """
+    Ensures 'terminated'/'truncated' flags are present for transition pipelines.
+    Defaults are conservative and backward-compatible with older call sites.
+    """
+
+    def __init__(
+        self,
+        done_key: str = "dones",
+        terminated_key: str = "terminated",
+        truncated_key: str = "truncated",
+    ):
+        self.done_key = done_key
+        self.terminated_key = terminated_key
+        self.truncated_key = truncated_key
+
+    def process_single(self, **kwargs):
+        done = bool(kwargs.get(self.done_key, False))
+        kwargs[self.terminated_key] = bool(kwargs.get(self.terminated_key, done))
+        kwargs[self.truncated_key] = bool(kwargs.get(self.truncated_key, False))
+        return kwargs
+
+
 class NStepInputProcessor(InputProcessor):
     """
     Handles N-Step return calculation.
@@ -228,12 +251,16 @@ class NStepInputProcessor(InputProcessor):
         num_players: int = 1,
         reward_key="rewards",
         done_key="dones",
+        terminated_key="terminated",
+        truncated_key="truncated",
     ):
         self.n_step = n_step
         self.gamma = gamma
         self.num_players = num_players
         self.reward_key = reward_key
         self.done_key = done_key
+        self.terminated_key = terminated_key
+        self.truncated_key = truncated_key
         self.n_step_buffers = [deque(maxlen=n_step) for _ in range(num_players)]
 
     def process_single(self, **kwargs):
@@ -258,6 +285,8 @@ class NStepInputProcessor(InputProcessor):
         final_next_obs = buffer[-1].get("next_observations")
         final_next_info = buffer[-1].get("next_infos")
         final_done = buffer[-1].get(self.done_key, False)
+        final_terminated = buffer[-1].get(self.terminated_key, final_done)
+        final_truncated = buffer[-1].get(self.truncated_key, False)
 
         # Iterate reversed from newest to oldest
         for transition in reversed(list(buffer)):
@@ -270,6 +299,8 @@ class NStepInputProcessor(InputProcessor):
                 final_next_obs = transition.get("next_observations")
                 final_next_info = transition.get("next_infos")
                 final_done = True
+                final_terminated = transition.get(self.terminated_key, True)
+                final_truncated = transition.get(self.truncated_key, False)
             else:
                 final_reward = r + self.gamma * final_reward
 
@@ -280,6 +311,8 @@ class NStepInputProcessor(InputProcessor):
         head_transition["next_observations"] = final_next_obs
         head_transition["next_infos"] = final_next_info
         head_transition[self.done_key] = final_done
+        head_transition[self.terminated_key] = final_terminated
+        head_transition[self.truncated_key] = final_truncated
 
         return head_transition
 
@@ -309,6 +342,19 @@ class MuZeroSequenceInputProcessor(InputProcessor):
     def process_sequence(self, sequence, **kwargs):
         # 1. Prepare Observations
         obs_history = sequence.observation_history
+        n_states = len(obs_history)
+        if len(sequence.terminated_history) != n_states:
+            raise ValueError(
+                "Sequence terminated_history length must equal observation_history length"
+            )
+        if len(sequence.truncated_history) != n_states:
+            raise ValueError(
+                "Sequence truncated_history length must equal observation_history length"
+            )
+        if len(sequence.done_history) != n_states:
+            raise ValueError(
+                "Sequence done_history length must equal observation_history length"
+            )
         obs_tensor = torch.from_numpy(np.stack(obs_history))  # .to(self.device)
 
         # 2. Prepare & Pad Actions, Rewards, Policies
@@ -338,7 +384,6 @@ class MuZeroSequenceInputProcessor(InputProcessor):
 
         # To Plays
         to_plays = [i.get("player", 0) for i in sequence.info_history]
-        n_states = len(obs_history)
         if len(to_plays) < n_states:
             to_plays = to_plays + [0] * (n_states - len(to_plays))
         tps_t = torch.tensor(to_plays[:n_states], dtype=torch.int16)
@@ -360,9 +405,9 @@ class MuZeroSequenceInputProcessor(InputProcessor):
         legal_masks_t = torch.stack(legal_masks)
 
         # Episode end signals per state
-        terminated = [i.get("terminated", False) for i in sequence.info_history]
-        truncated = [i.get("truncated", False) for i in sequence.info_history]
-        dones = [t or tr for t, tr in zip(terminated, truncated)]
+        terminated = list(sequence.terminated_history)
+        truncated = list(sequence.truncated_history)
+        dones = list(sequence.done_history)
         if len(terminated) < n_states:
             terminated = terminated + [False] * (n_states - len(terminated))
         if len(truncated) < n_states:

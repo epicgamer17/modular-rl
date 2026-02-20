@@ -207,6 +207,8 @@ class RainbowTrainer(BaseTrainer):
             rewards=transition.reward,
             next_observations=transition.next_observation,
             next_infos=transition.next_info if transition.next_info else {},
+            terminated=transition.terminated,
+            truncated=transition.truncated,
             dones=transition.done,
         )
 

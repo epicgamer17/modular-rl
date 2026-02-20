@@ -113,6 +113,8 @@ class NFSPLearner:
             rewards=reward,
             next_observations=next_observation,
             next_infos=next_info,
+            terminated=done,
+            truncated=False,
             dones=done,
         )
 

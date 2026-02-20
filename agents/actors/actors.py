@@ -92,9 +92,6 @@ class BaseActor(ABC):
         self._state, self._info = self._reset_env()
         if self._info is None:
             self._info = {}
-        self._info.setdefault("terminated", False)
-        self._info.setdefault("truncated", False)
-        self._info.setdefault("done", False)
         self._done = False
         self._episode_reward = 0.0
         self._episode_length = 0
@@ -152,9 +149,6 @@ class BaseActor(ABC):
 
             if next_info is None:
                 next_info = {}
-            next_info["terminated"] = bool(term)
-            next_info["truncated"] = bool(trunc)
-            next_info["done"] = bool(term or trunc)
 
             self._done = term or trunc
             self._episode_reward += reward
@@ -193,7 +187,7 @@ class BaseActor(ABC):
         sequence = Sequence(self.num_players)
 
         state, info = self.reset()
-        sequence.append(state, info)
+        sequence.append(state, info, terminated=False, truncated=False)
 
         while not self._done:
             # Note: player_id must be captured BEFORE the step for PettingZoo
@@ -212,6 +206,8 @@ class BaseActor(ABC):
             sequence.append(
                 observation=transition["next_state"],
                 info=transition["next_info"],
+                terminated=transition["terminated"],
+                truncated=transition["truncated"],
                 action=transition["action"],
                 reward=transition["reward"],
                 policy=policy_mode,
@@ -259,8 +255,8 @@ class BaseActor(ABC):
                     reward=float(transition["reward"]),
                     next_observation=transition["next_state"],
                     done=transition["done"],
-                    terminated=transition.get("terminated", False),
-                    truncated=transition.get("truncated", False),
+                    terminated=transition["terminated"],
+                    truncated=transition["truncated"],
                     info=transition["info"],
                     next_info=transition["next_info"],
                     metadata=transition.get("metadata"),
