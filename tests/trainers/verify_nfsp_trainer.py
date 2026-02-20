@@ -18,7 +18,7 @@ from agents.policies.nfsp_policy import NFSPPolicy
 from configs.agents.nfsp import NFSPDQNConfig
 from configs.agents.rainbow_dqn import RainbowConfig
 from configs.agents.supervised import SupervisedConfig
-from losses.basic_losses import MSELoss
+import torch.nn.functional as F
 
 
 def make_cartpole():
@@ -63,7 +63,7 @@ class MockConfig:
             "adam_epsilon": 1e-8,
             "weight_decay": 0.0,
             "optimizer": torch.optim.Adam,
-            "loss_function": MSELoss(),
+            "loss_function": F.mse_loss,
             "discount_factor": 0.99,
             "atom_size": 1,
             "v_min": -10,
@@ -88,7 +88,7 @@ class MockConfig:
             "sl_adam_epsilon": 1e-8,
             "sl_weight_decay": 0.0,
             "sl_optimizer": torch.optim.Adam,
-            "sl_loss_function": MSELoss(),  # Using MSE as a simple proxy for smoke test
+            "sl_loss_function": F.mse_loss,  # Using MSE as a simple proxy for smoke test
             "sl_training_iterations": 1,
             "sl_clipnorm": 1.0,
             "sl_dense_layer_widths": [16],

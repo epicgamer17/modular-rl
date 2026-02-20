@@ -15,7 +15,7 @@ import numpy as np
 
 from agents.trainers.imitation_trainer import ImitationTrainer
 from configs.agents.supervised import SupervisedConfig
-from losses.basic_losses import MSELoss
+import torch.nn.functional as F
 from replay_buffers.sequence import Sequence
 
 
@@ -49,7 +49,7 @@ def create_config():
         "sl_adam_epsilon": 1e-8,
         "sl_weight_decay": 0.0,
         "sl_optimizer": torch.optim.Adam,
-        "sl_loss_function": MSELoss(),
+        "sl_loss_function": F.mse_loss,
         "sl_training_iterations": 1,
         "sl_clipnorm": 1.0,
         "sl_dense_layer_widths": [16],

@@ -34,16 +34,23 @@ def test_sequence_iterable():
 
     for i, t in enumerate(transitions):
         assert isinstance(t, Transition)
-        print(f"Step {i}: Action {t.action}, Reward {t.reward}, Done {t.done}")
+        print(
+            f"Step {i}: Action {t.action}, Reward {t.reward}, Terminated {t.terminated}, Truncated {t.truncated}"
+        )
 
         # Verify values
         assert t.action == actions[i]
         assert t.reward == rewards[i]
         if i < 2:
-            assert not t.done
+            assert not t.terminated
+            assert not t.truncated
             assert np.array_equal(t.next_observation, obs_list[i])
         else:
-            assert t.done
+            # By default append uses terminated=False, truncated=False
+            # But the last step in play_sequence would pass them.
+            # In this manual test we didn't pass them, so they should be False.
+            assert not t.terminated
+            assert not t.truncated
             assert np.array_equal(t.next_observation, obs_list[i])
 
     print("Test passed!")

@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import pytest
 from modules.world_models.inference_output import LearningOutput
+from replay_buffers.processors import MuZeroUnrollOutputProcessor
 
 
 def test_nstep_value_single_player():
@@ -42,7 +43,8 @@ def test_nstep_value_single_player():
         raw_rewards=raw_rewards,
         raw_values=raw_values,
         raw_to_plays=raw_to_plays,
-        raw_dones=raw_dones,
+        raw_terminated=raw_dones,
+        raw_truncated=torch.zeros_like(raw_dones),
         valid_mask=valid_mask,
         device="cpu",
     )
@@ -94,7 +96,8 @@ def test_nstep_value_multi_player():
         raw_rewards=raw_rewards,
         raw_values=raw_values,
         raw_to_plays=raw_to_plays,
-        raw_dones=raw_dones,
+        raw_terminated=raw_dones,
+        raw_truncated=torch.zeros_like(raw_dones),
         valid_mask=valid_mask,
         device="cpu",
     )
@@ -138,7 +141,8 @@ def test_value_prefix_logic():
         raw_rewards=raw_rewards,
         raw_values=torch.zeros((1, 6)),
         raw_to_plays=raw_to_plays,
-        raw_dones=torch.zeros((1, 6), dtype=torch.bool),
+        raw_terminated=torch.zeros((1, 6), dtype=torch.bool),
+        raw_truncated=torch.zeros((1, 6), dtype=torch.bool),
         valid_mask=valid_mask,
         device="cpu",
     )
@@ -186,7 +190,8 @@ def test_nstep_specific_user_case():
         raw_rewards=raw_rewards,
         raw_values=raw_values,
         raw_to_plays=raw_to_plays,
-        raw_dones=raw_dones,
+        raw_terminated=raw_dones,
+        raw_truncated=torch.zeros_like(raw_dones),
         valid_mask=valid_mask,
         device="cpu",
     )
@@ -207,3 +212,7 @@ def test_nstep_specific_user_case():
     # Total = -2.0 - 2.97 + 0.49005 = -4.47995
 
     assert pytest.approx(float(target_values[0, 1]), rel=1e-5) == -4.47995
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

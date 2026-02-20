@@ -3,7 +3,7 @@ from agents.trainers.muzero_trainer import MuZeroTrainer
 from configs.agents.muzero import MuZeroConfig
 from configs.games.cartpole import CartPoleConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
-from losses.basic_losses import CategoricalCrossentropyLoss
+import torch.nn.functional as F
 
 
 def action_as_onehot(action, num_actions):
@@ -41,11 +41,12 @@ def test_muzero_stochastic_cartpole_smoke():
         "games_per_generation": 1,
         "learning_rate": 0.001,
         "action_function": action_as_onehot,
-        "value_loss_function": CategoricalCrossentropyLoss(from_logits=True),
-        "reward_loss_function": CategoricalCrossentropyLoss(from_logits=True),
-        "policy_loss_function": CategoricalCrossentropyLoss(from_logits=True),
+        "value_loss_function": F.cross_entropy,
+        "reward_loss_function": F.cross_entropy,
+        "policy_loss_function": F.cross_entropy,
         "support_range": 31,
         "model_name": "smoke_test_stochastic",
+        "action_selector": {"base": {"type": "categorical"}},
     }
 
     config = MuZeroConfig(config_dict, game_config)

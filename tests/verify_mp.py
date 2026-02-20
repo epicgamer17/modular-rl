@@ -5,7 +5,7 @@ from trainers.muzero_trainer import MuZeroTrainer
 from configs.agents.muzero import MuZeroConfig
 from configs.games.cartpole_config import CartPoleConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
-from losses.basic_losses import CategoricalCrossentropyLoss
+import torch.nn.functional as F
 
 
 def action_as_onehot(action, num_actions):
@@ -44,9 +44,9 @@ def verify():
         "training_steps": 2,
         "games_per_generation": 1,
         "action_function": action_as_onehot,
-        "value_loss_function": CategoricalCrossentropyLoss(),
-        "reward_loss_function": CategoricalCrossentropyLoss(),
-        "policy_loss_function": CategoricalCrossentropyLoss(),
+        "value_loss_function": F.cross_entropy,
+        "reward_loss_function": F.cross_entropy,
+        "policy_loss_function": F.cross_entropy,
         "support_range": 31,
         "model_name": "verify_mp_trainer",
     }

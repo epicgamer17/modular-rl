@@ -3,7 +3,7 @@ from trainers.muzero_trainer import MuZeroTrainer
 from configs.agents.muzero import MuZeroConfig
 from configs.games.cartpole_config import CartPoleConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
-from losses.basic_losses import CategoricalCrossentropyLoss
+import torch.nn.functional as F
 from torch.optim import Adam
 
 
@@ -44,9 +44,9 @@ def verify_trainer_refactor():
         "learning_rate": 0.001,
         "optimizer": Adam,
         "action_function": action_as_onehot,
-        "value_loss_function": CategoricalCrossentropyLoss(),
-        "reward_loss_function": CategoricalCrossentropyLoss(),
-        "policy_loss_function": CategoricalCrossentropyLoss(),
+        "value_loss_function": F.cross_entropy,
+        "reward_loss_function": F.cross_entropy,
+        "policy_loss_function": F.cross_entropy,
         "support_range": 31,
         "model_name": "verify_trainer_refactor",
     }
