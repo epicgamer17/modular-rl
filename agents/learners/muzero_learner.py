@@ -91,8 +91,6 @@ class MuZeroLearner:
         self.loss_pipeline = create_muzero_loss_pipeline(
             config=self.config,
             device=self.device,
-            predict_initial_inference_fn=self.predict_initial_inference_fn,
-            preprocess_fn=self.preprocess_fn,
             model=self.model,
         )
 
@@ -165,39 +163,41 @@ class MuZeroLearner:
     def _learn_step(self, samples, stats=None):
         """Internal logic for a single backprop step."""
         start_time = time.time()
-        # Unpack data
-        observations = samples["observations"]
-        target_observations = samples["unroll_observations"].to(self.device)
-        target_policies = samples["policies"].to(self.device)
-        target_values = samples["values"].to(self.device)
-        target_rewards = samples["rewards"].to(self.device)
-        actions = samples["actions"].to(self.device)
-        target_to_plays = samples["to_plays"].to(self.device)
-        target_chance_codes = samples["chance_codes"].to(self.device)
-        dones = samples["dones"].to(self.device)
-        weights = samples["weights"].to(self.device)
 
-        # MASKS
-        has_valid_action_mask = ~dones
-        shifted_dones = torch.roll(dones, 1, dims=1)
-        shifted_dones[:, 0] = False
-        has_valid_obs_mask = ~shifted_dones
-
-        inputs = self.preprocess_fn(observations)
-        # Initial state computation is now handled inside learner_inference
-        # Update samples with preprocessed observations for the network
+        # 1. Preprocess observations
+        inputs = self.preprocess_fn(samples["observations"])
         samples["observations"] = inputs
 
-        gradient_scales = [1.0] + [
-            1.0 / self.config.unroll_steps
-        ] * self.config.unroll_steps
+        # 2. Extract Data and Masks
+        has_valid_obs_mask = samples["obs_mask"].to(self.device).bool()
+        has_valid_action_mask = samples["action_mask"].to(self.device).bool()
+        target_observations = samples["unroll_observations"].to(self.device)
 
-        # AgentProxy is no longer needed as AgentNetwork handles head application.
+        weights = samples["weights"].to(self.device).float()
 
-        # 2. Run Unroll (Learner Inference)
+        # 3. Calculate Gradient Scales
+        unroll_steps = self.config.unroll_steps
+        gradient_scales = [1.0] + [1.0 / unroll_steps] * unroll_steps
+        gradient_scales_tensor = torch.tensor(
+            gradient_scales, device=self.device
+        ).reshape(1, -1)
+
+        # 3. Run Unroll (Learner Inference)
         network_output = self.model.learner_inference(samples)
 
-        # Map UnrollOutput fields to predictions dictionary expected by loss pipeline
+        # 4. Extract Targets
+        target_values = samples["values"].to(self.device)
+        target_rewards = samples["rewards"].to(self.device)
+        target_policies = samples["policies"].to(self.device)
+        target_to_plays = samples["to_plays"].to(self.device)
+        target_chance_codes = samples["chance_codes"].to(
+            self.device
+        )  # Keep this for stochastic stats if needed
+        actions = samples["actions"].to(
+            self.device
+        )  # Keep this for latent viz if needed
+
+        # 5. Build Tensors for LossPipeline
         predictions_tensor = {
             "values": network_output.values,
             "policies": network_output.policies,
@@ -233,27 +233,27 @@ class MuZeroLearner:
             "rewards": target_rewards,
             "policies": target_policies,
             "to_plays": target_to_plays,
+            "latent_states": network_output.target_latents,
         }
 
         if self.config.stochastic:
-            targets_tensor["chance_values"] = torch.zeros_like(target_values)
-            targets_tensor["chance_values"][:, 1:] = target_values[:, :-1]
+            # Chance values target: v_{t+1} (or similar depending on implementation)
+            # For afterstate s_t^a, we predict v(s_{t+1}) or something similar.
+            # Usually it's v(s_{t+1}) but sign-flipped if multi-player.
+            targets_tensor["chance_values"] = target_values[:, 1:]
             if network_output.extras and "encoder_onehots" in network_output.extras:
                 targets_tensor["encoder_onehots"] = network_output.extras[
                     "encoder_onehots"
                 ]
 
-        gradient_scales_tensor = torch.tensor(
-            gradient_scales, device=self.device
-        ).reshape(1, -1)
-
+        # 7. Context for vectorized masking
         context = {
             "has_valid_obs_mask": has_valid_obs_mask,
             "has_valid_action_mask": has_valid_action_mask,
             "target_observations": target_observations,
         }
 
-        # Backpropagation
+        # 8. Backpropagation
         self.optimizer.zero_grad(set_to_none=True)
         loss_mean, loss_dict, priorities = self.loss_pipeline.run(
             predictions_tensor=predictions_tensor,

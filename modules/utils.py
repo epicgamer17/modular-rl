@@ -129,34 +129,23 @@ def support_to_scalar(
 def scalar_to_support(x: torch.Tensor | float, support_size: int, eps: float = 0.001):
     """
     Convert scalar(s) into a categorical (2*support_size+1)-vector on the MuZero transformed scale.
-
-    Args:
-        x: scalar (float or 0-dim tensor) or 1D tensor of shape (B,).
-        support_size: integer support size.
-        eps: small epsilon used by MuZero (default 0.001).
-
-    Returns:
-        Tensor of shape (L,) (if input scalar) or (B, L) for batched inputs,
-        where L == 2*support_size + 1. Values are non-negative and sum to 1 per row.
+    Handles tensors of arbitrary shape, returning (..., 2*support_size+1).
     """
     if not torch.is_tensor(x):
         x = torch.tensor(x, dtype=torch.float32)
 
-    x = x.to(dtype=torch.float32)
-    squeeze_input = False
-    if x.dim() == 0:
-        x = x.unsqueeze(0)  # (1,)
-        squeeze_input = True
+    original_shape = x.shape
+    x_flat = x.reshape(-1)
 
-    device = x.device
-    batch = x.shape[0]
+    device = x_flat.device
+    num_elements = x_flat.shape[0]
     L = 2 * support_size + 1
 
     # forward transform from MuZero appendix:
     # f(x) = sign(x) * (sqrt(|x| + 1) - 1) + eps * x
-    sign = torch.sign(x)
-    abs_x = torch.abs(x)
-    x_trans = sign * (torch.sqrt(abs_x + 1.0) - 1.0) + eps * x
+    sign = torch.sign(x_flat)
+    abs_x = torch.abs(x_flat)
+    x_trans = sign * (torch.sqrt(abs_x + 1.0) - 1.0) + eps * x_flat
 
     # clamp into support range
     x_trans = torch.clamp(x_trans, -support_size, support_size)
@@ -164,28 +153,25 @@ def scalar_to_support(x: torch.Tensor | float, support_size: int, eps: float = 0
     floor = torch.floor(x_trans)
     prob = x_trans - floor  # fractional part, in [0,1)
 
-    out = torch.zeros((batch, L), device=device, dtype=torch.float32)
+    out = torch.zeros((num_elements, L), device=device, dtype=torch.float32)
 
     idx_lower = (floor + support_size).long()  # index for floor
-    idx_upper = idx_lower + 1  # index for floor+1 (may be out of bounds)
+    idx_upper = idx_lower + 1  # index for floor+1
 
-    batch_idx = torch.arange(batch, device=device)
+    flat_idx = torch.arange(num_elements, device=device)
 
     # assign (1 - frac) to floor bin
-    out[batch_idx, idx_lower] = 1.0 - prob
+    out[flat_idx, idx_lower] = 1.0 - prob
 
-    # assign frac to upper bin only if upper bin is within range
+    # assign frac to upper bin if within range
     valid_upper_mask = idx_upper <= (L - 1)
     if valid_upper_mask.any():
-        valid_batch_idx = batch_idx[valid_upper_mask]
-        valid_upper_idx = idx_upper[valid_upper_mask]
-        valid_prob = prob[valid_upper_mask]
-        out[valid_batch_idx, valid_upper_idx] = valid_prob
+        out[flat_idx[valid_upper_mask], idx_upper[valid_upper_mask]] = prob[
+            valid_upper_mask
+        ]
 
-    # for cases where floor == support_size (i.e., at upper boundary), all mass already on lower bin
-    if squeeze_input:
-        return out.squeeze(0)  # shape (L,)
-    return out  # shape (B, L)
+    # Reshape back to original shape + support dimension
+    return out.view(*original_shape, L)
 
 
 # def support_to_scalar(probabilities, support_size):

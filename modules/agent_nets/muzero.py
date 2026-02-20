@@ -231,7 +231,7 @@ class MuZeroNetwork(BaseAgentNetwork):
         # Wrap everything in a unique opaque state
         network_state_after = {
             "dynamics": wm_output.afterstate_features,
-            "wm_memory": network_state.wm_memory,  # Pass through memory
+            "wm_memory": network_state["wm_memory"],  # Pass through memory
         }
 
         return InferenceOutput(
@@ -251,6 +251,7 @@ class MuZeroNetwork(BaseAgentNetwork):
         # 1. Prepare Inputs
         initial_observation = batch["observations"]
         actions = batch["actions"]
+        target_observations = batch.get("unroll_observations")
         target_chance_codes = batch.get("target_chance_codes")
 
         if initial_observation is None or actions is None:
@@ -262,9 +263,13 @@ class MuZeroNetwork(BaseAgentNetwork):
         head_state = wm_output.head_state
 
         # TODO: MAKE SURE THIS IS CORRECT
-        encoder_inputs = torch.concat(
-            [initial_observation[:, :-1], initial_observation[:, 1:]], dim=1
-        )
+        encoder_inputs = None
+        if self.config.stochastic and target_observations is not None:
+            # Encoder expects concatenated current and next observations along channels
+            # target_observations: [B, T+1, C, H, W]
+            encoder_inputs = torch.cat(
+                [target_observations[:, :-1], target_observations[:, 1:]], dim=2
+            )
 
         # 3. Unroll Physics
         physics_output = self.world_model.unroll_physics(
@@ -273,13 +278,13 @@ class MuZeroNetwork(BaseAgentNetwork):
             encoder_inputs=encoder_inputs,
             true_chance_codes=target_chance_codes,
             head_state=head_state,
+            target_observations=target_observations,
         )
 
         # 4. Pass sequence through Agent Heads
         stacked_latents = physics_output.latents
-        # We can crush time dimension to batch dimension for efficiency
-        B, T = stacked_latents.shape[:2]
-        flat_latents = stacked_latents.reshape(B * T, *stacked_latents.shape[2:])
+        B, T_plus_1 = stacked_latents.shape[:2]
+        flat_latents = stacked_latents.reshape(B * T_plus_1, *stacked_latents.shape[2:])
 
         # Shared prediction backbone
         pred_features = self.prediction_backbone(flat_latents)
@@ -288,8 +293,8 @@ class MuZeroNetwork(BaseAgentNetwork):
         raw_policies, _, _ = self.policy_head(pred_features)
 
         # Uncrush
-        raw_values = raw_values.view(B, T, -1)
-        raw_policies = raw_policies.view(B, T, -1)
+        raw_values = raw_values.view(B, T_plus_1, -1)
+        raw_policies = raw_policies.view(B, T_plus_1, -1)
 
         # Rewards and ToPlays are already stacked tensors from unroll_physics
         stacked_rewards = physics_output.rewards
@@ -307,14 +312,14 @@ class MuZeroNetwork(BaseAgentNetwork):
             # 2. Extract Shared Backbone Features - Already stacked
             stacked_backbone_features = physics_output.afterstate_backbone_features
 
-            B_as, T_as = stacked_backbone_features.shape[:2]
+            B_as, T_plus_1_as = stacked_backbone_features.shape[:2]
             flat_backbone = stacked_backbone_features.view(
-                B_as * T_as, *stacked_backbone_features.shape[2:]
+                B_as * T_plus_1_as, *stacked_backbone_features.shape[2:]
             )
 
             # 3. Predict Afterstate Values
             raw_chance_values, _ = self.afterstate_value_head(flat_backbone)
-            chance_values = raw_chance_values.view(B_as, T_as, -1)
+            chance_values = raw_chance_values.view(B_as, T_plus_1_as, -1)
 
             # 4. Use Chance Logits directly from physics loop
             chance_logits = physics_output.chance_logits
@@ -335,6 +340,7 @@ class MuZeroNetwork(BaseAgentNetwork):
             latents_afterstates=latents_afterstates,
             chance_logits=chance_logits,
             chance_values=chance_values,
+            target_latents=physics_output.target_latents,
             extras=extras if extras else None,
         )
 
@@ -343,13 +349,23 @@ class MuZeroNetwork(BaseAgentNetwork):
         Projects the hidden state (s_t) into the embedding space.
         Used for both the 'real' target observation and the 'predicted' latent.
         """
-        # Flatten the spatial dimensions (B, C, H, W) -> (B, C*H*W)
-        flat_hidden = hidden_state.flatten(1, -1)
+        # Save original shape to restore later
+        original_shape = hidden_state.shape
+        # Flatten the spatial/latent dimensions (C, H, W) or (H,)
+        # Ensure we keep the leading batch/sequence dimensions
+        flat_hidden = hidden_state.reshape(-1, self.flat_hidden_dim)
         proj = self.projector.projection(flat_hidden)
 
         # with grad, use proj_head
         if grad:
             proj = self.projector.projection_head(proj)
-            return proj
         else:
-            return proj.detach()
+            proj = proj.detach()
+
+        # Restore leading shape: (B, T, embedding_dim) or (B, embedding_dim)
+        # We replace the latent_shape part with embedding_dim
+        # hidden_state_shape could be (C, H, W) (3 dims) or (H,) (1 dim)
+        hidden_state_shape = self.world_model.representation.output_shape
+        num_latent_dims = len(hidden_state_shape)
+        new_shape = list(original_shape[:-num_latent_dims]) + [proj.shape[-1]]
+        return proj.reshape(new_shape)

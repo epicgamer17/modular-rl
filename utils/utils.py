@@ -60,14 +60,26 @@ def action_mask(
     # ), "Legal moves should be the same length as the batch size"
     # print(legal_moves, actions.shape)
     mask = torch.zeros_like(actions, dtype=torch.bool).to(device)
-    for i, legal in enumerate(legal_moves):
-        mask[i, legal] = True
-    # print(mask)
-    # print(actions)
-    # actions[mask == 0] = mask_value
-    actions = torch.where(mask, actions, torch.tensor(mask_value).to(device)).to(device)
-    # print(mask)
 
+    if actions.dim() == 1:
+        # Single item masking
+        # legal_moves should be a list of indices
+        if isinstance(legal_moves, (list, np.ndarray, torch.Tensor)):
+            mask[legal_moves] = True
+        else:
+            raise ValueError(
+                f"For 1D actions, legal_moves must be an iterable of indices, got {type(legal_moves)}"
+            )
+    elif actions.dim() == 2:
+        # Batch masking
+        # legal_moves should be a list of lists/iterables
+        for i, legal in enumerate(legal_moves):
+            if legal is not None:
+                mask[i, legal] = True
+    else:
+        raise ValueError(f"action_mask expects 1D or 2D tensor, got {actions.dim()}D")
+
+    actions = torch.where(mask, actions, torch.tensor(mask_value).to(device)).to(device)
     return actions
 
 

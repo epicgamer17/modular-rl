@@ -143,7 +143,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         if observation.dim() == len(self.representation.input_shape):
             observation = observation.unsqueeze(0)
 
-        hidden_state = self.representation(observation)
+        hidden_state = self.representation(observation.float())
         return WorldModelOutput(features=hidden_state)
 
     def recurrent_inference(
@@ -219,6 +219,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         encoder_inputs: Tensor,
         true_chance_codes: Tensor,
         head_state: Any,
+        target_observations: Optional[Tensor] = None,
     ) -> PhysicsOutput:
         """
         Unrolls the dynamics for K steps given actions.
@@ -345,12 +346,8 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         # Stack everything here to avoid returning lists of tensors
         stacked_latents = torch.stack(latent_states, dim=1)
 
-        # Pad rewards to length T+1 (add dummy at index 0)
-        if rewards:
-            rew_pad = torch.zeros_like(rewards[0]).unsqueeze(1)
-            stacked_rewards = torch.cat([rew_pad, torch.stack(rewards, dim=1)], dim=1)
-        else:
-            stacked_rewards = torch.empty(0)
+        # Rewards: size K (1...K)
+        stacked_rewards = torch.stack(rewards, dim=1) if rewards else torch.empty(0)
 
         stacked_to_plays = torch.stack(to_plays, dim=1) if to_plays else torch.empty(0)
 
@@ -361,18 +358,39 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         stacked_onehots = None
 
         if self.config.stochastic:
-            # Pad stochastic fields as well (add dummy at index 0)
-            def pad_stochastic(tensor_list):
-                if not tensor_list:
-                    return None
-                pad = torch.zeros_like(tensor_list[0]).unsqueeze(1)
-                return torch.cat([pad, torch.stack(tensor_list, dim=1)], dim=1)
+            stacked_afterstates = (
+                torch.stack(latent_afterstates, dim=1) if latent_afterstates else None
+            )
+            stacked_chance_logits = (
+                torch.stack(latent_code_probabilities, dim=1)
+                if latent_code_probabilities
+                else None
+            )
+            stacked_backbone = (
+                torch.stack(afterstate_backbone_features, dim=1)
+                if afterstate_backbone_features
+                else None
+            )
+            stacked_softmaxes = (
+                torch.stack(encoder_softmaxes, dim=1) if encoder_softmaxes else None
+            )
+            stacked_onehots = (
+                torch.stack(encoder_onehots, dim=1) if encoder_onehots else None
+            )
 
-            stacked_afterstates = pad_stochastic(latent_afterstates)
-            stacked_chance_logits = pad_stochastic(latent_code_probabilities)
-            stacked_backbone = pad_stochastic(afterstate_backbone_features)
-            stacked_softmaxes = pad_stochastic(encoder_softmaxes)
-            stacked_onehots = pad_stochastic(encoder_onehots)
+        # 7. Compute target latents for consistency loss if requested
+        stacked_target_latents = None
+        if target_observations is not None:
+            B_target, T_plus_1_target = target_observations.shape[:2]
+            flat_target_obs = target_observations.reshape(
+                B_target * T_plus_1_target, *target_observations.shape[2:]
+            )
+            # Encode target observations
+            with torch.no_grad():
+                target_latents = self.representation(flat_target_obs.float())
+                stacked_target_latents = target_latents.view(
+                    B_target, T_plus_1_target, *target_latents.shape[1:]
+                )
 
         return PhysicsOutput(
             latents=stacked_latents,
@@ -383,6 +401,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             afterstate_backbone_features=stacked_backbone,
             encoder_softmaxes=stacked_softmaxes,
             encoder_onehots=stacked_onehots,
+            target_latents=stacked_target_latents,
         )
 
     def get_networks(self) -> Dict[str, nn.Module]:
