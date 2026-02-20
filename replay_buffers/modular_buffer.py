@@ -40,6 +40,9 @@ class ModularReplayBuffer:
         self.batch_size: int = batch_size if batch_size is not None else max_size
 
         self.buffer_configs = buffer_configs
+        self._buffer_fill_values = {
+            config.name: config.fill_value for config in buffer_configs
+        }
         self.backend = backend if backend is not None else LocalBackend()
 
         # 2. Initialize Buffers dynamically
@@ -197,19 +200,34 @@ class ModularReplayBuffer:
                     slice_len = sl.stop - sl.start
                     rng = sl
 
+                    # Reset the destination slice to configured defaults first.
+                    # This keeps partial sequence writes safe when some keys have
+                    # transition-length data (T) instead of state-length data (T+1).
+                    for key, buffer in self.buffers.items():
+                        buffer[rng] = self._buffer_fill_values.get(key, 0)
+
                     for key, tensor_data in data.items():
                         # Only write if we have a matching buffer
                         if key in self.buffers:
-                            # Slice the input data (tensor_data) matching the buffer slice
-                            batch_slice = tensor_data[
-                                data_offset : data_offset + slice_len
-                            ]
+                            if isinstance(tensor_data, np.ndarray):
+                                tensor_data = torch.from_numpy(tensor_data)
 
-                            # Handle Numpy/Torch mismatch
-                            if isinstance(batch_slice, np.ndarray):
-                                batch_slice = torch.from_numpy(batch_slice)
+                            data_len = (
+                                tensor_data.shape[0]
+                                if hasattr(tensor_data, "shape")
+                                else len(tensor_data)
+                            )
+                            src_start = data_offset
+                            src_stop = min(data_offset + slice_len, data_len)
+                            if src_stop <= src_start:
+                                continue
 
-                            self.buffers[key][rng] = batch_slice
+                            # Slice only available source data; leave the rest as fill.
+                            batch_slice = tensor_data[src_start:src_stop]
+                            write_len = src_stop - src_start
+                            dst = slice(rng.start, rng.start + write_len)
+
+                            self.buffers[key][dst] = batch_slice
 
                     data_offset += slice_len
 
@@ -318,9 +336,9 @@ class ModularReplayBuffer:
                 self.writer.clear()
                 self.input_processor.clear()  # Clear processor state if necessary
                 self.output_processor.clear()  # Clear output processor state if necessary
-                # Zero out buffers
-                for buf in self.buffers.values():
-                    buf.zero_()
+                # Reset buffers to configured defaults.
+                for key, buf in self.buffers.items():
+                    buf.fill_(self._buffer_fill_values.get(key, 0))
 
                 if "ids" in self.buffers:
                     self._next_id.zero_()

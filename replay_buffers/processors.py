@@ -344,6 +344,11 @@ class MuZeroSequenceInputProcessor(InputProcessor):
         # 1. Prepare Observations
         obs_history = sequence.observation_history
         n_states = len(obs_history)
+        n_transitions = len(sequence.action_history)
+        if n_transitions + 1 != n_states:
+            raise ValueError(
+                "observation_history must have exactly one more entry than action_history"
+            )
         if len(sequence.terminated_history) != n_states:
             raise ValueError(
                 "Sequence terminated_history length must equal observation_history length"
@@ -358,66 +363,61 @@ class MuZeroSequenceInputProcessor(InputProcessor):
             )
         obs_tensor = torch.from_numpy(np.stack(obs_history))  # .to(self.device)
 
-        # 2. Prepare & Pad Actions, Rewards, Policies
-        # Actions
-        acts_raw = torch.tensor(sequence.action_history, dtype=torch.float16)
-        acts_pad = torch.zeros(1, dtype=torch.float16)
-        acts_t = torch.cat([acts_raw, acts_pad])
+        # 2. Prepare transition-aligned tensors (no algorithm-specific padding here).
+        acts_t = torch.tensor(sequence.action_history, dtype=torch.float16)
+        rews_t = torch.tensor(sequence.rewards, dtype=torch.float32)
 
-        # Rewards
-        rews_raw = torch.tensor(sequence.rewards, dtype=torch.float32)
-        rews_pad = torch.zeros(1, dtype=torch.float32)
-        rews_t = torch.cat([rews_raw, rews_pad])
-
-        # Policies
-        pols_raw = (
-            torch.stack([p.detach() for p in sequence.policy_history]).cpu().float()
-        )
-        pols_pad = (
-            torch.ones((1, self.num_actions), dtype=torch.float32) / self.num_actions
-        )
-        pols_t = torch.cat([pols_raw, pols_pad])
+        if sequence.policy_history:
+            pols_t = torch.stack(
+                [p.detach() if torch.is_tensor(p) else torch.as_tensor(p) for p in sequence.policy_history]
+            ).cpu().float()
+        else:
+            pols_t = torch.empty((0, self.num_actions), dtype=torch.float32)
 
         # Values
         vals_t = torch.tensor(sequence.value_history, dtype=torch.float32)
-        if len(vals_t) == len(sequence.action_history):
-            vals_t = torch.cat([vals_t, torch.zeros(1, dtype=torch.float32)])
 
         # To Plays
-        to_plays = [i.get("player", 0) for i in sequence.info_history]
-        if len(to_plays) < n_states:
-            to_plays = to_plays + [0] * (n_states - len(to_plays))
-        tps_t = torch.tensor(to_plays[:n_states], dtype=torch.int16)
+        tps_t = torch.tensor(
+            [
+                (sequence.info_history[i] if i < len(sequence.info_history) else {}).get(
+                    "player", 0
+                )
+                for i in range(n_states)
+            ],
+            dtype=torch.int16,
+        )
 
         # Chances
-        chances = [i.get("chance", 0) for i in sequence.info_history]
-        if len(chances) < n_states:
-            chances = chances + [0] * (n_states - len(chances))
-        chance_t = torch.tensor(chances[:n_states], dtype=torch.int16).unsqueeze(1)
+        chance_t = torch.tensor(
+            [
+                (sequence.info_history[i] if i < len(sequence.info_history) else {}).get(
+                    "chance", 0
+                )
+                for i in range(n_states)
+            ],
+            dtype=torch.int16,
+        ).unsqueeze(1)
 
         # Legal Moves Mask
-        legal_masks = []
-        n_transitions = len(sequence.action_history)
-        for i in range(n_transitions):
-            moves = sequence.info_history[i].get("legal_moves", [])
-            legal_masks.append(legal_moves_mask(self.num_actions, moves))
-        # Terminal state mask: All False
-        legal_masks.append(torch.zeros(self.num_actions, dtype=torch.bool))
-        legal_masks_t = torch.stack(legal_masks)
+        legal_masks_t = torch.stack(
+            [
+                legal_moves_mask(
+                    self.num_actions,
+                    (
+                        sequence.info_history[i]
+                        if i < len(sequence.info_history)
+                        else {}
+                    ).get("legal_moves", []),
+                )
+                for i in range(n_states)
+            ]
+        )
 
         # Episode end signals per state
-        terminated = list(sequence.terminated_history)
-        truncated = list(sequence.truncated_history)
-        dones = list(sequence.done_history)
-        if len(terminated) < n_states:
-            terminated = terminated + [False] * (n_states - len(terminated))
-        if len(truncated) < n_states:
-            truncated = truncated + [False] * (n_states - len(truncated))
-        if len(dones) < n_states:
-            dones = dones + [False] * (n_states - len(dones))
-        terminated_t = torch.tensor(terminated[:n_states], dtype=torch.bool)
-        truncated_t = torch.tensor(truncated[:n_states], dtype=torch.bool)
-        dones_t = torch.tensor(dones[:n_states], dtype=torch.bool)
+        terminated_t = torch.tensor(sequence.terminated_history, dtype=torch.bool)
+        truncated_t = torch.tensor(sequence.truncated_history, dtype=torch.bool)
+        dones_t = torch.tensor(sequence.done_history, dtype=torch.bool)
 
         return {
             "observations": obs_tensor,
