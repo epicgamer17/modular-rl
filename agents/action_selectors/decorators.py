@@ -38,11 +38,22 @@ class PPODecorator(BaseActionSelector):
         )
 
         # 3. Inject PPO metadata
-        # We assume network_output.policy is a Distribution or has log_prob
-        metadata["log_prob"] = network_output.policy.log_prob(action).detach().cpu()
+        # Use the (potentially masked) distribution from metadata if available,
+        # otherwise fallback to the one in network_output.
+        dist = metadata.get("dist")
+        metadata["log_prob"] = dist.log_prob(action).detach().cpu()
         metadata["value"] = network_output.value.detach().cpu()
 
         return action, metadata
+
+    def mask_actions(
+        self,
+        values: torch.Tensor,
+        legal_moves: Any,
+        mask_value: float = -float("inf"),
+        device: Optional[torch.device] = None,
+    ) -> torch.Tensor:
+        return self.inner_selector.mask_actions(values, legal_moves, mask_value, device)
 
     def update_parameters(self, params_dict: Dict[str, Any]) -> None:
         """
@@ -169,6 +180,15 @@ class MCTSDecorator(BaseActionSelector):
         }
 
         return action, metadata
+
+    def mask_actions(
+        self,
+        values: torch.Tensor,
+        legal_moves: Any,
+        mask_value: float = -float("inf"),
+        device: Optional[torch.device] = None,
+    ) -> torch.Tensor:
+        return self.inner_selector.mask_actions(values, legal_moves, mask_value, device)
 
     def update_parameters(self, params_dict: Dict[str, Any]) -> None:
         self.inner_selector.update_parameters(params_dict)

@@ -157,6 +157,75 @@ class TestActionSelectors(unittest.TestCase):
         else:
             self.fail("select_action should have called sample() with exploration=True")
 
+    def test_categorical_selector_masking(self):
+        """Test that CategoricalSelector respects the action mask."""
+        selector = CategoricalSelector(exploration=True)
+        # Probabilities: [0.1, 0.2, 0.7] -> argmax is 2
+        logits = torch.tensor([[1.0, 2.0, 3.4]])  # Logits for [0.1, 0.2, 0.7] approx
+        probs = torch.softmax(logits, dim=-1)
+
+        from torch.distributions import Categorical
+
+        output = InferenceOutput(
+            value=torch.tensor([0.0]), policy=Categorical(logits=logits)
+        )
+
+        # Mask out index 2 (the most likely one)
+        info = {"legal_moves": [[0, 1]]}
+
+        # If it doesn't mask, it will likely pick 2 (70% of the time, but deterministic for argmax)
+        # Since we use exploration=True, result is stochastic. Let's force exploration=False for deterministic test.
+        action, _ = selector.select_action(
+            self.agent_network,
+            self.obs,
+            info=info,
+            network_output=output,
+            exploration=False,
+        )
+
+        # Currently this will FAIL (it will return 2) if masking is not implemented.
+        self.assertIn(
+            action.item(), [0, 1], f"Action {action.item()} should be in [0, 1]"
+        )
+
+    def test_categorical_selector_unmasked_log_prob(self):
+        """Test that PPODecorator uses the masked distribution for log_probs."""
+        from agents.action_selectors.decorators import PPODecorator
+        from torch.distributions import Categorical
+
+        base_selector = CategoricalSelector(exploration=False)
+        selector = PPODecorator(base_selector)
+
+        logits = torch.tensor([[1.0, 2.0, 3.0]])  # Probs are [.09, .24, .67]
+        output = InferenceOutput(
+            value=torch.tensor([0.0]), policy=Categorical(logits=logits)
+        )
+
+        # Mask out 2. New probs should be [.09/(.09+.24), .24/(.09+.24), 0] -> approx [0.27, 0.73, 0]
+        # Argmax should be 1.
+        info = {"legal_moves": [[0, 1]]}
+
+        action, meta = selector.select_action(
+            self.agent_network,
+            self.obs,
+            info=info,
+            network_output=output,
+            exploration=False,
+        )
+
+        self.assertEqual(action.item(), 1)
+        # The log_prob should be against the MASKED distribution.
+        # If unmasked: log(0.24) = -1.42
+        # If masked: log(0.73) = -0.31
+
+        # This test will also fail currently because log_prob will be calculated against original dist.
+        unmasked_dist = Categorical(logits=logits)
+        unmasked_log_prob = unmasked_dist.log_prob(action)
+
+        # We want it to be DIFFERENT from unmasked log_prob (if masking worked)
+        # But for now we just want to see it fail or record current state.
+        self.assertNotEqual(meta["log_prob"].item(), unmasked_log_prob.item())
+
     def test_nested_decorators_exploration_passing(self):
         """Test that decorators pass exploration arg down."""
 

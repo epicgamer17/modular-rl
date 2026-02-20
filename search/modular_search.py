@@ -13,7 +13,7 @@ from search.nodes import ChanceNode, DecisionNode
 from search.min_max_stats import MinMaxStats
 from search.prior_injectors import PriorInjector
 from search.root_policies import RootPolicyStrategy
-from utils.utils import action_mask, get_legal_moves
+from utils.utils import get_legal_moves
 from search.pruners import PruningMethod
 from modules.agent_nets.base import BaseAgentNetwork
 
@@ -83,7 +83,9 @@ class SearchAlgorithm:
             legal_moves = [list(range(self.num_actions))]
 
         # TODO: should i action mask?
-        policy = action_mask(policy, legal_moves, device=self.device)
+        policy = self.root_selection_strategy.mask_actions(
+            policy, legal_moves, device=self.device
+        )
 
         legal_moves = legal_moves[0]
         policy = policy[0]
@@ -173,7 +175,7 @@ class SearchAlgorithm:
 
         # Mask target policy if required by pruning method (e.g. for Sequential Halving)
         if self.pruning_method.mask_target_policy:
-            target_policy = action_mask(
+            target_policy = self.root_selection_strategy.mask_actions(
                 target_policy.unsqueeze(0), [legal_moves]
             ).squeeze(0)
 
@@ -751,9 +753,7 @@ class SearchAlgorithm:
         if afterstate_inputs:
             # 1. Batch opaque states
             full_after_states = [x["state"] for x in afterstate_inputs]
-            batched_after_states = agent_network.batch_network_states(
-                full_after_states
-            )
+            batched_after_states = agent_network.batch_network_states(full_after_states)
 
             actions = (
                 torch.tensor([x["action"] for x in afterstate_inputs])

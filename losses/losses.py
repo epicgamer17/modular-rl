@@ -132,11 +132,13 @@ class StandardDQNLoss(LossModule):
                 next_actions = torch.stack(next_actions).squeeze()
             else:
                 # Fallback: simple greedy with masking
-                from utils.utils import action_mask
+                from agents.action_selectors.selectors import ArgmaxSelector
+
+                selector = ArgmaxSelector()
 
                 masked_q = torch.stack(
                     [
-                        action_mask(
+                        selector.mask_actions(
                             curr_next_q[i],
                             next_infos[i].get(
                                 "legal_moves", list(range(curr_next_q.shape[-1]))
@@ -154,7 +156,9 @@ class StandardDQNLoss(LossModule):
             max_q_next = target_next_q[range(self.config.minibatch_size), next_actions]
 
             # 3. Bellman Calculation
-            targets = rewards + self.config.discount_factor * (~terminal_mask) * max_q_next
+            targets = (
+                rewards + self.config.discount_factor * (~terminal_mask) * max_q_next
+            )
 
         # POPULATE
         context["target_q_values"] = targets
@@ -581,7 +585,9 @@ class SigmaLoss(LossModule):
         # Default config uses cross entropy (logits + class index). Keep one-hot fallback
         # for custom losses expecting distribution targets.
         if self.config.sigma_loss == F.cross_entropy:
-            sigma_loss = self.config.sigma_loss(latent_code_probabilities_k, target_codes_k)
+            sigma_loss = self.config.sigma_loss(
+                latent_code_probabilities_k, target_codes_k
+            )
         else:
             encoder_onehot_k_plus_1 = F.one_hot(
                 target_codes_k, num_classes=latent_code_probabilities_k.shape[-1]
@@ -808,7 +814,9 @@ class LossPipeline:
 
         return loss_mean, loss_dict, priorities
 
-    def _extract_step_data(self, tensor_dict: dict, k: int, expected_steps: int) -> dict:
+    def _extract_step_data(
+        self, tensor_dict: dict, k: int, expected_steps: int
+    ) -> dict:
         """
         Extract data for unroll step `k`.
 
@@ -830,7 +838,9 @@ class LossPipeline:
                     step_data[key] = tensor[:, k - 1]
         return step_data
 
-    def _can_compute_module(self, module: LossModule, predictions: dict, targets: dict) -> bool:
+    def _can_compute_module(
+        self, module: LossModule, predictions: dict, targets: dict
+    ) -> bool:
         required_predictions = {
             "ValueLoss": {"values"},
             "PolicyLoss": {"policies"},

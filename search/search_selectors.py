@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Any
 import numpy as np
 import torch
 from search.nodes import ChanceNode, DecisionNode
@@ -10,6 +10,19 @@ import torch.nn.functional as F
 class SelectionStrategy(ABC):
     @abstractmethod
     def select_child(self, node, min_max_stats, pruned_searchset=None):
+        pass
+
+    @abstractmethod
+    def mask_actions(
+        self,
+        values: torch.Tensor,
+        legal_moves: Any,
+        mask_value: float = -float("inf"),
+        device: Optional[torch.device] = None,
+    ) -> torch.Tensor:
+        """
+        Masks illegal actions in the given values (logits or scores).
+        """
         pass
 
 
@@ -35,12 +48,7 @@ class TopScoreSelection(SelectionStrategy):
 
         # Masking for pruned_searchset
         if pruned_searchset is not None:
-            # Create a mask for allowed actions
-            # Ideally pruned_searchset should be a boolean mask tensor for efficiency
-            # But if it's a list, we must convert.
-            mask = torch.full_like(scores, -float("inf"))
-            mask[pruned_searchset] = 0
-            scores = scores + mask
+            scores = self.mask_actions(scores, pruned_searchset)
 
         # Find max score
         max_score = torch.max(scores)
@@ -79,6 +87,35 @@ class TopScoreSelection(SelectionStrategy):
 
         return action, node.get_child(action)
 
+    def mask_actions(
+        self,
+        values: torch.Tensor,
+        legal_moves: Any,
+        mask_value: float = -float("inf"),
+        device: Optional[torch.device] = None,
+    ) -> torch.Tensor:
+        if device is None:
+            device = values.device
+
+        mask = torch.full_like(values, mask_value, device=device)
+
+        if values.dim() == 1:
+            if isinstance(legal_moves, (list, np.ndarray, torch.Tensor)):
+                mask[legal_moves] = 0
+            else:
+                # Assuming legal_moves is already a list of indices
+                mask[legal_moves] = 0
+        elif values.dim() == 2:
+            for i, legal in enumerate(legal_moves):
+                if legal is not None:
+                    mask[i, legal] = 0
+        else:
+            raise ValueError(
+                f"mask_actions expects 1D or 2D tensor, got {values.dim()}D"
+            )
+
+        return values + mask
+
 
 class SamplingSelection(SelectionStrategy):
     """
@@ -100,9 +137,7 @@ class SamplingSelection(SelectionStrategy):
             scores = self.scoring_method.get_scores(node, min_max_stats)
 
             if pruned_searchset is not None:
-                mask = torch.full_like(scores, -float("inf"))
-                mask[pruned_searchset] = 0
-                scores = scores + mask
+                scores = self.mask_actions(scores, pruned_searchset)
 
             if self.temperature == 0:
                 action = torch.argmax(scores).item()
@@ -145,3 +180,25 @@ class SamplingSelection(SelectionStrategy):
 
             # Return scalar code now (modular_search will handle one-hot conversion if needed)
             return code, node.get_child(code)
+
+    def mask_actions(
+        self,
+        values: torch.Tensor,
+        legal_moves: Any,
+        mask_value: float = -float("inf"),
+        device: Optional[torch.device] = None,
+    ) -> torch.Tensor:
+        # For scores, we use additive masking by default (assuming logits or similar)
+        if device is None:
+            device = values.device
+
+        mask = torch.full_like(values, mask_value, device=device)
+
+        if values.dim() == 1:
+            mask[legal_moves] = 0
+        elif values.dim() == 2:
+            for i, legal in enumerate(legal_moves):
+                if legal is not None:
+                    mask[i, legal] = 0
+
+        return values + mask

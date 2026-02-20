@@ -207,7 +207,7 @@ class RainbowLearner(BaseLearner):
         Returns:
             Tensor of selected action indices of shape (B,).
         """
-        from utils.utils import get_legal_moves, action_mask
+        from utils.utils import get_legal_moves
 
         # For distributional RL, reduce atoms to Q-values
         if self.config.atom_size > 1:
@@ -223,7 +223,7 @@ class RainbowLearner(BaseLearner):
             for i in range(batch_size):
                 legal_moves = info[i].get("legal_moves", None)
                 if legal_moves is not None and len(legal_moves) > 0:
-                    masked_q = action_mask(
+                    masked_q = self.training_selector.mask_actions(
                         q_values[i],
                         legal_moves,
                         mask_value=-float("inf"),

@@ -41,48 +41,6 @@ def legal_moves_mask(num_actions: int, legal_moves, device="cpu"):
     return mask.float()
 
 
-def action_mask(
-    actions: Tensor, legal_moves, mask_value: float = 0, device="cpu"
-) -> Tensor:
-    """
-    Mask actions that are not legal moves
-    actions: Tensor, probabilities of actions or q-values
-    """
-    assert isinstance(
-        legal_moves, list
-    ), "Legal moves should be a list got {} of type {}".format(
-        legal_moves, type(legal_moves)
-    )
-    # add a dimension if the legal moves are not a list of lists
-
-    # assert (
-    #     len(legal_moves) == actions.shape[0]
-    # ), "Legal moves should be the same length as the batch size"
-    # print(legal_moves, actions.shape)
-    mask = torch.zeros_like(actions, dtype=torch.bool).to(device)
-
-    if actions.dim() == 1:
-        # Single item masking
-        # legal_moves should be a list of indices
-        if isinstance(legal_moves, (list, np.ndarray, torch.Tensor)):
-            mask[legal_moves] = True
-        else:
-            raise ValueError(
-                f"For 1D actions, legal_moves must be an iterable of indices, got {type(legal_moves)}"
-            )
-    elif actions.dim() == 2:
-        # Batch masking
-        # legal_moves should be a list of lists/iterables
-        for i, legal in enumerate(legal_moves):
-            if legal is not None:
-                mask[i, legal] = True
-    else:
-        raise ValueError(f"action_mask expects 1D or 2D tensor, got {actions.dim()}D")
-
-    actions = torch.where(mask, actions, torch.tensor(mask_value).to(device)).to(device)
-    return actions
-
-
 def clip_low_prob_actions(actions: Tensor, low_prob: float = 0.01) -> Tensor:
     """
     Clip actions with probability lower than low_prob to 0 and re-normalize.
