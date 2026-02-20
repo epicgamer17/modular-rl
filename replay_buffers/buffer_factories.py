@@ -14,7 +14,6 @@ from replay_buffers.processors import (
     ToPlayInputProcessor,
     StandardOutputProcessor,
     MuZeroUnrollOutputProcessor,
-    RSSMOutputProcessor,
     PPOOutputProcessor,
     FilterKeysInputProcessor,
 )
@@ -417,7 +416,6 @@ def create_rssm_buffer(
         batch_size=batch_size,
         buffer_configs=configs,
         # input_processor=input_stack,
-        output_processor=RSSMOutputProcessor(batch_length, max_size),
         writer=CircularWriter(max_size),
         sampler=UniformSampler(),
         backend=backend if backend is not None else LocalBackend(),

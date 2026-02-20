@@ -25,19 +25,6 @@ class RewardHead(BaseHead):
     ):
         super().__init__(arch_config, input_shape, strategy, neck_config)
 
-    def get_initial_state(
-        self, batch_size: int, device: torch.device
-    ) -> Dict[str, Any]:
-        """
-        Returns the initial opaque state for the reward head.
-        Base implementation returns a default structure.
-        """
-        return {
-            "reward_hidden": (None, None),
-            "step_count": torch.zeros(batch_size, 1, device=device),
-            "cumulative_reward": torch.zeros(batch_size, 1, device=device),
-        }
-
     def forward(
         self,
         x: Tensor,
@@ -87,23 +74,13 @@ class ValuePrefixRewardHead(RewardHead):
             sigma=self.arch_config.noisy_sigma,
         )
 
-    def get_initial_state(
-        self, batch_size: int, device: torch.device
-    ) -> Dict[str, Any]:
-        return {
-            "reward_hidden": (
-                torch.zeros(1, batch_size, self.lstm_hidden_size, device=device),
-                torch.zeros(1, batch_size, self.lstm_hidden_size, device=device),
-            ),
-            "step_count": torch.zeros(batch_size, 1, device=device),
-            "cumulative_reward": torch.zeros(batch_size, 1, device=device),
-        }
-
     def forward(
         self,
         x: Tensor,
-        state: Dict[str, Any],
+        state: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
+        state = state if state is not None else {}
+
         # Process neck
         x = self.process_input(x)  # (B, flat_dim)
 
@@ -116,6 +93,12 @@ class ValuePrefixRewardHead(RewardHead):
         parent_cumulative = state.get(
             "cumulative_reward", torch.zeros(x.shape[0], 1, device=x.device)
         )
+
+        if hidden is None:
+            hidden = (
+                torch.zeros(1, x.shape[0], self.lstm_hidden_size, device=x.device),
+                torch.zeros(1, x.shape[0], self.lstm_hidden_size, device=x.device),
+            )
 
         if step_count is None:
             batch_size = x.shape[0]

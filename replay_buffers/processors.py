@@ -822,30 +822,3 @@ class PPOOutputProcessor(OutputProcessor):
             log_probabilities=buffers["log_prob"][sl],
             legal_moves_masks=buffers["legal_mask"][sl],
         )
-
-
-class RSSMOutputProcessor(OutputProcessor):
-    """
-    Replicates RSSMReplayBuffer sampling: retrieves sequences of length L.
-    """
-
-    def __init__(self, batch_length, max_size):
-        self.batch_length = batch_length
-        self.max_size = max_size
-
-    def process_batch(self, indices, buffers, **kwargs):
-        # RSSM logic: sample sequence [i, i+L]
-        batch_size = len(indices)
-
-        # Create sequence offsets: [0, 1, ..., L-1]
-        offsets = np.arange(self.batch_length)
-        # Shape: (batch_size, batch_length)
-        seq_indices = (np.array(indices)[:, None] + offsets[None, :]) % self.max_size
-
-        results = {}
-        for key, buf in buffers.items():
-            # Retrieve data and possibly stack/reshape if needed
-            data = buf[seq_indices]
-            results[key] = data
-
-        return results

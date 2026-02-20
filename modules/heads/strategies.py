@@ -213,69 +213,6 @@ class C51Support(OutputStrategy):
         return res
 
 
-class DreamerSupport(OutputStrategy):
-    """DreamerV2/V3 support: Symlog transform + categorical buckets."""
-
-    def __init__(self, support_range: int):
-        super().__init__()
-        self.support_range = support_range
-        # Dreamer often uses buckets from -range to range
-        self.register_buffer(
-            "support",
-            torch.linspace(-support_range, support_range, 2 * support_range + 1),
-        )
-
-    @property
-    def num_bins(self) -> int:
-        return 2 * self.support_range + 1
-
-    def compute_loss(self, predictions: Tensor, targets: Tensor) -> Tensor:
-        return F.cross_entropy(predictions, targets, reduction="none")
-
-    def get_distribution(
-        self, network_output: Tensor
-    ) -> torch.distributions.Distribution:
-        return torch.distributions.Categorical(logits=network_output)
-
-    def symlog(self, x: Tensor) -> Tensor:
-        return torch.sign(x) * torch.log(torch.abs(x) + 1.0)
-
-    def symexp(self, x: Tensor) -> Tensor:
-        return torch.sign(x) * (torch.exp(torch.abs(x)) - 1.0)
-
-    def to_expected_value(self, network_output: Tensor) -> Tensor:
-        probs = torch.softmax(network_output, dim=-1)
-        val = (probs * self.support).sum(dim=-1)
-        return self.symexp(val)
-
-    def scalar_to_target(self, scalar: Tensor) -> Tensor:
-        val = self.symlog(scalar)
-        # Project onto buckets
-        val = val.clamp(-self.support_range, self.support_range)
-        floor = val.floor()
-        # prob = val - floor # Unused locally
-
-        res = torch.zeros(
-            (*scalar.shape, 2 * self.support_range + 1),
-            device=scalar.device,
-            dtype=scalar.dtype,
-        )
-
-        flat_res = res.view(-1, 2 * self.support_range + 1)
-        flat_val = val.view(-1)
-        flat_floor = floor.view(-1).long() + self.support_range
-
-        batch_idx = torch.arange(flat_val.size(0), device=scalar.device)
-        flat_res[batch_idx, flat_floor] = 1.0 - (flat_val - floor.view(-1))
-
-        valid_u = (flat_floor + 1) < (2 * self.support_range + 1)
-        flat_res[batch_idx[valid_u], flat_floor[valid_u] + 1] = (
-            flat_val[valid_u] - floor.view(-1)[valid_u]
-        )
-
-        return res
-
-
 class GaussianStrategy(OutputStrategy):
     """
     Gaussian distribution for continuous actions.

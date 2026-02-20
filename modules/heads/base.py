@@ -78,12 +78,6 @@ class BaseHead(nn.Module):
         if hasattr(self, "output_layer") and hasattr(self.output_layer, "reset_noise"):
             self.output_layer.reset_noise()
 
-    def get_initial_state(
-        self, batch_size: int, device: torch.device
-    ) -> Dict[str, Any]:
-        """Returns the initial state for the head."""
-        return {}
-
     def forward(
         self, x: Tensor, state: Optional[Dict[str, Any]] = None
     ) -> Tuple[Tensor, Dict[str, Any]]:

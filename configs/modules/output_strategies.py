@@ -47,12 +47,6 @@ class C51SupportConfig(OutputStrategyConfig):
         self.num_atoms: int = self.parse_field("num_atoms", 51)
 
 
-class DreamerSupportConfig(OutputStrategyConfig):
-    def __init__(self, config_dict: dict):
-        super().__init__(config_dict)
-        self.support_range: int = self.parse_field("support_range", 20)
-
-
 class OutputStrategyConfigFactory:
     @staticmethod
     def create(config_dict: dict) -> OutputStrategyConfig:
@@ -72,7 +66,5 @@ class OutputStrategyConfigFactory:
             return MuZeroSupportConfig(config_dict)
         elif strategy_type == "c51":
             return C51SupportConfig(config_dict)
-        elif strategy_type == "dreamer":
-            return DreamerSupportConfig(config_dict)
         else:
             return ScalarStrategyConfig(config_dict)
