@@ -134,8 +134,9 @@ class CategoricalSelector(BaseActionSelector):
             )
             # 2. Repackage the Distribution
             policy = Categorical(logits=masked_logits)
-            # Store masked distribution for decorators (e.g. PPODecorator)
-            metadata["dist"] = policy
+
+        # Always store distribution for decorators (e.g. PPODecorator)
+        metadata["dist"] = policy
 
         if should_explore:
             action = policy.sample()

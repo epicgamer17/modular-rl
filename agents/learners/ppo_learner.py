@@ -12,6 +12,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
 
+from losses.basic_losses import PPOPolicyLoss, PPOValueLoss
 from modules.utils import get_lr_scheduler
 from replay_buffers.buffer_factories import create_ppo_buffer
 from agents.learners.base import BaseLearner, StepResult
@@ -78,6 +79,18 @@ class PPOLearner(BaseLearner):
         # 3. Initialize LR Schedulers
         self.policy_scheduler = get_lr_scheduler(self.policy_optimizer, config)
         self.value_scheduler = get_lr_scheduler(self.value_optimizer, config)
+        self.policy_loss_module = PPOPolicyLoss(
+            clip_param=self.config.clip_param,
+            entropy_coefficient=self.config.entropy_coefficient,
+            policy_strategy=getattr(self.model.policy, "strategy", None),
+        )
+        self.value_loss_module = PPOValueLoss(
+            critic_coefficient=self.config.critic_coefficient,
+            atom_size=getattr(self.config, "atom_size", 1),
+            v_min=getattr(self.config, "v_min", None),
+            v_max=getattr(self.config, "v_max", None),
+            value_strategy=getattr(self.model.value, "strategy", None),
+        )
 
     def _create_optimizer(self, params, sub_config) -> torch.optim.Optimizer:
         """Creates optimizer based on config."""
@@ -146,10 +159,14 @@ class PPOLearner(BaseLearner):
                 batch_old_log_probs = old_log_probs[batch_indices]
                 batch_advantages = advantages[batch_indices]
 
-                # Forward pass through actor
-                actor_loss, kl_div = self._actor_loss(
-                    batch_obs, batch_actions, batch_old_log_probs, batch_advantages
+                loss_terms = self.compute_loss(
+                    batch={"observations": batch_obs},
+                    actions=batch_actions,
+                    old_log_probs=batch_old_log_probs,
+                    advantages=batch_advantages,
                 )
+                actor_loss = loss_terms["policy_loss"]
+                kl_div = loss_terms["approx_kl"]
 
                 self.policy_optimizer.zero_grad(set_to_none=True)
                 actor_loss.backward()
@@ -182,7 +199,11 @@ class PPOLearner(BaseLearner):
                 batch_obs = observations[batch_indices]
                 batch_returns = returns[batch_indices]
 
-                critic_loss = self._critic_loss(batch_obs, batch_returns)
+                loss_terms = self.compute_loss(
+                    batch={"observations": batch_obs},
+                    returns=batch_returns,
+                )
+                critic_loss = loss_terms["value_loss"]
 
                 self.value_optimizer.zero_grad(set_to_none=True)
                 critic_loss.backward()
@@ -223,69 +244,42 @@ class PPOLearner(BaseLearner):
             "kl_divergence": np.mean(kl_divergences) if kl_divergences else 0,
         }
 
-    def _actor_loss(
+    def compute_loss(
         self,
-        obs: torch.Tensor,
-        actions: torch.Tensor,
-        old_log_probs: torch.Tensor,
-        advantages: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        batch: Dict[str, torch.Tensor],
+        actions: Optional[torch.Tensor] = None,
+        old_log_probs: Optional[torch.Tensor] = None,
+        advantages: Optional[torch.Tensor] = None,
+        returns: Optional[torch.Tensor] = None,
+    ) -> Dict[str, torch.Tensor]:
         """
-        Computes PPO actor loss.
-
-        Returns:
-            Tuple of (policy_loss, approx_kl)
+        Computes PPO losses from raw learner logits.
         """
-        # Get current distribution using learner_inference
-        # learner_inference returns raw logits
-        batch = {"observations": obs}
-        output = self.model.learner_inference(batch)
-        logits = output.policies
+        unroll_out = self.agent.learner_inference(batch)
+        losses: Dict[str, torch.Tensor] = {}
 
-        # Apply strategy to get distribution from logits
-        dist = self.model.policy.strategy.get_distribution(logits)
-
-        log_probs = dist.log_prob(actions)
-
-        ratio = torch.exp(log_probs - old_log_probs)
-        surr1 = ratio * advantages
-        surr2 = (
-            torch.clamp(
-                ratio, 1.0 - self.config.clip_param, 1.0 + self.config.clip_param
+        if (
+            actions is not None
+            and old_log_probs is not None
+            and advantages is not None
+            and unroll_out.policies is not None
+        ):
+            policy_loss, approx_kl = self.policy_loss_module.compute(
+                policy_logits=unroll_out.policies,
+                actions=actions,
+                old_log_probs=old_log_probs,
+                advantages=advantages,
             )
-            * advantages
-        )
+            losses["policy_loss"] = policy_loss
+            losses["approx_kl"] = approx_kl
 
-        entropy = dist.entropy().mean()
-        policy_loss = (
-            -torch.min(surr1, surr2).mean() - self.config.entropy_coefficient * entropy
-        )
+        if returns is not None and unroll_out.values is not None:
+            losses["value_loss"] = self.value_loss_module.compute(
+                value_logits=unroll_out.values,
+                returns=returns,
+            )
 
-        with torch.no_grad():
-            approx_kl = (old_log_probs - log_probs).mean()
-
-        return policy_loss, approx_kl
-
-    def _critic_loss(
-        self, observations: torch.Tensor, returns: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Computes critic MSE loss.
-
-        Returns:
-            Critic loss tensor.
-        """
-        # Use learner_inference to get raw value logits
-        batch = {"observations": observations}
-        output = self.model.learner_inference(batch)
-        logits = output.values
-
-        # Use the strategy to extract expected scalar values (robust to support-based values)
-        values = self.model.value.strategy.to_expected_value(logits)
-
-        # values = values.squeeze(-1) # to_expected_value already handles squeezing if needed
-        critic_loss = self.config.critic_coefficient * ((returns - values) ** 2).mean()
-        return critic_loss
+        return losses
 
     def preprocess(self, observation: Any) -> torch.Tensor:
         """

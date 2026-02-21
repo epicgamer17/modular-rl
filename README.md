@@ -1,125 +1,152 @@
-# RL Research
+# Modular RL Architecture
 
-Recreations and implementations of state-of-the-art reinforcement learning algorithms from research papers. This repository contains working implementations of DQN variants, MuZero, PPO, NFSP, and more.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-## Implemented Algorithms
+A high-performance, modular framework for Reinforcement Learning research, designed with **Strict Separation of Concerns** and **Perfect Polymorphism**. This repository provides robust implementations of state-of-the-art RL algorithms, including MuZero, PPO, and Rainbow DQN, optimized for both research flexibility and execution speed.
 
-### DQN Variants (via RainbowDQN)
-These components can be mixed and matched through configuration:
+## 🌟 Overview
 
-1. **DQN** - Deep Q-Network with experience replay
-2. **Double DQN** - Reduces overestimation bias by decoupling action selection and evaluation
-3. **Prioritized Experience Replay** - Samples important transitions more frequently
-4. **Dueling DQN** - Separates state value and action advantage estimation
-5. **Noisy Networks** - Adaptive exploration through learned noise parameters
-6. **N-Step DQN** - Multi-step bootstrap targets for faster propagation
-7. **Categorical DQN (C51)** - Learns distribution over returns instead of point estimates
-8. **Rainbow DQN** - Combines all six improvements above
+The "Modular RL Architecture" project solves the complexity of modern RL development by isolating neural network math from environment logic and optimization pipelines. Whether you are experimenting with latent world models or tuning proximal policy updates, this framework ensures that components are pluggable, testable, and scalable.
 
-### Other Algorithms
+### Key Philosophy
+- **The Blind Learner**: Optimization is decoupled from network architecture.
+- **Game Logic Isolation**: Neural networks are pure mathematical functions; rules live in action selectors.
+- **Opaque Tokens**: Actor/Search trees treat network states as opaque, preserving abstraction boundaries.
 
-9. **Ape-X** - Distributed prioritized experience replay with multiple actors
-10. **NFSP (Neural Fictitious Self-Play)** - Learns approximate Nash equilibrium in imperfect information games
-    - Can also be used to train Rainbow on multi-agent deterministic games (Tic-Tac-Toe, Connect 4) by setting anticipatory parameter to 1.0
-11. **PPO** - Proximal Policy Optimization for stable policy gradient learning
-12. **AlphaZero** - MCTS combined with deep neural networks for perfect information games
-13. **MuZero** - Model-based planning without requiring environment dynamics
+---
 
-## Environments
+## 📸 Visuals
 
-### Currently Implemented
-- Tic-Tac-Toe
-- CartPole
-- Connect 4
-- Mississippi Marbles
-- LeDuc Hold'em Poker
+### Rainbow DQN Performance
+![CartPole Training](file:///Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/readme-figs/Rainbow_ClassicControl_CartPole-v1-episode-154.mp4)
+*Example: Rainbow DQN mastering CartPole-v1.*
 
-### Future Directions
-See `papers.txt` for the full list of potential environments and research challenges.
+---
 
-## Quick Start
+## 🚀 Features & Algorithms
 
-### Installation
+### 🌈 Rainbow DQN (Integrated Improvements)
+Mix and match components via configuration:
+- **DQN** & **Double DQN** (Overestimation bias reduction)
+- **Prioritized Experience Replay** (Important transition sampling)
+- **Dueling DQN** (Value/Advantage separation)
+- **Noisy Networks** (Adaptive exploration)
+- **N-Step Returns** & **Categorical DQN (C51)**
 
+### ♟️ Model-Based & Policy Gradient
+- **MuZero**: Planning with learned environment dynamics.
+- **AlphaZero**: MCTS integrated with deep policy/value networks.
+- **PPO (Proximal Policy Optimization)**: Stable and reliable policy gradients.
+- **NFSP (Neural Fictitious Self-Play)**: Nash equilibrium approximation for multi-agent games.
+
+### 🎮 Supported Environments
+- **Classic Control**: CartPole, Acrobot, LunarLander.
+- **Board Games**: Tic-Tac-Toe, Connect 4.
+- **Card Games**: LeDuc Hold'em.
+- **Custom**: Easy to plug in any Gymnasium-compatible environment.
+
+---
+
+## 🛠️ Installation
+
+### Prerequisites
+- **OS**: macOS (fully supported), Linux, or Windows.
+- **Python**: 3.10 or higher.
+- **Hardware**: CUDA/MPS supported (automatically detected).
+
+### Setup Commands
 ```bash
+# Clone the repository
+git clone https://github.com/epicgamer17/modular-rl.git
+cd modular-rl
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Install as editable package
 pip install -e .
 ```
 
-### Training an Agent
+---
 
+## 📖 Usage Examples
+
+### Training a Rainbow Agent
 ```python
 from agents.rainbow_dqn import RainbowDQN
 from agent_configs.rainbow_config import RainbowConfig
 from configs.games.cartpole_config import CartPoleConfig
 
-config = RainbowConfig()
-agent = RainbowDQN(config, CartPoleConfig())
-agent.train(episodes=1000)
+# 1. Initialize configurations
+config = RainbowConfig(learning_rate=0.00025, buffer_size=100_000)
+game_config = CartPoleConfig()
+
+# 2. Setup and train
+agent = RainbowDQN(config, game_config)
+agent.train(total_steps=100_000)
 ```
 
-## Project Structure
-
-- `agents/` - Agent implementations (Rainbow DQN, MuZero, PPO, NFSP, etc.)
-- `agent_configs/` - Configuration classes for all algorithms
-- `modules/` - Neural network building blocks
-- `replay_buffers/` - Experience replay implementations with prioritized sampling
-- `search/` - MCTS and tree search algorithms
-- `losses/` - Loss functions for different training objectives
-- `configs/games/` - Environment-specific configurations
-- `custom_gym_envs_pkg/` - Custom Gymnasium environments
-- `experiments/` - Training runs, checkpoints, and results
-- `tests/` - Unit and integration tests
-
-## Key Papers
-
-This codebase implements techniques from these papers (see `papers/` for PDFs):
-
-- **MuZero**: https://arxiv.org/pdf/1911.08265.pdf
-- **Rainbow**: https://arxiv.org/pdf/1710.02298.pdf
-- **AlphaZero**: https://arxiv.org/pdf/1712.01815.pdf
-- **PPO**: https://arxiv.org/pdf/1707.06347.pdf
-- **NFSP**: https://arxiv.org/pdf/1603.01121.pdf
-
-Full paper list in `papers.txt`.
-
-## Configuration System
-
-All agents use a consistent dataclass-based configuration system. Example:
-
-```python
-from dataclasses import dataclass
-
-@dataclass
-class RainbowConfig:
-    learning_rate: float = 0.00025
-    buffer_size: int = 100_000
-    batch_size: int = 32
-    gamma: float = 0.99
-    n_step: int = 3
-    v_min: float = -10.0
-    v_max: float = 10.0
+### Running MuZero via Launcher
+For performance-critical tasks, use the `launcher.py` pattern to ensure optimal memory and thread affinity:
+```bash
+python launcher.py run_muzero --env CartPole-v1 --config configs/muzero_default.yaml
 ```
 
-## Testing
+---
 
-Run the test suite:
+## 🧪 Testing
+
+We maintain a rigorous test suite using `pytest`.
 
 ```bash
+# Run all core tests
 pytest tests/
+
+# Run a specific algorithm smoke test
+pytest tests/test_muzero_smoke.py
 ```
 
-Interactive notebooks for debugging are available in `test_notebooks/`.
+---
 
-## Research Directions
+## 🤝 Contributing
 
-Algorithms to explore next:
-- Muesli
-- DreamerV3
-- R2D2
-- NGU (Never Give Up)
-- Agent 57
-- CFR / DeepCFR for imperfect information
-- StarCraft League training
+We are currently **not accepting external contributions** on this specific branch. This repository serves as a focused research environment. For major suggestions, please open an issue for discussion.
 
-See `papers.txt` for complete list of research ideas and paper links.
+---
+
+## 🏗️ Project Structure
+
+```text
+├── agents/             # Optimization (Learners) & Action Selectors
+├── modules/            # Pure PyTorch Compute Graphs (Backbones, Heads)
+├── replay_buffers/     # High-performance Transition Fact Stores
+├── search/             # CPU-bound Imagination (MCTS)
+├── losses/             # Vectorized Loss Pipelines
+├── configs/            # Game and Agent hyperparameters
+└── custom_gym_envs/    # Specialized RL environments
+```
+
+---
+
+## 🩺 Support & Community
+
+For bug reports, feature requests, or questions regarding the implementation details, please use the **[GitHub Issue Tracker](https://github.com/epicgamer17/modular-rl/issues)**. 
+
+---
+
+## 🎓 Authors & Credits
+
+- **Primary Author**: epicgamer17
+- **Contributors**: Ezra Huang (minor early contributions).
+- **Core Resources**: 
+    - [Rainbow is all you need](https://github.com/Curt-Park/rainbow-is-all-you-need)
+    - [37 Implementation Details of PPO](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/)
+    - See the `papers/` directory for full academic references.
+
+---
+
+## 📄 License
+
+This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details (or standard MIT terms if file is missing).

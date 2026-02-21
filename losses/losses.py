@@ -177,7 +177,7 @@ class StandardDQNLoss(LossModule):
         weights = context["weights"].to(torch.float32).to(self.device)
 
         # Calculate Elementwise (MSE or Huber)
-        elementwise = self.config.loss_function(preds, targets_vals)
+        elementwise = self.config.loss_function(preds, targets_vals, reduction="none")
 
         # Apply PER weights
         loss = (elementwise * weights).mean()
@@ -345,9 +345,13 @@ class ValueLoss(LossModule):
         ), f"{predicted_values_k.shape} = {target_values_k.shape}"
 
         # Value Loss: (B,)
-        value_loss = self.config.value_loss_factor * self.config.value_loss_function(
-            predicted_values_k, target_values_k
+        value_loss_k = self.config.value_loss_function(
+            predicted_values_k, target_values_k, reduction="none"
         )
+        if value_loss_k.ndim > 1:
+            value_loss_k = value_loss_k.sum(dim=-1)
+
+        value_loss = self.config.value_loss_factor * value_loss_k
 
         return value_loss
 
@@ -378,7 +382,9 @@ class PolicyLoss(LossModule):
         policies_k = predictions["policies"]
         target_policies_k = targets["policies"]
         # Policy Loss: (B,)
-        policy_loss = self.config.policy_loss_function(policies_k, target_policies_k)
+        policy_loss = self.config.policy_loss_function(
+            policies_k, target_policies_k, reduction="none"
+        )
 
         return policy_loss
 
@@ -421,9 +427,13 @@ class RewardLoss(LossModule):
         ), f"{predicted_rewards_k.shape} = {target_rewards_k.shape}"
 
         # Reward Loss: (B,)
-        reward_loss = self.config.reward_loss_function(
-            predicted_rewards_k, target_rewards_k
+        reward_loss_k = self.config.reward_loss_function(
+            predicted_rewards_k, target_rewards_k, reduction="none"
         )
+        if reward_loss_k.ndim > 1:
+            reward_loss_k = reward_loss_k.sum(dim=-1)
+
+        reward_loss = reward_loss_k
 
         return reward_loss
 
@@ -455,7 +465,9 @@ class ToPlayLoss(LossModule):
         # important to correctly predict whos turn it is on a terminal state, but unimportant afterwards
         to_play_loss = (
             self.config.to_play_loss_factor
-            * self.config.to_play_loss_function(to_plays_k, target_to_plays_k)
+            * self.config.to_play_loss_function(
+                to_plays_k, target_to_plays_k, reduction="none"
+            )
         )
 
         return to_play_loss
@@ -545,10 +557,15 @@ class ChanceQLoss(LossModule):
             predicted_chance_values_k.shape == target_chance_values_k.shape
         ), f"{predicted_chance_values_k.shape} = {target_chance_values_k.shape}"
 
-        q_loss = self.config.value_loss_factor * self.config.value_loss_function(
+        q_loss_k = self.config.value_loss_function(
             predicted_chance_values_k,
             target_chance_values_k,
+            reduction="none",
         )
+        if q_loss_k.ndim > 1:
+            q_loss_k = q_loss_k.sum(dim=-1)
+
+        q_loss = self.config.value_loss_factor * q_loss_k
 
         return q_loss
 
@@ -586,7 +603,7 @@ class SigmaLoss(LossModule):
         # for custom losses expecting distribution targets.
         if self.config.sigma_loss == F.cross_entropy:
             sigma_loss = self.config.sigma_loss(
-                latent_code_probabilities_k, target_codes_k
+                latent_code_probabilities_k, target_codes_k, reduction="none"
             )
         else:
             encoder_onehot_k_plus_1 = F.one_hot(
@@ -595,6 +612,7 @@ class SigmaLoss(LossModule):
             sigma_loss = self.config.sigma_loss(
                 latent_code_probabilities_k,
                 encoder_onehot_k_plus_1.detach(),
+                reduction="none",
             )
 
         return sigma_loss

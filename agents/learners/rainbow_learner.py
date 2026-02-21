@@ -10,7 +10,7 @@ from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
 
 from replay_buffers.buffer_factories import create_dqn_buffer
-from losses.losses import LossPipeline, StandardDQNLoss, C51Loss
+from losses.basic_losses import C51LossModule, StandardDQNLossModule
 from modules.utils import get_lr_scheduler
 from agents.learners.base import BaseLearner, StepResult
 
@@ -52,6 +52,7 @@ class RainbowLearner(BaseLearner):
             observation_dtype=observation_dtype,
         )
         self.target_model = target_model
+        self.target_agent = target_model
 
         # 1. Initialize Replay Buffer
         self.replay_buffer = create_dqn_buffer(
@@ -89,17 +90,19 @@ class RainbowLearner(BaseLearner):
 
         self.training_selector = ArgmaxSelector()
 
-        # 5. Initialize Loss Pipeline with action selector
-        loss_modules = []
+        # 5. Initialize architecture-agnostic TD loss module
         if config.atom_size > 1:
-            loss_modules.append(
-                C51Loss(config, device, action_selector=self.training_selector)
+            self.td_loss_module = C51LossModule(
+                config=config,
+                device=device,
+                action_selector=self.training_selector,
             )
         else:
-            loss_modules.append(
-                StandardDQNLoss(config, device, action_selector=self.training_selector)
+            self.td_loss_module = StandardDQNLossModule(
+                config=config,
+                device=device,
+                action_selector=self.training_selector,
             )
-        self.loss_pipeline = LossPipeline(loss_modules)
 
         # 5. Create support for distributional RL
         self.support = torch.linspace(
@@ -110,11 +113,57 @@ class RainbowLearner(BaseLearner):
         )
 
     def compute_step_result(self, batch, stats=None) -> StepResult:
-        loss, elementwise_loss = self.loss_pipeline.run(self, batch)
+        loss, elementwise_loss = self.compute_loss(batch)
         return StepResult(
             loss=loss,
             loss_dict={"td_loss": float(loss.detach().item())},
             priorities=elementwise_loss.detach(),
+        )
+
+    def compute_loss(self, batch: Dict[str, Any]) -> Tuple[torch.Tensor, torch.Tensor]:
+        observations = batch["observations"].to(self.device)
+        next_observations = batch["next_observations"].to(self.device)
+
+        online_out = self.agent.learner_inference({"observations": observations})
+
+        with torch.no_grad():
+            next_online_out = self.agent.learner_inference(
+                {"observations": next_observations}
+            )
+            target_next_out = self.target_agent.learner_inference(
+                {"observations": next_observations}
+            )
+
+        if self.config.atom_size > 1:
+            if (
+                online_out.q_logits is None
+                or next_online_out.q_logits is None
+                or target_next_out.q_logits is None
+            ):
+                raise ValueError(
+                    "Distributional Rainbow requires q_logits from learner_inference."
+                )
+            return self.td_loss_module.compute(
+                online_q_logits=online_out.q_logits,
+                next_online_q_logits=next_online_out.q_logits,
+                target_next_q_logits=target_next_out.q_logits,
+                batch=batch,
+                agent_network=self.model,
+            )
+
+        if (
+            online_out.q_values is None
+            or next_online_out.q_values is None
+            or target_next_out.q_values is None
+        ):
+            raise ValueError("Rainbow requires q_values from learner_inference.")
+
+        return self.td_loss_module.compute(
+            online_q_values=online_out.q_values,
+            next_online_q_values=next_online_out.q_values,
+            target_next_q_values=target_next_out.q_values,
+            batch=batch,
+            agent_network=self.model,
         )
 
     def after_optimizer_step(self, batch, step_result: StepResult, stats=None) -> None:

@@ -368,9 +368,16 @@ class MuZeroSequenceInputProcessor(InputProcessor):
         rews_t = torch.tensor(sequence.rewards, dtype=torch.float32)
 
         if sequence.policy_history:
-            pols_t = torch.stack(
-                [p.detach() if torch.is_tensor(p) else torch.as_tensor(p) for p in sequence.policy_history]
-            ).cpu().float()
+            pols_t = (
+                torch.stack(
+                    [
+                        p.detach() if torch.is_tensor(p) else torch.as_tensor(p)
+                        for p in sequence.policy_history
+                    ]
+                )
+                .cpu()
+                .float()
+            )
         else:
             pols_t = torch.empty((0, self.num_actions), dtype=torch.float32)
 
@@ -380,9 +387,9 @@ class MuZeroSequenceInputProcessor(InputProcessor):
         # To Plays
         tps_t = torch.tensor(
             [
-                (sequence.info_history[i] if i < len(sequence.info_history) else {}).get(
-                    "player", 0
-                )
+                (
+                    sequence.info_history[i] if i < len(sequence.info_history) else {}
+                ).get("player", 0)
                 for i in range(n_states)
             ],
             dtype=torch.int16,
@@ -391,9 +398,9 @@ class MuZeroSequenceInputProcessor(InputProcessor):
         # Chances
         chance_t = torch.tensor(
             [
-                (sequence.info_history[i] if i < len(sequence.info_history) else {}).get(
-                    "chance", 0
-                )
+                (
+                    sequence.info_history[i] if i < len(sequence.info_history) else {}
+                ).get("chance", 0)
                 for i in range(n_states)
             ],
             dtype=torch.int16,
@@ -806,9 +813,7 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
         # If any 'done' & 'valid' occurred in window -> no bootstrap.
         # We can sum up (dones_windows & valid_steps_mask).
         # If > 0, then we hit a done.
-        terminated_windows = safe_slice_unfold(
-            raw_terminated, required_len, n_step, 1
-        )
+        terminated_windows = safe_slice_unfold(raw_terminated, required_len, n_step, 1)
         hit_terminated_in_window = (
             terminated_windows.float() * valid_steps_mask.float()
         ).sum(dim=2) > 0
@@ -853,14 +858,15 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
                     # or assuming consistency)
                     prefix_sum = prefix_sum + raw_rewards[:, u - 1]
 
-                # Check if this node is valid for assignment
-                is_valid = valid_mask[:, u]
+                # Check if the TRANSITION to this node is valid (state u-1 must be non-terminal)
+                is_valid = valid_mask[:, u - 1]
                 target_rewards[is_valid, u] = prefix_sum[is_valid]
         else:
             # Standard: target_rewards[u] = raw_rewards[u-1]
-            # Vectorized assignment
+            # The reward at step u is for the transition FROM state u-1,
+            # so validity is determined by dynamics_mask at position u-1.
             t_rew = raw_rewards[:, : num_windows - 1]
-            mask_slice = valid_mask[:, 1:num_windows]
+            mask_slice = valid_mask[:, : num_windows - 1]  # positions 0..K-1
 
             # We assign to target_rewards[:, 1:]
             # But we must respect the mask

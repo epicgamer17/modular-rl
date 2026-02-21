@@ -40,8 +40,9 @@ class PPODecorator(BaseActionSelector):
         # 3. Inject PPO metadata
         # Use the (potentially masked) distribution from metadata if available,
         # otherwise fallback to the one in network_output.
-        dist = metadata.get("dist")
-        metadata["log_prob"] = dist.log_prob(action).detach().cpu()
+        dist = metadata.get("dist", network_output.policy)
+        if dist is not None:
+            metadata["log_prob"] = dist.log_prob(action).detach().cpu()
         metadata["value"] = network_output.value.detach().cpu()
 
         return action, metadata
