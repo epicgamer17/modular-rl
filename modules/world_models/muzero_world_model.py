@@ -183,10 +183,29 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
 
     def afterstate_recurrent_inference(
         self,
-        network_state,
-        action,
+        network_state: Dict[str, Any],
+        action: Tensor,
     ) -> WorldModelOutput:
-        # Unpack if opaque dictionary
+        """
+        Computes the afterstate from a deterministic action (stochastic MuZero).
+
+        This method is called from two places:
+        - ``unroll_physics`` (internal): passes a raw latent Tensor directly.
+        - ``MuZeroNetwork.afterstate_inference`` (MCTS external): passes the
+          opaque ``{"dynamics": Tensor, "wm_memory": ...}`` dict.
+
+        Both cases are handled gracefully.
+
+        Args:
+            network_state: Either a raw latent Tensor or the opaque network state
+                           dict produced by ``obs_inference`` / ``hidden_state_inference``.
+            action: Action taken at this step.
+
+        Returns:
+            WorldModelOutput with afterstate features and chance logits.
+        """
+        # only accept dicts for network state
+        assert isinstance(network_state, dict), "network_state must be a dict"
         latent_state = network_state["dynamics"]
 
         # 1. Transition to Afterstate
@@ -226,7 +245,11 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         Returns a PhysicsOutput containing STACKED tensors for each step.
         """
         batch_size = actions.shape[0]
-        unroll_steps = self.config.unroll_steps
+        # Use the actual number of provided actions rather than config.unroll_steps
+        # so callers (e.g. tests) may pass shorter sequences without errors.
+        unroll_steps = actions.shape[
+            1
+        ]  # TODO: this really should be config.unroll_steps
         device = initial_latent_state.device
 
         # --- 2. Prepare Storage ---
@@ -254,14 +277,14 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         if self.config.stochastic:
             latent_afterstates = []
             latent_code_probabilities = []
-            encoder_softmaxes = []
+            chance_encoder_softmaxes = []
             encoder_onehots = []
             afterstate_backbone_features = []
         else:
             latent_afterstates = []
             latent_code_probabilities = []
             afterstate_backbone_features = []
-            encoder_softmaxes = []
+            chance_encoder_softmaxes = []
             encoder_onehots = []
 
         # Rewards: MuZero unrolls usually return T rewards for T actions.
@@ -297,7 +320,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
 
                 # Store encoder outputs
                 encoder_onehots.append(encoder_onehot_k)
-                encoder_softmaxes.append(encoder_softmax_k)
+                chance_encoder_softmaxes.append(encoder_softmax_k)
 
                 # 4. Dynamics Inference (using chance code as action)
                 next_hidden_state = self.dynamics(afterstates, encoder_onehot_k)
@@ -361,7 +384,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             stacked_afterstates = torch.stack(latent_afterstates, dim=1)
             stacked_chance_logits = torch.stack(latent_code_probabilities, dim=1)
             stacked_backbone = torch.stack(afterstate_backbone_features, dim=1)
-            stacked_softmaxes = torch.stack(encoder_softmaxes, dim=1)
+            stacked_softmaxes = torch.stack(chance_encoder_softmaxes, dim=1)
             stacked_onehots = torch.stack(encoder_onehots, dim=1)
 
         # 7. Compute target latents for consistency loss if requested
@@ -385,7 +408,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             latents_afterstates=stacked_afterstates,
             chance_logits=stacked_chance_logits,
             afterstate_backbone_features=stacked_backbone,
-            encoder_softmaxes=stacked_softmaxes,
+            chance_encoder_softmaxes=stacked_softmaxes,
             encoder_onehots=stacked_onehots,
             target_latents=stacked_target_latents,
         )

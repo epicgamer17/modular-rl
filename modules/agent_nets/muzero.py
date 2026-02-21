@@ -124,36 +124,44 @@ class MuZeroNetwork(BaseAgentNetwork):
 
         return recursive_unbatch(batched_state)
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def obs_inference(self, obs: Tensor) -> "InferenceOutput":
-        """Actor API: Translates latent states into expected values."""
+        """
+        Actor API: translates a raw observation into an initial latent state,
+        value estimate, and action distribution for use by ActionSelectors or
+        MCTS root expansion.
 
-        # Ensure obs is a tensor
+        Args:
+            obs: Observation tensor. May be unbatched (shape == input_shape)
+                 or batched (shape == (B, *input_shape)).
+
+        Returns:
+            InferenceOutput with:
+                - ``network_state``: Opaque dict ``{"dynamics": hidden_state,
+                  "wm_memory": wm_head_state}`` for MCTS recurrent steps.
+                - ``value``: Expected value scalar(s) V(s).
+                - ``policy``: Action distribution (Categorical etc.).
+                - ``reward``: None (no reward at the initial step).
+                - ``to_play``: Turn indicator (for multi-player games).
+        """
         if not torch.is_tensor(obs):
             obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
 
-        # Ensure obs has batch dim
-        # Assuming input_shape from config does NOT include batch
+        # Add batch dimension if the input is a single (unbatched) observation.
         if obs.dim() == len(self.input_shape):
             obs = obs.unsqueeze(0)
 
-        # Ask World Model for physics state
+        # Representation network: obs → initial hidden state
         wm_output = self.world_model.initial_inference(obs)
         hidden_state = wm_output.features
 
-        # Pass through prediction backbone
+        # Prediction backbone + heads
         pred_features = self.prediction_backbone(hidden_state)
-
-        # Ask Agent Heads
         raw_value, _ = self.value_head(pred_features)
         raw_policy, _, policy_dist = self.policy_head(pred_features)
 
-        # Translate
         expected_value = self.value_head.strategy.to_expected_value(raw_value)
-        # policy_dist is already computed by PolicyHead
 
-        # Wrap everything in a unique opaque state
-        # wm_output.head_state now contains all World Model internal states
         network_state = {
             "dynamics": hidden_state,
             "wm_memory": wm_output.head_state,
@@ -163,74 +171,95 @@ class MuZeroNetwork(BaseAgentNetwork):
             network_state=network_state,
             value=expected_value,
             policy=policy_dist,
-            # Removed policy_logits
-            reward=None,  # Initial inference has no reward
+            reward=None,  # No reward at the root step
             to_play=wm_output.to_play,
             extras={},
         )
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def hidden_state_inference(
         self,
         network_state: Dict[str, Tensor | dict],
         action: Tensor,
     ) -> InferenceOutput:
+        """
+        MCTS Search API: steps the latent dynamics model (state, action) →
+        (next_state, reward, value, policy).
 
-        # 1. Unpack opaque state
+        Called at every simulated node expansion inside MCTS. The ``network_state``
+        token is treated as an opaque object — its internal structure is packed and
+        unpacked here, invisible to the search tree.
+
+        Args:
+            network_state: Opaque dict produced by the previous ``obs_inference``
+                           or ``hidden_state_inference`` call.
+            action: One-hot or integer action tensor of shape ``(B, num_actions)``
+                    or ``(B, 1)``.
+
+        Returns:
+            InferenceOutput with updated ``network_state``, ``value``, ``policy``,
+            and ``reward`` for this simulated transition.
+        """
         dynamics_state = network_state["dynamics"]
         wm_memory = network_state.get("wm_memory")
 
-        # Use world model dynamics and heads
         wm_output: WorldModelOutput = self.world_model.recurrent_inference(
             hidden_state=dynamics_state,
             action=action,
             recurrent_state=wm_memory,
         )
 
-        instant_reward = wm_output.instant_reward
         next_hidden = wm_output.features
-        raw_to_play = wm_output.to_play
-        next_wm_memory = wm_output.head_state
-
         pred_features = self.prediction_backbone(next_hidden)
 
-        # Ask Agent Heads
         raw_value, _ = self.value_head(pred_features)
         _, _, policy_dist = self.policy_head(pred_features)
 
-        # Translate
         expected_value = self.value_head.strategy.to_expected_value(raw_value)
 
         next_network_state = {
             "dynamics": next_hidden,
-            "wm_memory": next_wm_memory,
+            "wm_memory": wm_output.head_state,
         }
 
         return InferenceOutput(
             network_state=next_network_state,
             value=expected_value,
             policy=policy_dist,
-            reward=instant_reward,
-            to_play=raw_to_play,
+            reward=wm_output.instant_reward,
+            to_play=wm_output.to_play,
             extras={},
         )
 
-    @torch.no_grad()
-    def afterstate_inference(self, network_state: Any, action) -> InferenceOutput:
-        # Ask World Model for afterstate and shared features
+    @torch.inference_mode()
+    def afterstate_inference(
+        self, network_state: Any, action: Tensor
+    ) -> InferenceOutput:
+        """
+        Stochastic MCTS Search API: steps the latent model to the intermediate
+        afterstate (post-action, pre-environment-chance).
+
+        Used by Stochastic MuZero to model environment stochasticity.
+
+        Args:
+            network_state: Opaque dict from the previous search step.
+            action: Action tensor.
+
+        Returns:
+            InferenceOutput with the afterstate ``network_state``, afterstate
+            ``value``, and ``policy`` / ``chance`` distributions over chance codes.
+        """
         wm_output = self.world_model.afterstate_recurrent_inference(
             network_state, action
         )
         shared_features = wm_output.features
         chance_logits = wm_output.chance
 
-        # Piggyback on shared features for value prediction
         raw_value, _ = self.afterstate_value_head(shared_features)
 
-        # Wrap everything in a unique opaque state
         network_state_after = {
             "dynamics": wm_output.afterstate_features,
-            "wm_memory": network_state["wm_memory"],  # Pass through memory
+            "wm_memory": network_state["wm_memory"],
         }
 
         return InferenceOutput(
@@ -244,33 +273,58 @@ class MuZeroNetwork(BaseAgentNetwork):
     def learner_inference(
         self,
         batch: Any,
-    ) -> Dict[str, torch.Tensor]:
-        """Learner API: Returns flat predictions keyed for loss routing."""
+    ) -> "LearningOutput":
+        """
+        Learner API: unrolls the world model and runs all prediction heads,
+        returning raw logits for the loss pipeline.
 
-        # 1. Prepare Inputs
+        This method satisfies the ``BaseAgentNetwork`` learner contract. All
+        outputs are strongly typed via ``LearningOutput``; the MuZero-specific
+        fields (latents, afterstates, chance codes, etc.) map to named fields
+        rather than an opaque extras dict.
+
+        Args:
+            batch: Dict containing at minimum:
+                - ``"observations"``: Float tensor ``(B, *input_shape)``.
+                - ``"actions"``: Long tensor ``(B, T)`` of unroll actions.
+                - ``"unroll_observations"`` (optional): ``(B, T+1, *input_shape)``
+                  for EfficientZero consistency targets.
+                - ``"chance_codes"`` (optional): ``(B, T)`` for Stochastic MuZero.
+
+        Returns:
+            LearningOutput with tensors of shape ``(B, T+1, ...)``:
+                - ``values``, ``policies``, ``rewards``, ``to_plays``.
+                - ``latents``: Latent states (for consistency loss).
+                - ``latents_afterstates``: Afterstate latents (stochastic only).
+                - ``chance_logits``: Chance code logits (stochastic only).
+                - ``chance_values``: Afterstate value predictions (stochastic only).
+                - ``chance_encoder_softmaxes``: Encoder softmax outputs (stochastic only).
+        """
+        from modules.world_models.inference_output import LearningOutput
+
         initial_observation = batch["observations"]
         actions = batch["actions"]
         target_observations = batch.get("unroll_observations")
         target_chance_codes = batch.get("chance_codes")
 
-        if initial_observation is None or actions is None:
-            raise ValueError("Batch must contain 'observations' and 'actions'.")
+        assert initial_observation is not None, "Batch must contain 'observations'"
+        assert actions is not None, "Batch must contain 'actions'"
 
-        # 2. Get Initial State
+        # 1. Initial representation: obs → latent
         wm_output = self.world_model.initial_inference(initial_observation)
         latent = wm_output.features
         head_state = wm_output.head_state
 
-        # TODO: MAKE SURE THIS IS CORRECT
+        # 2. Build encoder inputs for Stochastic MuZero (pairs of consecutive obs)
         encoder_inputs = None
         if self.config.stochastic and target_observations is not None:
-            # Encoder expects concatenated current and next observations along channels
-            # target_observations: [B, T+1, C, H, W]
+            # target_observations: [B, T+1, *obs_shape]
+            # Concatenate neighbouring pairs along the channel dim for the encoder
             encoder_inputs = torch.cat(
                 [target_observations[:, :-1], target_observations[:, 1:]], dim=2
             )
 
-        # 3. Unroll Physics
+        # 3. World model unroll: latent → full sequence of latents + aux outputs
         physics_output = self.world_model.unroll_physics(
             initial_latent_state=latent,
             actions=actions,
@@ -280,67 +334,50 @@ class MuZeroNetwork(BaseAgentNetwork):
             target_observations=target_observations,
         )
 
-        # 4. Pass sequence through Agent Heads
-        stacked_latents = physics_output.latents
+        # 4. Prediction heads over the full unrolled sequence
+        stacked_latents = physics_output.latents  # [B, T+1, *latent_shape]
         B, T_plus_1 = stacked_latents.shape[:2]
         flat_latents = stacked_latents.reshape(B * T_plus_1, *stacked_latents.shape[2:])
 
-        # Shared prediction backbone
         pred_features = self.prediction_backbone(flat_latents)
+        raw_values, _ = self.value_head(pred_features)  # [B*T+1, ...]
+        raw_policies, _, _ = self.policy_head(pred_features)  # [B*T+1, num_actions]
 
-        raw_values, _ = self.value_head(pred_features)
-        raw_policies, _, _ = self.policy_head(pred_features)
-
-        # Uncrush
+        # Reshape back to sequence form: [B, T+1, ...]
         raw_values = raw_values.view(B, T_plus_1, -1)
         raw_policies = raw_policies.view(B, T_plus_1, -1)
 
-        # Rewards and ToPlays are already stacked tensors from unroll_physics
-        stacked_rewards = physics_output.rewards
-        stacked_toplays = physics_output.to_plays
-
-        # Handle Stochastic Extra Outputs
-        chance_values = None
-        chance_logits = None
-        latents_afterstates = None
+        # 5. Stochastic-MuZero afterstate heads
+        latents_afterstates: Optional[Tensor] = None
+        stochastic_chance_logits: Optional[Tensor] = None
+        stochastic_chance_values: Optional[Tensor] = None
+        stochastic_encoder_softmaxes: Optional[Tensor] = None
 
         if self.config.stochastic and physics_output.latents_afterstates is not None:
-            # 1. Stack Afterstates - Already stacked in physics_output
             latents_afterstates = physics_output.latents_afterstates
 
-            # 2. Extract Shared Backbone Features - Already stacked
             stacked_backbone_features = physics_output.afterstate_backbone_features
-
             B_as, T_plus_1_as = stacked_backbone_features.shape[:2]
             flat_backbone = stacked_backbone_features.view(
                 B_as * T_plus_1_as, *stacked_backbone_features.shape[2:]
             )
 
-            # 3. Predict Afterstate Values
             raw_chance_values, _ = self.afterstate_value_head(flat_backbone)
-            chance_values = raw_chance_values.view(B_as, T_plus_1_as, -1)
+            stochastic_chance_values = raw_chance_values.view(B_as, T_plus_1_as, -1)
+            stochastic_chance_logits = physics_output.chance_logits
+            stochastic_encoder_softmaxes = physics_output.chance_encoder_softmaxes
 
-            # 4. Use Chance Logits directly from physics loop
-            chance_logits = physics_output.chance_logits
-
-        predictions = {
-            "values": raw_values,
-            "policies": raw_policies,
-            "rewards": stacked_rewards,
-            "to_plays": stacked_toplays,
-            "latent_states": stacked_latents,
-        }
-
-        if latents_afterstates is not None:
-            predictions["latent_afterstates"] = latents_afterstates
-        if chance_logits is not None:
-            predictions["chance_codes"] = chance_logits
-        if chance_values is not None:
-            predictions["chance_values"] = chance_values
-        if physics_output.encoder_softmaxes is not None:
-            predictions["encoder_softmaxes"] = physics_output.encoder_softmaxes
-
-        return predictions
+        return LearningOutput(
+            values=raw_values,
+            policies=raw_policies,
+            rewards=physics_output.rewards,
+            to_plays=physics_output.to_plays,
+            latents=stacked_latents,
+            latents_afterstates=latents_afterstates,
+            chance_logits=stochastic_chance_logits,
+            chance_values=stochastic_chance_values,
+            chance_encoder_softmaxes=stochastic_encoder_softmaxes,
+        )
 
     def project(self, hidden_state: Tensor, grad=True) -> Tensor:
         """

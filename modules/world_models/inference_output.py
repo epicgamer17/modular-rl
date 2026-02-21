@@ -41,7 +41,7 @@ class PhysicsOutput(NamedTuple):
     latents_afterstates: Optional[torch.Tensor] = None  # [B, T+1, ...]
     chance_logits: Optional[torch.Tensor] = None  # [B, T+1, ...]
     afterstate_backbone_features: Optional[torch.Tensor] = None  # [B, T+1, ...]
-    encoder_softmaxes: Optional[torch.Tensor] = None  # [B, T+1, ...]
+    chance_encoder_softmaxes: Optional[torch.Tensor] = None  # [B, T+1, ...]
     encoder_onehots: Optional[torch.Tensor] = None  # [B, T+1, ...]
     target_latents: Optional[torch.Tensor] = None  # [B, T+1, ...]
 
@@ -84,4 +84,6 @@ class LearningOutput(NamedTuple):
     chance_logits: Optional[torch.Tensor] = None
     chance_values: Optional[torch.Tensor] = None
     target_latents: Optional[torch.Tensor] = None  # [B, T+1, ...]
-    extras: Optional[dict] = None  # dictionary for any leftovers (e.g. encoder stats)
+    chance_encoder_softmaxes: Optional[torch.Tensor] = (
+        None  # [B, T+1, num_chance] (Stochastic MuZero)
+    )

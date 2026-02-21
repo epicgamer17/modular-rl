@@ -234,6 +234,7 @@ class DecisionNode:
         self.parent = parent
 
         self.network_policy = None  # dense policy vector (numpy or torch)
+        self.network_policy_dist = None  # optional full distribution for compatibility
         self.network_value = None  # network scalar value estimate (float)
 
         # Vectorized child stats
@@ -250,12 +251,14 @@ class DecisionNode:
         network_state,
         reward,
         value=None,
+        network_policy_dist=None,
     ):
         self.to_play = to_play
         self.reward = reward
         self.network_state = network_state
 
         self.network_policy = network_policy.detach().cpu()
+        self.network_policy_dist = network_policy_dist
         self.network_value = value
 
         # Initialize vectorized stats

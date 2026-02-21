@@ -644,7 +644,7 @@ class VQVAECommitmentLoss(LossModule):
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         # Note: indexed at k-1 in the stochastic arrays
-        encoder_softmax_k_plus_1 = predictions["encoder_softmaxes"]
+        encoder_softmax_k_plus_1 = predictions["chance_encoder_softmaxes"]
         target_codes_k = targets["chance_codes"].squeeze(-1).long()
         encoder_onehot_k_plus_1 = F.one_hot(
             target_codes_k, num_classes=encoder_softmax_k_plus_1.shape[-1]
@@ -867,7 +867,7 @@ class LossPipeline:
             "ConsistencyLoss": {"latent_states"},
             "ChanceQLoss": {"chance_values"},
             "SigmaLoss": {"chance_codes"},
-            "VQVAECommitmentLoss": {"encoder_softmaxes"},
+            "VQVAECommitmentLoss": {"chance_encoder_softmaxes"},
         }
         required_targets = {
             "ValueLoss": {"values"},

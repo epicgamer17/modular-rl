@@ -159,35 +159,40 @@ def test_learner_inference():
     batch = {
         "observations": torch.randn(batch_size, *input_shape),
         "actions": torch.randint(0, 5, (batch_size, unroll_steps)),
-        "target_observations": torch.randn(batch_size, unroll_steps + 1, *input_shape),
+        "unroll_observations": torch.randn(batch_size, unroll_steps + 1, *input_shape),
     }
 
     print("Running learner_inference...")
     learning_output = net.learner_inference(batch)
 
-    print(f"Values shape: {learning_output['values'].shape}")
-    print(f"Policies shape: {learning_output['policies'].shape}")
-    print(f"Rewards shape: {learning_output['rewards'].shape}")
-    print(f"Latents shape: {learning_output['latent_states'].shape}")
+    print(f"Values shape: {learning_output.values.shape}")
+    print(f"Policies shape: {learning_output.policies.shape}")
+    print(f"Rewards shape: {learning_output.rewards.shape}")
+    print(f"Latents shape: {learning_output.latents.shape}")
 
     # Expected shapes:
-    # All sequence tensors should have T+1 steps
-    assert learning_output["values"].shape == (batch_size, unroll_steps + 1, 1)
-    assert learning_output["policies"].shape == (batch_size, unroll_steps + 1, 5)
-    assert learning_output["rewards"].shape == (batch_size, unroll_steps + 1, 1)
-    assert learning_output["latent_states"].shape == (batch_size, unroll_steps + 1, 4)
+    # State-aligned tensors have T+1 steps; rewards are transition-aligned (T steps).
+    assert learning_output.values.shape == (batch_size, unroll_steps + 1, 1)
+    assert learning_output.policies.shape == (batch_size, unroll_steps + 1, 5)
+    assert learning_output.rewards.shape == (
+        batch_size,
+        unroll_steps,
+        1,
+    ), f"Expected rewards shape (B, T, 1), got {learning_output.rewards.shape}"
+    assert learning_output.latents.shape == (batch_size, unroll_steps + 1, 4)
 
     if config.stochastic:
-        print(f"Latents Afterstates shape: {learning_output['latent_afterstates'].shape}")
-        print(f"Chance Logits shape: {learning_output['chance_codes'].shape}")
-        print(f"Chance Values shape: {learning_output['chance_values'].shape}")
-        assert learning_output["latent_afterstates"].shape == (
+        print(f"Latents Afterstates shape: {learning_output.latents_afterstates.shape}")
+        print(f"Chance Logits shape: {learning_output.chance_logits.shape}")
+        print(f"Chance Values shape: {learning_output.chance_values.shape}")
+        # Stochastic tensors are transition-aligned (T steps, same as rewards)
+        assert learning_output.latents_afterstates.shape == (
             batch_size,
-            unroll_steps + 1,
+            unroll_steps,
             4,
         )
-        assert learning_output["chance_codes"].shape == (batch_size, unroll_steps + 1, 10)
-        assert learning_output["chance_values"].shape == (batch_size, unroll_steps + 1, 1)
+        assert learning_output.chance_logits.shape == (batch_size, unroll_steps, 10)
+        assert learning_output.chance_values.shape == (batch_size, unroll_steps, 1)
 
     print("learner_inference Test Success!")
 

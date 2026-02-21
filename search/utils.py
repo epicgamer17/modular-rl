@@ -7,11 +7,11 @@ def get_completed_q_improved_policy(config, node, min_max_stats):
     sigma = calculate_gumbel_sigma(
         config.gumbel_cvisit, config.gumbel_cscale, node, completedQ
     )
-    eps = 1e-12
-    # Ensure network policy is on the same device as sigma/completedQ or CPU
-    # Usually completedQ is on device?
-    # Let's move to cpu for safety if needed or keep consistency.
-    logits = torch.log(node.child_priors + eps)
+    logits = torch.where(
+        node.child_priors > 0,
+        torch.log(node.child_priors),
+        torch.full_like(node.child_priors, -float("inf")),
+    )
     pi0_logits = logits + sigma
     pi0 = torch.softmax(pi0_logits, dim=0)
     return pi0

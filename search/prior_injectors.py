@@ -1,23 +1,28 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional, Any
+from typing import Optional, Any
 
 import numpy as np
 import torch
 
-from modules.utils import support_to_scalar
-from search.initial_searchsets import SearchSet, SelectAll, SelectTopK
-from utils.utils import get_legal_moves
+
+def _safe_log_probs(probs: torch.Tensor) -> torch.Tensor:
+    """Converts probabilities to logits while keeping exact zeros as -inf."""
+    return torch.where(probs > 0, probs.log(), torch.full_like(probs, -float("inf")))
 
 
 class PriorInjector(ABC):
     @abstractmethod
-    def inject(self, policy, config, trajectory_action=None):
+    def inject(
+        self, policy, legal_moves, config, trajectory_action=None, policy_dist=None
+    ):
         """Modifies the context (policy, scores, etc.) in place."""
         pass
 
 
 class DirichletInjector(PriorInjector):
-    def inject(self, policy, legal_moves, config, trajectory_action=None):
+    def inject(
+        self, policy, legal_moves, config, trajectory_action=None, policy_dist=None
+    ):
         # Only apply noise to legal moves
         if config.root_dirichlet_alpha_adaptive:
             alpha = 1.0 / np.sqrt(len(legal_moves))
@@ -42,7 +47,9 @@ class ActionTargetInjector(PriorInjector):
     Boosts the prior of the trajectory_action.
     """
 
-    def inject(self, policy, legal_moves, config, trajectory_action=None):
+    def inject(
+        self, policy, legal_moves, config, trajectory_action=None, policy_dist=None
+    ):
         # TODO: a clean way of properly ensuring policy is masked here using legal moves
         if trajectory_action is None:
             return policy
@@ -71,20 +78,43 @@ class GumbelInjector(PriorInjector):
     Injects Gumbel noise into the logits, used for Gumbel MuZero selection.
     """
 
-    def inject(self, policy, legal_moves, config, trajectory_action=None):
+    def inject(
+        self, policy, legal_moves, config, trajectory_action=None, policy_dist=None
+    ):
         assert legal_moves and len(legal_moves) > 0
+
+        # Prefer distribution logits (from model output/masked dist) to avoid
+        # reconstructing logits from probs with epsilon hacks.
+        logits = None
+        if policy_dist is not None and hasattr(policy_dist, "logits"):
+            logits = policy_dist.logits
+            if logits is not None:
+                logits = logits.detach().cpu()
+        if logits is None:
+            logits = _safe_log_probs(policy).cpu()
+        if logits.dim() > 1:
+            if logits.shape[0] != 1:
+                raise ValueError("GumbelInjector expects a single policy vector.")
+            logits = logits[0]
+
+        # Keep illegal actions exactly masked.
+        legal_idx = torch.as_tensor(legal_moves, dtype=torch.long)
+        illegal_mask = torch.ones_like(logits, dtype=torch.bool)
+        illegal_mask[legal_idx] = False
+        logits = logits.clone()
+        logits[illegal_mask] = -float("inf")
+
         # Gumbel noise: g = -log(-log(uniform))
-        g = -torch.log(-torch.log(torch.rand(len(legal_moves))))
+        g = -torch.log(-torch.log(torch.rand(len(legal_moves), dtype=logits.dtype)))
 
         # Update scores: Score = g + logits
         # We map these back to the full actions space in context.scores
         # TODO: MUST STORE NETWORK PRIOR AND PRIOR IS ESSENTIALLY PRIOR SCORE NOT NETWORK PRIOR
-        logits = torch.log(policy + 1e-12).cpu()
-        current_logits = logits[legal_moves]
+        current_logits = logits[legal_idx]
         noisy_scores = g + current_logits
 
         new_logits = logits.clone()
-        new_logits[legal_moves] = noisy_scores
+        new_logits[legal_idx] = noisy_scores
 
         # TODO: RETURN NOISY SCORES POLICY, TURN LOGITS INTO POLICY, IS BELOW RIGHT?
         assert not torch.all(torch.isclose(new_logits, logits))

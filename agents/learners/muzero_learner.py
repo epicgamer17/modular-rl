@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Tuple
+
+if TYPE_CHECKING:
+    from modules.world_models.inference_output import LearningOutput
 
 import torch
 import torch.nn.functional as F
@@ -104,6 +107,11 @@ class MuZeroLearner(BaseLearner):
         if isinstance(real_latents, dict):
             real_latents = real_latents["dynamics"]
 
+        # Clone to promote from inference_mode tensors (created by obs_inference's
+        # @torch.inference_mode() decorator) to normal autograd-tracked tensors.
+        # Without this, project() cannot save the tensor for backward.
+        real_latents = real_latents.clone()
+
         proj_targets = self.model.project(real_latents, grad=False)
         normalized_targets = F.normalize(proj_targets, p=2.0, dim=-1, eps=1e-5)
         return normalized_targets.reshape(batch_size, unroll_len, -1).detach()
@@ -120,13 +128,62 @@ class MuZeroLearner(BaseLearner):
                 targets[key] = value.to(self.device)
         return targets
 
+    def _predictions_to_dict(self, out: "LearningOutput") -> Dict[str, torch.Tensor]:
+        """
+        Converts a ``LearningOutput`` NamedTuple into the flat dict expected by
+        the MuZero loss pipeline and callbacks.
+
+        The LearningOutput field names are close but not identical to the legacy
+        dict keys consumed by ``_run_sequence_pipeline``, so we remap explicitly.
+
+        Args:
+            out: LearningOutput produced by ``MuZeroNetwork.learner_inference``.
+
+        Returns:
+            Dict mapping pipeline-expected keys to tensors (None values omitted).
+        """
+        mapping: Dict[str, torch.Tensor] = {
+            "values": out.values,
+            "policies": out.policies,
+            "rewards": out.rewards,
+            "to_plays": out.to_plays,
+            # loss pipeline uses "latent_states" for consistency loss key lookup
+            "latent_states": out.latents,
+        }
+        # Stochastic MuZero optional fields
+        if out.latents_afterstates is not None:
+            mapping["latent_afterstates"] = out.latents_afterstates
+        if out.chance_logits is not None:
+            # loss pipeline uses "chance_codes" for SigmaLoss key lookup
+            mapping["chance_codes"] = out.chance_logits
+        if out.chance_values is not None:
+            mapping["chance_values"] = out.chance_values
+        if out.chance_encoder_softmaxes is not None:
+            # loss pipeline uses "chance_encoder_softmaxes" for VQVAECommitmentLoss
+            mapping["chance_encoder_softmaxes"] = out.chance_encoder_softmaxes
+        return {k: v for k, v in mapping.items() if v is not None}
+
     def compute_step_result(self, batch: Dict[str, Any], stats=None) -> StepResult:
+        """
+        Runs one forward/loss pass for a sampled MuZero batch.
+
+        Args:
+            batch: Dict produced by the MuZero replay buffer sampler.
+            stats: Optional stat tracker.
+
+        Returns:
+            StepResult with scalar loss, loss breakdown dict, and PER priorities.
+        """
         batch["observations"] = self._preprocess_observation(batch["observations"])
         targets = self._prepare_targets(batch)
         targets["consistency_targets"] = self._prepare_consistency_targets(
             targets["unroll_observations"]
         )
-        predictions = self.model.learner_inference(targets)
+        learning_out = self.model.learner_inference(targets)
+
+        # Convert the typed NamedTuple to the dict the loss pipeline and
+        # callbacks expect.
+        predictions = self._predictions_to_dict(learning_out)
 
         weights = targets["weights"].float()
         gradient_scales = self._gradient_scales()

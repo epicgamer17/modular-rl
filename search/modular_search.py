@@ -3,6 +3,7 @@ from typing import Any, Dict, Callable, List, Optional
 import torch
 from torch import Tensor
 import torch.nn.functional as F
+from torch.distributions import Categorical
 import math
 from modules.utils import support_to_scalar
 from modules.world_models.inference_output import InferenceOutput
@@ -54,6 +55,38 @@ class SearchAlgorithm:
         self.internal_pruning_method: PruningMethod = internal_pruning_method
         self.backpropagator: Backpropagator = backpropagator
 
+    @staticmethod
+    def _safe_log_probs(probs: torch.Tensor) -> torch.Tensor:
+        return torch.where(probs > 0, probs.log(), torch.full_like(probs, -float("inf")))
+
+    def _get_policy_logits(self, policy_dist) -> Optional[torch.Tensor]:
+        if policy_dist is not None and hasattr(policy_dist, "logits"):
+            logits = policy_dist.logits
+            if logits is not None:
+                return logits
+        return None
+
+    def _get_policy_probs(self, policy_dist) -> Optional[torch.Tensor]:
+        if policy_dist is not None and hasattr(policy_dist, "probs"):
+            probs = policy_dist.probs
+            if probs is not None:
+                return probs
+        return None
+
+    def _dist_for_batch_index(self, policy_dist, index: int):
+        logits = self._get_policy_logits(policy_dist)
+        if logits is None:
+            probs = self._get_policy_probs(policy_dist)
+            if probs is None:
+                return None
+            logits = self._safe_log_probs(probs)
+
+        if logits.dim() == 1:
+            batch_logits = logits
+        else:
+            batch_logits = logits[index]
+        return Categorical(logits=batch_logits.detach().cpu())
+
     def run(
         self,
         observation: Any,
@@ -72,7 +105,15 @@ class SearchAlgorithm:
         outputs: InferenceOutput = agent_network.obs_inference(observation)
 
         val_raw = outputs.value
-        policy = outputs.policy.probs
+        root_policy_dist = outputs.policy
+        policy_logits = self._get_policy_logits(root_policy_dist)
+        if policy_logits is None:
+            policy_probs = self._get_policy_probs(root_policy_dist)
+            if policy_probs is None:
+                raise ValueError("Search requires a policy distribution with logits/probs.")
+            policy_logits = self._safe_log_probs(policy_probs)
+        if policy_logits.dim() == 1:
+            policy_logits = policy_logits.unsqueeze(0)
         network_state = outputs.network_state
 
         # 3. Legal Moves
@@ -82,15 +123,17 @@ class SearchAlgorithm:
         if legal_moves is None:
             legal_moves = [list(range(self.num_actions))]
 
-        # TODO: should i action mask?
-        policy = self.root_selection_strategy.mask_actions(
-            policy, legal_moves, device=self.device
+        # Mask in logit space so illegal actions stay exactly at -inf/zero prob.
+        masked_logits = self.root_selection_strategy.mask_actions(
+            policy_logits, legal_moves, device=self.device
         )
+        masked_policy = torch.softmax(masked_logits, dim=-1)
 
         legal_moves = legal_moves[0]
-        policy = policy[0]
-        policy = policy.cpu()  # ensure CPU for manipulation
+        policy = masked_policy[0].cpu()  # ensure CPU for manipulation
         network_policy = policy.clone()
+        network_policy_dist = Categorical(logits=masked_logits[0].detach().cpu())
+        policy_dist_for_injectors = network_policy_dist
 
         # Initialize reward hidden states (empty for root)
         # However, if using ValuePrefix, we might need them initialized.
@@ -105,8 +148,14 @@ class SearchAlgorithm:
         # 5. Apply Prior Injectors (Stackable)
         for injector in self.prior_injectors:
             policy = injector.inject(
-                policy, legal_moves, self.config, trajectory_action
+                policy,
+                legal_moves,
+                self.config,
+                trajectory_action,
+                policy_dist=policy_dist_for_injectors,
             )
+            # Keep distribution/logits in sync for subsequent injectors.
+            policy_dist_for_injectors = Categorical(probs=policy)
 
         # 6. Select Actions
         selection_count = self.config.gumbel_m
@@ -122,6 +171,7 @@ class SearchAlgorithm:
             to_play=to_play,
             priors=policy,
             network_policy=network_policy,
+            network_policy_dist=network_policy_dist,
             network_state=network_state,
             reward=0.0,
             value=v_pi_scalar,
@@ -311,11 +361,17 @@ class SearchAlgorithm:
                 reward = outputs.reward
                 network_state = outputs.network_state
                 value = outputs.value
-                policy = (
-                    outputs.policy.probs
-                    if hasattr(outputs.policy, "probs")
-                    else outputs.policy.logits
-                )
+                policy = self._get_policy_probs(outputs.policy)
+                if policy is None:
+                    logits = self._get_policy_logits(outputs.policy)
+                    if logits is None:
+                        raise ValueError(
+                            "hidden_state_inference policy must expose probs/logits."
+                        )
+                    policy = torch.softmax(logits, dim=-1)
+                if policy.dim() == 1:
+                    policy = policy.unsqueeze(0)
+                node_policy_dist = self._dist_for_batch_index(outputs.policy, 0)
 
                 to_play = outputs.to_play
 
@@ -340,6 +396,7 @@ class SearchAlgorithm:
                     to_play=to_play,
                     priors=policy[0],
                     network_policy=policy[0],
+                    network_policy_dist=node_policy_dist,
                     network_state=network_state,
                     reward=reward,
                     value=value,
@@ -359,7 +416,17 @@ class SearchAlgorithm:
                 reward = outputs.reward
                 network_state = outputs.network_state
                 value = outputs.value
-                policy = outputs.policy.probs
+                policy = self._get_policy_probs(outputs.policy)
+                if policy is None:
+                    logits = self._get_policy_logits(outputs.policy)
+                    if logits is None:
+                        raise ValueError(
+                            "hidden_state_inference policy must expose probs/logits."
+                        )
+                    policy = torch.softmax(logits, dim=-1)
+                if policy.dim() == 1:
+                    policy = policy.unsqueeze(0)
+                node_policy_dist = self._dist_for_batch_index(outputs.policy, 0)
 
                 to_play = outputs.to_play
 
@@ -384,6 +451,7 @@ class SearchAlgorithm:
                     to_play=to_play,
                     priors=policy[0],
                     network_policy=policy[0],
+                    network_policy_dist=node_policy_dist,
                     network_state=network_state,
                     reward=reward,
                     value=value,
@@ -737,7 +805,15 @@ class SearchAlgorithm:
 
             rewards = outputs.reward
             values = outputs.value
-            policies = outputs.policy.probs
+            policies = self._get_policy_probs(outputs.policy)
+            if policies is None:
+                policy_logits = self._get_policy_logits(outputs.policy)
+                if policy_logits is None:
+                    raise ValueError(
+                        "hidden_state_inference policy must expose probs/logits."
+                    )
+                policies = torch.softmax(policy_logits, dim=-1)
+            policy_logits = self._get_policy_logits(outputs.policy)
             to_plays = outputs.to_play
 
             for local_i, x in enumerate(recurrent_inputs):
@@ -747,6 +823,11 @@ class SearchAlgorithm:
                     "network_state": unbatched_next_states[local_i],
                     "value": values[local_i],
                     "policy": policies[local_i : local_i + 1],
+                    "policy_logits": (
+                        None
+                        if policy_logits is None
+                        else policy_logits[local_i : local_i + 1]
+                    ),
                     "to_play": to_plays[local_i : local_i + 1],
                 }
 
@@ -866,6 +947,13 @@ class SearchAlgorithm:
                     to_play=to_play,
                     priors=policy,
                     network_policy=policy,
+                    network_policy_dist=(
+                        None
+                        if res.get("policy_logits") is None
+                        else Categorical(
+                            logits=res["policy_logits"][0].detach().cpu()
+                        )
+                    ),
                     network_state=res["network_state"],
                     reward=reward,
                     value=value,
