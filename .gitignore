@@ -1,4 +1,6 @@
 **/__pycache__
+*.pyc
+*.pyo
 *.keras
 *.mp4
 *.png
@@ -7,8 +9,19 @@
 **/build
 .vscode
 *.dill
-# *.pkl
+*.pkl
 **/checkpoints/
-*.DS_Store
+.DS_Store
+**/.DS_Store
 .venv/
 */deprecated/*
+*.patch
+debug_*.py
+reproduce_*.py
+debug_*.txt
+pylint_output.txt
+ffmpeg
+*.pdf
+*.egg-info/
+.pytest_cache/
+*.ipynb
