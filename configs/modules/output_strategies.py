@@ -13,10 +13,6 @@ class ScalarStrategyConfig(OutputStrategyConfig):
         super().__init__(config_dict or {})
 
 
-# Alias for backward compatibility
-RegressionConfig = ScalarStrategyConfig
-
-
 class CategoricalConfig(OutputStrategyConfig):
     def __init__(self, config_dict: dict):
         super().__init__(config_dict)

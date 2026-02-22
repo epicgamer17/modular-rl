@@ -13,7 +13,7 @@ from modules.blocks.dense import build_dense
 class RewardHead(BaseHead):
     """
     Predicts the instant reward.
-    Supports multiple output strategies (Regression, MuZero, C51, Dreamer).
+    Supports multiple output strategies (Scalar, MuZero, C51, Dreamer).
     """
 
     def __init__(

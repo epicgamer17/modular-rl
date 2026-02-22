@@ -27,10 +27,19 @@ class InputProcessor(ABC):
         pass
 
     def process_sequence(self, sequence, *args, **kwargs):
-        """Optional hook for processing entire sequence objects (e.g. MuZero)."""
+        """Optional hook for processing entire sequence objects."""
         raise NotImplementedError(
-            "Batch/Sequence processing not implemented for this processor."
+            "Sequence processing not implemented for this processor."
         )
+
+    def finish_trajectory(self, buffers, trajectory_slice, **kwargs):
+        """
+        Optional hook called when a trajectory ends.
+        Override to compute trajectory-level computations (e.g., GAE).
+        Returns:
+            Optional dict of computed values to store in buffer.
+        """
+        return None
 
     def clear(self):
         pass
@@ -72,30 +81,15 @@ class StackedInputProcessor(InputProcessor):
         self.processors = processors
 
     def process_single(self, *args, **kwargs):
-        # 1. Standardize Input to Dict
         data = kwargs.copy()
         if args:
-            # Handle legacy positional arguments from BaseBuffers
-            # Assumes standard order: obs, info, act, rew, next_obs, next_info, done
-            # keys = [
-            #     "observation",
-            #     "info",
-            #     "action",
-            #     "reward",
-            #     "next_observation",
-            #     "next_info",
-            #     "done",
-            # ]
-            # for k, v in zip(keys, args):
-            #     data[k] = v
             raise NotImplementedError(
                 "Positional arguments are not supported in StackedInputProcessor."
             )
-        # 2. Run Pipeline
         for p in self.processors:
             data = p.process_single(**data)
             if data is None:
-                return None  # Pipeline halted (e.g. accumulating)
+                return None
 
         return data
 
@@ -106,6 +100,27 @@ class StackedInputProcessor(InputProcessor):
             if data is None:
                 return None
         return data
+
+    def finish_trajectory(self, buffers, trajectory_slice, **kwargs):
+        """
+        Calls finish_trajectory on all processors, aggregating results.
+        """
+        result = {}
+        for p in self.processors:
+            traj_result = p.finish_trajectory(buffers, trajectory_slice, **kwargs)
+            if traj_result:
+                result.update(traj_result)
+        return result
+
+    def get_processor(self, processor_type):
+        """
+        Find a processor by type in the stack.
+        Returns the first matching processor or None.
+        """
+        for p in self.processors:
+            if isinstance(p, processor_type):
+                return p
+        return None
 
     def clear(self):
         for p in self.processors:
@@ -323,10 +338,10 @@ class NStepInputProcessor(InputProcessor):
         ]
 
 
-class MuZeroSequenceInputProcessor(InputProcessor):
+class SequenceTensorProcessor(InputProcessor):
     """
-    Processes a complete Sequence object into tensors for MuZero storage.
-    Extracted from: replay_buffers/muzero_replay_buffer.py
+    Converts a complete Sequence object into tensor format for storage.
+    Handles observation stacking, action/reward tensors, and legal move masks.
     """
 
     def __init__(self, num_actions: int, num_players: int, device="cpu"):
@@ -335,9 +350,8 @@ class MuZeroSequenceInputProcessor(InputProcessor):
         self.device = device
 
     def process_single(self, **kwargs):
-        """MuZeroSequenceInputProcessor only supports sequence processing."""
         raise NotImplementedError(
-            "MuZeroSequenceInputProcessor only supports process_sequence."
+            "SequenceTensorProcessor only supports process_sequence."
         )
 
     def process_sequence(self, sequence, **kwargs):
@@ -442,24 +456,22 @@ class MuZeroSequenceInputProcessor(InputProcessor):
         }
 
 
-class PPOInputProcessor(InputProcessor):
+class GAEProcessor(InputProcessor):
     """
-    Handles accumulation of trajectory for GAE calculation.
+    Computes Generalized Advantage Estimation (GAE) at trajectory end.
+    Passes through single steps unchanged, then finalizes with GAE calculation.
     """
 
     def __init__(self, gamma, gae_lambda):
         self.gamma = gamma
         self.gae_lambda = gae_lambda
-        # We need a temporary buffer or access to the main buffer to calculate GAE.
-        # Assuming we can calculate GAE on the fly or post-trajectory like original code.
 
     def process_single(self, *args, **kwargs):
-        # PPO usually stores directly, then post-processes at end of trajectory.
         return kwargs
 
     def finish_trajectory(self, buffers, trajectory_slice, last_value=0):
         """
-        Extracted from BasePPOReplayBuffer.finish_trajectory
+        Compute GAE advantages and returns for a trajectory segment.
         """
         rewards = torch.cat(
             (
@@ -476,7 +488,6 @@ class PPOInputProcessor(InputProcessor):
 
         deltas = rewards[:-1] + self.gamma * values[1:] - values[:-1]
 
-        # discounted_cumulative_sums uses scipy+numpy slicing; convert tensors explicitly.
         deltas_np = deltas.detach().cpu().numpy()
         rewards_np = rewards.detach().cpu().numpy()
 
@@ -487,7 +498,7 @@ class PPOInputProcessor(InputProcessor):
             discounted_cumulative_sums(rewards_np, self.gamma).copy()
         ).to(torch.float32)[:-1]
 
-        return advantages, returns
+        return {"advantages": advantages, "returns": returns}
 
 
 # ==========================================
@@ -502,10 +513,10 @@ class StandardOutputProcessor(OutputProcessor):
         return {key: buf[indices] for key, buf in buffers.items()}
 
 
-class MuZeroUnrollOutputProcessor(OutputProcessor):
+class NStepUnrollProcessor(OutputProcessor):
     """
-    Handles the complex window unrolling, validity masking, and N-step target calculation.
-    Extracted from: replay_buffers/muzero_replay_buffer.py
+    Handles window unrolling, validity masking, and N-step target calculation.
+    Samples indices and creates unrolled sequences with N-step value bootstrapping.
     """
 
     def __init__(
@@ -880,10 +891,9 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
         return target_values, target_rewards
 
 
-class PPOOutputProcessor(OutputProcessor):
+class AdvantageNormalizer(OutputProcessor):
     """
-    Handles normalization of advantages and formatting for PPO.
-    Extracted from: BasePPOReplayBuffer.sample
+    Normalizes advantages and formats batches for policy gradient methods.
     """
 
     def process_batch(self, indices, buffers, **kwargs):

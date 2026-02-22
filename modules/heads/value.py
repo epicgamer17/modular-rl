@@ -9,7 +9,7 @@ from configs.modules.backbones.base import BackboneConfig
 class ValueHead(BaseHead):
     """
     Predicts the expected return (Value).
-    Supports multiple output strategies (Regression, MuZero, C51, Dreamer).
+    Supports multiple output strategies (Scalar, MuZero, C51, Dreamer).
     """
 
     def __init__(

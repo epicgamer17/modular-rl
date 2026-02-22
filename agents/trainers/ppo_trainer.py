@@ -11,7 +11,6 @@ from agents.learners.ppo_learner import PPOLearner
 from agents.action_selectors.factory import SelectorFactory
 from agents.actors.actors import get_actor_class
 from modules.agent_nets.ppo import PPONetwork
-from replay_buffers.processors import PPOInputProcessor
 
 # from agents.policies.ppo_policy import PPOPolicy # REMOVED
 from stats.stats import StatTracker, PlotType
@@ -189,29 +188,17 @@ class PPOTrainer(BaseTrainer):
                     )
 
                     if trajectory_end_index > trajectory_start_index:
-                        ppo_input_processor = None
                         input_processor = self.learner.replay_buffer.input_processor
-                        for processor in getattr(input_processor, "processors", []):
-                            if isinstance(processor, PPOInputProcessor):
-                                ppo_input_processor = processor
-                                break
-
-                        if ppo_input_processor is None:
-                            raise RuntimeError(
-                                "PPOInputProcessor not found in PPO replay buffer pipeline."
-                            )
-
-                        advantages, returns = ppo_input_processor.finish_trajectory(
+                        result = input_processor.finish_trajectory(
                             self.learner.replay_buffer.buffers,
                             trajectory_slice,
                             last_value=last_value,
                         )
-                        self.learner.replay_buffer.buffers["advantages"][
-                            trajectory_slice
-                        ] = advantages
-                        self.learner.replay_buffer.buffers["returns"][
-                            trajectory_slice
-                        ] = returns
+                        if result:
+                            for key, value in result.items():
+                                self.learner.replay_buffer.buffers[key][
+                                    trajectory_slice
+                                ] = value
 
                     trajectory_start_index = trajectory_end_index
 

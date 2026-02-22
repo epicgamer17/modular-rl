@@ -83,8 +83,6 @@ class BaseLearner(ABC):
     ):
         self.config = config
         self.model = model
-        # Alias used by newer learners to emphasize architecture-agnostic inference.
-        self.agent = model
         self.device = device
         self.num_actions = num_actions
         self.observation_dimensions = observation_dimensions

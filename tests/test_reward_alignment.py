@@ -35,7 +35,7 @@ def test_reward_alignment():
         "training_steps": torch.zeros(4),
     }
 
-    processor = MuZeroUnrollOutputProcessor(
+    processor = NStepUnrollProcessor(
         unroll_steps=unroll_steps,
         n_step=n_step,
         gamma=gamma,

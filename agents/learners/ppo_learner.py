@@ -255,7 +255,7 @@ class PPOLearner(BaseLearner):
         """
         Computes PPO losses from raw learner logits.
         """
-        unroll_out = self.agent.learner_inference(batch)
+        unroll_out = self.model.learner_inference(batch)
         losses: Dict[str, torch.Tensor] = {}
 
         if (

@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import pytest
 from modules.world_models.inference_output import LearningOutput
-from replay_buffers.processors import MuZeroUnrollOutputProcessor
+from replay_buffers.processors import NStepUnrollProcessor
 
 
 def test_nstep_value_single_player():
@@ -15,7 +15,7 @@ def test_nstep_value_single_player():
     num_actions = 2
     num_players = 1
 
-    proc = MuZeroUnrollOutputProcessor(
+    proc = NStepUnrollProcessor(
         unroll_steps=unroll_steps,
         n_step=n_step,
         gamma=gamma,
@@ -73,7 +73,7 @@ def test_nstep_value_multi_player():
     num_actions = 2
     num_players = 2
 
-    proc = MuZeroUnrollOutputProcessor(
+    proc = NStepUnrollProcessor(
         unroll_steps=unroll_steps,
         n_step=n_step,
         gamma=gamma,
@@ -121,7 +121,7 @@ def test_value_prefix_logic():
     """
     Test value prefix (EfficientZero style accumulation).
     """
-    proc = MuZeroUnrollOutputProcessor(
+    proc = NStepUnrollProcessor(
         unroll_steps=3,
         n_step=1,
         gamma=1.0,
@@ -175,7 +175,7 @@ def test_nstep_specific_user_case():
     n_step = 2
     gamma = 0.99
     """
-    proc = MuZeroUnrollOutputProcessor(
+    proc = NStepUnrollProcessor(
         unroll_steps=2, n_step=2, gamma=0.99, num_actions=2, num_players=2, max_size=10
     )
 

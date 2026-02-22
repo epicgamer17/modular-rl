@@ -76,7 +76,7 @@ class QHead(BaseHead):
 
         # 4. Reshape for actions (B, actions, atoms) if needed by strategy?
         # Strategies like C51 expect (B, actions, atoms)
-        # Strategies like Regression expect (B, actions)
+        # Strategies like ScalarStrategy expect (B, actions)
 
         if self.strategy.num_bins > 1:
             logits = logits.view(-1, self.num_actions, self.strategy.num_bins)

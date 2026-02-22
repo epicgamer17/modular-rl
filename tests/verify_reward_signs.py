@@ -35,7 +35,7 @@ def test_reward_flipping():
         "training_steps": torch.zeros((10,)),
     }
 
-    processor = MuZeroUnrollOutputProcessor(
+    processor = NStepUnrollProcessor(
         unroll_steps=unroll_steps,
         n_step=n_step,
         gamma=gamma,

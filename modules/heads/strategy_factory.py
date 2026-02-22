@@ -2,7 +2,7 @@ from typing import Optional, Dict, Type
 from torch import nn
 from configs.modules.output_strategies import (
     OutputStrategyConfig,
-    RegressionConfig,
+    ScalarStrategyConfig,
     CategoricalConfig,
     MuZeroSupportConfig,
     C51SupportConfig,
@@ -10,7 +10,7 @@ from configs.modules.output_strategies import (
 )
 from modules.heads.strategies import (
     OutputStrategy,
-    Regression,
+    ScalarStrategy,
     Categorical,
     MuZeroSupport,
     C51Support,
@@ -22,7 +22,7 @@ class OutputStrategyFactory:
     """Factory to create OutputStrategy modules based on their configuration."""
 
     _strategies: Dict[Type[OutputStrategyConfig], Type[OutputStrategy]] = {
-        RegressionConfig: Regression,
+        ScalarStrategyConfig: ScalarStrategy,
         CategoricalConfig: Categorical,
         MuZeroSupportConfig: MuZeroSupport,
         C51SupportConfig: C51Support,
@@ -33,8 +33,7 @@ class OutputStrategyFactory:
     def create(cls, config: OutputStrategyConfig) -> OutputStrategy:
         config_type = type(config)
         if config_type not in cls._strategies:
-            # Default to Regression if unknown
-            return Regression()
+            return ScalarStrategy()
 
         # Extract arguments from config
         if isinstance(config, CategoricalConfig):

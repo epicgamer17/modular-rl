@@ -124,10 +124,10 @@ class RainbowLearner(BaseLearner):
         observations = batch["observations"].to(self.device)
         next_observations = batch["next_observations"].to(self.device)
 
-        online_out = self.agent.learner_inference({"observations": observations})
+        online_out = self.model.learner_inference({"observations": observations})
 
         with torch.no_grad():
-            next_online_out = self.agent.learner_inference(
+            next_online_out = self.model.learner_inference(
                 {"observations": next_observations}
             )
             target_next_out = self.target_agent.learner_inference(

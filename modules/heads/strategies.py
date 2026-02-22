@@ -40,13 +40,8 @@ class OutputStrategy(nn.Module, ABC):
         """Converts a ground-truth scalar to a target format (distribution/scalar)."""
         pass
 
-    # Deprecated / Aliased methods for compatibility during refactor
-    def logits_to_scalar(self, logits: Tensor) -> Tensor:
-        return self.to_expected_value(logits)
-
 
 class ScalarStrategy(OutputStrategy):
-    """Pure regression: identity transform. Formerly 'Regression'."""
 
     def __init__(self, output_size: int = 1):
         super().__init__()
@@ -71,10 +66,6 @@ class ScalarStrategy(OutputStrategy):
 
     def scalar_to_target(self, scalar: Tensor) -> Tensor:
         return scalar
-
-
-# Alias for backward compatibility if needed, though we should migrate config
-Regression = ScalarStrategy
 
 
 class Categorical(OutputStrategy):

@@ -1,7 +1,7 @@
 import torch
 import time
 import numpy as np
-from replay_buffers.processors import MuZeroUnrollOutputProcessor
+from replay_buffers.processors import NStepUnrollProcessor
 
 
 def benchmark_n_step():
@@ -14,7 +14,7 @@ def benchmark_n_step():
     num_players = 2
     max_size = 1000
 
-    proc = MuZeroUnrollOutputProcessor(
+    proc = NStepUnrollProcessor(
         unroll_steps=unroll_steps,
         n_step=n_step,
         gamma=gamma,

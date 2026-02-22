@@ -8,14 +8,14 @@ from replay_buffers.processors import (
     IdentityInputProcessor,
     NStepInputProcessor,
     TerminationFlagsInputProcessor,
-    MuZeroSequenceInputProcessor,
-    PPOInputProcessor,
+    SequenceTensorProcessor,
+    GAEProcessor,
     StackedInputProcessor,
     LegalMovesInputProcessor,
     ToPlayInputProcessor,
     StandardOutputProcessor,
-    MuZeroUnrollOutputProcessor,
-    PPOOutputProcessor,
+    NStepUnrollProcessor,
+    AdvantageNormalizer,
     FilterKeysInputProcessor,
 )
 from replay_buffers.writers import (
@@ -318,18 +318,14 @@ def create_muzero_buffer(
         ),
     ]
 
-    # MuZero uses a monolithic processor because it processes the entire Sequence history at once.
-    # However, if you wanted to chain post-processing on the 'data' dict returned by process_sequence,
-    # you could wrap this in a StackedInputProcessor.
-    # For now, MuZeroSequenceInputProcessor handles extraction of policies, values, and legal_masks internally.
-    input_processor = MuZeroSequenceInputProcessor(num_actions, num_players)
+    input_processor = SequenceTensorProcessor(num_actions, num_players)
 
     return ModularReplayBuffer(
         max_size=max_size,
         batch_size=batch_size,
         buffer_configs=configs,
         input_processor=input_processor,
-        output_processor=MuZeroUnrollOutputProcessor(
+        output_processor=NStepUnrollProcessor(
             unroll_steps,
             n_step,
             gamma,
@@ -463,13 +459,9 @@ def create_ppo_buffer(
         BufferConfig("returns", shape=(), dtype=torch.float32),
     ]
 
-    # PPO Stack:
-    # 1. LegalMoves: info -> legal_moves_masks
-    # 2. Rename: standard args -> plural keys
-    # 3. PPOInputProcessor: (Currently pass-through for single step, but holds finish_trajectory logic)
     input_stack = StackedInputProcessor(
         [
-            PPOInputProcessor(gamma, gae_lambda),
+            GAEProcessor(gamma, gae_lambda),
             LegalMovesInputProcessor(
                 num_actions, info_key="info", output_key="legal_moves_masks"
             ),
@@ -481,7 +473,7 @@ def create_ppo_buffer(
         batch_size=max_size,
         buffer_configs=configs,
         input_processor=input_stack,
-        output_processor=PPOOutputProcessor(),
+        output_processor=AdvantageNormalizer(),
         writer=PPOWriter(max_size),
         sampler=WholeBufferSampler(),
         backend=backend if backend is not None else LocalBackend(),
