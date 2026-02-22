@@ -19,6 +19,7 @@ from modules.utils import _normalize_hidden_state, zero_weights_initializer
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from modules.world_models.inference_output import (
     InferenceOutput,
+    MuZeroNetworkState,
     PhysicsOutput,
     WorldModelOutput,
 )
@@ -162,10 +163,10 @@ class MuZeroNetwork(BaseAgentNetwork):
 
         expected_value = self.value_head.strategy.to_expected_value(raw_value)
 
-        network_state = {
-            "dynamics": hidden_state,
-            "wm_memory": wm_output.head_state,
-        }
+        network_state = MuZeroNetworkState(
+            dynamics=hidden_state,
+            wm_memory=wm_output.head_state,
+        )
 
         return InferenceOutput(
             network_state=network_state,
@@ -179,7 +180,7 @@ class MuZeroNetwork(BaseAgentNetwork):
     @torch.inference_mode()
     def hidden_state_inference(
         self,
-        network_state: Dict[str, Tensor | dict],
+        network_state: MuZeroNetworkState,
         action: Tensor,
     ) -> InferenceOutput:
         """
@@ -200,8 +201,8 @@ class MuZeroNetwork(BaseAgentNetwork):
             InferenceOutput with updated ``network_state``, ``value``, ``policy``,
             and ``reward`` for this simulated transition.
         """
-        dynamics_state = network_state["dynamics"]
-        wm_memory = network_state.get("wm_memory")
+        dynamics_state = network_state.dynamics
+        wm_memory = network_state.wm_memory
 
         wm_output: WorldModelOutput = self.world_model.recurrent_inference(
             hidden_state=dynamics_state,
@@ -217,10 +218,10 @@ class MuZeroNetwork(BaseAgentNetwork):
 
         expected_value = self.value_head.strategy.to_expected_value(raw_value)
 
-        next_network_state = {
-            "dynamics": next_hidden,
-            "wm_memory": wm_output.head_state,
-        }
+        next_network_state = MuZeroNetworkState(
+            dynamics=next_hidden,
+            wm_memory=wm_output.head_state,
+        )
 
         return InferenceOutput(
             network_state=next_network_state,
@@ -257,10 +258,10 @@ class MuZeroNetwork(BaseAgentNetwork):
 
         raw_value, _ = self.afterstate_value_head(shared_features)
 
-        network_state_after = {
-            "dynamics": wm_output.afterstate_features,
-            "wm_memory": network_state["wm_memory"],
-        }
+        network_state_after = MuZeroNetworkState(
+            dynamics=wm_output.afterstate_features,
+            wm_memory=network_state.wm_memory,
+        )
 
         return InferenceOutput(
             network_state=network_state_after,

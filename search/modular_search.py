@@ -57,26 +57,14 @@ class SearchAlgorithm:
 
     @staticmethod
     def _safe_log_probs(probs: torch.Tensor) -> torch.Tensor:
-        return torch.where(probs > 0, probs.log(), torch.full_like(probs, -float("inf")))
-
-    def _get_policy_logits(self, policy_dist) -> Optional[torch.Tensor]:
-        if policy_dist is not None and hasattr(policy_dist, "logits"):
-            logits = policy_dist.logits
-            if logits is not None:
-                return logits
-        return None
-
-    def _get_policy_probs(self, policy_dist) -> Optional[torch.Tensor]:
-        if policy_dist is not None and hasattr(policy_dist, "probs"):
-            probs = policy_dist.probs
-            if probs is not None:
-                return probs
-        return None
+        return torch.where(
+            probs > 0, probs.log(), torch.full_like(probs, -float("inf"))
+        )
 
     def _dist_for_batch_index(self, policy_dist, index: int):
-        logits = self._get_policy_logits(policy_dist)
+        logits = policy_dist.logits
         if logits is None:
-            probs = self._get_policy_probs(policy_dist)
+            probs = policy_dist.probs
             if probs is None:
                 return None
             logits = self._safe_log_probs(probs)
@@ -106,11 +94,13 @@ class SearchAlgorithm:
 
         val_raw = outputs.value
         root_policy_dist = outputs.policy
-        policy_logits = self._get_policy_logits(root_policy_dist)
+        policy_logits = root_policy_dist.logits
         if policy_logits is None:
-            policy_probs = self._get_policy_probs(root_policy_dist)
+            policy_probs = root_policy_dist.probs
             if policy_probs is None:
-                raise ValueError("Search requires a policy distribution with logits/probs.")
+                raise ValueError(
+                    "Search requires a policy distribution with logits/probs."
+                )
             policy_logits = self._safe_log_probs(policy_probs)
         if policy_logits.dim() == 1:
             policy_logits = policy_logits.unsqueeze(0)
@@ -143,7 +133,7 @@ class SearchAlgorithm:
 
         # 2. Value Processing
         # Value is already expected value from InferenceOutput
-        v_pi_scalar = float(val_raw.item())
+        v_pi_scalar = float(val_raw)
 
         # 5. Apply Prior Injectors (Stackable)
         for injector in self.prior_injectors:
@@ -223,16 +213,6 @@ class SearchAlgorithm:
             root, min_max_stats
         )
 
-        # Mask target policy if required by pruning method (e.g. for Sequential Halving)
-        if self.pruning_method.mask_target_policy:
-            target_policy = self.root_selection_strategy.mask_actions(
-                target_policy.unsqueeze(0), [legal_moves]
-            ).squeeze(0)
-
-        assert (
-            isinstance(target_policy, torch.Tensor)
-            and target_policy.shape == policy.shape
-        )
         return (
             root.value(),
             exploratory_policy,
@@ -312,7 +292,7 @@ class SearchAlgorithm:
                     min_max_stats=min_max_stats,
                 )
             else:
-                if isinstance(node, DecisionNode):
+                if node.is_decision:
                     if node not in pruning_context["internal"]:
                         pruning_context["internal"][node] = (
                             self.internal_pruning_method.initialize(node, self.config)
@@ -338,7 +318,7 @@ class SearchAlgorithm:
                             min_max_stats=min_max_stats,
                         )
                     )
-                elif isinstance(node, ChanceNode):
+                else:
                     action_or_code, node = self.chance_selection_strategy.select_child(
                         node,
                         # pruned_searchset=pruned_searchset,
@@ -351,8 +331,8 @@ class SearchAlgorithm:
         parent = search_path[-2]
         # if to_play != old_to_play and self.training_step > 1000:
         #     print("WRONG TO PLAY", onehot_to_play)
-        if isinstance(node, DecisionNode):
-            if isinstance(parent, DecisionNode):
+        if node.is_decision:
+            if parent.is_decision:
                 outputs: InferenceOutput = agent_network.hidden_state_inference(
                     parent.network_state,
                     torch.as_tensor([action_or_code], device=self.device),
@@ -361,9 +341,9 @@ class SearchAlgorithm:
                 reward = outputs.reward
                 network_state = outputs.network_state
                 value = outputs.value
-                policy = self._get_policy_probs(outputs.policy)
+                policy = outputs.policy.probs
                 if policy is None:
-                    logits = self._get_policy_logits(outputs.policy)
+                    logits = outputs.policy.logits
                     if logits is None:
                         raise ValueError(
                             "hidden_state_inference policy must expose probs/logits."
@@ -375,14 +355,9 @@ class SearchAlgorithm:
 
                 to_play = outputs.to_play
 
-                if isinstance(reward, torch.Tensor):
-                    reward = reward.item()
-                if isinstance(value, torch.Tensor):
-                    value = value.item()
-
-                # onehot_to_play = to_play
-                if isinstance(to_play, torch.Tensor):
-                    to_play = int(to_play.argmax().item())
+                reward = reward.item()
+                value = value.item()
+                to_play = int(to_play.item())
 
                 actions_to_expand = self.internal_searchset.create_initial_searchset(
                     policy[0],
@@ -401,7 +376,7 @@ class SearchAlgorithm:
                     reward=reward,
                     value=value,
                 )
-            elif isinstance(parent, ChanceNode):
+            elif parent.is_chance:
                 # Prepare scalar code as one-hot for inference
                 action_t = torch.tensor(action_or_code, device=self.device)
                 num_codes = parent.child_priors.shape[0]
@@ -413,12 +388,12 @@ class SearchAlgorithm:
                     one_hot_code.unsqueeze(0).float(),
                 )
 
-                reward = outputs.reward
+                reward = float(outputs.reward)
                 network_state = outputs.network_state
-                value = outputs.value
-                policy = self._get_policy_probs(outputs.policy)
+                value = float(outputs.value)
+                policy = outputs.policy.probs
                 if policy is None:
-                    logits = self._get_policy_logits(outputs.policy)
+                    logits = outputs.policy.logits
                     if logits is None:
                         raise ValueError(
                             "hidden_state_inference policy must expose probs/logits."
@@ -428,16 +403,7 @@ class SearchAlgorithm:
                     policy = policy.unsqueeze(0)
                 node_policy_dist = self._dist_for_batch_index(outputs.policy, 0)
 
-                to_play = outputs.to_play
-
-                if isinstance(reward, torch.Tensor):
-                    reward = reward.item()
-                if isinstance(value, torch.Tensor):
-                    value = value.item()
-
-                # onehot_to_play = to_play
-                if isinstance(to_play, torch.Tensor):
-                    to_play = int(to_play.argmax().item())
+                to_play = int(outputs.to_play)
 
                 actions_to_expand = self.internal_searchset.create_initial_searchset(
                     policy[0],
@@ -456,7 +422,7 @@ class SearchAlgorithm:
                     reward=reward,
                     value=value,
                 )
-        elif isinstance(node, ChanceNode):
+        elif node.is_chance:
             # CASE B: Stochastic Expansion (The Core Change)
             # We are at (State, Action). We need to:
             # 1. Get Afterstate Value & Code Priors (Expand ChanceNode)
@@ -472,11 +438,8 @@ class SearchAlgorithm:
             )
 
             network_state = outputs.network_state
-            value = outputs.value
+            value = float(outputs.value)
             code_probs = outputs.policy.probs
-
-            if isinstance(value, torch.Tensor):
-                value = value.item()
 
             # Expand the Chance Node with these priors
             node.expand(
@@ -549,12 +512,9 @@ class SearchAlgorithm:
                                 n.value_sum += virtual_loss
                                 n._v_mix = None
 
-                        # Fix: Revert child_visits
                         for i in range(len(action_path)):
                             p_node = search_path[i]
-                            act = action_path[i]
-                            if isinstance(act, torch.Tensor):
-                                act = act.item()
+                            act = int(action_path[i])
                             p_node.child_visits[act] -= 1
 
                         node = None
@@ -566,7 +526,7 @@ class SearchAlgorithm:
                         min_max_stats=min_max_stats,
                     )
                 else:
-                    if isinstance(node, DecisionNode):
+                    if node.is_decision:
                         if node not in pruning_context["internal"]:
                             pruning_context["internal"][node] = (
                                 self.internal_pruning_method.initialize(
@@ -600,9 +560,7 @@ class SearchAlgorithm:
                             # Fix: Revert child_visits
                             for i in range(len(action_path)):
                                 p_node = search_path[i]
-                                act = action_path[i]
-                                if isinstance(act, torch.Tensor):
-                                    act = act.item()
+                                act = int(action_path[i])
                                 p_node.child_visits[act] -= 1
 
                             node = None
@@ -615,7 +573,7 @@ class SearchAlgorithm:
                                 min_max_stats=min_max_stats,
                             )
                         )
-                    elif isinstance(node, ChanceNode):
+                    elif node.is_chance:
                         action_or_code, node = (
                             self.chance_selection_strategy.select_child(
                                 node,
@@ -631,10 +589,7 @@ class SearchAlgorithm:
 
                 # CRITICAL FIX: Sync child_visits tensor for vectorized selection
                 # This ensures subsequent batch items see the updated visit count
-                if isinstance(action_or_code, torch.Tensor):
-                    act_idx = action_or_code.item()
-                else:
-                    act_idx = action_or_code
+                act_idx = int(action_or_code)
 
                 parent_node.child_visits[act_idx] += 1
 
@@ -741,7 +696,7 @@ class SearchAlgorithm:
             parent = d["parent"]
             action = d["action"]
 
-            if isinstance(node, DecisionNode):
+            if node.is_decision:
                 state = parent.network_state
                 assert (
                     state is not None
@@ -754,7 +709,7 @@ class SearchAlgorithm:
                         "idx": i,
                     }
                 )
-            elif isinstance(node, ChanceNode):
+            elif node.is_chance:
                 state = parent.network_state
                 assert (
                     state is not None
@@ -776,12 +731,9 @@ class SearchAlgorithm:
             act_list = []
             for x in recurrent_inputs:
                 d = sim_data[x["idx"]]
-                is_chance_parent = isinstance(d["parent"], ChanceNode)
+                is_chance_parent = d["parent"].is_chance
                 raw_action = x["action"]
-                if isinstance(raw_action, torch.Tensor):
-                    val = raw_action.to(self.device).detach().clone()
-                else:
-                    val = torch.as_tensor(raw_action, device=self.device)
+                val = torch.as_tensor(raw_action, device=self.device)
 
                 if is_chance_parent:
                     num_codes = d["parent"].child_priors.shape[0]
@@ -805,15 +757,15 @@ class SearchAlgorithm:
 
             rewards = outputs.reward
             values = outputs.value
-            policies = self._get_policy_probs(outputs.policy)
+            policies = outputs.policy.probs
             if policies is None:
-                policy_logits = self._get_policy_logits(outputs.policy)
+                policy_logits = outputs.policy.logits
                 if policy_logits is None:
                     raise ValueError(
                         "hidden_state_inference policy must expose probs/logits."
                     )
                 policies = torch.softmax(policy_logits, dim=-1)
-            policy_logits = self._get_policy_logits(outputs.policy)
+            policy_logits = outputs.policy.logits
             to_plays = outputs.to_play
 
             for local_i, x in enumerate(recurrent_inputs):
@@ -893,10 +845,7 @@ class SearchAlgorithm:
             for i in range(len(d["action_path"])):
                 parent = path[i]
                 action = d["action_path"][i]
-                if isinstance(action, torch.Tensor):
-                    act_idx = action.item()
-                else:
-                    act_idx = action
+                act_idx = int(action)
                 parent.child_visits[act_idx] -= 1
                 # No need to invalidate v_mix again, handled above (parent in path)
 
@@ -911,7 +860,7 @@ class SearchAlgorithm:
 
             to_play_for_backprop = None
 
-            if isinstance(node, DecisionNode):
+            if node.is_decision:
                 reward = res["reward"]
                 value = res["value"]
                 if self.config.support_range is not None:
@@ -928,10 +877,10 @@ class SearchAlgorithm:
                     else:
                         value = value.item()
                 else:
-                    reward = reward.item()
-                    value = value.item()
+                    reward = float(reward)
+                    value = float(value)
 
-                to_play = int(res["to_play"].argmax().item())
+                to_play = int(res["to_play"])
                 to_play_for_backprop = to_play
 
                 policy = res["policy"][0]
@@ -950,16 +899,14 @@ class SearchAlgorithm:
                     network_policy_dist=(
                         None
                         if res.get("policy_logits") is None
-                        else Categorical(
-                            logits=res["policy_logits"][0].detach().cpu()
-                        )
+                        else Categorical(logits=res["policy_logits"][0].detach().cpu())
                     ),
                     network_state=res["network_state"],
                     reward=reward,
                     value=value,
                 )
 
-            elif isinstance(node, ChanceNode):
+            elif node.is_chance:
                 value = res["value"]
                 if self.config.support_range:
                     if value.numel() > 1:
@@ -969,7 +916,7 @@ class SearchAlgorithm:
                     else:
                         value = value.item()
                 else:
-                    value = value.item()
+                    value = float(value)
 
                 to_play_for_backprop = d["parent"].to_play
 

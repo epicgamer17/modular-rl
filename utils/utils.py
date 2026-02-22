@@ -434,9 +434,14 @@ def recursive_batch(states: list | dict | torch.Tensor | tuple):
     if isinstance(states[0], dict):
         return {k: recursive_batch([s[k] for s in states]) for k in states[0].keys()}
     if isinstance(states[0], tuple):
-        return tuple(
+        cls = type(states[0])  # Preserves NamedTuple subclass (e.g. MuZeroNetworkState)
+        batched = tuple(
             recursive_batch([s[i] for s in states]) for i in range(len(states[0]))
         )
+        try:
+            return cls._make(batched)
+        except (AttributeError, TypeError):
+            return batched  # Plain tuple fallback
     if isinstance(states[0], torch.Tensor):
         # Handle LSTM states (L, 1, H) vs standard states
         if states[0].dim() == 3 and states[0].shape[1] == 1:
@@ -470,12 +475,17 @@ def recursive_unbatch(batched_state: dict | torch.Tensor | tuple):
             for j in range(batch_size)
         ]
     if isinstance(batched_state, tuple):
+        cls = type(batched_state)  # Preserves NamedTuple subclass
         unbatched_items = [recursive_unbatch(t) for t in batched_state]
         if not unbatched_items:
-            return [()]
+            try:
+                return [cls._make([])]
+            except (AttributeError, TypeError):
+                return [()]
         batch_size = max(len(v) for v in unbatched_items)
-        return [
-            tuple(
+        result = []
+        for j in range(batch_size):
+            elems = tuple(
                 (
                     unbatched_items[i][j]
                     if len(unbatched_items[i]) > 1
@@ -483,8 +493,11 @@ def recursive_unbatch(batched_state: dict | torch.Tensor | tuple):
                 )
                 for i in range(len(batched_state))
             )
-            for j in range(batch_size)
-        ]
+            try:
+                result.append(cls._make(elems))
+            except (AttributeError, TypeError):
+                result.append(elems)
+        return result
     if isinstance(batched_state, torch.Tensor):
         # Handle LSTM states (L, B, H)
         if batched_state.dim() == 3:

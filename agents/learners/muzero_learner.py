@@ -103,10 +103,7 @@ class MuZeroLearner(BaseLearner):
         flat_obs = real_obs.flatten(0, 1)
 
         initial_out = self.model.obs_inference(flat_obs)
-        real_latents = initial_out.network_state
-        if isinstance(real_latents, dict):
-            real_latents = real_latents["dynamics"]
-
+        real_latents = initial_out.network_state.dynamics
         # Clone to promote from inference_mode tensors (created by obs_inference's
         # @torch.inference_mode() decorator) to normal autograd-tracked tensors.
         # Without this, project() cannot save the tensor for backward.
@@ -176,9 +173,12 @@ class MuZeroLearner(BaseLearner):
         """
         batch["observations"] = self._preprocess_observation(batch["observations"])
         targets = self._prepare_targets(batch)
-        targets["consistency_targets"] = self._prepare_consistency_targets(
-            targets["unroll_observations"]
-        )
+        if self.config.consistency_loss_factor > 0:
+            targets["consistency_targets"] = self._prepare_consistency_targets(
+                targets["unroll_observations"]
+            )
+        else:
+            targets["consistency_targets"] = None
         learning_out = self.model.learner_inference(targets)
 
         # Convert the typed NamedTuple to the dict the loss pipeline and

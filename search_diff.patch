@@ -1,0 +1,107 @@
+diff --git a/search/modular_search.py b/search/modular_search.py
+index ad29db635..c671c8fd9 100644
+--- a/search/modular_search.py
++++ b/search/modular_search.py
+@@ -91,8 +91,11 @@ class SearchAlgorithm:
+ 
+         # 2. Value Processing
+         if self.config.support_range is not None:
+-            v_pi = support_to_scalar(val_raw, self.config.support_range)
+-            v_pi_scalar = float(v_pi.item())
++            if val_raw.numel() == 1:
++                v_pi_scalar = float(val_raw.item())
++            else:
++                v_pi = support_to_scalar(val_raw, self.config.support_range)
++                v_pi_scalar = float(v_pi.item())
+         else:
+             v_pi_scalar = float(val_raw.item())
+ 
+@@ -323,8 +326,18 @@ class SearchAlgorithm:
+                     model=inference_model,
+                 )
+                 if self.config.support_range is not None:
+-                    reward = support_to_scalar(reward, self.config.support_range).item()
+-                    value = support_to_scalar(value, self.config.support_range).item()
++                    if reward.numel() > 1:
++                        reward = support_to_scalar(
++                            reward, self.config.support_range
++                        ).item()
++                    else:
++                        reward = reward.item()
++                    if value.numel() > 1:
++                        value = support_to_scalar(
++                            value, self.config.support_range
++                        ).item()
++                    else:
++                        value = value.item()
+                 else:
+                     reward = reward.item()
+                     value = value.item()
+@@ -378,8 +391,18 @@ class SearchAlgorithm:
+                     model=inference_model,
+                 )
+                 if self.config.support_range is not None:
+-                    reward = support_to_scalar(reward, self.config.support_range).item()
+-                    value = support_to_scalar(value, self.config.support_range).item()
++                    if reward.numel() > 1:
++                        reward = support_to_scalar(
++                            reward, self.config.support_range
++                        ).item()
++                    else:
++                        reward = reward.item()
++                    if value.numel() > 1:
++                        value = support_to_scalar(
++                            value, self.config.support_range
++                        ).item()
++                    else:
++                        value = value.item()
+                 else:
+                     reward = reward.item()
+                     value = value.item()
+@@ -429,7 +452,10 @@ class SearchAlgorithm:
+             )
+ 
+             if self.config.support_range:
+-                value = support_to_scalar(value, self.config.support_range).item()
++                if value.numel() > 1:
++                    value = support_to_scalar(value, self.config.support_range).item()
++                else:
++                    value = value.item()
+             else:
+                 value = value.item()
+ 
+@@ -848,8 +874,18 @@ class SearchAlgorithm:
+                 reward = res["reward"]
+                 value = res["value"]
+                 if self.config.support_range is not None:
+-                    reward = support_to_scalar(reward, self.config.support_range).item()
+-                    value = support_to_scalar(value, self.config.support_range).item()
++                    if reward.numel() > 1:
++                        reward = support_to_scalar(
++                            reward, self.config.support_range
++                        ).item()
++                    else:
++                        reward = reward.item()
++                    if value.numel() > 1:
++                        value = support_to_scalar(
++                            value, self.config.support_range
++                        ).item()
++                    else:
++                        value = value.item()
+                 else:
+                     reward = reward.item()
+                     value = value.item()
+@@ -889,7 +925,12 @@ class SearchAlgorithm:
+             elif isinstance(node, ChanceNode):
+                 value = res["value"]
+                 if self.config.support_range:
+-                    value = support_to_scalar(value, self.config.support_range).item()
++                    if value.numel() > 1:
++                        value = support_to_scalar(
++                            value, self.config.support_range
++                        ).item()
++                    else:
++                        value = value.item()
+                 else:
+                     value = value.item()
+ 

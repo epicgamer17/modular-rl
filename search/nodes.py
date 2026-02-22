@@ -21,7 +21,6 @@ class ChanceNode:
     value_prefix = None
 
     def __init__(self, prior, parent):
-        # assert isinstance(parent, DecisionNode)
         self.parent = parent  # DecisionNode
         self.prior = prior  # P(a|s) from Policy
 
@@ -46,6 +45,14 @@ class ChanceNode:
 
         # Cache for v_mix
         self._v_mix = None
+
+    @property
+    def is_decision(self) -> bool:
+        return False
+
+    @property
+    def is_chance(self) -> bool:
+        return True
 
     def expand(
         self,
@@ -111,8 +118,7 @@ class ChanceNode:
     def _sample_code(self, codes, probs):
         """Helper to sample a single code index from probabilities."""
         # Normalize probs just in case
-        probs = [(p.detach().item() if torch.is_tensor(p) else float(p)) for p in probs]
-        probs = np.array(probs)
+        probs = np.array([float(p) for p in probs])
         probs /= probs.sum()
         return np.random.choice(len(codes), p=probs)
 
@@ -137,19 +143,10 @@ class ChanceNode:
         return true_reward
 
     def get_child_q_from_parent(self, child):
-        # assert isinstance(child, DecisionNode)
-        r = self.child_reward(child)
-        if torch.is_tensor(r):
-            r = r.detach().item()
-        else:
-            r = float(r)
+        r = float(self.child_reward(child))
 
         # child.value() if visited else v_mix
-        v = child.value()
-        if torch.is_tensor(v):
-            v = v.detach().item()
-        else:
-            v = float(v)
+        v = float(child.value())
 
         # sign = +1 if child.to_play == self.to_play else -1 (multi-agent).
         sign = 1.0 if child.to_play == self.to_play else -1.0
@@ -216,11 +213,6 @@ class DecisionNode:
     stochastic = None
 
     def __init__(self, prior, parent=None):
-        assert (
-            (self.stochastic and isinstance(parent, ChanceNode))
-            or (parent is None)
-            or (not self.stochastic and isinstance(parent, DecisionNode))
-        )
         self.visits = 0
         self.to_play = -1
         self.prior = prior
@@ -241,6 +233,14 @@ class DecisionNode:
         self.child_visits = None
         self.child_values = None
         self.child_priors = None
+
+    @property
+    def is_decision(self) -> bool:
+        return True
+
+    @property
+    def is_chance(self) -> bool:
+        return False
 
     def expand(
         self,
@@ -402,25 +402,15 @@ class DecisionNode:
 
     def get_child_q_from_parent(self, child):
         # This legacy method is still useful for non-vectorized parts or debugging
-        if isinstance(child, DecisionNode):
+        if child.is_decision:
             if not child.expanded():
-                v = child.value()
-                return v.detach().item() if torch.is_tensor(v) else float(v)
+                return float(child.value())
 
-            r = self.child_reward(child)
-            if torch.is_tensor(r):
-                r = r.detach().item()
-            else:
-                r = float(r)
-
-            v = child.value()
-            if torch.is_tensor(v):
-                v = v.detach().item()
-            else:
-                v = float(v)
+            r = float(self.child_reward(child))
+            v = float(child.value())
             sign = 1.0 if child.to_play == self.to_play else -1.0
             q_from_parent = r + self.discount * (sign * v)
-        elif isinstance(child, ChanceNode):
+        else:
             assert (
                 child.to_play == self.to_play
             ), "chance nodes should be the same player as their parent"

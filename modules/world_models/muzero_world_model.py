@@ -12,7 +12,11 @@ from modules.heads.to_play import ToPlayHead
 from modules.heads.reward import RewardHead
 from modules.heads.strategy_factory import OutputStrategyFactory
 from modules.utils import scale_gradient
-from modules.world_models.inference_output import WorldModelOutput, PhysicsOutput
+from modules.world_models.inference_output import (
+    MuZeroNetworkState,
+    WorldModelOutput,
+    PhysicsOutput,
+)
 from modules.world_models.world_model import WorldModelInterface
 
 from modules.world_models.components.representation import Representation
@@ -171,12 +175,15 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         # WorldModelOutput.head_state is Any.
         outcome_state = new_state if isinstance(recurrent_state, dict) else new_state
 
-        to_play, _ = self.to_play_head(next_hidden_state)
+        # to_play_head returns (logits, state, player_idx).
+        # Recurrent inference exposes logits for the learner, player_idx for the actor/MCTS.
+        to_play_logits, _, to_play = self.to_play_head(next_hidden_state)
 
         return WorldModelOutput(
             features=next_hidden_state,
             reward=reward_logits,
-            to_play=to_play,
+            to_play=to_play,  # actor-facing: scalar player index (B,)
+            to_play_logits=to_play_logits,  # learner-facing: raw logits (B, num_players)
             head_state=outcome_state,
             instant_reward=instant_reward,
         )
@@ -194,19 +201,22 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         - ``MuZeroNetwork.afterstate_inference`` (MCTS external): passes the
           opaque ``{"dynamics": Tensor, "wm_memory": ...}`` dict.
 
-        Both cases are handled gracefully.
+        Both cases are handled gracefully via ``MuZeroNetworkState``.
 
         Args:
-            network_state: Either a raw latent Tensor or the opaque network state
-                           dict produced by ``obs_inference`` / ``hidden_state_inference``.
+            network_state: A ``MuZeroNetworkState`` — either from
+                ``MuZeroNetwork.afterstate_inference`` (MCTS) or wrapped by
+                ``unroll_physics`` (learner). Must never be a raw Tensor.
             action: Action taken at this step.
 
         Returns:
             WorldModelOutput with afterstate features and chance logits.
         """
-        # only accept dicts for network state
-        assert isinstance(network_state, dict), "network_state must be a dict"
-        latent_state = network_state["dynamics"]
+        assert isinstance(network_state, MuZeroNetworkState), (
+            f"network_state must be a MuZeroNetworkState, got {type(network_state)}. "
+            "Wrap raw latent tensors with MuZeroNetworkState(dynamics=latent) before calling."
+        )
+        latent_state = network_state.dynamics
 
         # 1. Transition to Afterstate
         action = action.view(-1).to(latent_state.device)
@@ -269,9 +279,11 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         # Add initial states to lists
         latent_states.append(hidden_states)
 
-        # Predict initial player
-        initial_to_play, _ = self.to_play_head(hidden_states)
-        to_plays.append(initial_to_play)
+        # Predict initial player — return logits so ToPlayLoss receives pre-softmax
+        # values (cross_entropy expects logits, not probabilities).
+        # to_play_head returns (logits, state, player_idx); store logits for the learner.
+        initial_to_play_logits, _, _player_idx = self.to_play_head(hidden_states)
+        to_plays.append(initial_to_play_logits)
 
         # Stochastic MuZero specific storage
         if self.config.stochastic:
@@ -296,9 +308,11 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             actions_k = actions[:, k]
 
             if self.config.stochastic:
-                # 1. Afterstate Inference
+                # 1. Afterstate Inference — wrap latent in MuZeroNetworkState so the
+                # method's strict type check passes (it must be a structured object,
+                # never a raw Tensor).
                 afterstate_out = self.afterstate_recurrent_inference(
-                    hidden_states, actions_k
+                    MuZeroNetworkState(dynamics=hidden_states), actions_k
                 )
                 afterstates = afterstate_out.afterstate_features
                 shared_features = afterstate_out.features
@@ -331,11 +345,13 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 )
                 current_head_state = new_state
 
-                to_play, _ = self.to_play_head(next_hidden_state)
+                # to_play_head returns (logits, state, player_idx).
+                to_play_logits, _, to_play = self.to_play_head(next_hidden_state)
 
                 rewards_k = reward_logits  # Changed
                 hidden_states = next_hidden_state
-                to_plays_k = to_play
+                # Store logits for the learner (ToPlayLoss expects pre-softmax values).
+                to_plays_k = to_play_logits
 
                 # Update LSTM states (for potential external usage, though unroll mainly uses dict now)
                 # But we don't strictly need these unpacking if we pass current_reward_state next time
@@ -348,7 +364,8 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 )
                 rewards_k = wm_output.reward
                 hidden_states = wm_output.features
-                to_plays_k = wm_output.to_play
+                # Use logits for the learner (cross_entropy expects pre-softmax values).
+                to_plays_k = wm_output.to_play_logits
 
                 # wm_output.head_state is now the opaque dict
                 current_head_state = wm_output.head_state
@@ -389,7 +406,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
 
         # 7. Compute target latents for consistency loss if requested
         stacked_target_latents = None
-        if target_observations is not None:
+        if target_observations is not None and self.config.consistency_loss_factor > 0:
             B_target, T_plus_1_target = target_observations.shape[:2]
             flat_target_obs = target_observations.reshape(
                 B_target * T_plus_1_target, *target_observations.shape[2:]

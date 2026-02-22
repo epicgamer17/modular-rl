@@ -1,6 +1,24 @@
 from typing import NamedTuple, Optional, Any
 import torch
+from torch import Tensor
 from torch.distributions import Distribution
+
+
+class MuZeroNetworkState(NamedTuple):
+    """
+    Opaque token passed between MuZero's inference calls and the MCTS.
+
+    The search tree stores and forwards this without inspecting it.
+    Only ``MuZeroNetwork`` ever unpacks the fields.
+
+    Attributes:
+        dynamics: The current latent hidden state (from representation or dynamics).
+        wm_memory: Opaque world-model recurrent state (e.g. LSTM hidden for
+                   ValuePrefix). ``None`` when no recurrent state is used.
+    """
+
+    dynamics: Tensor
+    wm_memory: Any = None
 
 
 class WorldModelOutput(NamedTuple):
@@ -11,7 +29,10 @@ class WorldModelOutput(NamedTuple):
 
     features: torch.Tensor
     reward: Optional[torch.Tensor] = None
-    to_play: Optional[torch.Tensor] = None
+    to_play: Optional[torch.Tensor] = None  # Actor-facing: argmax player index (B,)
+    to_play_logits: Optional[torch.Tensor] = (
+        None  # Learner-facing: pre-softmax logits (B, P)
+    )
     q_values: Optional[torch.Tensor] = None
 
     # Opaque state (hidden_state, reward_hidden, etc.) passed to next step
