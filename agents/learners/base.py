@@ -74,7 +74,7 @@ class BaseLearner(ABC):
     def __init__(
         self,
         config,
-        model,
+        agent_network,
         device,
         num_actions,
         observation_dimensions,
@@ -82,7 +82,7 @@ class BaseLearner(ABC):
         callbacks: Optional[List[Callback]] = None,
     ):
         self.config = config
-        self.model = model
+        self.agent_network = agent_network
         self.device = device
         self.num_actions = num_actions
         self.observation_dimensions = observation_dimensions
@@ -127,7 +127,7 @@ class BaseLearner(ABC):
             result.loss.backward()
 
             if self.clipnorm > 0:
-                clip_grad_norm_(self.model.parameters(), self.clipnorm)
+                clip_grad_norm_(self.agent_network.parameters(), self.clipnorm)
 
             self.optimizer.step()
             if self.lr_scheduler is not None:

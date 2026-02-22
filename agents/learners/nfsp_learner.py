@@ -22,9 +22,9 @@ class NFSPLearner:
     def __init__(
         self,
         config,
-        best_response_model: nn.Module,
-        best_response_target_model: nn.Module,
-        average_model: nn.Module,
+        best_response_agent_network: nn.Module,
+        best_response_target_agent_network: nn.Module,
+        average_agent_network: nn.Module,
         device: torch.device,
         num_actions: int,
         observation_dimensions: Tuple[int, ...],
@@ -35,9 +35,9 @@ class NFSPLearner:
 
         Args:
             config: NFSPConfig with hyperparameters.
-            best_response_model: Network for Best Response.
-            best_response_target_model: Target network for Best Response.
-            average_model: Network for Average Strategy.
+            best_response_agent_network: Network for Best Response.
+            best_response_target_agent_network: Target network for Best Response.
+            average_agent_network: Network for Average Strategy.
             device: Torch device for tensors.
             num_actions: Number of discrete actions.
             observation_dimensions: Shape of observations.
@@ -53,8 +53,8 @@ class NFSPLearner:
         # 1. Initialize Best Response (RL) Learner
         self.rl_learner = RainbowLearner(
             config=config.rl_configs[0],
-            model=best_response_model,
-            target_model=best_response_target_model,
+            agent_network=best_response_agent_network,
+            target_agent_network=best_response_target_agent_network,
             device=device,
             num_actions=num_actions,
             observation_dimensions=observation_dimensions,
@@ -64,7 +64,7 @@ class NFSPLearner:
         # 2. Initialize Average Strategy (SL) Learner via composition
         self.sl_learner = ImitationLearner(
             config=config.sl_configs[0],
-            model=average_model,
+            agent_network=average_agent_network,
             device=device,
             num_actions=num_actions,
             observation_dimensions=observation_dimensions,

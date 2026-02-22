@@ -24,8 +24,8 @@ class RainbowLearner(BaseLearner):
     def __init__(
         self,
         config,
-        model: torch.nn.Module,
-        target_model: torch.nn.Module,
+        agent_network: torch.nn.Module,
+        target_agent_network: torch.nn.Module,
         device: torch.device,
         num_actions: int,
         observation_dimensions: Tuple[int, ...],
@@ -36,8 +36,8 @@ class RainbowLearner(BaseLearner):
 
         Args:
             config: RainbowConfig with hyperparameters.
-            model: The online Q-network.
-            target_model: The target Q-network (for stable targets).
+            agent_network: The online Q-network.
+            target_agent_network: The target Q-network (for stable targets).
             device: Torch device for tensors.
             num_actions: Number of discrete actions.
             observation_dimensions: Shape of observations.
@@ -45,14 +45,13 @@ class RainbowLearner(BaseLearner):
         """
         super().__init__(
             config=config,
-            model=model,
+            agent_network=agent_network,
             device=device,
             num_actions=num_actions,
             observation_dimensions=observation_dimensions,
             observation_dtype=observation_dtype,
         )
-        self.target_model = target_model
-        self.target_agent = target_model
+        self.target_agent_network = target_agent_network
 
         # 1. Initialize Replay Buffer
         self.replay_buffer = create_dqn_buffer(
@@ -67,14 +66,14 @@ class RainbowLearner(BaseLearner):
         # 2. Initialize Optimizer
         if config.optimizer == Adam:
             self.optimizer = config.optimizer(
-                params=model.parameters(),
+                params=agent_network.parameters(),
                 lr=config.learning_rate,
                 eps=config.adam_epsilon,
                 weight_decay=config.weight_decay,
             )
         elif config.optimizer == SGD:
             self.optimizer = config.optimizer(
-                params=model.parameters(),
+                params=agent_network.parameters(),
                 lr=config.learning_rate,
                 momentum=config.momentum,
                 weight_decay=config.weight_decay,
@@ -124,13 +123,13 @@ class RainbowLearner(BaseLearner):
         observations = batch["observations"].to(self.device)
         next_observations = batch["next_observations"].to(self.device)
 
-        online_out = self.model.learner_inference({"observations": observations})
+        online_out = self.agent_network.learner_inference({"observations": observations})
 
         with torch.no_grad():
-            next_online_out = self.model.learner_inference(
+            next_online_out = self.agent_network.learner_inference(
                 {"observations": next_observations}
             )
-            target_next_out = self.target_agent.learner_inference(
+            target_next_out = self.target_agent_network.learner_inference(
                 {"observations": next_observations}
             )
 
@@ -148,7 +147,7 @@ class RainbowLearner(BaseLearner):
                 next_online_q_logits=next_online_out.q_logits,
                 target_next_q_logits=target_next_out.q_logits,
                 batch=batch,
-                agent_network=self.model,
+                agent_network=self.agent_network,
             )
 
         if (
@@ -163,12 +162,12 @@ class RainbowLearner(BaseLearner):
             next_online_q_values=next_online_out.q_values,
             target_next_q_values=target_next_out.q_values,
             batch=batch,
-            agent_network=self.model,
+            agent_network=self.agent_network,
         )
 
     def after_optimizer_step(self, batch, step_result: StepResult, stats=None) -> None:
-        self.model.reset_noise()
-        self.target_model.reset_noise()
+        self.agent_network.reset_noise()
+        self.target_agent_network.reset_noise()
 
     def update_target_network(self) -> None:
         """
@@ -178,7 +177,7 @@ class RainbowLearner(BaseLearner):
         if self.config.soft_update:
             # Soft update: target = beta * target + (1 - beta) * online
             for target_param, online_param in zip(
-                self.target_model.parameters(), self.model.parameters()
+                self.target_agent_network.parameters(), self.agent_network.parameters()
             ):
                 target_param.data.copy_(
                     self.config.ema_beta * target_param.data
@@ -186,7 +185,7 @@ class RainbowLearner(BaseLearner):
                 )
         else:
             # Hard update
-            self.target_model.load_state_dict(self.model.state_dict())
+            self.target_agent_network.load_state_dict(self.agent_network.state_dict())
 
     def predict(self, states: torch.Tensor) -> torch.Tensor:
         """
@@ -199,7 +198,7 @@ class RainbowLearner(BaseLearner):
             Q-distribution (logits) or Q-values tensor.
         """
         batch = {"observations": states}
-        out = self.model.learner_inference(batch)
+        out = self.agent_network.learner_inference(batch)
         if self.config.atom_size > 1:
             # Distributional RL: Return LOGITS for numerically stable loss calculation (log_softmax)
             return out.q_logits  # (B, actions, atoms) - LOGITS
@@ -216,7 +215,7 @@ class RainbowLearner(BaseLearner):
             Q-distribution (logits) or Q-values tensor.
         """
         batch = {"observations": states}
-        out = self.target_model.learner_inference(batch)
+        out = self.target_agent_network.learner_inference(batch)
         if self.config.atom_size > 1:
             # Distributional RL: Return LOGITS for numerically stable loss calculation (log_softmax)
             return out.q_logits  # (B, actions, atoms) - LOGITS

@@ -122,7 +122,7 @@ class StandardDQNLoss(LossModule):
                 next_actions = []
                 for i in range(self.config.minibatch_size):
                     action, _ = self.action_selector.select_action(
-                        agent_network=agent.model,
+                        agent_network=agent.agent_network,
                         obs=next_obs[i : i + 1],
                         network_output=InferenceOutput(q_values=curr_next_q[i : i + 1]),
                         exploration=False,
@@ -239,7 +239,7 @@ class C51Loss(LossModule):
             next_actions = []
             for i in range(self.config.minibatch_size):
                 action, _ = self.action_selector.select_action(
-                    agent_network=agent.model,
+                    agent_network=agent.agent_network,
                     obs=next_obs[i : i + 1],
                     network_output=InferenceOutput(q_values=online_q_values[i : i + 1]),
                     exploration=False,
@@ -476,10 +476,10 @@ class ToPlayLoss(LossModule):
 class ConsistencyLoss(LossModule):
     """Consistency loss module (EfficientZero style)."""
 
-    def __init__(self, config, device, model):
+    def __init__(self, config, device, agent_network):
         super().__init__(config, device)
         self.sequence_loss = True
-        self.model = model
+        self.agent_network = agent_network
 
     def should_compute(self, k: int, context: dict) -> bool:
         return k > 0  # Only for k > 0
@@ -504,7 +504,7 @@ class ConsistencyLoss(LossModule):
 
         # Process the predicted latent (Prediction)
         # We project, then predict (SimSiam style predictor head)
-        proj_preds = self.model.project(latent_states_k, grad=True)
+        proj_preds = self.agent_network.project(latent_states_k, grad=True)
         f2 = F.normalize(proj_preds, p=2.0, dim=-1, eps=1e-5)
 
         # Compare against learner-precomputed target features.
@@ -908,14 +908,14 @@ def create_c51_loss_pipeline(config, device):
     return LossPipeline(modules)
 
 
-def create_muzero_loss_pipeline(config, device, model):
+def create_muzero_loss_pipeline(config, device, agent_network):
     """
     Factory function to create the standard MuZero loss pipeline.
 
     Args:
         config: Configuration object
         device: Device to run on
-        model: Model instance (needed for consistency)
+        agent_network: AgentNetwork instance (needed for consistency)
 
     Returns:
         LossPipeline instance configured for MuZero
@@ -930,7 +930,7 @@ def create_muzero_loss_pipeline(config, device, model):
     if config.game.num_players != 1:
         modules.append(ToPlayLoss(config, device))
 
-    modules.append(ConsistencyLoss(config, device, model))
+    modules.append(ConsistencyLoss(config, device, agent_network))
 
     if config.stochastic:
         modules.extend(

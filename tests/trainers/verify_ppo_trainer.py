@@ -196,7 +196,7 @@ def test_ppo_learner_store():
 
     learner = PPOLearner(
         config=config,
-        model=model,
+        agent_network=model,
         device=device,
         num_actions=2,
         observation_dimensions=(4,),
@@ -234,7 +234,7 @@ def test_ppo_learner_finish_trajectory():
 
     learner = PPOLearner(
         config=config,
-        model=model,
+        agent_network=model,
         device=device,
         num_actions=2,
         observation_dimensions=(4,),
@@ -280,7 +280,7 @@ def test_ppo_learner_step():
 
     learner = PPOLearner(
         config=config,
-        model=model,
+        agent_network=model,
         device=device,
         num_actions=2,
         observation_dimensions=(4,),

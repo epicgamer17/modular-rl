@@ -30,12 +30,12 @@ class RainbowTrainer(BaseTrainer):
         super().__init__(config, env, device, model_name, stats, test_agents)
 
         # 1. Initialize Networks
-        self.model = RainbowNetwork(
+        self.agent_network = RainbowNetwork(
             config=config,
             output_size=self.num_actions,
             input_shape=self.obs_dim,
         )
-        self.target_model = RainbowNetwork(
+        self.target_agent_network = RainbowNetwork(
             config=config,
             output_size=self.num_actions,
             input_shape=self.obs_dim,
@@ -43,15 +43,15 @@ class RainbowTrainer(BaseTrainer):
 
         # Initialize weights
         if config.kernel_initializer is not None:
-            self.model.initialize(config.kernel_initializer)
+            self.agent_network.initialize(config.kernel_initializer)
 
-        self.model.to(device)
-        self.target_model.to(device)
-        self.target_model.load_state_dict(self.model.state_dict())
-        self.target_model.eval()
+        self.agent_network.to(device)
+        self.target_agent_network.to(device)
+        self.target_agent_network.load_state_dict(self.agent_network.state_dict())
+        self.target_agent_network.eval()
 
         if config.multi_process:
-            self.model.share_memory()
+            self.agent_network.share_memory()
 
         # 2. Initialize Action Selector
         self.action_selector = SelectorFactory.create(
@@ -67,8 +67,8 @@ class RainbowTrainer(BaseTrainer):
         # 4. Initialize Learner
         self.learner = RainbowLearner(
             config=config,
-            model=self.model,
-            target_model=self.target_model,
+            agent_network=self.agent_network,
+            target_agent_network=self.target_agent_network,
             device=device,
             num_actions=self.num_actions,
             observation_dimensions=self.obs_dim,
@@ -89,7 +89,7 @@ class RainbowTrainer(BaseTrainer):
         num_workers = getattr(config, "num_workers", 1)
         worker_args = (
             config.game.make_env,
-            self.model,
+            self.agent_network,
             self.action_selector,
             config.game.num_players,
             config,
@@ -114,7 +114,7 @@ class RainbowTrainer(BaseTrainer):
 
             # 2. Broadcast weights and epsilon to workers
             self.executor.update_weights(
-                self.model.state_dict(),
+                self.agent_network.state_dict(),
                 params={"epsilon": self.current_epsilon},
             )
 
@@ -265,12 +265,12 @@ class RainbowTrainer(BaseTrainer):
 
                     # Direct replacement of self.policy.compute_action(state, info)
                     # We want GREEDY action.
-                    # network_output = self.model.initial_inference(obs)
+                    # network_output = self.agent_network.initial_inference(obs)
                     # action = network_output.q_values.argmax()
 
                     # BETTER: Use the selector mechanism but update params?
                     # Doing manual argmax mimics DirectPolicy behavior for test.
-                    net_out = self.model.obs_inference(state)
+                    net_out = self.agent_network.obs_inference(state)
                     action = net_out.q_values.argmax(dim=-1)
 
                     action_val = action.item() if hasattr(action, "item") else action
@@ -297,8 +297,8 @@ class RainbowTrainer(BaseTrainer):
     def _save_checkpoint(self) -> None:
         """Saves Rainbow checkpoint."""
         checkpoint_data = {
-            "model": self.model.state_dict(),
-            "target_model": self.target_model.state_dict(),
+            "agent_network": self.agent_network.state_dict(),
+            "target_agent_network": self.target_agent_network.state_dict(),
             "optimizer": self.learner.optimizer.state_dict(),
             "epsilon": self.current_epsilon,
         }
@@ -306,10 +306,10 @@ class RainbowTrainer(BaseTrainer):
 
     def load_checkpoint_weights(self, checkpoint: Dict[str, Any]):
         """Loads Rainbow weights and epsilon."""
-        if "model" in checkpoint:
-            self.model.load_state_dict(checkpoint["model"])
-        if "target_model" in checkpoint:
-            self.target_model.load_state_dict(checkpoint["target_model"])
+        if "agent_network" in checkpoint:
+            self.agent_network.load_state_dict(checkpoint["agent_network"])
+        if "target_agent_network" in checkpoint:
+            self.target_agent_network.load_state_dict(checkpoint["target_agent_network"])
         if "optimizer" in checkpoint:
             self.learner.optimizer.load_state_dict(checkpoint["optimizer"])
         if "epsilon" in checkpoint:
@@ -318,7 +318,7 @@ class RainbowTrainer(BaseTrainer):
     def select_test_action(self, state, info, env) -> Any:
         """Greedy action for testing."""
         # Manual greedy selection using model
-        net_out = self.model.obs_inference(state)
+        net_out = self.agent_network.obs_inference(state)
         action = net_out.q_values.argmax(dim=-1)
         return action.item()
 

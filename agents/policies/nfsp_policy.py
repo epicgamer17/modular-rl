@@ -25,11 +25,11 @@ class NFSPPolicy(Policy):
     def __init__(
         self,
         # Shared weights mode (single model for all players)
-        best_response_model: Optional[nn.Module] = None,
-        average_model: Optional[nn.Module] = None,
+        best_response_agent_network: Optional[nn.Module] = None,
+        average_agent_network: Optional[nn.Module] = None,
         # Separate weights mode (per-player models)
-        best_response_models: Optional[Dict[str, nn.Module]] = None,
-        average_models: Optional[Dict[str, nn.Module]] = None,
+        best_response_agent_networks: Optional[Dict[str, nn.Module]] = None,
+        average_agent_networks: Optional[Dict[str, nn.Module]] = None,
         # Selectors (shared for all players)
         best_response_selector: Optional[ActionSelector] = None,
         average_selector: Optional[ActionSelector] = None,
@@ -41,10 +41,10 @@ class NFSPPolicy(Policy):
         Initializes the NFSPPolicy.
 
         Args:
-            best_response_model: Network for BR policy (shared mode).
-            average_model: Network for AVG policy (shared mode).
-            best_response_models: Dict mapping player_id -> BR network (separate mode).
-            average_models: Dict mapping player_id -> AVG network (separate mode).
+            best_response_agent_network: Network for BR policy (shared mode).
+            average_agent_network: Network for AVG policy (shared mode).
+            best_response_agent_networks: Dict mapping player_id -> BR network (separate mode).
+            average_agent_networks: Dict mapping player_id -> AVG network (separate mode).
             best_response_selector: Selector for BR action selection.
             average_selector: Selector for AVG action selection.
             device: Torch device.
@@ -57,27 +57,27 @@ class NFSPPolicy(Policy):
         self.average_selector = average_selector
 
         # Determine mode based on which models are provided
-        if best_response_models is not None and average_models is not None:
+        if best_response_agent_networks is not None and average_agent_networks is not None:
             # Separate weights mode
             self.shared_weights = False
-            self.br_models = best_response_models
-            self.avg_models = average_models
-            self.player_ids = list(best_response_models.keys())
+            self.br_agent_networks = best_response_agent_networks
+            self.avg_agent_networks = average_agent_networks
+            self.player_ids = list(best_response_agent_networks.keys())
 
             # Move all models to device
-            for model in self.br_models.values():
-                model.to(self.device).eval()
-            for model in self.avg_models.values():
-                model.to(self.device).eval()
+            for agent_network in self.br_agent_networks.values():
+                agent_network.to(self.device).eval()
+            for agent_network in self.avg_agent_networks.values():
+                agent_network.to(self.device).eval()
         else:
             # Shared weights mode (backwards compatible)
             self.shared_weights = True
-            assert best_response_model is not None, "Must provide best_response_model"
-            assert average_model is not None, "Must provide average_model"
-            self.br_model = best_response_model
-            self.avg_model = average_model
-            self.br_model.to(self.device).eval()
-            self.avg_model.to(self.device).eval()
+            assert best_response_agent_network is not None, "Must provide best_response_agent_network"
+            assert average_agent_network is not None, "Must provide average_agent_network"
+            self.br_agent_network = best_response_agent_network
+            self.avg_agent_network = average_agent_network
+            self.br_agent_network.to(self.device).eval()
+            self.avg_agent_network.to(self.device).eval()
             self.player_ids = player_ids if player_ids else ["player_0"]
 
         # Per-player policy mode tracking
@@ -108,13 +108,13 @@ class NFSPPolicy(Policy):
 
         # Reset noise in models
         if self.shared_weights:
-            self.br_model.reset_noise()
-            self.avg_model.reset_noise()
+            self.br_agent_network.reset_noise()
+            self.avg_agent_network.reset_noise()
         else:
-            br_model = self.br_models.get(player_id)
-            avg_model = self.avg_models.get(player_id)
-            br_model.reset_noise()
-            avg_model.reset_noise()
+            br_agent_network = self.br_agent_networks.get(player_id)
+            avg_agent_network = self.avg_agent_networks.get(player_id)
+            br_agent_network.reset_noise()
+            avg_agent_network.reset_noise()
 
     def compute_action(
         self,
@@ -160,15 +160,15 @@ class NFSPPolicy(Policy):
         with torch.inference_mode():
             if policy_mode == "best_response":
                 if self.shared_weights:
-                    net_out = self.br_model.obs_inference(obs_tensor)
+                    net_out = self.br_agent_network.obs_inference(obs_tensor)
                 else:
-                    net_out = self.br_models[player_id].obs_inference(obs_tensor)
+                    net_out = self.br_agent_networks[player_id].obs_inference(obs_tensor)
                 selector = self.best_response_selector
             else:
                 if self.shared_weights:
-                    net_out = self.avg_model.obs_inference(obs_tensor)
+                    net_out = self.avg_agent_network.obs_inference(obs_tensor)
                 else:
-                    net_out = self.avg_models[player_id].obs_inference(obs_tensor)
+                    net_out = self.avg_agent_networks[player_id].obs_inference(obs_tensor)
                 selector = self.average_selector
 
         # Pass exploration flag to selector for proper sampling behavior
@@ -232,16 +232,16 @@ class NFSPPolicy(Policy):
         # Update model weights
         if self.shared_weights:
             if "best_response_state_dict" in params_dict:
-                self.br_model.load_state_dict(params_dict["best_response_state_dict"])
+                self.br_agent_network.load_state_dict(params_dict["best_response_state_dict"])
             if "average_state_dict" in params_dict:
-                self.avg_model.load_state_dict(params_dict["average_state_dict"])
+                self.avg_agent_network.load_state_dict(params_dict["average_state_dict"])
         else:
             # Separate weights mode
             if "best_response_state_dicts" in params_dict:
                 for pid, state_dict in params_dict["best_response_state_dicts"].items():
-                    if pid in self.br_models:
-                        self.br_models[pid].load_state_dict(state_dict)
+                    if pid in self.br_agent_networks:
+                        self.br_agent_networks[pid].load_state_dict(state_dict)
             if "average_state_dicts" in params_dict:
                 for pid, state_dict in params_dict["average_state_dicts"].items():
-                    if pid in self.avg_models:
-                        self.avg_models[pid].load_state_dict(state_dict)
+                    if pid in self.avg_agent_networks:
+                        self.avg_agent_networks[pid].load_state_dict(state_dict)

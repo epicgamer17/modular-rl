@@ -11,7 +11,7 @@ from replay_buffers.sequence import Sequence
 
 class MockPolicy:
     def __init__(self):
-        self.model = None  # Remove potential unpicklable/complex torch objects
+        self.agent_network = None  # Remove potential unpicklable/complex torch objects
 
     def reset(self, state):
         pass

@@ -34,14 +34,14 @@ class ImitationTrainer(BaseTrainer):
         super().__init__(config, env, device, model_name, stats, test_agents)
 
         # 1. Initialize Network
-        self.model = SupervisedNetwork(
+        self.agent_network = SupervisedNetwork(
             config=config,
             output_size=self.num_actions,
             input_shape=self.obs_dim,
         ).to(device)
 
         if getattr(config, "multi_process", False):
-            self.model.share_memory()
+            self.agent_network.share_memory()
 
         # 2. Initialize Action Selector
         self.action_selector = SelectorFactory.create(
@@ -54,7 +54,7 @@ class ImitationTrainer(BaseTrainer):
         # 4. Initialize Learner
         self.learner = ImitationLearner(
             config=config,
-            model=self.model,
+            agent_network=self.agent_network,
             device=device,
             num_actions=self.num_actions,
             observation_dimensions=self.obs_dim,
@@ -73,7 +73,7 @@ class ImitationTrainer(BaseTrainer):
         worker_args = (
             config.game.make_env,
             config.game.make_env,
-            self.model,
+            self.agent_network,
             self.action_selector,
             config.game.num_players,
             config,
@@ -98,7 +98,7 @@ class ImitationTrainer(BaseTrainer):
 
         while self.training_step < training_steps:
             # 1. Update worker weights
-            self.executor.update_weights(self.model.state_dict())
+            self.executor.update_weights(self.agent_network.state_dict())
 
             # 2. Collect data from workers
             sequences, collection_stats = self.executor.collect_data(replay_interval)
@@ -175,15 +175,15 @@ class ImitationTrainer(BaseTrainer):
     def _save_checkpoint(self) -> None:
         """Saves Imitation checkpoint."""
         checkpoint_data = {
-            "model": self.model.state_dict(),
+            "agent_network": self.agent_network.state_dict(),
             "optimizer": self.learner.optimizer.state_dict(),
         }
         super()._save_checkpoint(checkpoint_data)
 
     def load_checkpoint_weights(self, checkpoint: Dict[str, Any]):
         """Loads Imitation weights."""
-        if "model" in checkpoint:
-            self.model.load_state_dict(checkpoint["model"])
+        if "agent_network" in checkpoint:
+            self.agent_network.load_state_dict(checkpoint["agent_network"])
         if "optimizer" in checkpoint:
             self.learner.optimizer.load_state_dict(checkpoint["optimizer"])
 
@@ -193,8 +193,8 @@ class ImitationTrainer(BaseTrainer):
             0
         )
         with torch.inference_mode():
-            # probs = self.model(obs)
-            inf_out = self.model.obs_inference(obs)
+            # probs = self.agent_network(obs)
+            inf_out = self.agent_network.obs_inference(obs)
             probs = inf_out.policy.probs
         action = probs.argmax(dim=-1).item()
         return action

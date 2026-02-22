@@ -31,17 +31,17 @@ class MuZeroTrainer(BaseTrainer):
         # The local import `from modules.agent_nets.muzero import AgentNetwork as Network` is removed
         # as MuZeroNetwork is already imported at the top and will be used directly.
 
-        self.model = MuZeroNetwork(
+        self.agent_network = MuZeroNetwork(
             config,
             input_shape=self.obs_dim,
             num_actions=self.num_actions,
         ).to(device)
 
         if config.kernel_initializer is not None:
-            self.model.initialize(config.kernel_initializer)
+            self.agent_network.initialize(config.kernel_initializer)
 
         if getattr(config, "multi_process", False):
-            self.model.share_memory()
+            self.agent_network.share_memory()
 
         # 2. Initialize Search Algorithm (MCTS)
         from search.search_factories import create_mcts
@@ -70,7 +70,7 @@ class MuZeroTrainer(BaseTrainer):
         # 4. Initialize Learner
         self.learner = MuZeroLearner(
             config=config,
-            model=self.model,
+            agent_network=self.agent_network,
             device=device,
             num_actions=self.num_actions,
             observation_dimensions=self.obs_dim,
@@ -93,7 +93,7 @@ class MuZeroTrainer(BaseTrainer):
         num_workers = config.num_workers
         worker_args = (
             config.game.make_env,
-            self.model,
+            self.agent_network,
             self.action_selector,
             config.game.num_players,
             config,
@@ -143,7 +143,7 @@ class MuZeroTrainer(BaseTrainer):
                 # In TorchMP with shared memory, this might be a no-op if using the same model instance.
                 # But we follow the pattern for consistency.
                 if self.training_step % self.config.transfer_interval == 0:
-                    self.executor.update_weights(self.model.state_dict())
+                    self.executor.update_weights(self.agent_network.state_dict())
 
                 # 6. Periodic checkpointing
                 if self.training_step % self.checkpoint_interval == 0:
@@ -169,7 +169,7 @@ class MuZeroTrainer(BaseTrainer):
     def _save_checkpoint(self) -> None:
         """Saves MuZero checkpoint."""
         checkpoint_data = {
-            "model": self.model.state_dict(),
+            "agent_network": self.agent_network.state_dict(),
             "optimizer": self.learner.optimizer.state_dict(),
             "scheduler": self.learner.lr_scheduler.state_dict(),
         }
@@ -177,8 +177,8 @@ class MuZeroTrainer(BaseTrainer):
 
     def load_checkpoint_weights(self, checkpoint: Dict[str, Any]):
         """Loads MuZero weights."""
-        if "model" in checkpoint:
-            self.model.load_state_dict(checkpoint["model"])
+        if "agent_network" in checkpoint:
+            self.agent_network.load_state_dict(checkpoint["agent_network"])
         if "optimizer" in checkpoint:
             self.learner.optimizer.load_state_dict(checkpoint["optimizer"])
         if "scheduler" in checkpoint:
@@ -210,7 +210,7 @@ class MuZeroTrainer(BaseTrainer):
         # Passing 'exploration=False' to CategoricalSelector forces argmax.
         # MCTSDecorator passes kwargs to inner.
         action, _ = self.action_selector.select_action(
-            self.model, state, info, exploration=False, episode_step=1e9
+            self.agent_network, state, info, exploration=False, episode_step=1e9
         )
         return action.item() if hasattr(action, "item") else action
 

@@ -52,30 +52,30 @@ class NFSPTrainer(BaseTrainer):
         sl_config = self.config.sl_configs[0]
 
         # RL Network (Best Response)
-        self.br_model = RainbowNetwork(
+        self.br_agent_network = RainbowNetwork(
             config=rl_config,
             input_shape=obs_dim,  # Exclude batch dim
             output_size=num_actions,
         ).to(self.device)
 
-        self.br_target_model = RainbowNetwork(
+        self.br_target_agent_network = RainbowNetwork(
             config=rl_config,
             input_shape=obs_dim,  # Exclude batch dim
             output_size=num_actions,
         ).to(self.device)
-        self.br_target_model.load_state_dict(self.br_model.state_dict())
+        self.br_target_agent_network.load_state_dict(self.br_agent_network.state_dict())
 
         # SL Network (Average Strategy)
-        self.avg_model = SupervisedNetwork(
+        self.avg_agent_network = SupervisedNetwork(
             config=sl_config,
             output_size=num_actions,
             input_shape=obs_dim,  # Exclude batch dim
         ).to(self.device)
 
         if self.config.multi_process:
-            self.br_model.share_memory()
-            self.br_target_model.share_memory()
-            self.avg_model.share_memory()
+            self.br_agent_network.share_memory()
+            self.br_target_agent_network.share_memory()
+            self.avg_agent_network.share_memory()
 
         # Action Selectors
         self.br_selector = EpsilonGreedy(epsilon=rl_config.eg_epsilon)
@@ -83,8 +83,8 @@ class NFSPTrainer(BaseTrainer):
 
         # Policy (shared networks mode)
         self.policy = NFSPPolicy(
-            best_response_model=self.br_model,
-            average_model=self.avg_model,
+            best_response_agent_network=self.br_agent_network,
+            average_agent_network=self.avg_agent_network,
             best_response_selector=self.br_selector,
             average_selector=self.avg_selector,
             device=self.device,
@@ -95,9 +95,9 @@ class NFSPTrainer(BaseTrainer):
         # Single learner for all players
         self.learner = NFSPLearner(
             config=self.config,
-            best_response_model=self.br_model,
-            best_response_target_model=self.br_target_model,
-            average_model=self.avg_model,
+            best_response_agent_network=self.br_agent_network,
+            best_response_target_agent_network=self.br_target_agent_network,
+            average_agent_network=self.avg_agent_network,
             device=self.device,
             num_actions=num_actions,
             observation_dimensions=obs_dim,
@@ -128,47 +128,47 @@ class NFSPTrainer(BaseTrainer):
         sl_config = self.config.sl_configs[0]
 
         # Per-player networks
-        self.br_models: Dict[str, RainbowNetwork] = {}
-        self.br_target_models: Dict[str, RainbowNetwork] = {}
-        self.avg_models: Dict[str, SupervisedNetwork] = {}
+        self.br_agent_networks: Dict[str, RainbowNetwork] = {}
+        self.br_target_agent_networks: Dict[str, RainbowNetwork] = {}
+        self.avg_agent_networks: Dict[str, SupervisedNetwork] = {}
         self.learners: Dict[str, NFSPLearner] = {}
 
         for player_id in self.player_ids:
             # BR Network
-            br_model = RainbowNetwork(
+            br_agent_network = RainbowNetwork(
                 config=rl_config,
                 input_shape=obs_dim,  # Exclude batch dim
                 output_size=num_actions,
             ).to(self.device)
-            br_target = RainbowNetwork(
+            br_target_agent_network = RainbowNetwork(
                 config=rl_config,
                 input_shape=obs_dim,  # Exclude batch dim
                 output_size=num_actions,
             ).to(self.device)
-            br_target.load_state_dict(br_model.state_dict())
+            br_target_agent_network.load_state_dict(br_agent_network.state_dict())
 
             # AVG Network
-            avg_model = SupervisedNetwork(
+            avg_agent_network = SupervisedNetwork(
                 config=sl_config,
                 output_size=num_actions,
                 input_shape=obs_dim,  # Exclude batch dim
             ).to(self.device)
 
             if self.config.multi_process:
-                br_model.share_memory()
-                br_target.share_memory()
-                avg_model.share_memory()
+                br_agent_network.share_memory()
+                br_target_agent_network.share_memory()
+                avg_agent_network.share_memory()
 
-            self.br_models[player_id] = br_model
-            self.br_target_models[player_id] = br_target
-            self.avg_models[player_id] = avg_model
+            self.br_agent_networks[player_id] = br_agent_network
+            self.br_target_agent_networks[player_id] = br_target_agent_network
+            self.avg_agent_networks[player_id] = avg_agent_network
 
             # Per-player learner
             self.learners[player_id] = NFSPLearner(
                 config=self.config,
-                best_response_model=br_model,
-                best_response_target_model=br_target,
-                average_model=avg_model,
+                best_response_agent_network=br_agent_network,
+                best_response_target_agent_network=br_target_agent_network,
+                average_agent_network=avg_agent_network,
                 device=self.device,
                 num_actions=num_actions,
                 observation_dimensions=obs_dim,
@@ -181,8 +181,8 @@ class NFSPTrainer(BaseTrainer):
 
         # Policy (separate networks mode)
         self.policy = NFSPPolicy(
-            best_response_models=self.br_models,
-            average_models=self.avg_models,
+            best_response_agent_networks=self.br_agent_networks,
+            average_agent_networks=self.avg_agent_networks,
             best_response_selector=self.br_selector,
             average_selector=self.avg_selector,
             device=self.device,
@@ -276,8 +276,8 @@ class NFSPTrainer(BaseTrainer):
         if self.shared_networks:
             self.executor.update_weights(
                 {
-                    "best_response_state_dict": self.br_model.state_dict(),
-                    "average_state_dict": self.avg_model.state_dict(),
+                    "best_response_state_dict": self.br_agent_network.state_dict(),
+                    "average_state_dict": self.avg_agent_network.state_dict(),
                     "eta": self.config.anticipatory_param,
                 }
             )
@@ -285,11 +285,11 @@ class NFSPTrainer(BaseTrainer):
             self.executor.update_weights(
                 {
                     "best_response_state_dicts": {
-                        pid: model.state_dict() for pid, model in self.br_models.items()
+                        pid: agent_network.state_dict() for pid, agent_network in self.br_agent_networks.items()
                     },
                     "average_state_dicts": {
-                        pid: model.state_dict()
-                        for pid, model in self.avg_models.items()
+                        pid: agent_network.state_dict()
+                        for pid, agent_network in self.avg_agent_networks.items()
                     },
                     "eta": self.config.anticipatory_param,
                 }
@@ -565,17 +565,17 @@ class NFSPTrainer(BaseTrainer):
         if self.shared_networks:
             checkpoint_data = {
                 "shared_networks": True,
-                "br_model": self.br_model.state_dict(),
-                "avg_model": self.avg_model.state_dict(),
+                "br_agent_network": self.br_agent_network.state_dict(),
+                "avg_agent_network": self.avg_agent_network.state_dict(),
                 "rl_optimizer": self.learner.rl_learner.optimizer.state_dict(),
                 "sl_optimizer": self.learner.sl_optimizer.state_dict(),
             }
         else:
             checkpoint_data = {
                 "shared_networks": False,
-                "br_models": {pid: m.state_dict() for pid, m in self.br_models.items()},
-                "avg_models": {
-                    pid: m.state_dict() for pid, m in self.avg_models.items()
+                "br_agent_networks": {pid: an.state_dict() for pid, an in self.br_agent_networks.items()},
+                "avg_agent_networks": {
+                    pid: an.state_dict() for pid, an in self.avg_agent_networks.items()
                 },
                 "rl_optimizers": {
                     pid: l.rl_learner.optimizer.state_dict()
@@ -591,10 +591,10 @@ class NFSPTrainer(BaseTrainer):
         """Loads NFSP weights."""
         shared = checkpoint.get("shared_networks", True)
         if shared:
-            if "br_model" in checkpoint:
-                self.br_model.load_state_dict(checkpoint["br_model"])
-            if "avg_model" in checkpoint:
-                self.avg_model.load_state_dict(checkpoint["avg_model"])
+            if "br_agent_network" in checkpoint:
+                self.br_agent_network.load_state_dict(checkpoint["br_agent_network"])
+            if "avg_agent_network" in checkpoint:
+                self.avg_agent_network.load_state_dict(checkpoint["avg_agent_network"])
             if "rl_optimizer" in checkpoint:
                 self.learner.rl_learner.optimizer.load_state_dict(
                     checkpoint["rl_optimizer"]
@@ -602,14 +602,22 @@ class NFSPTrainer(BaseTrainer):
             if "sl_optimizer" in checkpoint:
                 self.learner.sl_optimizer.load_state_dict(checkpoint["sl_optimizer"])
         else:
-            if "br_models" in checkpoint:
-                for pid, sd in checkpoint["br_models"].items():
-                    if pid in self.br_models:
-                        self.br_models[pid].load_state_dict(sd)
-            if "avg_models" in checkpoint:
-                for pid, sd in checkpoint["avg_models"].items():
-                    if pid in self.avg_models:
-                        self.avg_models[pid].load_state_dict(sd)
+            if "br_agent_networks" in checkpoint:
+                for pid, sd in checkpoint["br_agent_networks"].items():
+                    if pid in self.br_agent_networks:
+                        self.br_agent_networks[pid].load_state_dict(sd)
+            if "avg_agent_networks" in checkpoint:
+                for pid, sd in checkpoint["avg_agent_networks"].items():
+                    if pid in self.avg_agent_networks:
+                        self.avg_agent_networks[pid].load_state_dict(sd)
+            if "rl_optimizers" in checkpoint:
+                for pid, sd in checkpoint["rl_optimizers"].items():
+                    if pid in self.learners:
+                        self.learners[pid].rl_learner.optimizer.load_state_dict(sd)
+            if "sl_optimizers" in checkpoint:
+                for pid, sd in checkpoint["sl_optimizers"].items():
+                    if pid in self.learners:
+                        self.learners[pid].sl_optimizer.load_state_dict(sd)
 
     def select_test_action(self, state, info, env) -> Any:
         """Select action for testing (from average strategy)."""

@@ -47,18 +47,18 @@ class PPOTrainer(BaseTrainer):
         # 1. Initialize Network
         # New standard: input_shape excludes batch dimension
         input_shape = self.obs_dim
-        self.model = PPONetwork(
+        self.agent_network = PPONetwork(
             config=config,
             input_shape=input_shape,
         )
-        self.model.to(device)
+        self.agent_network.to(device)
 
         # Initialize weights
         if config.kernel_initializer is not None:
-            self.model.initialize(config.kernel_initializer)
+            self.agent_network.initialize(config.kernel_initializer)
 
         if config.multi_process:
-            self.model.share_memory()
+            self.agent_network.share_memory()
 
         # 2. Initialize Action Selector
         self.action_selector = SelectorFactory.create(
@@ -68,7 +68,7 @@ class PPOTrainer(BaseTrainer):
         # 3. Initialize Learner
         self.learner = PPOLearner(
             config=config,
-            model=self.model,
+            agent_network=self.agent_network,
             device=device,
             num_actions=self.num_actions,
             observation_dimensions=self.obs_dim,
@@ -86,7 +86,7 @@ class PPOTrainer(BaseTrainer):
         actor_cls = get_actor_class(env)
         worker_args = (
             config.game.make_env,
-            self.model,
+            self.agent_network,
             self.action_selector,
             config.game.num_players,
             config,
@@ -112,7 +112,7 @@ class PPOTrainer(BaseTrainer):
 
         while self.training_step < self.config.training_steps:
             # 1. Broadcast weights to workers
-            self.executor.update_weights(self.model.state_dict())
+            self.executor.update_weights(self.agent_network.state_dict())
 
             # 2. Collect trajectory data (steps_per_epoch transitions)
             steps_collected = 0
@@ -133,7 +133,7 @@ class PPOTrainer(BaseTrainer):
                             state, dtype=torch.float32, device=self.device
                         )
                         action, metadata = self.action_selector.select_action(
-                            agent_network=self.model,
+                            agent_network=self.agent_network,
                             obs=obs_tensor,
                             info=info,
                             exploration=True,
@@ -183,7 +183,7 @@ class PPOTrainer(BaseTrainer):
                     else:
                         with torch.inference_mode():
                             obs = self.learner.preprocess(state)
-                            last_value, _ = self.model.value(obs)
+                            last_value, _ = self.agent_network.value(obs)
                             last_value = last_value.item()
 
                     trajectory_end_index = self.learner.replay_buffer.size
@@ -264,7 +264,7 @@ class PPOTrainer(BaseTrainer):
         Saves model weights and stats using BaseTrainer implementation.
         """
         checkpoint_data = {
-            "model": self.model.state_dict(),
+            "agent_network": self.agent_network.state_dict(),
             "policy_optimizer": self.learner.policy_optimizer.state_dict(),
             "value_optimizer": self.learner.value_optimizer.state_dict(),
             "policy_scheduler": self.learner.policy_scheduler.state_dict(),
@@ -274,8 +274,8 @@ class PPOTrainer(BaseTrainer):
 
     def load_checkpoint_weights(self, checkpoint: Dict[str, Any]):
         """Ported from BaseAgent.load_model_weights and load_optimizer_state."""
-        if "model" in checkpoint:
-            self.model.load_state_dict(checkpoint["model"])
+        if "agent_network" in checkpoint:
+            self.agent_network.load_state_dict(checkpoint["agent_network"])
         if "policy_optimizer" in checkpoint:
             self.learner.policy_optimizer.load_state_dict(
                 checkpoint["policy_optimizer"]
@@ -296,7 +296,7 @@ class PPOTrainer(BaseTrainer):
         # CategoricalSelector has 'exploration' kwarg.
         obs_tensor = torch.tensor(state, dtype=torch.float32, device=self.device)
         action, _ = self.action_selector.select_action(
-            self.model, obs_tensor, info, exploration=False
+            self.agent_network, obs_tensor, info, exploration=False
         )
         return action.item() if hasattr(action, "item") else action
 

@@ -54,10 +54,10 @@ def test_muzero_stochastic_cartpole_smoke():
     trainer._save_checkpoint = lambda: None
 
     print("Stochastic MuZero Model Initialized.")
-    assert trainer.model is not None
-    assert trainer.model.config.stochastic is True
-    assert hasattr(trainer.model.world_model, "sigma_head")
-    assert hasattr(trainer.model, "afterstate_value_head")
+    assert trainer.agent_network is not None
+    assert trainer.agent_network.config.stochastic is True
+    assert hasattr(trainer.agent_network.world_model, "sigma_head")
+    assert hasattr(trainer.agent_network, "afterstate_value_head")
 
     # Run training loop
     print("Starting Stochastic MuZero Training Loop...")

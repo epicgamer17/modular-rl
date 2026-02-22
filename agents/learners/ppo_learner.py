@@ -27,7 +27,7 @@ class PPOLearner(BaseLearner):
     def __init__(
         self,
         config,
-        model: torch.nn.Module,
+        agent_network: torch.nn.Module,
         device: torch.device,
         num_actions: int,
         observation_dimensions: Tuple[int, ...],
@@ -38,7 +38,7 @@ class PPOLearner(BaseLearner):
 
         Args:
             config: PPOConfig with hyperparameters.
-            model: The policy-value network (shared or separate actor/critic).
+            agent_network: The policy-value network (shared or separate actor/critic).
             device: Torch device for tensors.
             num_actions: Number of discrete actions.
             observation_dimensions: Shape of observations.
@@ -46,7 +46,7 @@ class PPOLearner(BaseLearner):
         """
         super().__init__(
             config=config,
-            model=model,
+            agent_network=agent_network,
             device=device,
             num_actions=num_actions,
             observation_dimensions=observation_dimensions,
@@ -68,11 +68,11 @@ class PPOLearner(BaseLearner):
 
         # 2. Initialize Optimizers (separate for actor and critic)
         self.policy_optimizer = self._create_optimizer(
-            self.model.policy.parameters(),
+            self.agent_network.policy.parameters(),
             config.actor,
         )
         self.value_optimizer = self._create_optimizer(
-            self.model.value.parameters(),
+            self.agent_network.value.parameters(),
             config.critic,
         )
 
@@ -82,14 +82,14 @@ class PPOLearner(BaseLearner):
         self.policy_loss_module = PPOPolicyLoss(
             clip_param=self.config.clip_param,
             entropy_coefficient=self.config.entropy_coefficient,
-            policy_strategy=getattr(self.model.policy, "strategy", None),
+            policy_strategy=getattr(self.agent_network.policy, "strategy", None),
         )
         self.value_loss_module = PPOValueLoss(
             critic_coefficient=self.config.critic_coefficient,
             atom_size=getattr(self.config, "atom_size", 1),
             v_min=getattr(self.config, "v_min", None),
             v_max=getattr(self.config, "v_max", None),
-            value_strategy=getattr(self.model.value, "strategy", None),
+            value_strategy=getattr(self.agent_network.value, "strategy", None),
         )
 
     def _create_optimizer(self, params, sub_config) -> torch.optim.Optimizer:
@@ -173,7 +173,7 @@ class PPOLearner(BaseLearner):
 
                 if self.config.actor.clipnorm > 0:
                     clip_grad_norm_(
-                        self.model.policy.parameters(), self.config.actor.clipnorm
+                        self.agent_network.policy.parameters(), self.config.actor.clipnorm
                     )
 
                 self.policy_optimizer.step()
@@ -210,7 +210,7 @@ class PPOLearner(BaseLearner):
 
                 if self.config.critic.clipnorm > 0:
                     clip_grad_norm_(
-                        self.model.value.parameters(), self.config.critic.clipnorm
+                        self.agent_network.value.parameters(), self.config.critic.clipnorm
                     )
 
                 self.value_optimizer.step()
@@ -255,7 +255,7 @@ class PPOLearner(BaseLearner):
         """
         Computes PPO losses from raw learner logits.
         """
-        unroll_out = self.model.learner_inference(batch)
+        unroll_out = self.agent_network.learner_inference(batch)
         losses: Dict[str, torch.Tensor] = {}
 
         if (

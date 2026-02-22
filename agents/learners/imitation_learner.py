@@ -24,7 +24,7 @@ class ImitationLearner(BaseLearner):
     def __init__(
         self,
         config,
-        model: nn.Module,
+        agent_network: nn.Module,
         device: torch.device,
         num_actions: int,
         observation_dimensions: Tuple[int, ...],
@@ -35,7 +35,7 @@ class ImitationLearner(BaseLearner):
 
         Args:
             config: Configuration with hyperparameters (learning_rate, optimizer, etc.).
-            model: The policy network to train.
+            agent_network: The policy network to train.
             device: Torch device for tensors.
             num_actions: Number of discrete actions.
             observation_dimensions: Shape of observations.
@@ -43,7 +43,7 @@ class ImitationLearner(BaseLearner):
         """
         super().__init__(
             config=config,
-            model=model,
+            agent_network=agent_network,
             device=device,
             num_actions=num_actions,
             observation_dimensions=observation_dimensions,
@@ -62,14 +62,14 @@ class ImitationLearner(BaseLearner):
         # 2. Initialize Optimizer
         if config.optimizer == Adam:
             self.optimizer = config.optimizer(
-                params=model.parameters(),
+                params=agent_network.parameters(),
                 lr=config.learning_rate,
                 eps=config.adam_epsilon,
                 weight_decay=config.weight_decay,
             )
         elif config.optimizer == SGD:
             self.optimizer = config.optimizer(
-                params=model.parameters(),
+                params=agent_network.parameters(),
                 lr=config.learning_rate,
                 momentum=config.momentum,
                 weight_decay=config.weight_decay,
@@ -115,7 +115,7 @@ class ImitationLearner(BaseLearner):
         observations = batch["observations"].to(self.device)
         targets = batch["target_policies"].to(self.device)
 
-        inf_out = self.model.initial_inference(observations)
+        inf_out = self.agent_network.initial_inference(observations)
         predictions = inf_out.policy.logits
 
         with torch.inference_mode():
@@ -138,7 +138,7 @@ class ImitationLearner(BaseLearner):
         )
 
     def after_optimizer_step(self, batch, step_result: StepResult, stats=None) -> None:
-        self.model.reset_noise()
+        self.agent_network.reset_noise()
         self._policy_total += step_result.meta["policy_mean"]
         self._policy_count += 1
 

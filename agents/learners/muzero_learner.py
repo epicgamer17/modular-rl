@@ -23,7 +23,7 @@ class MuZeroLearner(BaseLearner):
     def __init__(
         self,
         config,
-        model,
+        agent_network,
         device,
         num_actions,
         observation_dimensions,
@@ -31,7 +31,7 @@ class MuZeroLearner(BaseLearner):
     ):
         super().__init__(
             config=config,
-            model=model,
+            agent_network=agent_network,
             device=device,
             num_actions=num_actions,
             observation_dimensions=observation_dimensions,
@@ -62,14 +62,14 @@ class MuZeroLearner(BaseLearner):
 
         if config.optimizer == Adam:
             self.optimizer = config.optimizer(
-                params=model.parameters(),
+                params=agent_network.parameters(),
                 lr=config.learning_rate,
                 eps=config.adam_epsilon,
                 weight_decay=config.weight_decay,
             )
         elif config.optimizer == SGD:
             self.optimizer = config.optimizer(
-                params=model.parameters(),
+                params=agent_network.parameters(),
                 lr=config.learning_rate,
                 momentum=config.momentum,
                 weight_decay=config.weight_decay,
@@ -81,7 +81,7 @@ class MuZeroLearner(BaseLearner):
         self.loss_pipeline = create_muzero_loss_pipeline(
             config=config,
             device=device,
-            model=model,
+            agent_network=agent_network,
         )
 
     @property
@@ -102,14 +102,14 @@ class MuZeroLearner(BaseLearner):
         batch_size, unroll_len = real_obs.shape[:2]
         flat_obs = real_obs.flatten(0, 1)
 
-        initial_out = self.model.obs_inference(flat_obs)
+        initial_out = self.agent_network.obs_inference(flat_obs)
         real_latents = initial_out.network_state.dynamics
         # Clone to promote from inference_mode tensors (created by obs_inference's
         # @torch.inference_mode() decorator) to normal autograd-tracked tensors.
         # Without this, project() cannot save the tensor for backward.
         real_latents = real_latents.clone()
 
-        proj_targets = self.model.project(real_latents, grad=False)
+        proj_targets = self.agent_network.project(real_latents, grad=False)
         normalized_targets = F.normalize(proj_targets, p=2.0, dim=-1, eps=1e-5)
         return normalized_targets.reshape(batch_size, unroll_len, -1).detach()
 
@@ -179,7 +179,7 @@ class MuZeroLearner(BaseLearner):
             )
         else:
             targets["consistency_targets"] = None
-        learning_out = self.model.learner_inference(targets)
+        learning_out = self.agent_network.learner_inference(targets)
 
         # Convert the typed NamedTuple to the dict the loss pipeline and
         # callbacks expect.

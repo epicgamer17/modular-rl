@@ -112,7 +112,7 @@ def test_learner_directly():
     print("Initializing Learner...")
     learner = MuZeroLearner(
         config=config,
-        model=model,
+        agent_network=model,
         device=device,
         num_actions=num_actions,
         observation_dimensions=observation_dimensions,
@@ -145,7 +145,6 @@ def test_learner_directly():
     print(f"Buffer size: {learner.replay_buffer.size}")
 
     print("Running learner step...")
-    # The learner.step() method samples from the buffer and calls self.model.learner_inference(batch)
     stats = learner.step()
 
     print(f"Learner step completed! Stats: {stats}")
