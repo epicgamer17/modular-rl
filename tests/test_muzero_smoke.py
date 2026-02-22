@@ -63,12 +63,14 @@ def test_muzero_cartpole_smoke():
 
     config = MuZeroConfig(config_dict, game_config)
 
-    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"), model_name="smoke_test_cartpole")
+    trainer = MuZeroTrainer(
+        config, env, device=torch.device("cpu"), model_name="smoke_test_cartpole"
+    )
 
     # Disable checkpointing/plotting to avoid permission errors in this environment
     trainer._save_checkpoint = lambda: None
 
-    assert trainer.model is not None
+    assert trainer.agent_network is not None
     assert trainer.buffer is not None
 
     # Run a few steps of self-play and a learner step to verify the whole loop
@@ -117,12 +119,14 @@ def test_muzero_tictactoe_smoke():
 
     config = MuZeroConfig(config_dict, game_config)
 
-    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"), model_name="smoke_test_tictactoe")
+    trainer = MuZeroTrainer(
+        config, env, device=torch.device("cpu"), model_name="smoke_test_tictactoe"
+    )
 
     # Disable checkpointing/plotting
     trainer._save_checkpoint = lambda: None
 
-    assert trainer.model is not None
+    assert trainer.agent_network is not None
     assert trainer.buffer is not None
 
     # Verify trainer can run

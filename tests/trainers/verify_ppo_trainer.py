@@ -168,7 +168,7 @@ def test_ppo_trainer_init():
     )
 
     # Check components are initialized
-    assert trainer.model is not None, "Model should be initialized"
+    assert trainer.agent_network is not None, "Model should be initialized"
     assert trainer.learner is not None, "Learner should be initialized"
 
     assert trainer.action_selector is not None, "Action selector should be initialized"
