@@ -155,9 +155,9 @@ class MuZeroLearner(BaseLearner):
             mapping["chance_codes"] = out.chance_logits
         if out.chance_values is not None:
             mapping["chance_values"] = out.chance_values
-        if out.chance_encoder_softmaxes is not None:
-            # loss pipeline uses "chance_encoder_softmaxes" for VQVAECommitmentLoss
-            mapping["chance_encoder_softmaxes"] = out.chance_encoder_softmaxes
+        if out.chance_encoder_embeddings is not None:
+            # loss pipeline uses "chance_encoder_embeddings" for VQVAECommitmentLoss
+            mapping["chance_encoder_embeddings"] = out.chance_encoder_embeddings
         return {k: v for k, v in mapping.items() if v is not None}
 
     def compute_step_result(self, batch: Dict[str, Any], stats=None) -> StepResult:

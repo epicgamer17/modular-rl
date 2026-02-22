@@ -299,7 +299,7 @@ class MuZeroNetwork(BaseAgentNetwork):
                 - ``latents_afterstates``: Afterstate latents (stochastic only).
                 - ``chance_logits``: Chance code logits (stochastic only).
                 - ``chance_values``: Afterstate value predictions (stochastic only).
-                - ``chance_encoder_softmaxes``: Encoder softmax outputs (stochastic only).
+                - ``chance_encoder_embeddings``: Encoder embedding outputs (stochastic only).
         """
         from modules.world_models.inference_output import LearningOutput
 
@@ -352,7 +352,7 @@ class MuZeroNetwork(BaseAgentNetwork):
         latents_afterstates: Optional[Tensor] = None
         stochastic_chance_logits: Optional[Tensor] = None
         stochastic_chance_values: Optional[Tensor] = None
-        stochastic_encoder_softmaxes: Optional[Tensor] = None
+        chance_encoder_embeddings: Optional[Tensor] = None
 
         if self.config.stochastic and physics_output.latents_afterstates is not None:
             latents_afterstates = physics_output.latents_afterstates
@@ -366,7 +366,7 @@ class MuZeroNetwork(BaseAgentNetwork):
             raw_chance_values, _ = self.afterstate_value_head(flat_backbone)
             stochastic_chance_values = raw_chance_values.view(B_as, T_plus_1_as, -1)
             stochastic_chance_logits = physics_output.chance_logits
-            stochastic_encoder_softmaxes = physics_output.chance_encoder_softmaxes
+            chance_encoder_embeddings = physics_output.chance_encoder_embeddings
 
         return LearningOutput(
             values=raw_values,
@@ -377,7 +377,7 @@ class MuZeroNetwork(BaseAgentNetwork):
             latents_afterstates=latents_afterstates,
             chance_logits=stochastic_chance_logits,
             chance_values=stochastic_chance_values,
-            chance_encoder_softmaxes=stochastic_encoder_softmaxes,
+            chance_encoder_embeddings=chance_encoder_embeddings,
         )
 
     def project(self, hidden_state: Tensor, grad=True) -> Tensor:

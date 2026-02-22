@@ -289,15 +289,15 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         if self.config.stochastic:
             latent_afterstates = []
             latent_code_probabilities = []
-            chance_encoder_softmaxes = []
-            encoder_onehots = []
+            chance_encoder_embeddings = []
+            chance_encoder_onehots = []
             afterstate_backbone_features = []
         else:
             latent_afterstates = []
             latent_code_probabilities = []
             afterstate_backbone_features = []
-            chance_encoder_softmaxes = []
-            encoder_onehots = []
+            chance_encoder_embeddings = []
+            chance_encoder_onehots = []
 
         # Rewards: MuZero unrolls usually return T rewards for T actions.
         # PhysicsOutput says rewards: [B, T, ...]
@@ -319,25 +319,25 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 chance_logits_k = afterstate_out.chance
 
                 # 3. Encoder Inference
-                encoder_softmax_k, encoder_onehot_k = self.encoder(encoder_inputs[:, k])
+                chance_encoder_embedding_k, chance_encoder_onehot_k = self.encoder(encoder_inputs[:, k])
 
                 if self.config.use_true_chance_codes:
                     codes_k = F.one_hot(
                         true_chance_codes[:, k + 1].squeeze(-1).long(),
                         self.config.num_chance,
                     )
-                    encoder_onehot_k = codes_k.float()
+                    chance_encoder_onehot_k = codes_k.float()
 
                 latent_afterstates.append(afterstates)
                 latent_code_probabilities.append(chance_logits_k)  # Logits
                 afterstate_backbone_features.append(shared_features)
 
                 # Store encoder outputs
-                encoder_onehots.append(encoder_onehot_k)
-                chance_encoder_softmaxes.append(encoder_softmax_k)
+                chance_encoder_onehots.append(chance_encoder_onehot_k)
+                chance_encoder_embeddings.append(chance_encoder_embedding_k)
 
                 # 4. Dynamics Inference (using chance code as action)
-                next_hidden_state = self.dynamics(afterstates, encoder_onehot_k)
+                next_hidden_state = self.dynamics(afterstates, chance_encoder_onehot_k)
 
                 # Heads
                 reward_logits, new_state, instant_reward = self.reward_head(
@@ -394,15 +394,15 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         stacked_afterstates = None
         stacked_chance_logits = None
         stacked_backbone = None
-        stacked_softmaxes = None
-        stacked_onehots = None
+        stacked_chance_encoder_embeddings = None
+        stacked_chance_encoder_onehots = None
 
         if self.config.stochastic:
             stacked_afterstates = torch.stack(latent_afterstates, dim=1)
             stacked_chance_logits = torch.stack(latent_code_probabilities, dim=1)
             stacked_backbone = torch.stack(afterstate_backbone_features, dim=1)
-            stacked_softmaxes = torch.stack(chance_encoder_softmaxes, dim=1)
-            stacked_onehots = torch.stack(encoder_onehots, dim=1)
+            stacked_chance_encoder_embeddings = torch.stack(chance_encoder_embeddings, dim=1)
+            stacked_chance_encoder_onehots = torch.stack(chance_encoder_onehots, dim=1)
 
         # 7. Compute target latents for consistency loss if requested
         stacked_target_latents = None
@@ -425,8 +425,8 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             latents_afterstates=stacked_afterstates,
             chance_logits=stacked_chance_logits,
             afterstate_backbone_features=stacked_backbone,
-            chance_encoder_softmaxes=stacked_softmaxes,
-            encoder_onehots=stacked_onehots,
+            chance_encoder_embeddings=stacked_chance_encoder_embeddings,
+            chance_encoder_onehots=stacked_chance_encoder_onehots,
             target_latents=stacked_target_latents,
         )
 

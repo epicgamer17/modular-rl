@@ -606,12 +606,12 @@ class SigmaLoss(LossModule):
                 latent_code_probabilities_k, target_codes_k, reduction="none"
             )
         else:
-            encoder_onehot_k_plus_1 = F.one_hot(
+            chance_encoder_onehot_k_plus_1 = F.one_hot(
                 target_codes_k, num_classes=latent_code_probabilities_k.shape[-1]
             ).float()
             sigma_loss = self.config.sigma_loss(
                 latent_code_probabilities_k,
-                encoder_onehot_k_plus_1.detach(),
+                chance_encoder_onehot_k_plus_1.detach(),
                 reduction="none",
             )
 
@@ -644,16 +644,16 @@ class VQVAECommitmentLoss(LossModule):
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         # Note: indexed at k-1 in the stochastic arrays
-        encoder_softmax_k_plus_1 = predictions["chance_encoder_softmaxes"]
+        chance_encoder_embedding_k_plus_1 = predictions["chance_encoder_embeddings"]
         target_codes_k = targets["chance_codes"].squeeze(-1).long()
-        encoder_onehot_k_plus_1 = F.one_hot(
-            target_codes_k, num_classes=encoder_softmax_k_plus_1.shape[-1]
+        chance_encoder_onehot_k_plus_1 = F.one_hot(
+            target_codes_k, num_classes=chance_encoder_embedding_k_plus_1.shape[-1]
         ).float()
 
         # VQ-VAE commitment cost between c_t+k+1 and (c^e)_t+k+1 ||c_t+k+1 - (c^e)_t+k+1||^2
         # If using true chance codes, we can use them directly
         diff = (
-            encoder_softmax_k_plus_1 - encoder_onehot_k_plus_1.detach()
+            chance_encoder_embedding_k_plus_1 - chance_encoder_onehot_k_plus_1.detach()
         )  # TODO: lightzero does not detach here, try both
         vqvae_commitment_cost = self.config.vqvae_commitment_cost_factor * torch.sum(
             diff.pow(2), dim=-1
@@ -867,7 +867,7 @@ class LossPipeline:
             "ConsistencyLoss": {"latent_states"},
             "ChanceQLoss": {"chance_values"},
             "SigmaLoss": {"chance_codes"},
-            "VQVAECommitmentLoss": {"chance_encoder_softmaxes"},
+            "VQVAECommitmentLoss": {"chance_encoder_embeddings"},
         }
         required_targets = {
             "ValueLoss": {"values"},
