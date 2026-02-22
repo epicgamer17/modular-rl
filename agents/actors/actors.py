@@ -160,7 +160,7 @@ class BaseActor(ABC):
                 player_id=player_id,
                 episode_step=self._episode_length,  # Pass loop state
             )
-            action_val = action.item() if torch.is_tensor(action) else action
+            action_val = action.item()
 
             next_obs, reward, term, trunc, next_info = self._step_env(action_val)
 

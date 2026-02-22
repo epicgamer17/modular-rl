@@ -65,11 +65,7 @@ class ScheduleLRScheduler(optim.lr_scheduler.LRScheduler):
 
 
 def get_lr_scheduler(optimizer: optim.Optimizer, config: "Config"):
-    """
-    Returns a learning rate scheduler based on the config parameters.
-    Uses the unified ScheduleConfig system.
-    """
-    schedule_config = getattr(config, "lr_schedule", None)
+    schedule_config = config.lr_schedule
     if schedule_config is None:
         return optim.lr_scheduler.LambdaLR(optimizer, ConstantLR())
 

@@ -137,8 +137,9 @@ class DuelingQHead(BaseHead):
         )
 
         # Remove BaseHead's generic output_layer as we have specialized ones
-        if hasattr(self, "output_layer"):
+        if self.output_layer is not None:
             del self.output_layer
+            self.output_layer = None
 
     def initialize(
         self, initializer: Optional[Callable[[Tensor], None]] = None

@@ -82,13 +82,12 @@ class RainbowTrainer(BaseTrainer):
         from agents.executors.local_executor import LocalExecutor
         from agents.executors.torch_mp_executor import TorchMPExecutor
 
-        if getattr(config, "multi_process", False):
+        if config.multi_process:
             self.executor = TorchMPExecutor()
         else:
             self.executor = LocalExecutor()
 
-        # Launch workers (default to 1 worker if not specified)
-        num_workers = getattr(config, "num_workers", 1)
+        num_workers = config.num_workers
         worker_args = (
             config.game.make_env,
             self.agent_network,
@@ -259,7 +258,7 @@ class RainbowTrainer(BaseTrainer):
                     net_out = self.agent_network.obs_inference(state)
                     action = net_out.q_values.argmax(dim=-1)
 
-                    action_val = action.item() if hasattr(action, "item") else action
+                    action_val = action.item()
 
                     state, reward, terminated, truncated, info = test_env.step(
                         action_val

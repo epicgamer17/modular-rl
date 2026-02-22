@@ -142,9 +142,7 @@ class PPOTrainer(BaseTrainer):
                         log_prob = metadata.get("log_prob")
                         value = metadata.get("value")
 
-                        action_val = (
-                            action.item() if hasattr(action, "item") else action
-                        )
+                        action_val = action.item()
 
                         # Environment step
                         next_state, reward, terminated, truncated, next_info = (
@@ -298,7 +296,7 @@ class PPOTrainer(BaseTrainer):
         action, _ = self.action_selector.select_action(
             self.agent_network, obs_tensor, info, exploration=False
         )
-        return action.item() if hasattr(action, "item") else action
+        return action.item()
 
     def _setup_stats(self):
         """Initializes the stat tracker with PPO-specific keys and plot types."""

@@ -32,14 +32,7 @@ class NFSPTrainer(BaseTrainer):
         super().__init__(config, env, device, name, stats, test_agents)
 
         self.shared_networks = config.shared_networks_and_buffers
-
-        # Get player IDs (NFSP specific)
-        if hasattr(env, "possible_agents"):
-            self.player_ids = env.possible_agents
-        elif hasattr(env, "agents"):
-            self.player_ids = env.agents
-        else:
-            self.player_ids = ["player_0"]
+        self.player_ids = list(env.possible_agents)
 
         if self.shared_networks:
             self._init_shared_networks(self.obs_dim, self.num_actions)
@@ -544,7 +537,7 @@ class NFSPTrainer(BaseTrainer):
                     action = self.policy.compute_action(
                         state, info, player_id=player_id
                     )
-                    action_val = action.item() if torch.is_tensor(action) else action
+                    action_val = action.item()
 
                     test_env.step(action_val)
                     state, reward, terminated, truncated, info = test_env.last()

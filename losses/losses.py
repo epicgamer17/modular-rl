@@ -101,9 +101,7 @@ class StandardDQNLoss(LossModule):
             rewards = context["rewards"].to(self.device)
             dones = context["dones"].to(self.device)
             terminated = context.get("terminated", dones).to(self.device)
-            bootstrap_on_truncated = bool(
-                getattr(self.config, "bootstrap_on_truncated", False)
-            )
+            bootstrap_on_truncated = bool(self.config.bootstrap_on_truncated)
             terminal_mask = terminated if bootstrap_on_truncated else dones
 
             # Action Masking Logic
@@ -217,9 +215,7 @@ class C51Loss(LossModule):
             rewards = context["rewards"].to(self.device).view(-1, 1)
             dones = context["dones"].to(self.device).view(-1, 1)
             terminated = context.get("terminated", dones).to(self.device).view(-1, 1)
-            bootstrap_on_truncated = bool(
-                getattr(self.config, "bootstrap_on_truncated", False)
-            )
+            bootstrap_on_truncated = bool(self.config.bootstrap_on_truncated)
             terminal_mask = terminated if bootstrap_on_truncated else dones
 
             # Masking

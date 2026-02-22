@@ -50,13 +50,9 @@ class BaseTrainer:
         self.test_trials = 5
 
     def _detect_player_id(self, env) -> str:
-        """Detects the player_id for PettingZoo environments."""
-        if hasattr(env, "possible_agents") and len(env.possible_agents) > 0:
+        if self.config.game.num_players > 1:
             return env.possible_agents[0]
-        elif hasattr(env, "agents") and len(env.agents) > 0:
-            return env.agents[0]
-        else:
-            return "player_0"
+        return "player_0"
 
     def _determine_observation_dimensions(self, env) -> Tuple[torch.Size, np.dtype]:
         """
@@ -72,15 +68,7 @@ class BaseTrainer:
         elif isinstance(obs_space, gym.spaces.Tuple):
             return torch.Size((len(obs_space.spaces),)), np.int32
         elif callable(obs_space):
-            # For PettingZoo-style callable observation spaces
-            player_id = getattr(self, "_player_id", "player_0")
-            try:
-                space = obs_space(player_id)
-            except KeyError:
-                if hasattr(env, "possible_agents") and env.possible_agents:
-                    space = obs_space(env.possible_agents[0])
-                else:
-                    raise
+            space = obs_space(self._player_id)
             return torch.Size(space.shape), space.dtype
         else:
             return torch.Size(obs_space.shape), obs_space.dtype
@@ -92,9 +80,8 @@ class BaseTrainer:
         """
         if isinstance(env.action_space, gym.spaces.Discrete):
             return int(env.action_space.n)
-        elif callable(env.action_space):  # PettingZoo
-            player_id = getattr(self, "_player_id", "player_0")
-            return int(env.action_space(player_id).n)
+        elif callable(env.action_space):
+            return int(env.action_space(self._player_id).n)
         elif self.config.game.num_actions:
             return self.config.game.num_actions
         else:
@@ -102,14 +89,7 @@ class BaseTrainer:
             return int(env.action_space.shape[0])
 
     def _get_num_players(self, env) -> int:
-        """Determines the number of players in the environment."""
-        if hasattr(env, "possible_agents"):
-            return len(env.possible_agents)
-        elif hasattr(env, "agents"):
-            return len(env.agents)
-        elif self.config.game.num_players:
-            return self.config.game.num_players
-        return 1
+        return self.config.game.num_players
 
     def _save_checkpoint(self, checkpoint_data: Dict[str, Any]):
         """
@@ -224,7 +204,7 @@ class BaseTrainer:
                 while not done and episode_length < 1000:
                     episode_length += 1
                     action = self.select_test_action(state, info, test_env)
-                    action_val = action.item() if hasattr(action, "item") else action
+                    action_val = action.item()
 
                     if is_multiplayer:
                         test_env.step(action_val)
@@ -288,9 +268,7 @@ class BaseTrainer:
                             action = agent.select_actions(prediction, info=info)
 
                         # Ensure action is a standard scalar for PettingZoo/Gymnasium
-                        action_val = (
-                            action.item() if hasattr(action, "item") else action
-                        )
+                        action_val = action.item()
                         test_env.step(action_val)
                         state, reward, termination, truncation, info = test_env.last()
                         done = termination or truncation

@@ -40,7 +40,7 @@ class MuZeroTrainer(BaseTrainer):
         if config.kernel_initializer is not None:
             self.agent_network.initialize(config.kernel_initializer)
 
-        if getattr(config, "multi_process", False):
+        if config.multi_process:
             self.agent_network.share_memory()
 
         # 2. Initialize Search Algorithm (MCTS)
@@ -212,7 +212,7 @@ class MuZeroTrainer(BaseTrainer):
         action, _ = self.action_selector.select_action(
             self.agent_network, state, info, exploration=False, episode_step=1e9
         )
-        return action.item() if hasattr(action, "item") else action
+        return action.item()
 
     def _setup_stats(self):
         """Initializes the stat tracker with all required keys and plot types."""

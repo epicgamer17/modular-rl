@@ -86,9 +86,9 @@ class PPOLearner(BaseLearner):
         )
         self.value_loss_module = PPOValueLoss(
             critic_coefficient=self.config.critic_coefficient,
-            atom_size=getattr(self.config, "atom_size", 1),
-            v_min=getattr(self.config, "v_min", None),
-            v_max=getattr(self.config, "v_max", None),
+            atom_size=self.config.atom_size,
+            v_min=self.config.v_min,
+            v_max=self.config.v_max,
             value_strategy=getattr(self.agent_network.value, "strategy", None),
         )
 
@@ -105,7 +105,7 @@ class PPOLearner(BaseLearner):
             return SGD(
                 params=params,
                 lr=self.config.learning_rate,
-                momentum=getattr(self.config, "momentum", 0.0),
+                momentum=self.config.momentum,
                 weight_decay=self.config.weight_decay,
             )
         else:

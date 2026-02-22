@@ -147,6 +147,9 @@ class ReplayConfig:
         self.per_use_initial_max_priority: bool = self.parse_field(
             "per_use_initial_max_priority", True
         )
+        self.bootstrap_on_truncated: bool = self.parse_field(
+            "bootstrap_on_truncated", False
+        )
 
 
 class SearchConfig:
@@ -220,21 +223,11 @@ class DistributionalConfig:
         )
         if self.support_range is not None and self.atom_size == 1:
             self.atom_size = self.support_range * 2 + 1
-        game_min = (
-            getattr(self.game, "min_score", None)
-            if hasattr(self, "game") and self.game
-            else None
-        )
-        game_max = (
-            getattr(self.game, "max_score", None)
-            if hasattr(self, "game") and self.game
-            else None
-        )
-        self.v_min = game_min
-        self.v_max = game_max
+        self.v_min = self.game.min_score
+        self.v_max = self.game.max_score
 
 
-class Config(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig):
+class Config(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig, DistributionalConfig):
     def __init__(self, config_dict: dict, game_config: GameConfig) -> None:
         self.multi_process = False
         super().__init__(config_dict)
@@ -246,6 +239,7 @@ class Config(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig):
         self.parse_optimization_params()
         self.parse_replay_params()
         self.parse_record_params()
+        self.parse_distributional_params()
         self.loss_function = self.parse_field("loss_function", F.mse_loss)
         self.activation = self.parse_field(
             "activation", "relu", wrapper=prepare_activations
@@ -265,6 +259,8 @@ class Config(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig):
         self.norm_type: str = self.parse_field("norm_type", "none")
         self.soft_update: bool = self.parse_field("soft_update", False)
         self.min_max_epsilon: float = self.parse_field("min_max_epsilon", 0.01)
+        self.num_workers: int = self.parse_field("num_workers", 1, wrapper=int)
+        self.replay_interval: int = self.parse_field("replay_interval", 1, wrapper=int)
 
     def _verify_game(self):
         assert (

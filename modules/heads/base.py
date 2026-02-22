@@ -32,6 +32,7 @@ class BaseHead(nn.Module):
         self.flat_dim = self._get_flat_dim(self.output_shape)
 
         # 2. Final Output Layer
+        self.output_layer = None
         if self.strategy is not None:
             self.output_layer = build_dense(
                 in_features=self.flat_dim,
@@ -57,25 +58,21 @@ class BaseHead(nn.Module):
                 self.neck.initialize(init_fn)
 
         # Initialize the final output layer (defined in subclasses)
-        if hasattr(self, "output_layer"):
+        if self.output_layer is not None:
             init_fn = (
                 initializer
                 or self.arch_config.output_layer_initializer
                 or self.arch_config.kernel_initializer
             )
-            if hasattr(self.output_layer, "initialize") and callable(
-                self.output_layer.initialize
-            ):
-                # Some custom layers have their own initialize method
+            if hasattr(self.output_layer, "initialize"):
                 self.output_layer.initialize(init_fn)
             elif init_fn:
                 self.output_layer.apply(init_fn)
 
     def reset_noise(self) -> None:
-        """Resets noise for Noisy layers in neck or output layer."""
         if hasattr(self.neck, "reset_noise"):
             self.neck.reset_noise()
-        if hasattr(self, "output_layer") and hasattr(self.output_layer, "reset_noise"):
+        if self.output_layer is not None and hasattr(self.output_layer, "reset_noise"):
             self.output_layer.reset_noise()
 
     def forward(

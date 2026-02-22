@@ -136,10 +136,7 @@ class AppendAgentSelectionWrapper(BaseWrapper):
             orig_low = np.asarray(obs_space.low).reshape(-1)
             orig_high = np.asarray(obs_space.high).reshape(-1)
 
-            # Number of possible agents (defensive: fallback to env.agents or 0)
-            num_agents = len(
-                getattr(self.env, "possible_agents", getattr(self.env, "agents", []))
-            )
+            num_agents = len(self.env.possible_agents)
 
             # If we can't determine number of agents, don't modify space.
             if num_agents == 0:
@@ -182,10 +179,7 @@ class AppendAgentSelectionWrapper(BaseWrapper):
             # fallback: return original observation unchanged
             return obs
 
-        # determine number of possible agents (defensive)
-        possible_agents = list(
-            getattr(self.env, "possible_agents", getattr(self.env, "agents", []))
-        )
+        possible_agents = list(self.env.possible_agents)
         num_agents = len(possible_agents)
 
         # if we can't determine num_agents, fallback to original observation

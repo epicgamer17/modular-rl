@@ -126,9 +126,7 @@ class StandardDQNLossModule:
         if next_observations is not None:
             next_observations = next_observations.to(self.device)
 
-        bootstrap_on_truncated = bool(
-            getattr(self.config, "bootstrap_on_truncated", False)
-        )
+        bootstrap_on_truncated = bool(self.config.bootstrap_on_truncated)
         terminal_mask = terminated if bootstrap_on_truncated else dones
         batch_size = actions.shape[0]
 
@@ -230,9 +228,7 @@ class C51LossModule:
         if next_observations is not None:
             next_observations = next_observations.to(self.device)
 
-        bootstrap_on_truncated = bool(
-            getattr(self.config, "bootstrap_on_truncated", False)
-        )
+        bootstrap_on_truncated = bool(self.config.bootstrap_on_truncated)
         terminal_mask = terminated if bootstrap_on_truncated else dones
         batch_size = actions.shape[0]
 

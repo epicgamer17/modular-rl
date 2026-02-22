@@ -40,7 +40,7 @@ class ImitationTrainer(BaseTrainer):
             input_shape=self.obs_dim,
         ).to(device)
 
-        if getattr(config, "multi_process", False):
+        if config.multi_process:
             self.agent_network.share_memory()
 
         # 2. Initialize Action Selector
@@ -89,9 +89,9 @@ class ImitationTrainer(BaseTrainer):
         """
         self._setup_stats()
 
-        training_steps = getattr(self.config, "training_steps", 1000)
-        replay_interval = getattr(self.config, "replay_interval", 1)
-        num_minibatches = getattr(self.config, "num_minibatches", 1)
+        training_steps = self.config.training_steps
+        replay_interval = self.config.replay_interval
+        num_minibatches = self.config.num_minibatches
 
         print(f"Starting Imitation training for {training_steps} steps...")
         last_log_time = time.time()
