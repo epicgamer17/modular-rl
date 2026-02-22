@@ -10,7 +10,7 @@ from agents.actors.actors import get_actor_class
 from modules.agent_nets.rainbow_dqn import RainbowNetwork
 from replay_buffers.transition import TransitionBatch, Transition
 from stats.stats import StatTracker, PlotType
-from utils.utils import update_linear_schedule, update_inverse_sqrt_schedule
+from utils.schedule import create_schedule
 
 
 class RainbowTrainer(BaseTrainer):
@@ -58,7 +58,9 @@ class RainbowTrainer(BaseTrainer):
             config.action_selector.config_dict
         )
 
-        self.current_epsilon = config.eg_epsilon
+        # Initialize epsilon schedule
+        self.epsilon_schedule = create_schedule(config.epsilon_schedule)
+        self.current_epsilon = self.epsilon_schedule.get_value()
 
         # 3. Create support for distributional RL (C51)
         # Note: RainbowNetwork.initial_inference now handles calculating expected value from support
@@ -165,26 +167,10 @@ class RainbowTrainer(BaseTrainer):
 
     def _update_epsilon(self) -> None:
         """
-        Updates epsilon according to the configured decay schedule.
+        Updates epsilon according to the configured schedule.
         """
-        if self.config.eg_epsilon_decay_type == "linear":
-            self.current_epsilon = update_linear_schedule(
-                self.config.eg_epsilon_final,
-                self.config.eg_epsilon_final_step,
-                self.config.eg_epsilon,
-                self.training_step,
-            )
-        elif self.config.eg_epsilon_decay_type == "inverse_sqrt":
-            self.current_epsilon = update_inverse_sqrt_schedule(
-                self.config.eg_epsilon,
-                self.training_step,
-            )
-        else:
-            raise ValueError(
-                f"Invalid epsilon decay type: {self.config.eg_epsilon_decay_type}"
-            )
-
-        # Update local selector parameters
+        self.epsilon_schedule.step()
+        self.current_epsilon = self.epsilon_schedule.get_value()
         self.action_selector.update_parameters({"epsilon": self.current_epsilon})
 
     def _store_transitions(self, batch: TransitionBatch) -> None:

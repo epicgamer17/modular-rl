@@ -7,6 +7,7 @@ from modules.utils import (
 )
 import torch.nn.functional as F
 from configs.games.game import GameConfig
+from utils.schedule import ScheduleConfig
 
 
 class ConfigBase:
@@ -36,6 +37,17 @@ class ConfigBase:
         if field_name in self._parsed_fields:
             print("warning: duplicate field: ", field_name)
         self._parsed_fields.add(field_name)
+
+    def parse_schedule_config(
+        self, field_name: str, defaults: dict = None
+    ) -> ScheduleConfig:
+        d = self.parse_field(field_name, default=None, required=False)
+        if d is None:
+            d = {}
+        if defaults:
+            d = {**defaults, **d}
+        print(f"Using         {field_name:30}: {d}")
+        return ScheduleConfig.from_dict(d)
 
     def __init__(self, config_dict: dict):
         self.config_dict = config_dict.copy()
@@ -104,9 +116,10 @@ class OptimizationConfig:
         self.training_iterations: int = self.parse_field(
             "training_iterations", 1, wrapper=int
         )
-        self.lr_schedule_type: str = self.parse_field("lr_schedule_type", "none")
-        self.lr_schedule_steps: list = self.parse_field("lr_schedule_steps", [])
-        self.lr_schedule_values: list = self.parse_field("lr_schedule_values", [])
+        self.lr_schedule = self.parse_schedule_config(
+            "lr_schedule",
+            defaults={"type": "constant", "initial": self.learning_rate},
+        )
         self.test_interval: int = self.parse_field("test_interval", 1000)
         self.checkpoint_interval: int = self.parse_field("checkpoint_interval", 1000)
 
@@ -123,8 +136,10 @@ class ReplayConfig:
         self.n_step: int = self.parse_field("n_step", 1)
         self.discount_factor: float = self.parse_field("discount_factor", 0.99)
         self.per_alpha: float = self.parse_field("per_alpha", 0.5)
-        self.per_beta: float = self.parse_field("per_beta", 0.5)
-        self.per_beta_final: float = self.parse_field("per_beta_final", 1.0)
+        self.per_beta_schedule = self.parse_schedule_config(
+            "per_beta_schedule",
+            defaults={"type": "linear", "initial": 0.5, "final": 1.0, "decay_steps": 10000},
+        )
         self.per_epsilon: float = self.parse_field("per_epsilon", 1e-6)
         self.per_use_batch_weights: bool = self.parse_field(
             "per_use_batch_weights", False
@@ -164,14 +179,9 @@ class NoisyConfig:
 
 class EpsilonGreedyConfig:
     def parse_epsilon_greedy_params(self):
-        self.eg_epsilon: float = self.parse_field("eg_epsilon", 0.00)
-        self.eg_epsilon_final: float = self.parse_field("eg_epsilon_final", 0.00)
-        self.eg_epsilon_decay_type: str = self.parse_field(
-            "eg_epsilon_decay_type", "linear"
-        )
-        steps = getattr(self, "training_steps", 10000)
-        self.eg_epsilon_final_step: int = self.parse_field(
-            "eg_epsilon_final_step", steps
+        self.epsilon_schedule = self.parse_schedule_config(
+            "epsilon_schedule",
+            defaults={"type": "constant", "initial": 0.0},
         )
 
 

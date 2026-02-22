@@ -1,4 +1,3 @@
-import math
 import random
 
 import numpy as np
@@ -43,30 +42,6 @@ def normalize_images(image: Tensor) -> Tensor:
 def action_mask_to_legal_moves(action_mask):
     legal_moves = [i for i, x in enumerate(action_mask) if x == 1]
     return legal_moves
-
-
-def update_linear_schedule(
-    final_value: float,
-    total_steps: int,
-    initial_value: float,
-    current_step: int,
-):
-    if initial_value < final_value:
-        clamp_func = min
-    else:
-        clamp_func = max
-    value = clamp_func(
-        final_value,
-        initial_value + ((final_value - initial_value) * (current_step / total_steps)),
-    )
-    return value
-
-
-def update_inverse_sqrt_schedule(
-    initial_value: float = None,
-    current_step: int = None,
-):
-    return initial_value / math.sqrt(current_step + 1)
 
 
 def epsilon_greedy_policy(

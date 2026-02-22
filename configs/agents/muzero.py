@@ -18,6 +18,7 @@ from configs.modules.heads.base import HeadConfig
 from configs.modules.architecture_config import ArchitectureConfig
 import torch.nn.functional as F
 from utils.utils import tointlists
+from utils.schedule import ScheduleConfig
 import copy
 
 
@@ -188,12 +189,10 @@ class MuZeroConfig(
         # Mixin: Search (MCTS)
         self.parse_search_params()
 
-        self.temperatures = self.parse_field("temperatures", [1.0, 0.0])
-        self.temperature_updates = self.parse_field("temperature_updates", [5])
-        self.temperature_with_training_steps = self.parse_field(
-            "temperature_with_training_steps", False
+        self.temperature_schedule = self.parse_schedule_config(
+            "temperature_schedule",
+            defaults={"type": "stepwise", "steps": [5], "values": [1.0, 0.0]},
         )
-        assert len(self.temperatures) == len(self.temperature_updates) + 1
 
         self.clip_low_prob: float = self.parse_field("clip_low_prob", 0.0)
 

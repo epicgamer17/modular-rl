@@ -2,6 +2,7 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 from agents.action_selectors.selectors import BaseActionSelector
 from torch.distributions import Categorical
+from utils.schedule import create_schedule, Schedule
 
 
 class PPODecorator(BaseActionSelector):
@@ -74,23 +75,23 @@ class MCTSDecorator(BaseActionSelector):
     ):
         self.inner_selector = inner_selector
         self.search = search_algorithm
-        self.config = config  # Need config for temperature schedule
+        self.config = config
+        if hasattr(config, "temperature_schedule"):
+            self.temperature_schedule = create_schedule(config.temperature_schedule)
+        else:
+            from utils.schedule import ScheduleConfig
+            self.temperature_schedule = create_schedule(
+                ScheduleConfig.stepwise(steps=[5], values=[1.0, 0.0])
+            )
 
     def _get_current_temperature(self, steps_in_episode: int) -> float:
         """Determines exploration temperature based on episode step."""
-        if not hasattr(self.config, "temperatures") or not hasattr(
-            self.config, "temperature_updates"
-        ):
-            return 1.0  # Default if no config
-
-        curr_temp = self.config.temperatures[0]
-        for i, temperature_step in enumerate(self.config.temperature_updates):
-            if not getattr(self.config, "temperature_with_training_steps", False):
-                if steps_in_episode >= temperature_step:
-                    curr_temp = self.config.temperatures[i + 1]
-                else:
-                    break
-        return curr_temp
+        if not self.temperature_schedule.config.with_training_steps:
+            temp_schedule = create_schedule(self.config.temperature_schedule)
+            for _ in range(steps_in_episode):
+                temp_schedule.step()
+            return temp_schedule.get_value()
+        return self.temperature_schedule.get_value()
 
     def select_action(
         self,

@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from configs.base import Config
 
+from utils.schedule import ScheduleConfig, Schedule, create_schedule
+
 
 class LinearLR:
     def __init__(self, training_steps: int):
@@ -29,13 +31,10 @@ class StepWiseLR:
         self.initial_lr = initial_lr
 
     def __call__(self, current_step: int):
-        # Find the largest step <= current_step
         idx = bisect.bisect_right(self.steps, current_step)
         if idx == 0:
-            return 1.0  # Before first step, use initial LR
+            return 1.0
         else:
-            # Use the value corresponding to the step we passed
-            # The value is the absolute LR, so divide by initial_lr to get lambda
             return self.values[idx - 1] / self.initial_lr
 
 
@@ -44,37 +43,38 @@ class ConstantLR:
         return 1.0
 
 
+class ScheduleLRScheduler(optim.lr_scheduler.LRScheduler):
+    """
+    Wraps a Schedule to work with PyTorch's LR scheduler interface.
+    """
+
+    def __init__(self, optimizer: optim.Optimizer, schedule: Schedule):
+        self.schedule = schedule
+        self._initial_lr = schedule.config.initial
+        super().__init__(optimizer)
+
+    def _get_closed_form_lr(self):
+        if self._initial_lr is None or self._initial_lr == 0:
+            return self.base_lrs
+        factor = self.schedule.get_value() / self._initial_lr
+        return [lr * factor for lr in self.base_lrs]
+
+    def step(self, *args, **kwargs):
+        self.schedule.step()
+        super().step(*args, **kwargs)
+
+
 def get_lr_scheduler(optimizer: optim.Optimizer, config: "Config"):
     """
     Returns a learning rate scheduler based on the config parameters.
-    Supports: "linear", "step_wise", "none".
+    Uses the unified ScheduleConfig system.
     """
-    schedule_type = getattr(config, "lr_schedule_type", "none")
-
-    if schedule_type == "linear":
-        training_steps = getattr(config, "training_steps", 10000)
-        return optim.lr_scheduler.LambdaLR(optimizer, LinearLR(training_steps))
-
-    elif schedule_type == "step_wise":
-        steps = getattr(config, "lr_schedule_steps", [])
-        values = getattr(config, "lr_schedule_values", [])
-        initial_lr = config.learning_rate
-
-        assert len(steps) == len(
-            values
-        ), "Length of steps and values must match for step_wise scheduler"
-
-        # Sort just in case
-        combined = sorted(zip(steps, values), key=lambda x: x[0])
-        sorted_steps, sorted_values = zip(*combined) if combined else ([], [])
-
-        return optim.lr_scheduler.LambdaLR(
-            optimizer, StepWiseLR(sorted_steps, sorted_values, initial_lr)
-        )
-
-    else:
-        # No scheduling (constant LR)
+    schedule_config = getattr(config, "lr_schedule", None)
+    if schedule_config is None:
         return optim.lr_scheduler.LambdaLR(optimizer, ConstantLR())
+
+    schedule = create_schedule(schedule_config)
+    return ScheduleLRScheduler(optimizer, schedule)
 
 
 def support_to_scalar(

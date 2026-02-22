@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torch.nn.utils import clip_grad_norm_
 
-from replay_buffers.utils import update_per_beta
+from utils.schedule import create_schedule, Schedule
 
 
 @dataclass
@@ -89,6 +89,12 @@ class BaseLearner(ABC):
         self.observation_dtype = observation_dtype
         self.training_step = 0
         self.callbacks = CallbackList(callbacks)
+        self.schedules: Dict[str, Schedule] = {}
+        self._init_schedules()
+
+    def _init_schedules(self):
+        if hasattr(self.config, "per_beta_schedule"):
+            self.schedules["per_beta"] = create_schedule(self.config.per_beta_schedule)
 
     def _preprocess_observation(self, states: Any) -> torch.Tensor:
         """
@@ -145,7 +151,7 @@ class BaseLearner(ABC):
 
             last_result = result
 
-        self._update_per_beta()
+        self._step_schedules()
         self.training_step += 1
 
         if stats is not None:
@@ -184,15 +190,11 @@ class BaseLearner(ABC):
     def clipnorm(self) -> float:
         return self.config.clipnorm
 
-    def _update_per_beta(self) -> None:
-        self.replay_buffer.set_beta(
-            update_per_beta(
-                self.replay_buffer.beta,
-                self.config.per_beta_final,
-                self.config.training_steps,
-                self.config.per_beta,
-            )
-        )
+    def _step_schedules(self) -> None:
+        for name, schedule in self.schedules.items():
+            schedule.step()
+            if name == "per_beta":
+                self.replay_buffer.set_beta(schedule.get_value())
 
     def _maybe_clear_mps_cache(self) -> None:
         if isinstance(self.device, torch.device):

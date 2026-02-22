@@ -5,22 +5,6 @@ from dataclasses import dataclass
 import torch
 
 
-def update_per_beta(
-    per_beta: float, per_beta_final: float, per_beta_steps: int, initial_per_beta: int
-):
-    # could also use an initial per_beta instead of current (multiply below equation by current step)
-    if per_beta < per_beta_final:
-        clamp_func = min
-    else:
-        clamp_func = max
-    per_beta = clamp_func(
-        per_beta_final,
-        per_beta + (per_beta_final - initial_per_beta) / (per_beta_steps),
-    )
-
-    return per_beta
-
-
 def sample_by_random_indices(
     max_index_or_1darray, batch_size: int, with_replacement=False
 ) -> npt.NDArray[np.int64]:

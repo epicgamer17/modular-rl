@@ -2,44 +2,41 @@ import torch
 import torch.optim as optim
 import pickle
 from modules.utils import get_lr_scheduler
-from configs.agents.muzero import MuZeroConfig
-from configs.games.cartpole_config import CartPoleConfig
+from utils.schedule import ScheduleConfig
 from unittest.mock import MagicMock
 
 
 def test_pickling():
     print("Testing pickling of lr_scheduler...")
 
-    # Mock config
-    config = MagicMock()
-    config.lr_schedule_type = "linear"
-    config.training_steps = 1000
-    config.learning_rate = 0.001
-
     model = torch.nn.Linear(10, 2)
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
     # Test linear
     print("  Testing linear...")
+    config = MagicMock()
+    config.lr_schedule = ScheduleConfig.linear(
+        initial=0.001, final=0.00001, decay_steps=1000
+    )
     scheduler = get_lr_scheduler(optimizer, config)
     pickle.dumps(scheduler)
     print("  Linear pickling successful!")
 
-    # Test step_wise
-    print("  Testing step_wise...")
-    config.lr_schedule_type = "step_wise"
-    config.lr_schedule_steps = [100, 200]
-    config.lr_schedule_values = [0.0001, 0.00001]
+    # Test stepwise
+    print("  Testing stepwise...")
+    config.lr_schedule = ScheduleConfig.stepwise(
+        steps=[100, 200], values=[0.0001, 0.00001]
+    )
     scheduler = get_lr_scheduler(optimizer, config)
     pickle.dumps(scheduler)
-    print("  Step-wise pickling successful!")
+    print("  Stepwise pickling successful!")
 
-    # Test none
-    print("  Testing none...")
-    config.lr_schedule_type = "none"
+    # Test constant
+    print("  Testing constant...")
+    config.lr_schedule = ScheduleConfig.constant(0.001)
     scheduler = get_lr_scheduler(optimizer, config)
     pickle.dumps(scheduler)
-    print("  None (constant) pickling successful!")
+    print("  Constant pickling successful!")
 
 
 if __name__ == "__main__":

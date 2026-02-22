@@ -40,11 +40,13 @@ def build_minimal_config(atom_size=1):
         "v_max": 10,
         "transfer_interval": 1,
         "replay_interval": 1,
-        # Epsilon greedy
-        "eg_epsilon": 1.0,
-        "eg_epsilon_final": 0.05,
-        "eg_epsilon_final_step": 1000,
-        "eg_epsilon_decay_type": "linear",
+        # Epsilon greedy schedule
+        "epsilon_schedule": {
+            "type": "linear",
+            "initial": 1.0,
+            "final": 0.05,
+            "decay_steps": 1000,
+        },
         "action_selector": {
             "base": {"type": "epsilon_greedy", "kwargs": {"epsilon": 0.05}}
         },
