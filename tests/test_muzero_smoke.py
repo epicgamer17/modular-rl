@@ -64,7 +64,7 @@ def test_muzero_cartpole_smoke():
     config = MuZeroConfig(config_dict, game_config)
 
     trainer = MuZeroTrainer(
-        config, env, device=torch.device("cpu"), model_name="smoke_test_cartpole"
+        config, env, device=torch.device("cpu"), name="smoke_test_cartpole"
     )
 
     # Disable checkpointing/plotting to avoid permission errors in this environment
@@ -120,7 +120,7 @@ def test_muzero_tictactoe_smoke():
     config = MuZeroConfig(config_dict, game_config)
 
     trainer = MuZeroTrainer(
-        config, env, device=torch.device("cpu"), model_name="smoke_test_tictactoe"
+        config, env, device=torch.device("cpu"), name="smoke_test_tictactoe"
     )
 
     # Disable checkpointing/plotting

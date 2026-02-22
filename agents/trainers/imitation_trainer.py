@@ -26,12 +26,12 @@ class ImitationTrainer(BaseTrainer):
         config,
         env,
         device: torch.device,
-        model_name: str = "agent",
+        name: str = "agent",
         stats: Optional[StatTracker] = None,
         test_agents: Optional[List] = None,
         use_categorical: bool = True,
     ):
-        super().__init__(config, env, device, model_name, stats, test_agents)
+        super().__init__(config, env, device, name, stats, test_agents)
 
         # 1. Initialize Network
         self.agent_network = SupervisedNetwork(
@@ -78,7 +78,7 @@ class ImitationTrainer(BaseTrainer):
             config.game.num_players,
             config,
             device,
-            self.model_name,
+            self.name,
         )
         actor_cls = get_actor_class(env)
         self.executor.launch(actor_cls, worker_args, num_workers)

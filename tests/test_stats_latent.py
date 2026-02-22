@@ -18,7 +18,7 @@ class TestStatsLatent(unittest.TestCase):
             shutil.rmtree(self.output_dir)
 
     def test_pca_integration(self):
-        tracker = StatTracker(model_name="test_model")
+        tracker = StatTracker(name="test_model")
         
         # Add latent data
         latents = torch.randn(50, 32)
@@ -33,7 +33,7 @@ class TestStatsLatent(unittest.TestCase):
         self.assertTrue(os.path.exists(expected_file))
 
     def test_tsne_integration(self):
-        tracker = StatTracker(model_name="test_model_tsne")
+        tracker = StatTracker(name="test_model_tsne")
         
         # Add latent data
         # Use small N for speed
@@ -48,7 +48,7 @@ class TestStatsLatent(unittest.TestCase):
         self.assertTrue(os.path.exists(expected_file))
 
     def test_umap_integration(self):
-        tracker = StatTracker(model_name="test_model_umap")
+        tracker = StatTracker(name="test_model_umap")
         
         latents = torch.randn(20, 16)
         

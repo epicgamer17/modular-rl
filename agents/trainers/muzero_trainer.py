@@ -21,11 +21,11 @@ class MuZeroTrainer(BaseTrainer):
         config,
         env,
         device: torch.device,
-        model_name: str = "agent",
+        name: str = "agent",
         stats: Optional[StatTracker] = None,
         test_agents: List = None,
     ):
-        super().__init__(config, env, device, model_name, stats, test_agents)
+        super().__init__(config, env, device, name, stats, test_agents)
         # 1. Initialize Network
         # ... (network initialization)
         # The local import `from modules.agent_nets.muzero import AgentNetwork as Network` is removed
@@ -98,7 +98,7 @@ class MuZeroTrainer(BaseTrainer):
             config.game.num_players,
             config,
             device,
-            self.model_name,
+            self.name,
         )
         from agents.actors.actors import get_actor_class
 
@@ -219,7 +219,7 @@ class MuZeroTrainer(BaseTrainer):
         from stats.stats import PlotType
 
         test_score_keys = (
-            [f"test_score_vs_{agent.model_name}" for agent in self.test_agents]
+            [f"test_score_vs_{agent.name}" for agent in self.test_agents]
             if hasattr(self, "test_agents")
             else []
         )

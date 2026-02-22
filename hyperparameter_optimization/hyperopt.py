@@ -51,7 +51,7 @@ except ImportError:
             # Return a dummy DF structure expected by the code
             data = {"Elo": [1400] * len(self.players)}
             idx = [
-                p.model_name if hasattr(p, "model_name") else str(p)
+                p.name if hasattr(p, "name") else str(p)
                 for p in self.players
             ]
             return {"Elo table": pd.DataFrame(data, index=idx)}
@@ -256,7 +256,7 @@ def elo_evaluation(agent):
         replace=False,
     )
 
-    opp_names = [config.table.players[o].model_name for o in opponents_indices]
+    opp_names = [config.table.players[o].name for o in opponents_indices]
     print(f"Testing against opponents: {opp_names}")
 
     config.table.add_player(agent)
@@ -927,10 +927,10 @@ def simulate_elo_math(start_elo=1400, total_games=100):
 
     class DummyPlayer:
         def __init__(self, name):
-            self.model_name = name
+            self.name = name
 
         def __str__(self):
-            return self.model_name
+            return self.name
 
     p1 = DummyPlayer("Hero")
     p2 = DummyPlayer("Opponent")
@@ -953,7 +953,7 @@ def simulate_elo_math(start_elo=1400, total_games=100):
         elo_df = table.bayes_elo(return_params=True)["Elo table"]
 
         # We need to find the specific rows for our dummy players
-        # The index usually matches the model_name
+        # The index usually matches the name
         try:
             p2_curr = elo_df.loc["Opponent", "Elo"]
             p1_val_raw = elo_df.loc["Hero", "Elo"]

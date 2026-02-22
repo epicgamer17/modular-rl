@@ -6,7 +6,7 @@ from stats.stats import StatTracker, PlotType
 
 def test_robust_stats_shapes():
     print("Testing StatTracker robustness against multi-dimensional tensors...")
-    tracker = StatTracker(model_name="robust_test")
+    tracker = StatTracker(name="robust_test")
 
     # 1. Test (10, 1, 32) shape which was failing before (reported as (10, 1, 32) after stack)
     # This means each append was (1, 32)

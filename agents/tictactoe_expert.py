@@ -2,8 +2,8 @@ import numpy as np
 
 
 class TicTacToeBestAgent:
-    def __init__(self, model_name="tictactoe_expert"):
-        self.model_name = model_name
+    def __init__(self, name="tictactoe_expert"):
+        self.name = name
 
     def predict(self, observation, info, env=None, *args, **kwargs):
         return observation, info

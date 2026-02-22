@@ -84,7 +84,7 @@ class CatanPlayerWrapper:
     def __init__(self, player_class, color):
         # keep original initialization but we will overwrite color at decision time
         self.player = player_class(color)
-        self.model_name = player_class.__name__
+        self.name = player_class.__name__
         # remember the initial color (not strictly necessary, but harmless)
         self.init_color = color
 

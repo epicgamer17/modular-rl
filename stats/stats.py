@@ -33,14 +33,14 @@ class StatTracker:
 
     def __init__(
         self,
-        model_name: str,
+        name: str,
         stat_keys: List[str] = None,
         target_values: Optional[Dict[str, float]] = None,
         use_tensor_dicts: Optional[Dict[str, List[str]]] = None,
         # This new argument enables the dual-mode logic
         queue: Optional[mp.Queue] = None,
     ):
-        self.model_name = model_name
+        self.name = name
         self._is_client = queue is not None
 
         if self._is_client:
@@ -88,7 +88,7 @@ class StatTracker:
         if self._is_client:
             raise RuntimeError("Cannot get a client from another client.")
         # The client is initialized with the host's queue and no data keys.
-        return StatTracker(model_name=self.model_name, queue=self.queue)
+        return StatTracker(name=self.name, queue=self.queue)
 
     def _init_key(
         self,
@@ -311,7 +311,7 @@ class StatTracker:
             if dir:
                 save_dir = Path(dir)
                 save_dir.mkdir(parents=True, exist_ok=True)
-                save_path = save_dir / f"{self.model_name}_stats.png"
+                save_path = save_dir / f"{self.name}_stats.png"
                 fig.savefig(save_path)
                 print(f"Saved stats plot to {save_path.absolute()}")
             plt.close(fig)
@@ -345,7 +345,7 @@ class StatTracker:
                 if dir:
                     save_dir = Path(dir)
                     save_dir.mkdir(parents=True, exist_ok=True)
-                    save_path = save_dir / f"{self.model_name}_{key}_{method}.png"
+                    save_path = save_dir / f"{self.name}_{key}_{method}.png"
 
                 # Check dimensionality before plotting
                 # flatten if needed is handled by visualizer, but let's be safe on input type
@@ -354,7 +354,7 @@ class StatTracker:
                         latents,
                         labels=labels,
                         save_path=save_path,
-                        title=f"{self.model_name} - {key} ({method.upper()})",
+                        title=f"{self.name} - {key} ({method.upper()})",
                         show=False,
                     )
                 except Exception as e:
@@ -372,13 +372,13 @@ class StatTracker:
                 if dir:
                     save_dir = Path(dir)
                     save_dir.mkdir(parents=True, exist_ok=True)
-                    save_path = save_dir / f"{self.model_name}_{key}_custom.png"
+                    save_path = save_dir / f"{self.name}_{key}_custom.png"
 
                 try:
                     visualizer.plot(
                         viz_data,
                         save_path=save_path,
-                        title=f"{self.model_name} - {key}",
+                        title=f"{self.name} - {key}",
                         **kwargs,
                     )
                 except Exception as e:
@@ -440,7 +440,7 @@ class StatTracker:
                     x, p_min, p_max, alpha=0.2, label=f"{label} (P1-P2 fill)"
                 )
 
-        ax.set_title(f"{self.model_name} - {label}")
+        ax.set_title(f"{self.name} - {label}")
         ax.set_xlabel(params.get("x_label", "Updates"))
         ax.set_ylabel(label)
         ax.grid(True, alpha=0.3)
@@ -583,7 +583,7 @@ class StatTracker:
         if PlotType.LOG_Y in types:
             ax.set_yscale("log")
 
-        ax.set_title(f"{self.model_name} - {label}")
+        ax.set_title(f"{self.name} - {label}")
         ax.set_xlabel(params.get("x_label", "Updates"))
         ax.set_ylabel(label)
         ax.grid()

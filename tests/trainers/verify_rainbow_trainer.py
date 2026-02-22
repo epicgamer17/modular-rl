@@ -105,7 +105,7 @@ def test_rainbow_trainer_init():
     env = config.game.make_env()
 
     print("Initializing RainbowTrainer...", flush=True)
-    trainer = RainbowTrainer(config, env, torch.device("cpu"), model_name="test_rainbow_trainer", stats=MockStats())
+    trainer = RainbowTrainer(config, env, torch.device("cpu"), name="test_rainbow_trainer", stats=MockStats())
 
     assert trainer.learner is not None, "Learner should be initialized"
     assert trainer.executor is not None, "Executor should be initialized"
@@ -122,7 +122,7 @@ def test_rainbow_trainer_epsilon_update():
     print("Testing epsilon schedule...", flush=True)
     config = build_minimal_config()
     env = config.game.make_env()
-    trainer = RainbowTrainer(config, env, torch.device("cpu"), model_name="test_rainbow_trainer", stats=MockStats())
+    trainer = RainbowTrainer(config, env, torch.device("cpu"), name="test_rainbow_trainer", stats=MockStats())
 
     initial_epsilon = trainer.current_epsilon
     assert (
@@ -146,7 +146,7 @@ def test_rainbow_c51_training():
     print("Testing C51 training loop...", flush=True)
     config = build_minimal_config(atom_size=51)
     env = config.game.make_env()
-    trainer = RainbowTrainer(config, env, torch.device("cpu"), model_name="test_rainbow_trainer", stats=MockStats())
+    trainer = RainbowTrainer(config, env, torch.device("cpu"), name="test_rainbow_trainer", stats=MockStats())
 
     # Mock some data collection to avoid environment issues in smoke test
     # but we want to test learner.step which calls the loss pipeline
@@ -190,7 +190,7 @@ def test_rainbow_trainer_test_loop():
     print("Testing evaluation loop (test())...", flush=True)
     config = build_minimal_config()
     env = config.game.make_env()
-    trainer = RainbowTrainer(config, env, torch.device("cpu"), model_name="test_rainbow_trainer", stats=MockStats())
+    trainer = RainbowTrainer(config, env, torch.device("cpu"), name="test_rainbow_trainer", stats=MockStats())
 
     # Run a short test
     scores = trainer.test(num_trials=1)

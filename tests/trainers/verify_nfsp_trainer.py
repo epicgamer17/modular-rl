@@ -107,7 +107,7 @@ def test_nfsp_trainer_init():
         config=config,
         env=make_cartpole(),
         device=device,
-        model_name="nfsp_smoke_test",
+        name="nfsp_smoke_test",
     )
 
     assert trainer.br_model is not None
@@ -128,7 +128,7 @@ def test_nfsp_trainer_train():
         config=config,
         env=make_cartpole(),
         device=device,
-        model_name="nfsp_smoke_test",
+        name="nfsp_smoke_test",
     )
 
     # Run for a very small number of steps

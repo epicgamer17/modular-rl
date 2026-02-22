@@ -20,15 +20,15 @@ class BaseTrainer:
         config: Any,
         env: Any,
         device: torch.device,
-        model_name: str = "agent",
+        name: str = "agent",
         stats: Optional[StatTracker] = None,
         test_agents: Optional[List] = None,
     ):
         self.config = config
         self.device = device
-        self.model_name = model_name
+        self.name = name
         self.stats = (
-            stats if stats is not None else StatTracker(model_name=model_name)
+            stats if stats is not None else StatTracker(name=name)
         )
         self.test_agents = test_agents if test_agents is not None else []
         self._env = env
@@ -115,7 +115,7 @@ class BaseTrainer:
         """
         Saves model weights and stats. Standardized checkpoint format.
         """
-        base_dir = Path("checkpoints", self.model_name)
+        base_dir = Path("checkpoints", self.name)
         step_dir = base_dir / f"step_{self.training_step}"
         os.makedirs(step_dir, exist_ok=True)
 
@@ -126,7 +126,7 @@ class BaseTrainer:
 
         full_checkpoint = {
             "training_step": self.training_step,
-            "model_name": self.model_name,
+            "name": self.name,
             **checkpoint_data,
         }
         torch.save(full_checkpoint, weights_path)
@@ -266,7 +266,7 @@ class BaseTrainer:
 
         with torch.no_grad():
             for player in range(num_players):
-                print(f"Testing Player {player} vs Agent {agent.model_name}")
+                print(f"Testing Player {player} vs Agent {agent.name}")
 
                 for trial in range(num_trials // num_players):
                     test_env.reset()
@@ -337,7 +337,7 @@ class BaseTrainer:
         # 2. Test vs agents (if any)
         for agent in self.test_agents:
             vs_results = self.test_vs_agent(self.test_trials, agent)
-            key = f"vs_{agent.model_name}_score"
+            key = f"vs_{agent.name}_score"
             self.stats.append(key, vs_results["score"], subkey="avg")
             self.stats.append(key, vs_results["min_score"], subkey="min")
             self.stats.append(key, vs_results["max_score"], subkey="max")
@@ -359,7 +359,7 @@ class BaseTrainer:
         # Add test_score vs other agents if applicable
         if hasattr(self, "test_agents") and self.test_agents:
             for agent in self.test_agents:
-                stat_keys.append(f"vs_{agent.model_name}_score")
+                stat_keys.append(f"vs_{agent.name}_score")
 
         # Initialize keys
         player_subkeys = [f"p{p}" for p in range(self.config.game.num_players)]
@@ -391,7 +391,7 @@ class BaseTrainer:
         if hasattr(self, "test_agents") and self.test_agents:
             for agent in self.test_agents:
                 self.stats.add_plot_types(
-                    f"vs_{agent.model_name}_score",
+                    f"vs_{agent.name}_score",
                     PlotType.BEST_FIT_LINE,
                     PlotType.VARIATION_FILL,
                 )

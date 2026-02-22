@@ -50,7 +50,7 @@ def test_muzero_stochastic_cartpole_smoke():
 
     config = MuZeroConfig(config_dict, game_config)
 
-    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"), model_name="smoke_test_stochastic")
+    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"), name="smoke_test_stochastic")
     trainer._save_checkpoint = lambda: None
 
     print("Stochastic MuZero Model Initialized.")

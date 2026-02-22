@@ -134,7 +134,7 @@ def test_ppo_inference():
         config=config,
         env=make_cartpole(),
         device=device,
-        model_name="ppo_smoke_test",
+        name="ppo_smoke_test",
     )
 
     print("Running trainer.test(1)...")
@@ -164,7 +164,7 @@ def test_ppo_trainer_init():
         config=config,
         env=make_cartpole(),
         device=device,
-        model_name="ppo_smoke_test",
+        name="ppo_smoke_test",
     )
 
     # Check components are initialized

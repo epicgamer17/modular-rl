@@ -6,7 +6,7 @@ from stats.stats import StatTracker, PlotType
 
 def test_stat_tracker_new_viz():
     print("Testing StatTracker with new visualizations...")
-    tracker = StatTracker(model_name="test_model")
+    tracker = StatTracker(name="test_model")
 
     # 1. Test Policy Entropy (Rolling Avg)
     print("  Adding policy_entropy...")

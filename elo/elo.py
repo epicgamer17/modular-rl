@@ -40,7 +40,7 @@ import scipy.optimize
 class StandingsTable:
     def __init__(self, players, start_elo=1000):
         self.players = players
-        self.player_names = [p.model_name for p in players]
+        self.player_names = [p.name for p in players]
         self.start_elo = start_elo
         self.table = pd.DataFrame(
             [[[0, 0, 0] for _ in range(len(players))] for _ in range(len(players))],
@@ -57,13 +57,13 @@ class StandingsTable:
         return str(self.table)
 
     def add_player(self, new_player):
-        if new_player.model_name not in self.table.index:
+        if new_player.name not in self.table.index:
             self.players += [new_player]
-            self.player_names += [new_player.model_name]
-            self.table[new_player.model_name] = [
+            self.player_names += [new_player.name]
+            self.table[new_player.name] = [
                 [0, 0, 0] for _ in range(self.table.shape[0])
             ]
-            self.table.loc[new_player.model_name] = [
+            self.table.loc[new_player.name] = [
                 [0, 0, 0] for _ in range(self.table.shape[1])
             ]
             # self.table.loc[new_player, new_player] = np.NaN
@@ -75,9 +75,9 @@ class StandingsTable:
             self.add_player(new_player)
 
     def remove_player(self, player_to_remove):
-        if player_to_remove.model_name in self.table.index:
-            self.table.drop(player_to_remove.model_name, axis=0, inplace=True)
-            self.table.drop(player_to_remove.model_name, axis=1, inplace=True)
+        if player_to_remove.name in self.table.index:
+            self.table.drop(player_to_remove.name, axis=0, inplace=True)
+            self.table.drop(player_to_remove.name, axis=1, inplace=True)
 
     def remove_players(self, players_to_remove):
         for player_to_remove in players_to_remove:
@@ -88,12 +88,12 @@ class StandingsTable:
         Result should be +1 for player1 win, 0 for draw, -1 for player2 win
         """
         if player1 != player2:
-            if player1.model_name in self.table.columns:
-                if player2.model_name in self.table.columns:
-                    self.table.loc[player1.model_name, player2.model_name][
+            if player1.name in self.table.columns:
+                if player2.name in self.table.columns:
+                    self.table.loc[player1.name, player2.name][
                         1 - result
                     ] += 1
-                    self.table.loc[player2.model_name, player1.model_name][
+                    self.table.loc[player2.name, player1.name][
                         1 + result
                     ] += 1
                 else:
@@ -194,7 +194,7 @@ class StandingsTable:
         for opponent in opponents:
             for _ in range(games_per_pair // 2):
                 print(
-                    f"Playing {player.model_name} vs {opponent.model_name} game {_+1}"
+                    f"Playing {player.name} vs {opponent.name} game {_+1}"
                 )
                 result = play_sequence(player, opponent)
                 results.append((player, opponent, result))
@@ -202,7 +202,7 @@ class StandingsTable:
         for opponent in opponents:
             for _ in range(games_per_pair // 2):
                 print(
-                    f"Playing {opponent.model_name} vs {player.model_name} game {_+1}"
+                    f"Playing {opponent.name} vs {player.name} game {_+1}"
                 )
                 result = play_sequence(opponent, player)
                 results.append((opponent, player, result))

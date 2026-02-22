@@ -27,7 +27,7 @@ class PPOTrainer(BaseTrainer):
         config,
         env,
         device: torch.device,
-        model_name: str = "agent",
+        name: str = "agent",
         stats: Optional[StatTracker] = None,
         test_agents: Optional[List] = None,
     ):
@@ -38,11 +38,11 @@ class PPOTrainer(BaseTrainer):
             config: PPOConfig with hyperparameters.
             env: Environment instance or factory function.
             device: Torch device for training.
-            model_name: Name for this model (used for checkpoints, stats, videos).
+            name: Name for this model (used for checkpoints, stats, videos).
             stats: Optional StatTracker for logging metrics.
             test_agents: Optional list of agents to test against.
         """
-        super().__init__(config, env, device, model_name, stats, test_agents)
+        super().__init__(config, env, device, name, stats, test_agents)
 
         # 1. Initialize Network
         # New standard: input_shape excludes batch dimension
@@ -91,7 +91,7 @@ class PPOTrainer(BaseTrainer):
             config.game.num_players,
             config,
             device,
-            self.model_name,
+            self.name,
         )
         self.executor.launch(actor_cls, worker_args, num_workers)
 

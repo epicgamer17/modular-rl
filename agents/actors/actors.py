@@ -25,7 +25,7 @@ class BaseActor(ABC):
         num_players: Optional[int] = None,
         config: Optional[Any] = None,
         device: Optional[torch.device] = None,
-        model_name: str = "agent",
+        name: str = "agent",
         *,
         worker_id: int = 0,
     ):
@@ -45,7 +45,7 @@ class BaseActor(ABC):
         self.worker_id = worker_id
         self.env = env_factory()
         self.device = device
-        self.model_name = model_name
+        self.name = name
 
         # Determine num_players if not provided
         if num_players is not None:
@@ -94,7 +94,7 @@ class BaseActor(ABC):
             interval = getattr(self.config, "record_video_interval", 1000)
             self.env = wrap_recording(
                 self.env,
-                video_folder=f"videos/{self.model_name}",
+                video_folder=f"videos/{self.name}",
                 episode_trigger=lambda ep_id: ep_id % interval == 0,
             )
 

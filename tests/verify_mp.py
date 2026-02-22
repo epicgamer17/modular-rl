@@ -56,7 +56,7 @@ def verify():
     device = torch.device("cpu")
 
     print("Initializing Trainer...")
-    trainer = MuZeroTrainer(config, env, device=device, model_name="verify_mp_trainer")
+    trainer = MuZeroTrainer(config, env, device=device, name="verify_mp_trainer")
 
     # Disable checkpointing/plotting to avoid permission errors
     trainer._save_checkpoint = lambda: None

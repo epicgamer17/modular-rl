@@ -53,7 +53,7 @@ def verify_trainer_refactor():
     config = MuZeroConfig(config_dict, game_config)
 
     print("Initializing Trainer...")
-    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"), model_name="verify_trainer_refactor")
+    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"), name="verify_trainer_refactor")
 
     print("Running training loop verification...")
     # Trainer.train() handles data collection, storage, and optimization
