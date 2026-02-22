@@ -1,19 +1,12 @@
 import argparse
 import os
-import sys
 import torch
 import numpy as np
 import yaml
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, Type
 
-# Add project root to path to allow importing local modules
-project_root = str(Path(__file__).parent.parent)
-if project_root not in sys.path:
-    sys.path.append(project_root)
 
-
-# Robust YAML Loader to handle missing modules in checkpoints
 class RobustLoader(yaml.Loader):
     def construct_python_object(self, suffix, node):
         return f"UnknownObject:{suffix}"

@@ -1,10 +1,6 @@
-import sys
 import os
 import torch
 import shutil
-
-# Add project root to path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from configs.agents.muzero import MuZeroConfig
 from agents.muzero import MuZeroAgent

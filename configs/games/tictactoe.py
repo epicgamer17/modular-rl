@@ -1,8 +1,5 @@
 from .game import GameConfig
-import sys
-
-sys.path.append("../../")
-from wrappers import (
+from utils.wrappers import (
     ActionMaskInInfoWrapper,
     ChannelLastToFirstWrapper,
     FrameStackWrapper,

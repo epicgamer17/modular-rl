@@ -1,11 +1,7 @@
-import sys
 import os
 import torch
 import numpy as np
 from unittest.mock import MagicMock
-
-# Add project root to path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from agents.agent import MARLBaseAgent, BaseAgent
 from configs.base import Config

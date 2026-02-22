@@ -1,19 +1,11 @@
 import os
-import sys
 import argparse
 from pathlib import Path
 import matplotlib.cm as cm
 import matplotlib.colors as colors
 import numpy as np
 
-# Add project root to path to allow importing local modules
-project_root = str(Path(__file__).parent.parent)
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
-# Import repo components
-try:
-    from search.nodes import DecisionNode, ChanceNode
+from search.nodes import DecisionNode, ChanceNode
 except ImportError as e:
     print(f"Error: Could not import repository modules. {e}")
 

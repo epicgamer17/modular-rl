@@ -1,10 +1,5 @@
 import unittest
 import torch
-import sys
-import os
-
-# Ensure the project root is in path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from stats.stats import StatTracker
 

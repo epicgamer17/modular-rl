@@ -1,10 +1,5 @@
 import torch
 import numpy as np
-import sys
-import os
-
-# Ensure project root is in path
-sys.path.append(os.getcwd())
 
 from agents.action_selectors.selectors import (
     EpsilonGreedy,

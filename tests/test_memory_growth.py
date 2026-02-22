@@ -2,10 +2,6 @@ import time
 import torch
 import numpy as np
 import os
-import sys
-
-# Ensure project root is in path
-sys.path.append(os.path.abspath("."))
 
 from configs.games.tictactoe_config import TicTacToeConfig
 from configs.agents.muzero import MuZeroConfig

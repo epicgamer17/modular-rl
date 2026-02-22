@@ -2,10 +2,6 @@ import time
 import torch
 import numpy as np
 import os
-import sys
-
-# Ensure custom_gym_envs_pkg is in path
-sys.path.append(os.path.abspath("custom_gym_envs_pkg"))
 
 from configs.games.catan import CatanConfig
 from configs.games.tictactoe import TicTacToeConfig

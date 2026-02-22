@@ -1,9 +1,3 @@
-import sys
-import os
-
-# Add project root to sys.path
-sys.path.append(os.getcwd())
-
 import torch
 import numpy as np
 import matplotlib.pyplot as plt

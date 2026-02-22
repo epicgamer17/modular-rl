@@ -8,7 +8,7 @@ from replay_buffers.sequence import Sequence
 from replay_buffers.transition import Transition, TransitionBatch
 from agents.policies.policy import Policy
 from agents.action_selectors.selectors import BaseActionSelector
-from wrappers import wrap_recording
+from utils.wrappers import wrap_recording
 
 
 class BaseActor(ABC):
