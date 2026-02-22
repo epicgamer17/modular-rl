@@ -405,6 +405,15 @@ def prepare_kernel_initializers(kernel_initializer: str, output_layer: bool = Fa
     raise ValueError(f"Invalid kernel initializer: {kernel_initializer}")
 
 
+def kernel_initializer_wrapper(x):
+    if x is None:
+        return x
+    if isinstance(x, str):
+        return prepare_kernel_initializers(x)
+    assert callable(x)
+    return x
+
+
 def prepare_activations(activation: str | nn.Module | Callable):
     """
     Returns an activation module from a string name or returns the input if already a module/callable.

@@ -3,6 +3,7 @@ import yaml
 from modules.utils import (
     prepare_kernel_initializers,
     prepare_activations,
+    kernel_initializer_wrapper,
 )
 import torch.nn.functional as F
 from configs.games.game import GameConfig
@@ -221,15 +222,6 @@ class DistributionalConfig:
         )
         self.v_min = game_min
         self.v_max = game_max
-
-
-def kernel_initializer_wrapper(x):
-    if x is None:
-        return x
-    if isinstance(x, str):
-        return prepare_kernel_initializers(x)
-    assert callable(x)
-    return x
 
 
 class Config(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig):

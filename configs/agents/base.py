@@ -10,19 +10,9 @@ from configs.base import (
     NoisyConfig,
 )
 import torch.nn.functional as F
-from modules.utils import prepare_activations, prepare_kernel_initializers
+from modules.utils import prepare_activations, prepare_kernel_initializers, kernel_initializer_wrapper
 from configs.games.game import GameConfig
 from configs.selectors import SelectorConfig
-
-
-def kernel_initializer_wrapper(x):
-    if x is None:
-        return x
-    elif isinstance(x, str):
-        return prepare_kernel_initializers(x)
-    else:
-        assert callable(x)
-        return x
 
 
 class AgentConfig(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig):

@@ -2,12 +2,11 @@ from configs.base import (
     ConfigBase,
     OptimizationConfig,
     ReplayConfig,
-    kernel_initializer_wrapper,
 )
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.backbones.factory import BackboneConfigFactory
 from configs.modules.architecture_config import ArchitectureConfig
-from modules.utils import prepare_activations, prepare_kernel_initializers
+from modules.utils import prepare_activations, prepare_kernel_initializers, kernel_initializer_wrapper
 from torch.optim import Optimizer, Adam
 
 

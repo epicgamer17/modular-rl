@@ -1,6 +1,6 @@
 from typing import Any, Callable, Optional, Dict
 from configs.base import ConfigBase
-from modules.utils import prepare_activations, prepare_kernel_initializers
+from modules.utils import prepare_activations, kernel_initializer_wrapper
 
 
 class ArchitectureConfig(ConfigBase):
@@ -21,13 +21,13 @@ class ArchitectureConfig(ConfigBase):
             "kernel_initializer",
             None,
             required=False,
-            wrapper=prepare_kernel_initializers,
+            wrapper=kernel_initializer_wrapper,
         )
         self.output_layer_initializer = self.parse_field(
             "output_layer_initializer",
             None,
             required=False,
-            wrapper=prepare_kernel_initializers,
+            wrapper=kernel_initializer_wrapper,
         )
 
         # Defaults for backbone and neck (e.g., {"type": "resnet", "num_blocks": 2})
