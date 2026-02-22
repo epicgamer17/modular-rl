@@ -25,8 +25,9 @@ class BaseActor(ABC):
         num_players: Optional[int] = None,
         config: Optional[Any] = None,
         device: Optional[torch.device] = None,
-        worker_id: int = 0,
         model_name: str = "agent",
+        *,
+        worker_id: int = 0,
     ):
         """
         Initializes the BaseActor.
