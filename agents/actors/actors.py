@@ -62,6 +62,21 @@ class BaseActor(ABC):
         """Actor-specific player count detection."""
         pass
 
+    @abstractmethod
+    def _get_player_id(self) -> Optional[str]:
+        """Returns current player ID for multi-player, None for single-player."""
+        pass
+
+    @abstractmethod
+    def _finalize_episode_info(self, sequence: Sequence) -> None:
+        """Add env-specific info to sequence at episode end."""
+        pass
+
+    @abstractmethod
+    def _get_score(self, sequence: Sequence) -> float:
+        """Calculate episode score in env-specific way."""
+        pass
+
     def setup(self):
         """Re-initializes the environment."""
         self.env = self.env_factory()
@@ -123,8 +138,7 @@ class BaseActor(ABC):
             if self._done:
                 self.reset()
 
-            # Get player_id for multi-player environments (if available)
-            player_id = getattr(self.env, "agent_selection", None)
+            player_id = self._get_player_id()
 
             # Convert observation to tensor
             obs_tensor = torch.as_tensor(
@@ -190,8 +204,7 @@ class BaseActor(ABC):
         sequence.append(state, info, terminated=False, truncated=False)
 
         while not self._done:
-            # Note: player_id must be captured BEFORE the step for PettingZoo
-            player_id = getattr(self.env, "agent_selection", None)
+            player_id = self._get_player_id()
             transition = self.step()
 
             metadata = transition["metadata"]
@@ -216,12 +229,7 @@ class BaseActor(ABC):
             )
 
         sequence.duration_seconds = time.time() - start_time
-
-        if self.num_players > 1:
-            # Store final rewards for multi-agent evaluation
-            sequence.info_history[-1]["final_rewards"] = getattr(
-                self.env, "rewards", {}
-            )
+        self._finalize_episode_info(sequence)
 
         if stats_tracker:
             self._update_stats(sequence, stats_tracker)
@@ -287,15 +295,7 @@ class BaseActor(ABC):
         if sequence.duration_seconds > 0:
             stats_tracker.append("actor_fps", len(sequence) / sequence.duration_seconds)
 
-        if self.num_players == 1:
-            score = sum(sequence.rewards)
-        else:
-            final_rewards = getattr(self.env, "rewards", {})
-            # Assumes environment is PettingZoo and has possible_agents
-            possible_agents = getattr(self.env, "possible_agents", [])
-            agent_id = possible_agents[0] if possible_agents else "player_0"
-            score = final_rewards.get(agent_id, 0.0)
-
+        score = self._get_score(sequence)
         stats_tracker.append("score", score)
         stats_tracker.append("episode_length", len(sequence))
         stats_tracker.increment_steps(len(sequence))
@@ -336,7 +336,18 @@ class GymActor(BaseActor):
     """Actor specialized for Gymnasium single-player environments."""
 
     def _detect_num_players(self) -> int:
+        if self.num_players is not None and self.num_players != 1:
+            raise ValueError(f"GymActor requires num_players=1, got {self.num_players}")
         return 1
+
+    def _get_player_id(self) -> None:
+        return None
+
+    def _finalize_episode_info(self, sequence: Sequence) -> None:
+        pass
+
+    def _get_score(self, sequence: Sequence) -> float:
+        return sum(sequence.rewards)
 
     def _reset_env(self) -> Tuple[Any, Dict[str, Any]]:
         result = self.env.reset()
@@ -359,6 +370,17 @@ class PettingZooActor(BaseActor):
 
     def _detect_num_players(self) -> int:
         return len(self.env.possible_agents)
+
+    def _get_player_id(self) -> Optional[str]:
+        return self.env.agent_selection
+
+    def _finalize_episode_info(self, sequence: Sequence) -> None:
+        sequence.info_history[-1]["final_rewards"] = dict(self.env.rewards)
+
+    def _get_score(self, sequence: Sequence) -> float:
+        final_rewards = dict(self.env.rewards)
+        agent_id = self.env.possible_agents[0] if self.env.possible_agents else "player_0"
+        return final_rewards.get(agent_id, 0.0)
 
     def _reset_env(self) -> Tuple[Any, Dict[str, Any]]:
         self.env.reset()
