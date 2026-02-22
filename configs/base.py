@@ -260,7 +260,6 @@ class Config(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig):
             required=False,
             wrapper=kernel_initializer_wrapper,
         )
-        self.model_name = self.parse_field("model_name", default="agent")
         self.norm_type: str = self.parse_field("norm_type", "none")
         self.soft_update: bool = self.parse_field("soft_update", False)
         self.min_max_epsilon: float = self.parse_field("min_max_epsilon", 0.01)

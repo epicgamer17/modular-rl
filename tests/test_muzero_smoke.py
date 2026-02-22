@@ -58,13 +58,12 @@ def test_muzero_cartpole_smoke():
         "reward_loss_function": F.cross_entropy,
         "policy_loss_function": F.cross_entropy,
         "support_range": 31,
-        "model_name": "smoke_test_cartpole",
         "action_selector": {"base": {"type": "categorical"}},
     }
 
     config = MuZeroConfig(config_dict, game_config)
 
-    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"))
+    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"), model_name="smoke_test_cartpole")
 
     # Disable checkpointing/plotting to avoid permission errors in this environment
     trainer._save_checkpoint = lambda: None
@@ -113,13 +112,12 @@ def test_muzero_tictactoe_smoke():
         "reward_loss_function": F.mse_loss,
         "policy_loss_function": F.cross_entropy,
         "support_range": None,
-        "model_name": "smoke_test_tictactoe",
         "action_selector": {"base": {"type": "categorical"}},
     }
 
     config = MuZeroConfig(config_dict, game_config)
 
-    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"))
+    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"), model_name="smoke_test_tictactoe")
 
     # Disable checkpointing/plotting
     trainer._save_checkpoint = lambda: None

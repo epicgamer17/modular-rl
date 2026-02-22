@@ -17,7 +17,6 @@ class NFSPDQNConfig(ConfigBase):
         self.sl_configs = [
             SupervisedConfig(config_dict) for _ in range(self.num_players)
         ]
-        self.model_name = self.parse_field("model_name", "nfsp")
         self.training_steps = self.parse_field("training_steps", 100000)
 
         self.replay_interval = self.parse_field("replay_interval", 16)

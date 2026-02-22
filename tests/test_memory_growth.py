@@ -52,7 +52,6 @@ def test_memory_growth(num_calls=1000, num_simulations=25):
         "soft_update": False,
         "min_max_epsilon": 0.01,
         "search_batch_size": 0,
-        "model_name": "test_agent",
     }
 
     config = MuZeroConfig(params, game_config)

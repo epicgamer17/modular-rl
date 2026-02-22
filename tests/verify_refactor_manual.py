@@ -48,13 +48,12 @@ def verify_trainer_refactor():
         "reward_loss_function": F.cross_entropy,
         "policy_loss_function": F.cross_entropy,
         "support_range": 31,
-        "model_name": "verify_trainer_refactor",
     }
 
     config = MuZeroConfig(config_dict, game_config)
 
     print("Initializing Trainer...")
-    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"))
+    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"), model_name="verify_trainer_refactor")
 
     print("Running training loop verification...")
     # Trainer.train() handles data collection, storage, and optimization

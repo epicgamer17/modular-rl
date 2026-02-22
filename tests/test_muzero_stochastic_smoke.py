@@ -45,13 +45,12 @@ def test_muzero_stochastic_cartpole_smoke():
         "reward_loss_function": F.cross_entropy,
         "policy_loss_function": F.cross_entropy,
         "support_range": 31,
-        "model_name": "smoke_test_stochastic",
         "action_selector": {"base": {"type": "categorical"}},
     }
 
     config = MuZeroConfig(config_dict, game_config)
 
-    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"))
+    trainer = MuZeroTrainer(config, env, device=torch.device("cpu"), model_name="smoke_test_stochastic")
     trainer._save_checkpoint = lambda: None
 
     print("Stochastic MuZero Model Initialized.")

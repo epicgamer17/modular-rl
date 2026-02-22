@@ -59,7 +59,6 @@ class MinimalPPOConfig:
     """Minimal PPO config for testing."""
 
     def __init__(self):
-        self.model_name = "ppo_smoke_test"
         self.training_steps = 3
         self.steps_per_epoch = 100
 
@@ -135,6 +134,7 @@ def test_ppo_inference():
         config=config,
         env=make_cartpole(),
         device=device,
+        model_name="ppo_smoke_test",
     )
 
     print("Running trainer.test(1)...")
@@ -164,6 +164,7 @@ def test_ppo_trainer_init():
         config=config,
         env=make_cartpole(),
         device=device,
+        model_name="ppo_smoke_test",
     )
 
     # Check components are initialized

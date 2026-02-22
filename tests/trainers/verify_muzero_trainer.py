@@ -21,7 +21,6 @@ def build_minimal_config():
     game_config = CartPoleConfig()
 
     config_dict = {
-        "model_name": "test_muzero_trainer",
         "training_steps": 2,
         "min_replay_buffer_size": 1,
         "minibatch_size": 2,
@@ -94,7 +93,7 @@ def test_muzero_trainer_init():
     print("Creating environment...", flush=True)
     env = config.game.make_env()
     print("Initializing MuZeroTrainer...", flush=True)
-    trainer = MuZeroTrainer(config, env, torch.device("cpu"), stats=MockStats())
+    trainer = MuZeroTrainer(config, env, torch.device("cpu"), model_name="test_muzero_trainer", stats=MockStats())
     assert trainer.learner is not None
     assert trainer.executor is not None
     assert trainer.buffer is not None

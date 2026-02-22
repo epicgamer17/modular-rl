@@ -48,7 +48,6 @@ def verify():
         "reward_loss_function": F.cross_entropy,
         "policy_loss_function": F.cross_entropy,
         "support_range": 31,
-        "model_name": "verify_mp_trainer",
     }
 
     config = MuZeroConfig(config_dict, game_config)
@@ -57,7 +56,7 @@ def verify():
     device = torch.device("cpu")
 
     print("Initializing Trainer...")
-    trainer = MuZeroTrainer(config, env, device=device)
+    trainer = MuZeroTrainer(config, env, device=device, model_name="verify_mp_trainer")
 
     # Disable checkpointing/plotting to avoid permission errors
     trainer._save_checkpoint = lambda: None

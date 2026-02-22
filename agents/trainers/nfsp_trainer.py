@@ -25,10 +25,11 @@ class NFSPTrainer(BaseTrainer):
         config,
         env,
         device: torch.device,
+        model_name: str = "agent",
         stats: Optional[StatTracker] = None,
         test_agents: Optional[List] = None,
     ):
-        super().__init__(config, env, device, stats, test_agents)
+        super().__init__(config, env, device, model_name, stats, test_agents)
 
         self.shared_networks = config.shared_networks_and_buffers
 
@@ -115,6 +116,8 @@ class NFSPTrainer(BaseTrainer):
             self.policy,
             self.num_players,
             self.config,
+            self.device,
+            self.model_name,
         )
         actor_cls = get_actor_class(self._env)
         self.executor.launch(actor_cls, worker_args, self.config.num_workers)
@@ -197,8 +200,10 @@ class NFSPTrainer(BaseTrainer):
             self.policy,
             self.num_players,
             self.config,
+            self.device,
+            self.model_name,
         )
-        actor_cls = get_actor_class(self.env)
+        actor_cls = get_actor_class(self._env)
         self.executor.launch(actor_cls, worker_args, self.config.num_workers)
 
     def train(self) -> None:

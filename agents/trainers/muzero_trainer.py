@@ -21,10 +21,11 @@ class MuZeroTrainer(BaseTrainer):
         config,
         env,
         device: torch.device,
+        model_name: str = "agent",
         stats: Optional[StatTracker] = None,
         test_agents: List = None,
     ):
-        super().__init__(config, env, device, stats, test_agents)
+        super().__init__(config, env, device, model_name, stats, test_agents)
         # 1. Initialize Network
         # ... (network initialization)
         # The local import `from modules.agent_nets.muzero import AgentNetwork as Network` is removed
@@ -96,7 +97,8 @@ class MuZeroTrainer(BaseTrainer):
             self.action_selector,
             config.game.num_players,
             config,
-            self.device,  # TODO: fix this device management for workers
+            device,
+            self.model_name,
         )
         from agents.actors.actors import get_actor_class
 

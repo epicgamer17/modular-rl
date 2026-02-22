@@ -39,8 +39,6 @@ class AgentConfig(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig):
         self.game = game_config
         self._verify_game()
 
-        self.model_name = self.parse_field("model_name", default="agent")
-
         # Initialize Mixins
         self.parse_optimization_params()
         self.parse_replay_params()

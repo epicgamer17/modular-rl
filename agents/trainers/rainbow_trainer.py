@@ -23,10 +23,11 @@ class RainbowTrainer(BaseTrainer):
         config,
         env,
         device: torch.device,
+        model_name: str = "agent",
         stats: Optional[StatTracker] = None,
         test_agents: Optional[List] = None,
     ):
-        super().__init__(config, env, device, stats, test_agents)
+        super().__init__(config, env, device, model_name, stats, test_agents)
 
         # 1. Initialize Networks
         self.model = RainbowNetwork(
@@ -92,6 +93,8 @@ class RainbowTrainer(BaseTrainer):
             self.action_selector,
             config.game.num_players,
             config,
+            device,
+            self.model_name,
         )
         actor_cls = get_actor_class(env)
         self.executor.launch(actor_cls, worker_args, num_workers)

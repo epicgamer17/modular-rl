@@ -41,7 +41,6 @@ def create_config():
     """Creates a SupervisedConfig for testing."""
     game = MinimalGameConfig()
     sl_dict = {
-        "model_name": "imitation_smoke_test",
         "sl_minibatch_size": 2,
         "sl_replay_buffer_size": 10,
         "sl_min_replay_buffer_size": 2,
@@ -72,6 +71,7 @@ def test_imitation_trainer_init():
         config=config,
         env=make_cartpole(),
         device=device,
+        model_name="imitation_smoke_test",
     )
 
     assert trainer.model is not None
@@ -90,6 +90,7 @@ def test_imitation_trainer_train():
         config=config,
         env=make_cartpole(),
         device=device,
+        model_name="imitation_smoke_test",
     )
 
     # Manually push a mock sequence into the buffer since it needs data to train

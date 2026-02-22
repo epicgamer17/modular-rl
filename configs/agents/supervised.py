@@ -19,7 +19,6 @@ class SupervisedConfig(ConfigBase, OptimizationConfig, ReplayConfig):
         # Parse shared architecture defaults
         arch_dict = self.parse_field("architecture", default={}, required=False)
         self.arch = ArchitectureConfig(arch_dict)
-        self.model_name = self.parse_field("model_name", default="supervised")
         self.learning_rate = self.parse_field("sl_learning_rate", 0.005)
         self.momentum = self.parse_field("sl_momentum", 0.9)
         self.loss_function = self.parse_field("sl_loss_function", required=True)

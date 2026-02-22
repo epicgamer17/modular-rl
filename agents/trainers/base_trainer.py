@@ -20,17 +20,18 @@ class BaseTrainer:
         config: Any,
         env: Any,
         device: torch.device,
+        model_name: str = "agent",
         stats: Optional[StatTracker] = None,
         test_agents: Optional[List] = None,
     ):
         self.config = config
         self.device = device
+        self.model_name = model_name
         self.stats = (
-            stats if stats is not None else StatTracker(model_name=config.model_name)
+            stats if stats is not None else StatTracker(model_name=model_name)
         )
         self.test_agents = test_agents if test_agents is not None else []
         self._env = env
-        self.model_name = config.model_name
 
         # Detect player_id for PettingZoo environments
         self._player_id = self._detect_player_id(env)
