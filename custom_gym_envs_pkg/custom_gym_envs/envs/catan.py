@@ -44,6 +44,8 @@ from catanatron.gym.board_tensor_features import (
     create_board_tensor,
     get_channels,
     is_graph_feature,
+    get_spatial_dims,
+    SpatialEncoding,
 )
 
 from catanatron.state_functions import (
@@ -369,10 +371,16 @@ class CatanAECEnv(AECEnv):
         num_players=2,
         map_type="BASE",
         vps_to_win=10,
-        representation="vector",
+        representation="image",
         invalid_action_reward=-1,
         auto_play_single_action: bool = False,
         bandit_mode: bool = False,
+        spatial_encoding: SpatialEncoding = "sparse",
+        include_validity_mask: bool = False,
+        include_last_roll: bool = False,
+        include_game_phase: bool = False,
+        include_bank_state: bool = False,
+        include_road_distance: bool = False,
     ):
         super().__init__()
 
@@ -399,6 +407,12 @@ class CatanAECEnv(AECEnv):
         self.vps_to_win = vps_to_win
         self.representation = representation
         self.invalid_action_reward = invalid_action_reward
+        self.spatial_encoding = spatial_encoding
+        self.include_validity_mask = include_validity_mask
+        self.include_last_roll = include_last_roll
+        self.include_game_phase = include_game_phase
+        self.include_bank_state = include_bank_state
+        self.include_road_distance = include_road_distance
         assert self.representation in ["mixed", "image", "vector"]
         assert 2 <= num_players <= 4, "Catan must be played with 2 to 4 players"
 
@@ -430,14 +444,25 @@ class CatanAECEnv(AECEnv):
         }
 
         self.features = get_feature_ordering(len(self.possible_agents), self.map_type)
+        self.numeric_features = [f for f in self.features if not is_graph_feature(f)]
+
+        spatial_width, spatial_height = get_spatial_dims(self.spatial_encoding)
+
         if self.representation == "mixed":
-            channels = get_channels(len(self.possible_agents))
-            board_tensor_space = spaces.Box(
-                low=0, high=1, shape=(channels, 21, 11), dtype=np.float32
+            channels = get_channels(
+                len(self.possible_agents),
+                include_validity_mask=self.include_validity_mask,
+                include_last_roll=self.include_last_roll,
+                include_game_phase=self.include_game_phase,
+                include_bank_state=self.include_bank_state,
+                include_road_distance=self.include_road_distance,
             )
-            self.numeric_features = [
-                f for f in self.features if not is_graph_feature(f)
-            ]
+            board_tensor_space = spaces.Box(
+                low=0,
+                high=1,
+                shape=(channels, spatial_width, spatial_height),
+                dtype=np.float32,
+            )
             numeric_space = spaces.Box(
                 low=0, high=HIGH, shape=(len(self.numeric_features),), dtype=np.float32
             )
@@ -445,10 +470,20 @@ class CatanAECEnv(AECEnv):
                 {"board": board_tensor_space, "numeric": numeric_space}
             )
         elif self.representation == "image":
-            board_channels = get_channels(len(self.possible_agents))
+            board_channels = get_channels(
+                len(self.possible_agents),
+                include_validity_mask=self.include_validity_mask,
+                include_last_roll=self.include_last_roll,
+                include_game_phase=self.include_game_phase,
+                include_bank_state=self.include_bank_state,
+                include_road_distance=self.include_road_distance,
+            )
             total_channels = board_channels + len(self.numeric_features)
             core_obs_space = spaces.Box(
-                low=0, high=HIGH, shape=(total_channels, 21, 11), dtype=np.float32
+                low=0,
+                high=HIGH,
+                shape=(total_channels, spatial_width, spatial_height),
+                dtype=np.float32,
             )
         else:
             core_obs_space = spaces.Box(
@@ -1185,29 +1220,40 @@ class CatanAECEnv(AECEnv):
         sample = create_sample(self.game, agent_color)
         if self.representation == "mixed":
             board_tensor = create_board_tensor(
-                self.game, agent_color, channels_first=True
+                self.game,
+                agent_color,
+                channels_first=True,
+                spatial_encoding=self.spatial_encoding,
+                include_validity_mask=self.include_validity_mask,
+                include_last_roll=self.include_last_roll,
+                include_game_phase=self.include_game_phase,
+                include_bank_state=self.include_bank_state,
+                include_road_distance=self.include_road_distance,
             ).astype(np.float32)
             numeric = np.array(
                 [float(sample[i]) for i in self.numeric_features], dtype=np.float32
             )
             return {"board": board_tensor, "numeric": numeric}
         if self.representation == "image":
-            # 1. Generate the spatial board tensor
             board_tensor = create_board_tensor(
-                self.game, agent_color, channels_first=True
+                self.game,
+                agent_color,
+                channels_first=True,
+                spatial_encoding=self.spatial_encoding,
+                include_validity_mask=self.include_validity_mask,
+                include_last_roll=self.include_last_roll,
+                include_game_phase=self.include_game_phase,
+                include_bank_state=self.include_bank_state,
+                include_road_distance=self.include_road_distance,
             ).astype(np.float32)
 
-            # 2. Extract numeric values
             numeric = np.array(
                 [float(sample[i]) for i in self.numeric_features], dtype=np.float32
             )
 
-            # 3. Broadcast numeric values to spatial planes (N, H, W)
-            # We assume board_tensor is (Channels, Height, Width) due to channels_first=True
             _, h, w = board_tensor.shape
             numeric_planes = np.tile(numeric[:, None, None], (1, h, w))
 
-            # 4. Concatenate board channels with numeric planes
             return np.concatenate((board_tensor, numeric_planes), axis=0)
         else:
             return np.array([float(sample[i]) for i in self.features], dtype=np.float32)
