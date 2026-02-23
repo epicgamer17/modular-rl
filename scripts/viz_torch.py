@@ -82,9 +82,7 @@ try:
     AgentConfig.__init__ = robust_agent_config_init
     AgentConfig._verify_game = robust_verify_game
 
-    from modules.agent_nets.ppo import PPONetwork
-    from modules.agent_nets.muzero import MuZeroNetwork as MuZeroNetwork
-    from modules.agent_nets.rainbow_dqn import RainbowNetwork
+    from modules.agent_nets.modular import ModularAgentNetwork
     from configs.agents.ppo import PPOConfig
     from configs.agents.muzero import MuZeroConfig
     from configs.agents.rainbow_dqn import RainbowConfig
@@ -95,10 +93,10 @@ except ImportError as e:
     sys.exit(1)
 
 AGENT_MAPPING = {
-    "ppo": {"config": PPOConfig, "network": PPONetwork},
-    "muzero": {"config": MuZeroConfig, "network": MuZeroNetwork},
-    "dqn": {"config": RainbowConfig, "network": RainbowNetwork},
-    "rainbow": {"config": RainbowConfig, "network": RainbowNetwork},
+    "ppo": {"config": PPOConfig, "network": ModularAgentNetwork},
+    "muzero": {"config": MuZeroConfig, "network": ModularAgentNetwork},
+    "dqn": {"config": RainbowConfig, "network": ModularAgentNetwork},
+    "rainbow": {"config": RainbowConfig, "network": ModularAgentNetwork},
 }
 
 
@@ -234,21 +232,11 @@ def main():
                 f"Resolved input shape: {inference_shape}, num_actions: {num_actions}"
             )
 
-            if agent_type == "ppo":
-                model = net_cls(
-                    config=config,
-                    input_shape=inference_shape,
-                    output_size=num_actions,
-                    discrete=True,
-                )
-            elif agent_type == "muzero":
-                model = net_cls(
-                    config=config, input_shape=inference_shape, num_actions=num_actions
-                )
-            elif agent_type in ["dqn", "rainbow"]:
-                model = net_cls(
-                    config=config, input_shape=inference_shape, output_size=num_actions
-                )
+            model = net_cls(
+                config=config,
+                input_shape=inference_shape,
+                num_actions=num_actions,
+            )
 
             if weights:
                 state_dict = (

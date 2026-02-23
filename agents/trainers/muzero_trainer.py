@@ -7,7 +7,7 @@ from agents.action_selectors.selectors import CategoricalSelector
 from agents.action_selectors.decorators import MCTSDecorator
 from search.search_factories import create_mcts
 from agents.actors.actors import get_actor_class
-from modules.agent_nets.muzero import MuZeroNetwork
+from modules.agent_nets.modular import ModularAgentNetwork
 from stats.stats import StatTracker, PlotType
 
 
@@ -40,8 +40,8 @@ class MuZeroTrainer(BaseTrainer):
         # The local import `from modules.agent_nets.muzero import AgentNetwork as Network` is removed
         # as MuZeroNetwork is already imported at the top and will be used directly.
 
-        self.agent_network = MuZeroNetwork(
-            config,
+        self.agent_network = ModularAgentNetwork(
+            config=config,
             input_shape=self.obs_dim,
             num_actions=self.num_actions,
         ).to(device)

@@ -7,7 +7,7 @@ from agents.learners.rainbow_learner import RainbowLearner
 
 from agents.action_selectors.factory import SelectorFactory
 from agents.actors.actors import get_actor_class
-from modules.agent_nets.rainbow_dqn import RainbowNetwork
+from modules.agent_nets.modular import ModularAgentNetwork
 from replay_buffers.transition import TransitionBatch, Transition
 from stats.stats import StatTracker, PlotType
 from utils.schedule import create_schedule
@@ -30,14 +30,14 @@ class RainbowTrainer(BaseTrainer):
         super().__init__(config, env, device, name, stats, test_agents)
 
         # 1. Initialize Networks
-        self.agent_network = RainbowNetwork(
+        self.agent_network = ModularAgentNetwork(
             config=config,
-            output_size=self.num_actions,
+            num_actions=self.num_actions,
             input_shape=self.obs_dim,
         )
-        self.target_agent_network = RainbowNetwork(
+        self.target_agent_network = ModularAgentNetwork(
             config=config,
-            output_size=self.num_actions,
+            num_actions=self.num_actions,
             input_shape=self.obs_dim,
         )
 
@@ -194,7 +194,9 @@ class RainbowTrainer(BaseTrainer):
             actions=transition.action,
             rewards=transition.reward,
             next_observations=transition.next_observation,
-            next_legal_moves=transition.next_legal_moves if transition.next_legal_moves else [],
+            next_legal_moves=(
+                transition.next_legal_moves if transition.next_legal_moves else []
+            ),
             terminated=transition.terminated,
             truncated=transition.truncated,
             dones=transition.done,
@@ -294,7 +296,9 @@ class RainbowTrainer(BaseTrainer):
         if "agent_network" in checkpoint:
             self.agent_network.load_state_dict(checkpoint["agent_network"])
         if "target_agent_network" in checkpoint:
-            self.target_agent_network.load_state_dict(checkpoint["target_agent_network"])
+            self.target_agent_network.load_state_dict(
+                checkpoint["target_agent_network"]
+            )
         if "optimizer" in checkpoint:
             self.learner.optimizer.load_state_dict(checkpoint["optimizer"])
         if "epsilon" in checkpoint:

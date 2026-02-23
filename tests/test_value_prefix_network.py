@@ -2,7 +2,7 @@ import torch
 import gymnasium as gym
 from configs.agents.muzero import MuZeroConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
-from modules.agent_nets.muzero import MuZeroNetwork
+from modules.agent_nets.modular import ModularAgentNetwork
 from modules.heads.reward import ValuePrefixRewardHead
 from configs.games.game import GameConfig
 
@@ -56,7 +56,7 @@ def test_value_prefix_network():
     input_shape = (4,)  # Flat input
     print("Initializing Network...")
     input_shape = (4,)  # Flat input
-    net = MuZeroNetwork(config, config.game.num_actions, input_shape)
+    net = ModularAgentNetwork(config, input_shape, config.game.num_actions)
 
     # Verify Reward Head Type
     reward_head = net.world_model.dynamics.reward_head

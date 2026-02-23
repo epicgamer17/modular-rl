@@ -10,7 +10,7 @@ from agents.learners.ppo_learner import PPOLearner
 from agents.learners.ppo_learner import PPOLearner
 from agents.action_selectors.factory import SelectorFactory
 from agents.actors.actors import get_actor_class
-from modules.agent_nets.ppo import PPONetwork
+from modules.agent_nets.modular import ModularAgentNetwork
 
 # from agents.policies.ppo_policy import PPOPolicy # REMOVED
 from stats.stats import StatTracker, PlotType
@@ -47,9 +47,10 @@ class PPOTrainer(BaseTrainer):
         # 1. Initialize Network
         # New standard: input_shape excludes batch dimension
         input_shape = self.obs_dim
-        self.agent_network = PPONetwork(
+        self.agent_network = ModularAgentNetwork(
             config=config,
             input_shape=input_shape,
+            num_actions=self.num_actions,
         )
         self.agent_network.to(device)
 
@@ -154,9 +155,13 @@ class PPOTrainer(BaseTrainer):
                         self.learner.replay_buffer.store(
                             observations=state,
                             actions=action_val,
-                            values=float(value.item() if torch.is_tensor(value) else value),
+                            values=float(
+                                value.item() if torch.is_tensor(value) else value
+                            ),
                             log_probabilities=float(
-                                log_prob.item() if torch.is_tensor(log_prob) else log_prob
+                                log_prob.item()
+                                if torch.is_tensor(log_prob)
+                                else log_prob
                             ),
                             rewards=reward,
                             info=info,
@@ -181,8 +186,8 @@ class PPOTrainer(BaseTrainer):
                     else:
                         with torch.inference_mode():
                             obs = self.learner.preprocess(state)
-                            last_value, _ = self.agent_network.value(obs)
-                            last_value = last_value.item()
+                            out = self.agent_network.obs_inference(obs)
+                            last_value = out.value.item()
 
                     trajectory_end_index = self.learner.replay_buffer.size
                     trajectory_slice = slice(

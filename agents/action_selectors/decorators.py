@@ -114,11 +114,11 @@ class MCTSDecorator(BaseActionSelector):
             to_play = info.get("to_play", 0)
 
         # Get episode step for temperature
-        # If exploration is explicitly False, we might want to force temperature to something low?
-        # But really, if exploration=False, the inner selector (Categorical) will take Argmax, so temperature matters less
-        # unless it changes the mode.
+        # If exploration is explicitly False, we can skip temperature decay to avoid massive loops.
         episode_step = kwargs.get("episode_step", 0)
-        curr_temp = self._get_current_temperature(episode_step)
+        curr_temp = (
+            0.0 if exploration is False else self._get_current_temperature(episode_step)
+        )
 
         # 3. Run MCTS
         # Search algorithms usually expect: run(state, info, to_play, agent_network)

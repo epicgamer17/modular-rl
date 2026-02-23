@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from modules.agent_nets.muzero import MuZeroNetwork
+from modules.agent_nets.modular import ModularAgentNetwork
 from configs.agents.muzero import MuZeroConfig
 from configs.games.tictactoe import TicTacToeConfig
 from search.modular_search import SearchAlgorithm
@@ -35,7 +35,7 @@ def test_batched_search():
     num_actions = 9
     input_shape = (5, 3, 3)  # Handled by TicTacToe env wrappers
     # Create shared network
-    model = MuZeroNetwork(config, num_actions, input_shape)
+    model = ModularAgentNetwork(config, input_shape, num_actions)
 
     # 2. Setup Search Algorithm
     search = SearchAlgorithm(

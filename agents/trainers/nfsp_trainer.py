@@ -10,7 +10,7 @@ from agents.actors.actors import get_actor_class
 from agents.executors.local_executor import LocalExecutor
 from agents.executors.torch_mp_executor import TorchMPExecutor
 from replay_buffers.transition import TransitionBatch, Transition
-from modules.agent_nets.rainbow_dqn import RainbowNetwork
+from modules.agent_nets.modular import ModularAgentNetwork
 from modules.agent_nets.policy_imitation import SupervisedNetwork
 from stats.stats import StatTracker, PlotType
 
@@ -45,16 +45,16 @@ class NFSPTrainer(BaseTrainer):
         sl_config = self.config.sl_configs[0]
 
         # RL Network (Best Response)
-        self.br_agent_network = RainbowNetwork(
+        self.br_agent_network = ModularAgentNetwork(
             config=rl_config,
             input_shape=obs_dim,  # Exclude batch dim
-            output_size=num_actions,
+            num_actions=num_actions,
         ).to(self.device)
 
-        self.br_target_agent_network = RainbowNetwork(
+        self.br_target_agent_network = ModularAgentNetwork(
             config=rl_config,
             input_shape=obs_dim,  # Exclude batch dim
-            output_size=num_actions,
+            num_actions=num_actions,
         ).to(self.device)
         self.br_target_agent_network.load_state_dict(self.br_agent_network.state_dict())
 
@@ -121,22 +121,22 @@ class NFSPTrainer(BaseTrainer):
         sl_config = self.config.sl_configs[0]
 
         # Per-player networks
-        self.br_agent_networks: Dict[str, RainbowNetwork] = {}
-        self.br_target_agent_networks: Dict[str, RainbowNetwork] = {}
+        self.br_agent_networks: Dict[str, ModularAgentNetwork] = {}
+        self.br_target_agent_networks: Dict[str, ModularAgentNetwork] = {}
         self.avg_agent_networks: Dict[str, SupervisedNetwork] = {}
         self.learners: Dict[str, NFSPLearner] = {}
 
         for player_id in self.player_ids:
             # BR Network
-            br_agent_network = RainbowNetwork(
+            br_agent_network = ModularAgentNetwork(
                 config=rl_config,
                 input_shape=obs_dim,  # Exclude batch dim
-                output_size=num_actions,
+                num_actions=num_actions,
             ).to(self.device)
-            br_target_agent_network = RainbowNetwork(
+            br_target_agent_network = ModularAgentNetwork(
                 config=rl_config,
                 input_shape=obs_dim,  # Exclude batch dim
-                output_size=num_actions,
+                num_actions=num_actions,
             ).to(self.device)
             br_target_agent_network.load_state_dict(br_agent_network.state_dict())
 
@@ -278,7 +278,8 @@ class NFSPTrainer(BaseTrainer):
             self.executor.update_weights(
                 {
                     "best_response_state_dicts": {
-                        pid: agent_network.state_dict() for pid, agent_network in self.br_agent_networks.items()
+                        pid: agent_network.state_dict()
+                        for pid, agent_network in self.br_agent_networks.items()
                     },
                     "average_state_dicts": {
                         pid: agent_network.state_dict()
@@ -307,7 +308,11 @@ class NFSPTrainer(BaseTrainer):
         # 2. Store transitions, folding the next_state to the player's next turn
         for i in range(len(sequence.action_history)):
             obs = sequence.observation_history[i]
-            legal_moves = sequence.legal_moves_history[i] if i < len(sequence.legal_moves_history) else []
+            legal_moves = (
+                sequence.legal_moves_history[i]
+                if i < len(sequence.legal_moves_history)
+                else []
+            )
             action = sequence.action_history[i]
 
             if sequence.player_id_history and i < len(sequence.player_id_history):
@@ -326,12 +331,20 @@ class NFSPTrainer(BaseTrainer):
             if next_turn_idx != -1:
                 # Next state for this player is the state at their next turn
                 next_obs = sequence.observation_history[next_turn_idx]
-                next_legal_moves = sequence.legal_moves_history[next_turn_idx] if next_turn_idx < len(sequence.legal_moves_history) else []
+                next_legal_moves = (
+                    sequence.legal_moves_history[next_turn_idx]
+                    if next_turn_idx < len(sequence.legal_moves_history)
+                    else []
+                )
                 done = False
             else:
                 # No more turns for this player in this episode - use terminal state
                 next_obs = sequence.observation_history[-1]
-                next_legal_moves = sequence.legal_moves_history[-1] if sequence.legal_moves_history else []
+                next_legal_moves = (
+                    sequence.legal_moves_history[-1]
+                    if sequence.legal_moves_history
+                    else []
+                )
                 done = True
 
             # Get correctly attributed reward
@@ -392,7 +405,11 @@ class NFSPTrainer(BaseTrainer):
 
             # The rewards at index i+1 were generated by action i (acting_player)
             # We attribute rewards to EACH player for their PREVIOUS move.
-            all_rewards = sequence.all_player_rewards_history[i + 1] if i + 1 < len(sequence.all_player_rewards_history) else {}
+            all_rewards = (
+                sequence.all_player_rewards_history[i + 1]
+                if i + 1 < len(sequence.all_player_rewards_history)
+                else {}
+            )
 
             for pid, r in all_rewards.items():
                 if pid in last_action_idx:
@@ -563,7 +580,9 @@ class NFSPTrainer(BaseTrainer):
         else:
             checkpoint_data = {
                 "shared_networks": False,
-                "br_agent_networks": {pid: an.state_dict() for pid, an in self.br_agent_networks.items()},
+                "br_agent_networks": {
+                    pid: an.state_dict() for pid, an in self.br_agent_networks.items()
+                },
                 "avg_agent_networks": {
                     pid: an.state_dict() for pid, an in self.avg_agent_networks.items()
                 },

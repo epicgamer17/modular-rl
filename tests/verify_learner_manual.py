@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from agents.learners.muzero_learner import MuZeroLearner
 from configs.agents.muzero import MuZeroConfig
 from configs.games.cartpole import CartPoleConfig
-from modules.agent_nets.muzero import MuZeroNetwork
+from modules.agent_nets.modular import ModularAgentNetwork
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from torch.optim import Adam
 from unittest.mock import MagicMock
@@ -63,7 +63,7 @@ def test_learner_directly():
     support_size = config.support_range * 2 + 1 if config.support_range else 1
 
     print("Initializing model...")
-    model = MuZeroNetwork(
+    model = ModularAgentNetwork(
         config=config,
         num_actions=num_actions,
         input_shape=torch.Size(

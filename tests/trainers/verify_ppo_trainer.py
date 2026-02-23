@@ -187,11 +187,12 @@ def test_ppo_learner_store():
     device = torch.device("cpu")
 
     # Create dummy model
-    from modules.agent_nets.ppo import PPONetwork
+    from modules.agent_nets.modular import ModularAgentNetwork
 
-    model = PPONetwork(
+    model = ModularAgentNetwork(
         config=config,
         input_shape=(4,),
+        num_actions=2,
     )
 
     learner = PPOLearner(
@@ -225,11 +226,12 @@ def test_ppo_learner_finish_trajectory():
     config = MinimalPPOConfig()
     device = torch.device("cpu")
 
-    from modules.agent_nets.ppo import PPONetwork
+    from modules.agent_nets.modular import ModularAgentNetwork
 
-    model = PPONetwork(
+    model = ModularAgentNetwork(
         config=config,
         input_shape=(4,),
+        num_actions=2,
     )
 
     learner = PPOLearner(
@@ -271,11 +273,12 @@ def test_ppo_learner_step():
     config = MinimalPPOConfig()
     device = torch.device("cpu")
 
-    from modules.agent_nets.ppo import PPONetwork
+    from modules.agent_nets.modular import ModularAgentNetwork
 
-    model = PPONetwork(
+    model = ModularAgentNetwork(
         config=config,
         input_shape=(4,),
+        num_actions=2,
     )
 
     learner = PPOLearner(

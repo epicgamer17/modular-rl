@@ -68,11 +68,11 @@ class PPOLearner(BaseLearner):
 
         # 2. Initialize Optimizers (separate for actor and critic)
         self.policy_optimizer = self._create_optimizer(
-            self.agent_network.policy.parameters(),
+            self.agent_network.components["policy_head"].parameters(),
             config.actor,
         )
         self.value_optimizer = self._create_optimizer(
-            self.agent_network.value.parameters(),
+            self.agent_network.components["value_head"].parameters(),
             config.critic,
         )
 
@@ -82,14 +82,18 @@ class PPOLearner(BaseLearner):
         self.policy_loss_module = PPOPolicyLoss(
             clip_param=self.config.clip_param,
             entropy_coefficient=self.config.entropy_coefficient,
-            policy_strategy=getattr(self.agent_network.policy, "strategy", None),
+            policy_strategy=getattr(
+                self.agent_network.components["policy_head"], "strategy", None
+            ),
         )
         self.value_loss_module = PPOValueLoss(
             critic_coefficient=self.config.critic_coefficient,
             atom_size=self.config.atom_size,
             v_min=self.config.v_min,
             v_max=self.config.v_max,
-            value_strategy=getattr(self.agent_network.value, "strategy", None),
+            value_strategy=getattr(
+                self.agent_network.components["value_head"], "strategy", None
+            ),
         )
 
     def _create_optimizer(self, params, sub_config) -> torch.optim.Optimizer:
@@ -173,7 +177,8 @@ class PPOLearner(BaseLearner):
 
                 if self.config.actor.clipnorm > 0:
                     clip_grad_norm_(
-                        self.agent_network.policy.parameters(), self.config.actor.clipnorm
+                        self.agent_network.components["policy_head"].parameters(),
+                        self.config.actor.clipnorm,
                     )
 
                 self.policy_optimizer.step()
@@ -210,7 +215,8 @@ class PPOLearner(BaseLearner):
 
                 if self.config.critic.clipnorm > 0:
                     clip_grad_norm_(
-                        self.agent_network.value.parameters(), self.config.critic.clipnorm
+                        self.agent_network.components["value_head"].parameters(),
+                        self.config.critic.clipnorm,
                     )
 
                 self.value_optimizer.step()

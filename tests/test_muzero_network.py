@@ -2,7 +2,7 @@ import torch
 import gymnasium as gym
 from configs.agents.muzero import MuZeroConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
-from modules.agent_nets.muzero import MuZeroNetwork
+from modules.agent_nets.modular import ModularAgentNetwork
 from configs.games.game import GameConfig
 
 
@@ -64,7 +64,7 @@ def test_muzero_network_structure():
         "support_range": 5,  # Smaller support for testing
     }
 
-    net = MuZeroNetwork(config, config.game.num_actions, input_shape)
+    net = ModularAgentNetwork(config, input_shape, config.game.num_actions)
 
     print("Parameters check:")
     print(f"Prediction Value Head: {net.value_head}")
@@ -151,7 +151,7 @@ def test_learner_inference():
 
     config = MuZeroConfig(config_dict, game)
     input_shape = (4,)
-    net = MuZeroNetwork(config, config.game.num_actions, input_shape)
+    net = ModularAgentNetwork(config, input_shape, config.game.num_actions)
 
     # Mock batch
     batch_size = 2

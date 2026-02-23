@@ -27,9 +27,7 @@ class BaseTrainer:
         self.config = config
         self.device = device
         self.name = name
-        self.stats = (
-            stats if stats is not None else StatTracker(name=name)
-        )
+        self.stats = stats if stats is not None else StatTracker(name=name)
         self.test_agents = test_agents if test_agents is not None else []
         self._env = env
 
@@ -204,7 +202,10 @@ class BaseTrainer:
                 while not done and episode_length < 1000:
                     episode_length += 1
                     action = self.select_test_action(state, info, test_env)
-                    action_val = action.item()
+                    try:
+                        action_val = action.item()
+                    except AttributeError:
+                        action_val = action
 
                     if is_multiplayer:
                         test_env.step(action_val)
@@ -268,7 +269,10 @@ class BaseTrainer:
                             action = agent.select_actions(prediction, info=info)
 
                         # Ensure action is a standard scalar for PettingZoo/Gymnasium
-                        action_val = action.item()
+                        try:
+                            action_val = action.item()
+                        except AttributeError:
+                            action_val = action
                         test_env.step(action_val)
                         state, reward, termination, truncation, info = test_env.last()
                         done = termination or truncation

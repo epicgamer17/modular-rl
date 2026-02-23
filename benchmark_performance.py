@@ -9,7 +9,7 @@ from configs.agents.muzero import MuZeroConfig
 from agents.policies.search_policy import SearchPolicy
 from search.search_factories import create_mcts
 from modules.world_models.muzero_world_model import MuzeroWorldModel
-from modules.agent_nets.muzero import MuZeroNetwork as Network
+from modules.agent_nets.modular import ModularAgentNetwork as Network
 
 
 def benchmark_env(game_name, make_env_fn, num_steps=100):
@@ -106,7 +106,10 @@ def benchmark_policy(game_name, game_config, num_simulations=25, num_calls=10):
     num_actions = env.action_space(env.possible_agents[0]).n
 
     model = Network(
-        config, num_actions, obs_shape, world_model_cls=MuzeroWorldModel
+        config=config,
+        num_actions=num_actions,
+        input_shape=obs_shape,
+        world_model_cls=MuzeroWorldModel,
     ).to(device)
     search_algo = create_mcts(config, device, num_actions)
     policy = SearchPolicy(model, search_algo, config, device, simple_obs_shape)
