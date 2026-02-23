@@ -28,6 +28,7 @@ class MuZeroLearner(BaseLearner):
         num_actions,
         observation_dimensions,
         observation_dtype,
+        player_id_mapping: Dict[str, int],
     ):
         super().__init__(
             config=config,
@@ -44,13 +45,14 @@ class MuZeroLearner(BaseLearner):
             max_size=config.replay_buffer_size,
             num_actions=num_actions,
             num_players=config.game.num_players,
+            player_id_mapping=player_id_mapping,
             unroll_steps=config.unroll_steps,
             n_step=config.n_step,
             gamma=config.discount_factor,
             batch_size=config.minibatch_size,
             observation_dtype=observation_dtype,
             alpha=config.per_alpha,
-            beta=config.per_beta,
+            beta=config.per_beta_schedule.initial,
             epsilon=config.per_epsilon,
             use_batch_weights=config.per_use_batch_weights,
             use_initial_max_priority=config.per_use_initial_max_priority,

@@ -117,6 +117,7 @@ def test_learner_directly():
         num_actions=num_actions,
         observation_dimensions=observation_dimensions,
         observation_dtype=torch.float32,
+        player_id_mapping={"player_0": 0},
     )
 
     print("Populating buffer...")

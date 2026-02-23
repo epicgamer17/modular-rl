@@ -1,7 +1,7 @@
 import torch
 from replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
 from replay_buffers.concurrency import LocalBackend, TorchMPBackend, ConcurrencyBackend
-from typing import Optional
+from typing import Dict, Optional
 from modules.world_models.inference_output import LearningOutput
 from replay_buffers.processors import (
     InputProcessor,
@@ -127,7 +127,7 @@ def create_dqn_buffer(
         sampler = PrioritizedSampler(
             max_size,
             alpha=config.per_alpha,
-            beta=config.per_beta,
+            beta=config.per_beta_schedule.initial,
             epsilon=config.per_epsilon,
             max_priority=1.0,
             use_batch_weights=config.per_use_batch_weights,
@@ -265,6 +265,7 @@ def create_muzero_buffer(
     max_size,
     num_actions,
     num_players,
+    player_id_mapping: Dict[str, int],
     unroll_steps,
     n_step,
     gamma,
@@ -318,7 +319,7 @@ def create_muzero_buffer(
         ),
     ]
 
-    input_processor = SequenceTensorProcessor(num_actions, num_players)
+    input_processor = SequenceTensorProcessor(num_actions, num_players, player_id_mapping)
 
     return ModularReplayBuffer(
         max_size=max_size,

@@ -26,6 +26,15 @@ class MuZeroTrainer(BaseTrainer):
         test_agents: List = None,
     ):
         super().__init__(config, env, device, name, stats, test_agents)
+
+        # Create player_id_mapping for multi-player games
+        if hasattr(env, "possible_agents"):
+            self.player_id_mapping = {
+                agent_id: i for i, agent_id in enumerate(env.possible_agents)
+            }
+        else:
+            self.player_id_mapping = {"player_0": 0}
+
         # 1. Initialize Network
         # ... (network initialization)
         # The local import `from modules.agent_nets.muzero import AgentNetwork as Network` is removed
@@ -75,7 +84,7 @@ class MuZeroTrainer(BaseTrainer):
             num_actions=self.num_actions,
             observation_dimensions=self.obs_dim,
             observation_dtype=self.obs_dtype,
-            # policy=self.policy, # REMOVED/Updated
+            player_id_mapping=self.player_id_mapping,
         )
 
         self.buffer = self.learner.replay_buffer
@@ -186,33 +195,10 @@ class MuZeroTrainer(BaseTrainer):
 
     def select_test_action(self, state, info, env) -> Any:
         """Search and select greedy action for testing."""
-        # Use predict which handles Gumbel/Sequential Halving correctly
-
-    def select_test_action(self, state, info, env) -> Any:
-        """Search and select greedy action for testing."""
-        # For testing, we might want temperature=0 or argmax.
-        # MCTSDecorator handles temperature via config.
-        # If we want explicit greedy selection:
-        # We can pass exploration=False to select_action if Inner is Categorical?
-        # CategoricalSelector(exploration=True) by default samples.
-        # We might want to force argmax for test.
-        # Or pass a specific low temperature (handled by MCTS Decorator logic usually).
-        # For now, relying on select_action with episode_step=0 (or high) might not be enough override.
-        # We'll just call select_action.
-
-        # Note: MCTS Decorator expects 'episode_step' in kwargs for temperature.
-        # During test, maybe we want 'temperature' to be 0 or small.
-        # But MCTS stochasticity is often desired? Usually Argmax on visit counts.
-        # If we use ArgmaxSelector as inner for Test?
-        # But self.action_selector is fixed.
-        # We may need a way to override behavior.
-
-        # Passing 'exploration=False' to CategoricalSelector forces argmax.
-        # MCTSDecorator passes kwargs to inner.
         action, _ = self.action_selector.select_action(
             self.agent_network, state, info, exploration=False, episode_step=1e9
         )
-        return action.item()
+        return action
 
     def _setup_stats(self):
         """Initializes the stat tracker with all required keys and plot types."""

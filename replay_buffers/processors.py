@@ -1,4 +1,4 @@
-from typing import List
+from typing import Dict, List
 import numpy as np
 import torch
 from abc import ABC, abstractmethod
@@ -196,7 +196,10 @@ class ToPlayInputProcessor(InputProcessor):
     """
 
     def __init__(
-        self, num_players: int, input_key: str = "player_id", output_key: str = "to_plays"
+        self,
+        num_players: int,
+        input_key: str = "player_id",
+        output_key: str = "to_plays",
     ):
         self.num_players = num_players
         self.input_key = input_key
@@ -333,10 +336,27 @@ class SequenceTensorProcessor(InputProcessor):
     Handles observation stacking, action/reward tensors, and legal move masks.
     """
 
-    def __init__(self, num_actions: int, num_players: int, device="cpu"):
+    def __init__(
+        self,
+        num_actions: int,
+        num_players: int,
+        player_id_mapping: Dict[str, int],
+        device="cpu",
+    ):
         self.num_actions = num_actions
         self.num_players = num_players
+        self.player_id_mapping = player_id_mapping
         self.device = device
+
+    def _resolve_player_id(self, player_id) -> int:
+        if isinstance(player_id, int):
+            return player_id
+        if player_id not in self.player_id_mapping:
+            raise ValueError(
+                f"player_id '{player_id}' not found in player_id_mapping. "
+                f"Available keys: {list(self.player_id_mapping.keys())}"
+            )
+        return self.player_id_mapping[player_id]
 
     def process_single(self, **kwargs):
         raise NotImplementedError(
@@ -390,7 +410,9 @@ class SequenceTensorProcessor(InputProcessor):
         # To Plays
         tps_t = torch.tensor(
             [
-                sequence.player_id_history[i] if i < len(sequence.player_id_history) else 0
+                self._resolve_player_id(sequence.player_id_history[i])
+                if i < len(sequence.player_id_history)
+                else 0
                 for i in range(n_states)
             ],
             dtype=torch.int16,
@@ -410,7 +432,11 @@ class SequenceTensorProcessor(InputProcessor):
             [
                 legal_moves_mask(
                     self.num_actions,
-                    sequence.legal_moves_history[i] if i < len(sequence.legal_moves_history) else [],
+                    (
+                        sequence.legal_moves_history[i]
+                        if i < len(sequence.legal_moves_history)
+                        else []
+                    ),
                 )
                 for i in range(n_states)
             ]
