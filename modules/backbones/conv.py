@@ -40,3 +40,42 @@ class ConvBackbone(nn.Module):
 
     def reset_noise(self) -> None:
         self.stack.reset_noise()
+
+
+class DeconvBackbone(nn.Module):
+    """
+    Backbone for upscaling/decoding tasks (e.g. Dreamer decoder).
+    Wraps ConvTranspose2dStack.
+    """
+
+    def __init__(self, config: "DeconvConfig", input_shape: Tuple[int, ...]):
+        super().__init__()
+        self.config = config
+        self.input_shape = input_shape
+
+        # Late import to avoid circular dependency
+        from modules.blocks.conv import ConvTranspose2dStack
+
+        self.stack = ConvTranspose2dStack(
+            input_shape=input_shape,
+            filters=config.filters,
+            kernel_sizes=config.kernel_sizes,
+            strides=config.strides,
+            activation=config.activation,
+            norm_type=config.norm_type,
+            output_padding=config.output_padding,
+        )
+
+        self.output_shape = self._get_output_shape()
+
+    def _get_output_shape(self) -> Tuple[int, ...]:
+        # Dummy forward pass to determine output shape if not explicitly provided
+        with torch.no_grad():
+            dummy = torch.zeros(
+                1, *self.input_shape, device=self.stack._layers[0][0].weight.device
+            )
+            out = self.stack(dummy)
+            return tuple(out.shape[1:])
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.stack(x)

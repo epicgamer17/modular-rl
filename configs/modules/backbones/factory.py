@@ -1,5 +1,6 @@
 from typing import Type, Dict
 from configs.modules.backbones.resnet import ResNetConfig
+from configs.modules.backbones.deconv import DeconvConfig
 from configs.modules.backbones.denseresnet import DenseResNetConfig
 from configs.modules.backbones.dense import DenseConfig
 from configs.modules.backbones.conv import ConvConfig
@@ -20,6 +21,7 @@ class BackboneConfigFactory:
         "recurrent": RecurrentConfig,
         "transformer": TransformerConfig,
         "identity": IdentityConfig,
+        "deconv": DeconvConfig,
     }
 
     @classmethod

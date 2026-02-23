@@ -6,11 +6,17 @@ from .reward import RewardHead, ValuePrefixRewardHead
 from .value import ValueHead
 from .policy import PolicyHead
 from .chance_probability import ChanceProbabilityHead
+from .continuation import ContinuationHead
+from .observation import ObservationHead
+from .latent_consistency import LatentConsistencyHead
 from configs.modules.heads.to_play import ToPlayHeadConfig
 from configs.modules.heads.value import ValueHeadConfig
 from configs.modules.heads.reward import RewardHeadConfig, ValuePrefixRewardHeadConfig
 from configs.modules.heads.policy import PolicyHeadConfig
 from configs.modules.heads.chance_probability import ChanceProbabilityHeadConfig
+from configs.modules.heads.continuation import ContinuationHeadConfig
+from configs.modules.heads.observation import ObservationHeadConfig
+from configs.modules.heads.latent_consistency import LatentConsistencyHeadConfig
 from configs.modules.heads.base import HeadConfig
 from configs.modules.architecture_config import ArchitectureConfig
 
@@ -25,6 +31,9 @@ class HeadFactory:
         ValuePrefixRewardHeadConfig: ValuePrefixRewardHead,
         PolicyHeadConfig: PolicyHead,
         ChanceProbabilityHeadConfig: ChanceProbabilityHead,
+        ContinuationHeadConfig: ContinuationHead,
+        ObservationHeadConfig: ObservationHead,
+        LatentConsistencyHeadConfig: LatentConsistencyHead,
     }
 
     @classmethod
@@ -92,6 +101,16 @@ class HeadFactory:
                 ),  # Strategy is usually created outside and passed in
                 config=config,
                 neck_config=config.neck,
+            )
+
+        # LatentConsistencyHead needs projection_dim
+        if isinstance(config, LatentConsistencyHeadConfig):
+            return LatentConsistencyHead(
+                arch_config=arch_config,
+                input_shape=input_shape,
+                strategy=kwargs.get("strategy"),
+                neck_config=config.neck,
+                projection_dim=config.projection_dim,
             )
 
         return head_cls(

@@ -8,6 +8,7 @@ from modules.backbones.conv import ConvBackbone
 from modules.backbones.recurrent import RecurrentBackbone
 from modules.backbones.transformer import TransformerBackbone
 from modules.backbones.identity import IdentityBackbone
+from modules.backbones.conv import DeconvBackbone
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.backbones.resnet import ResNetConfig
 from configs.modules.backbones.denseresnet import DenseResNetConfig
@@ -16,6 +17,7 @@ from configs.modules.backbones.conv import ConvConfig
 from configs.modules.backbones.recurrent import RecurrentConfig
 from configs.modules.backbones.transformer import TransformerConfig
 from configs.modules.backbones.identity import IdentityConfig
+from configs.modules.backbones.deconv import DeconvConfig
 
 
 class BackboneFactory:
@@ -29,6 +31,7 @@ class BackboneFactory:
         RecurrentConfig: RecurrentBackbone,
         TransformerConfig: TransformerBackbone,
         IdentityConfig: IdentityBackbone,
+        DeconvConfig: DeconvBackbone,
     }
 
     @classmethod
