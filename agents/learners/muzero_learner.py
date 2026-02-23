@@ -60,6 +60,8 @@ class MuZeroLearner(BaseLearner):
             value_prefix=config.value_prefix,
             tau=config.reanalyze_tau,
             multi_process=config.multi_process,
+            observation_quantization=config.observation_quantization,
+            observation_compression=config.observation_compression,
         )
 
         if config.optimizer == Adam:

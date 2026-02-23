@@ -138,7 +138,12 @@ class ReplayConfig:
         self.per_alpha: float = self.parse_field("per_alpha", 0.5)
         self.per_beta_schedule = self.parse_schedule_config(
             "per_beta_schedule",
-            defaults={"type": "linear", "initial": 0.5, "final": 1.0, "decay_steps": 10000},
+            defaults={
+                "type": "linear",
+                "initial": 0.5,
+                "final": 1.0,
+                "decay_steps": 10000,
+            },
         )
         self.per_epsilon: float = self.parse_field("per_epsilon", 1e-6)
         self.per_use_batch_weights: bool = self.parse_field(
@@ -149,6 +154,12 @@ class ReplayConfig:
         )
         self.bootstrap_on_truncated: bool = self.parse_field(
             "bootstrap_on_truncated", False
+        )
+        self.observation_quantization: str = self.parse_field(
+            "observation_quantization", None, required=False
+        )
+        self.observation_compression: str = self.parse_field(
+            "observation_compression", None, required=False
         )
 
 
@@ -227,7 +238,9 @@ class DistributionalConfig:
         self.v_max = self.game.max_score
 
 
-class Config(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig, DistributionalConfig):
+class Config(
+    ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig, DistributionalConfig
+):
     def __init__(self, config_dict: dict, game_config: GameConfig) -> None:
         self.multi_process = False
         super().__init__(config_dict)

@@ -17,6 +17,8 @@ from replay_buffers.processors import (
     NStepUnrollProcessor,
     AdvantageNormalizer,
     FilterKeysInputProcessor,
+    ObservationCompressionProcessor,
+    ObservationDecompressionProcessor,
 )
 from replay_buffers.writers import (
     CircularWriter,
@@ -281,15 +283,36 @@ def create_muzero_buffer(
     tau=0.3,
     multi_process=True,
     backend: Optional[ConcurrencyBackend] = None,
+    observation_quantization: Optional[str] = None,
+    observation_compression: Optional[str] = None,
 ):
     if backend is None:
         backend = TorchMPBackend() if multi_process else LocalBackend()
 
+    obs_dtype = observation_dtype
+    obs_shape = observation_dimensions
+    
+    if observation_compression:
+        import numpy as np
+        obs_size = int(np.prod(observation_dimensions))
+        if observation_quantization == "float16":
+            obs_bytes = obs_size * 2
+        else:
+            obs_bytes = obs_size * 4
+        
+        import zlib
+        sample_data = bytes(obs_bytes)
+        max_compressed = len(zlib.compress(sample_data, level=1)) + 4
+        obs_dtype = torch.uint8
+        obs_shape = (max_compressed,)
+    elif observation_quantization == "float16":
+        obs_dtype = torch.float16
+
     configs = [
         BufferConfig(
             "observations",
-            shape=observation_dimensions,
-            dtype=observation_dtype,
+            shape=obs_shape,
+            dtype=obs_dtype,
             is_shared=multi_process,
         ),
         BufferConfig("actions", shape=(), dtype=torch.float16, is_shared=multi_process),
@@ -319,24 +342,48 @@ def create_muzero_buffer(
         ),
     ]
 
-    input_processor = SequenceTensorProcessor(num_actions, num_players, player_id_mapping)
+    base_processor = SequenceTensorProcessor(num_actions, num_players, player_id_mapping)
+    
+    if observation_quantization or observation_compression:
+        input_processor = StackedInputProcessor([
+            base_processor,
+            ObservationCompressionProcessor(
+                quantization=observation_quantization,
+                compression=observation_compression,
+            ),
+        ])
+    else:
+        input_processor = base_processor
+    
+    inner_output_processor = NStepUnrollProcessor(
+        unroll_steps,
+        n_step,
+        gamma,
+        num_actions,
+        num_players,
+        max_size,
+        lstm_horizon_len,
+        value_prefix,
+        tau,
+    )
+    
+    if observation_quantization or observation_compression:
+        output_processor = ObservationDecompressionProcessor(
+            inner_processor=inner_output_processor,
+            quantization=observation_quantization,
+            compression=observation_compression,
+            obs_shape=observation_dimensions,
+            obs_dtype=observation_dtype,
+        )
+    else:
+        output_processor = inner_output_processor
 
     return ModularReplayBuffer(
         max_size=max_size,
         batch_size=batch_size,
         buffer_configs=configs,
         input_processor=input_processor,
-        output_processor=NStepUnrollProcessor(
-            unroll_steps,
-            n_step,
-            gamma,
-            num_actions,
-            num_players,
-            max_size,
-            lstm_horizon_len,
-            value_prefix,
-            tau,
-        ),
+        output_processor=output_processor,
         writer=(
             SharedCircularWriter(max_size)
             if multi_process
