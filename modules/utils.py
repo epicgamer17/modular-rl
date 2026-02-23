@@ -53,7 +53,7 @@ class ScheduleLRScheduler(optim.lr_scheduler.LRScheduler):
         self._initial_lr = schedule.config.initial
         super().__init__(optimizer)
 
-    def _get_closed_form_lr(self):
+    def get_lr(self):
         if self._initial_lr is None or self._initial_lr == 0:
             return self.base_lrs
         factor = self.schedule.get_value() / self._initial_lr

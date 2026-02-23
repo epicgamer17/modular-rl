@@ -375,12 +375,12 @@ class CatanAECEnv(AECEnv):
         invalid_action_reward=-1,
         auto_play_single_action: bool = False,
         bandit_mode: bool = False,
-        spatial_encoding: SpatialEncoding = "sparse",
-        include_validity_mask: bool = False,
-        include_last_roll: bool = False,
-        include_game_phase: bool = False,
-        include_bank_state: bool = False,
-        include_road_distance: bool = False,
+        spatial_encoding: SpatialEncoding = "axial",
+        include_validity_mask: bool = True,
+        include_last_roll: bool = True,
+        include_game_phase: bool = True,
+        include_bank_state: bool = True,
+        include_road_distance: bool = True,
     ):
         super().__init__()
 

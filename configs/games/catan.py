@@ -9,6 +9,7 @@ from custom_gym_envs.envs.catan import (
     env as catan_env,
     CatanAECEnv,
     ACTION_SPACE_SIZE,
+    SpatialEncoding,
 )
 
 
@@ -16,11 +17,17 @@ def make_env(
     num_players=2,
     map_type="MINI",
     vps_to_win=5,
-    representation="vector",
+    representation="image",
     invalid_action_reward=-10,
     render_mode="rgb_array",
     auto_play_single_action=True,
     bandit_mode=True,
+    spatial_encoding: SpatialEncoding = "axial",
+    include_validity_mask: bool = True,
+    include_last_roll: bool = True,
+    include_game_phase: bool = True,
+    include_bank_state: bool = True,
+    include_road_distance: bool = True,
 ):
     env = catan_env(
         render_mode=render_mode,
@@ -31,6 +38,12 @@ def make_env(
         invalid_action_reward=invalid_action_reward,
         auto_play_single_action=auto_play_single_action,
         bandit_mode=bandit_mode,
+        spatial_encoding=spatial_encoding,
+        include_validity_mask=include_validity_mask,
+        include_last_roll=include_last_roll,
+        include_game_phase=include_game_phase,
+        include_bank_state=include_bank_state,
+        include_road_distance=include_road_distance,
     )
     env = ActionMaskInInfoWrapper(env)
     env = FrameStackWrapper(env, 4, channel_first=False)

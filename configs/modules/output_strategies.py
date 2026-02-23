@@ -51,8 +51,7 @@ class OutputStrategyConfigFactory:
 
         strategy_type = config_dict.get("type", "scalar")
 
-        # Handle legacy "regression" type
-        if strategy_type == "regression" or strategy_type == "scalar":
+        if strategy_type == "scalar":
             return ScalarStrategyConfig(config_dict)
         elif strategy_type == "categorical":
             return CategoricalConfig(config_dict)

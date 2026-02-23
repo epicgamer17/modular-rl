@@ -9,5 +9,5 @@ class ValueHeadConfig(HeadConfig):
         super().__init__(config_dict or {})
         d = config_dict or {}
         # Default to regression for Value
-        strat = d.get("output_strategy", {"type": "regression"})
+        strat = d.get("output_strategy", {"type": "scalar"})
         self.output_strategy = OutputStrategyConfigFactory.create(strat)

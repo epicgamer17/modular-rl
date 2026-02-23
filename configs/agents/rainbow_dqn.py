@@ -96,7 +96,7 @@ class RainbowConfig(
                     "v_max": self.v_max,
                 }
             else:
-                head_dict["output_strategy"] = {"type": "regression"}
+                head_dict["output_strategy"] = {"type": "scalar"}
 
         # 3. Construct Head Config
         if self.dueling:

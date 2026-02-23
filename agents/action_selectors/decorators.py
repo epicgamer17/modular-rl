@@ -21,7 +21,7 @@ class PPODecorator(BaseActionSelector):
         info: Optional[Dict[str, Any]] = None,
         network_output: Optional[Any] = None,
         exploration: Optional[bool] = None,
-        **kwargs
+        **kwargs,
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
 
         # 1. Ensure we have network output
@@ -35,7 +35,7 @@ class PPODecorator(BaseActionSelector):
             info,
             network_output=network_output,
             exploration=exploration,
-            **kwargs
+            **kwargs,
         )
 
         # 3. Inject PPO metadata
@@ -80,6 +80,7 @@ class MCTSDecorator(BaseActionSelector):
             self.temperature_schedule = create_schedule(config.temperature_schedule)
         else:
             from utils.schedule import ScheduleConfig
+
             self.temperature_schedule = create_schedule(
                 ScheduleConfig.stepwise(steps=[5], values=[1.0, 0.0])
             )
@@ -88,7 +89,7 @@ class MCTSDecorator(BaseActionSelector):
         """Determines exploration temperature based on episode step."""
         if not self.temperature_schedule.config.with_training_steps:
             temp_schedule = create_schedule(self.config.temperature_schedule)
-            for _ in range(steps_in_episode):
+            for _ in range(int(steps_in_episode)):
                 temp_schedule.step()
             return temp_schedule.get_value()
         return self.temperature_schedule.get_value()
@@ -102,7 +103,7 @@ class MCTSDecorator(BaseActionSelector):
             Any
         ] = None,  # Not used for MCTS usually, as MCTS does its own inference calls
         exploration: Optional[bool] = None,
-        **kwargs
+        **kwargs,
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
 
         # 1. Determine "to_play"
@@ -155,7 +156,7 @@ class MCTSDecorator(BaseActionSelector):
             info,
             network_output=mcts_output,
             exploration=exploration,
-            **kwargs
+            **kwargs,
         )
 
         # 5. Metadata

@@ -42,7 +42,7 @@ class TopScoreSelection(SelectionStrategy):
 
     def select_child(self, node, min_max_stats, pruned_searchset=None):
         # assert isinstance(node, DecisionNode)
-        assert node.is_decision_node()
+        assert node.is_decision
         # assert node.expanded(), "node must be expanded to select a child"
 
         scores = self.scoring_method.get_scores(node, min_max_stats)
