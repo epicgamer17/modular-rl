@@ -86,7 +86,7 @@ class ImitationLearner(BaseLearner):
     def store(
         self,
         observation: Any,
-        info: Dict[str, Any],
+        legal_moves: list,
         target_policy: torch.Tensor,
     ) -> None:
         """
@@ -94,12 +94,12 @@ class ImitationLearner(BaseLearner):
 
         Args:
             observation: Current observation.
-            info: Current info dict (for legal moves mask).
+            legal_moves: List of legal action indices.
             target_policy: Target policy distribution to imitate.
         """
         self.replay_buffer.store(
             observations=observation,
-            infos=info,
+            legal_moves=legal_moves,
             target_policies=target_policy,
         )
 

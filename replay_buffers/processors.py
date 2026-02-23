@@ -166,55 +166,44 @@ class IdentityInputProcessor(InputProcessor):
         return kwargs
 
 
-class LegalMovesInputProcessor(InputProcessor):
+class LegalMovesMaskProcessor(InputProcessor):
     """
-    Extracts 'legal_moves' from 'info' or 'next_info' and creates a boolean mask.
+    Creates a boolean mask from a list of legal moves.
     """
 
     def __init__(
         self,
         num_actions: int,
-        info_key: str = "infos",
+        input_key: str = "legal_moves",
         output_key: str = "legal_moves_masks",
     ):
         self.num_actions = num_actions
-        self.info_key = info_key
+        self.input_key = input_key
         self.output_key = output_key
 
     def process_single(self, **kwargs):
-        info = kwargs.get(self.info_key, {})
-        # Handle case where info might be None
-        if info is None:
-            info = {}
-
-        moves = info.get("legal_moves", [])
-        mask = legal_moves_mask(self.num_actions, moves)
-
+        legal_moves = kwargs.get(self.input_key, [])
+        if legal_moves is None:
+            legal_moves = []
+        mask = legal_moves_mask(self.num_actions, legal_moves)
         kwargs[self.output_key] = mask
-
         return kwargs
 
 
 class ToPlayInputProcessor(InputProcessor):
     """
-    Extracts 'player' or 'to_play' from 'info' or kwargs.
+    Extracts 'player_id' from kwargs.
     """
 
     def __init__(
-        self, num_players: int, info_key: str = "infos", output_key: str = "to_plays"
+        self, num_players: int, input_key: str = "player_id", output_key: str = "to_plays"
     ):
         self.num_players = num_players
-        self.info_key = info_key
+        self.input_key = input_key
         self.output_key = output_key
 
     def process_single(self, **kwargs):
-        # Check kwargs first, then info dict
-        if "player" in kwargs:
-            val = kwargs["player"]
-        else:
-            info = kwargs.get(self.info_key, {}) or {}
-            val = info.get("player", 0)
-
+        val = kwargs.get(self.input_key, 0)
         kwargs[self.output_key] = val
         return kwargs
 
@@ -401,9 +390,7 @@ class SequenceTensorProcessor(InputProcessor):
         # To Plays
         tps_t = torch.tensor(
             [
-                (
-                    sequence.info_history[i] if i < len(sequence.info_history) else {}
-                ).get("player", 0)
+                sequence.player_id_history[i] if i < len(sequence.player_id_history) else 0
                 for i in range(n_states)
             ],
             dtype=torch.int16,
@@ -412,9 +399,7 @@ class SequenceTensorProcessor(InputProcessor):
         # Chances
         chance_t = torch.tensor(
             [
-                (
-                    sequence.info_history[i] if i < len(sequence.info_history) else {}
-                ).get("chance", 0)
+                sequence.chance_history[i] if i < len(sequence.chance_history) else 0
                 for i in range(n_states)
             ],
             dtype=torch.int16,
@@ -425,11 +410,7 @@ class SequenceTensorProcessor(InputProcessor):
             [
                 legal_moves_mask(
                     self.num_actions,
-                    (
-                        sequence.info_history[i]
-                        if i < len(sequence.info_history)
-                        else {}
-                    ).get("legal_moves", []),
+                    sequence.legal_moves_history[i] if i < len(sequence.legal_moves_history) else [],
                 )
                 for i in range(n_states)
             ]

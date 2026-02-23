@@ -84,11 +84,11 @@ class NFSPLearner:
     def store(
         self,
         observation: Any,
-        info: Dict[str, Any],
+        legal_moves: list,
         action: int,
         reward: float,
         next_observation: Any,
-        next_info: Dict[str, Any],
+        next_legal_moves: list,
         done: bool,
         policy_used: str,
     ) -> None:
@@ -97,22 +97,22 @@ class NFSPLearner:
 
         Args:
             observation: Current observation.
-            info: Current info.
+            legal_moves: List of legal action indices.
             action: Action taken.
             reward: Reward received.
             next_observation: Next observation.
-            next_info: Next info.
+            next_legal_moves: List of legal action indices for next state.
             done: Whether the episode finished.
             policy_used: Either "best_response" or "average_strategy".
         """
         # Always store in RL replay buffer
         self.rl_learner.replay_buffer.store(
             observations=observation,
-            infos=info,
+            legal_moves=legal_moves,
             actions=action,
             rewards=reward,
             next_observations=next_observation,
-            next_infos=next_info,
+            next_legal_moves=next_legal_moves,
             terminated=done,
             truncated=False,
             dones=done,
@@ -124,7 +124,7 @@ class NFSPLearner:
             target_policy[action] = 1.0
             self.sl_learner.store(
                 observation=observation,
-                info=info,
+                legal_moves=legal_moves,
                 target_policy=target_policy,
             )
 

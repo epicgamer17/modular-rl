@@ -33,12 +33,11 @@ class MockActor:
 
     def run_episode(self, stats_tracker=None):
         seq = Sequence(num_players=1)
-        seq.append(observation=np.zeros(1), info={}, terminated=False, truncated=False)
+        seq.append(observation=np.zeros(1), terminated=False, truncated=False)
         # Mock a sequence with 5 steps
         for i in range(5):
             seq.append(
                 observation=np.zeros(1),
-                info={},
                 terminated=(i == 4),
                 truncated=False,
                 action=0,

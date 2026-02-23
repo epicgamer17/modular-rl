@@ -151,15 +151,15 @@ class ImitationTrainer(BaseTrainer):
         """
         Stores transitions from a sequence episode into the learner's buffer.
 
-        For imitation learning, we store (observation, info, target_policy)
+        For imitation learning, we store (observation, legal_moves, target_policy)
         where target_policy is typically the action taken as a one-hot vector.
 
         Args:
-            sequence: Sequence object with observation_history, action_history, info_history.
+            sequence: Sequence object with observation_history, action_history, legal_moves_history.
         """
         for i in range(len(sequence.action_history)):
             obs = sequence.observation_history[i]
-            info = sequence.info_history[i] if sequence.info_history else {}
+            legal_moves = sequence.legal_moves_history[i] if i < len(sequence.legal_moves_history) else []
             action = sequence.action_history[i]
 
             # Create one-hot target policy from action
@@ -168,7 +168,7 @@ class ImitationTrainer(BaseTrainer):
 
             self.learner.store(
                 observation=obs,
-                info=info,
+                legal_moves=legal_moves,
                 target_policy=target_policy,
             )
 

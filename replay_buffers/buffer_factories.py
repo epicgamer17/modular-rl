@@ -11,7 +11,7 @@ from replay_buffers.processors import (
     SequenceTensorProcessor,
     GAEProcessor,
     StackedInputProcessor,
-    LegalMovesInputProcessor,
+    LegalMovesMaskProcessor,
     ToPlayInputProcessor,
     StandardOutputProcessor,
     NStepUnrollProcessor,
@@ -104,9 +104,9 @@ def create_dqn_buffer(
                     reward_key="rewards",
                     done_key="dones",
                 ),
-                LegalMovesInputProcessor(
+                LegalMovesMaskProcessor(
                     num_actions,
-                    info_key="next_infos",
+                    input_key="next_legal_moves",
                     output_key="next_legal_moves_masks",
                 ),
                 FilterKeysInputProcessor(
@@ -143,9 +143,9 @@ def create_dqn_buffer(
                     terminated_key="terminated",
                     truncated_key="truncated",
                 ),
-                LegalMovesInputProcessor(
+                LegalMovesMaskProcessor(
                     num_actions,
-                    info_key="next_infos",
+                    input_key="next_legal_moves",
                     output_key="next_legal_moves_masks",
                 ),
                 FilterKeysInputProcessor(
@@ -375,8 +375,8 @@ def create_nfsp_buffer(
     # 2. Rename: 'observation' -> 'observations', 'target_policy' -> 'target_policies'
     input_stack = StackedInputProcessor(
         [
-            LegalMovesInputProcessor(
-                num_actions, info_key="info", output_key="legal_moves_masks"
+            LegalMovesMaskProcessor(
+                num_actions, input_key="legal_moves", output_key="legal_moves_masks"
             ),
             FilterKeysInputProcessor(
                 ["observations", "legal_moves_masks", "target_policies"]
@@ -462,8 +462,8 @@ def create_ppo_buffer(
     input_stack = StackedInputProcessor(
         [
             GAEProcessor(gamma, gae_lambda),
-            LegalMovesInputProcessor(
-                num_actions, info_key="info", output_key="legal_moves_masks"
+            LegalMovesMaskProcessor(
+                num_actions, input_key="legal_moves", output_key="legal_moves_masks"
             ),
         ]
     )

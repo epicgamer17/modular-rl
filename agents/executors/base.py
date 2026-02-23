@@ -70,14 +70,14 @@ class BaseExecutor(ABC):
             lengths = []
             fps_values = []
             for res in results:
-                if hasattr(res, "rewards") and hasattr(res, "info_history"):
-                    # For multiplayer: get player 0's final reward
-                    final_info = res.info_history[-1] if res.info_history else {}
-                    if "final_rewards" in final_info:
+                if hasattr(res, "rewards") and hasattr(res, "stats"):
+                    # For multiplayer: get player 0's final reward from stats
+                    final_player_rewards = res.stats.get("final_player_rewards", None)
+                    if final_player_rewards:
                         # This is the proper multi-agent reward dict
-                        player_ids = list(final_info["final_rewards"].keys())
+                        player_ids = list(final_player_rewards.keys())
                         if player_ids:
-                            scores.append(final_info["final_rewards"][player_ids[0]])
+                            scores.append(final_player_rewards[player_ids[0]])
                         else:
                             scores.append(sum(res.rewards))
                     else:

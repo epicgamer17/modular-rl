@@ -204,7 +204,8 @@ class BaseActor(ABC):
         sequence = Sequence(self.num_players)
 
         state, info = self.reset()
-        sequence.append(state, info, terminated=False, truncated=False)
+        legal_moves = info.get("legal_moves", []) if info else []
+        sequence.append(state, terminated=False, truncated=False, legal_moves=legal_moves)
 
         while not self._done:
             player_id = self._get_player_id()
@@ -219,9 +220,12 @@ class BaseActor(ABC):
             if "policies" in metadata and player_id:
                 policy_mode = metadata["policies"].get(player_id, policy_mode)
 
+            next_info = transition["next_info"]
+            next_legal_moves = next_info.get("legal_moves", []) if next_info else []
+            all_player_rewards = next_info.get("all_player_rewards", None) if next_info else None
+
             sequence.append(
                 observation=transition["next_state"],
-                info=transition["next_info"],
                 terminated=transition["terminated"],
                 truncated=transition["truncated"],
                 action=transition["action"],
@@ -229,6 +233,8 @@ class BaseActor(ABC):
                 policy=policy_mode,
                 value=metadata.get("value"),
                 player_id=player_id,
+                legal_moves=next_legal_moves,
+                all_player_rewards=all_player_rewards,
             )
 
         sequence.duration_seconds = time.time() - start_time
@@ -268,8 +274,8 @@ class BaseActor(ABC):
                     done=transition["done"],
                     terminated=transition["terminated"],
                     truncated=transition["truncated"],
-                    info=transition["info"],
-                    next_info=transition["next_info"],
+                    legal_moves=transition["info"].get("legal_moves", []) if transition.get("info") else [],
+                    next_legal_moves=transition["next_info"].get("legal_moves", []) if transition.get("next_info") else [],
                     metadata=transition.get("metadata"),
                 )
             )
@@ -378,7 +384,7 @@ class PettingZooActor(BaseActor):
         return self.env.agent_selection
 
     def _finalize_episode_info(self, sequence: Sequence) -> None:
-        sequence.info_history[-1]["final_rewards"] = dict(self.env.rewards)
+        sequence.stats["final_player_rewards"] = dict(self.env.rewards)
 
     def _get_score(self, sequence: Sequence) -> float:
         final_rewards = dict(self.env.rewards)

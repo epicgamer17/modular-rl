@@ -5,7 +5,6 @@ rather than complete game episodes.
 
 from dataclasses import dataclass
 from typing import Any, Optional, List
-import numpy as np
 
 
 @dataclass
@@ -24,8 +23,8 @@ class Transition:
     done: bool
     terminated: bool
     truncated: bool
-    info: Optional[dict] = None
-    next_info: Optional[dict] = None
+    legal_moves: Optional[List[int]] = None
+    next_legal_moves: Optional[List[int]] = None
     metadata: Optional[dict] = None
 
 
@@ -39,7 +38,7 @@ class TransitionBatch:
     """
 
     transitions: List[Transition]
-    episode_stats: Optional[dict] = None  # e.g., episode_length, score
+    episode_stats: Optional[dict] = None
 
     def __len__(self) -> int:
         return len(self.transitions)
