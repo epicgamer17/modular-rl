@@ -6,7 +6,7 @@ from agents.learners.muzero_learner import MuZeroLearner
 from agents.action_selectors.selectors import CategoricalSelector
 from agents.action_selectors.decorators import MCTSDecorator
 from search.search_factories import create_mcts
-from agents.actors.actors import get_actor_class
+from agents.workers.actors import get_actor_class
 from modules.agent_nets.modular import ModularAgentNetwork
 from stats.stats import StatTracker, PlotType
 
@@ -109,7 +109,7 @@ class MuZeroTrainer(BaseTrainer):
             device,
             self.name,
         )
-        from agents.actors.actors import get_actor_class
+        from agents.workers.actors import get_actor_class
 
         actor_cls = get_actor_class(env)
         self.executor.launch(actor_cls, worker_args, num_workers)
@@ -160,7 +160,12 @@ class MuZeroTrainer(BaseTrainer):
 
                 # 7. Periodic testing
                 if self.training_step % self.test_interval == 0:
-                    self._run_tests()
+                    self.trigger_test(
+                        self.agent_network.state_dict(), self.training_step
+                    )
+
+            # Poll for background test results
+            self.poll_test()
 
             # Periodic logging
             if self.training_step % 100 == 0 and self.training_step > 0:
@@ -170,6 +175,7 @@ class MuZeroTrainer(BaseTrainer):
             if hasattr(self.stats, "drain_queue"):
                 self.stats.drain_queue()
 
+        self.stop_test()
         self.executor.stop()
         # Final checkpoint and stats plot
         self._save_checkpoint()
@@ -192,13 +198,6 @@ class MuZeroTrainer(BaseTrainer):
             self.learner.optimizer.load_state_dict(checkpoint["optimizer"])
         if "scheduler" in checkpoint:
             self.learner.lr_scheduler.load_state_dict(checkpoint["scheduler"])
-
-    def select_test_action(self, state, info, env) -> Any:
-        """Search and select greedy action for testing."""
-        action, _ = self.action_selector.select_action(
-            self.agent_network, state, info, exploration=False, episode_step=1e9
-        )
-        return action
 
     def _setup_stats(self):
         """Initializes the stat tracker with all required keys and plot types."""

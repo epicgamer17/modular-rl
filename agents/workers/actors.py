@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 
 from replay_buffers.sequence import Sequence
 from replay_buffers.transition import Transition, TransitionBatch
-from agents.policies.policy import Policy
 from agents.action_selectors.selectors import BaseActionSelector
 from utils.wrappers import wrap_recording
 

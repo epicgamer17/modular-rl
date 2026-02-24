@@ -7,9 +7,8 @@ from agents.trainers.base_trainer import BaseTrainer
 from agents.executors.local_executor import LocalExecutor
 from agents.executors.torch_mp_executor import TorchMPExecutor
 from agents.learners.ppo_learner import PPOLearner
-from agents.learners.ppo_learner import PPOLearner
 from agents.action_selectors.factory import SelectorFactory
-from agents.actors.actors import get_actor_class
+from agents.workers.actors import get_actor_class
 from modules.agent_nets.modular import ModularAgentNetwork
 
 # from agents.policies.ppo_policy import PPOPolicy # REMOVED
@@ -244,7 +243,10 @@ class PPOTrainer(BaseTrainer):
 
             # 5. Periodic testing
             if self.training_step % self.test_interval == 0:
-                self._run_tests()
+                self.trigger_test(self.agent_network.state_dict(), self.training_step)
+
+            # Poll for background test results
+            self.poll_test()
 
             # Periodic logging
             if self.training_step % 10 == 0:
@@ -258,6 +260,7 @@ class PPOTrainer(BaseTrainer):
             if hasattr(self.stats, "drain_queue"):
                 self.stats.drain_queue()
 
+        self.stop_test()
         self.executor.stop()
         self._save_checkpoint()
         print("Training finished.")
@@ -291,17 +294,6 @@ class PPOTrainer(BaseTrainer):
             )
         if "value_scheduler" in checkpoint:
             self.learner.value_scheduler.load_state_dict(checkpoint["value_scheduler"])
-
-    def select_test_action(self, state, info, env) -> Any:
-        # PPO usually tests with its policy (which might be greedy depending on compute_action implementation)
-        # We enforce greedy/non-exploratory for test if possible, or sample if that's standard PPO (usually stochastic)
-        # But for 'score' we usually want best effort.
-        # CategoricalSelector has 'exploration' kwarg.
-        obs_tensor = torch.tensor(state, dtype=torch.float32, device=self.device)
-        action, _ = self.action_selector.select_action(
-            self.agent_network, obs_tensor, info, exploration=False
-        )
-        return action.item()
 
     def _setup_stats(self):
         """Initializes the stat tracker with PPO-specific keys and plot types."""

@@ -6,7 +6,7 @@ from agents.trainers.base_trainer import BaseTrainer
 from agents.learners.rainbow_learner import RainbowLearner
 
 from agents.action_selectors.factory import SelectorFactory
-from agents.actors.actors import get_actor_class
+from agents.workers.actors import get_actor_class
 from modules.agent_nets.modular import ModularAgentNetwork
 from replay_buffers.transition import TransitionBatch, Transition
 from stats.stats import StatTracker, PlotType
@@ -150,7 +150,12 @@ class RainbowTrainer(BaseTrainer):
 
                 # 9. Periodic testing
                 if self.training_step % self.test_interval == 0:
-                    self._run_tests()
+                    self.trigger_test(
+                        self.agent_network.state_dict(), self.training_step
+                    )
+
+            # Poll for test results
+            self.poll_test()
 
             # Periodic logging
             if self.training_step % 100 == 0 and self.training_step > 0:
@@ -160,6 +165,7 @@ class RainbowTrainer(BaseTrainer):
                     f"Buffer: {self.buffer.size}"
                 )
 
+        self.stop_test()
         self.executor.stop()
         self._save_checkpoint()
         print("Training finished.")
@@ -202,84 +208,7 @@ class RainbowTrainer(BaseTrainer):
             dones=transition.done,
         )
 
-    def test(self, num_trials: int, dir: str = "./checkpoints") -> Dict[str, float]:
-        """
-        Runs evaluation episodes and returns test scores.
-
-        Args:
-            num_trials: Number of evaluation episodes.
-            dir: Directory for saving results.
-
-        Returns:
-            Dictionary with 'score', 'max_score', 'min_score' keys.
-        """
-        if num_trials == 0:
-            return {}
-
-        test_env = self.config.game.make_env()
-        scores = []
-
-        with torch.inference_mode():
-            for _ in range(num_trials):
-                state, info = test_env.reset()
-                done = False
-                episode_reward = 0.0
-                episode_length = 0
-
-                while not done and episode_length < 1000:
-                    episode_length += 1
-
-                    # Use action selector with exploration disabled/greedy?
-                    # Test usually implies greedy. EpsilonGreedySelector with epsilon=0?
-                    # Or just use the selector as is but update epsilon to 0 temporarily?
-                    # Or use ArgmaxSelector?
-                    # The standard way is to assume the selector is configured for test or we pass kwargs?
-                    # BaseActionSelector.select_action takes **kwargs.
-                    # EpsilonGreedySelector doesn't explicitly take 'epsilon' in select_action overrides yet?
-                    # Let's assume we can update it or passing kwargs works if selector supports it.
-                    # My EpsilonGreedySelector implementation uses self.epsilon.
-                    # I should probably update it to support override.
-                    # For now, I'll rely on update_parameters or a temporary selector for test?
-                    # Efficient way: Just use argmax on value if network provides it.
-                    # But proper way is using selector.
-                    # If I use self.action_selector, it has self.epsilon.
-                    # Use a separate test selector?
-                    # Or just manually select greedy here since we know it's evaluation?
-                    # "select_test_action" usually does greedy.
-                    # Let's use the selector but we need to force greedy.
-                    # If it's EpsilonGreedy, we can't easily force it without changing state.
-                    # I'll manually do argmax here for safety as Rainbow test is greedy.
-
-                    # Direct replacement of self.policy.compute_action(state, info)
-                    # We want GREEDY action.
-                    # network_output = self.agent_network.initial_inference(obs)
-                    # action = network_output.q_values.argmax()
-
-                    # BETTER: Use the selector mechanism but update params?
-                    # Doing manual argmax mimics DirectPolicy behavior for test.
-                    net_out = self.agent_network.obs_inference(state)
-                    action = net_out.q_values.argmax(dim=-1)
-
-                    action_val = action.item()
-
-                    state, reward, terminated, truncated, info = test_env.step(
-                        action_val
-                    )
-                    episode_reward += reward
-                    done = terminated or truncated
-
-                scores.append(episode_reward)
-
-        test_env.close()
-
-        if not scores:
-            return {}
-
-        return {
-            "score": sum(scores) / len(scores),
-            "max_score": max(scores),
-            "min_score": min(scores),
-        }
+    # test() removed, handled by Tester
 
     def _save_checkpoint(self) -> None:
         """Saves Rainbow checkpoint."""
@@ -303,13 +232,6 @@ class RainbowTrainer(BaseTrainer):
             self.learner.optimizer.load_state_dict(checkpoint["optimizer"])
         if "epsilon" in checkpoint:
             self.current_epsilon = checkpoint["epsilon"]
-
-    def select_test_action(self, state, info, env) -> Any:
-        """Greedy action for testing."""
-        # Manual greedy selection using model
-        net_out = self.agent_network.obs_inference(state)
-        action = net_out.q_values.argmax(dim=-1)
-        return action.item()
 
     def _setup_stats(self) -> None:
         """

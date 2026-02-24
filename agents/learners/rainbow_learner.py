@@ -123,7 +123,9 @@ class RainbowLearner(BaseLearner):
         observations = batch["observations"].to(self.device)
         next_observations = batch["next_observations"].to(self.device)
 
-        online_out = self.agent_network.learner_inference({"observations": observations})
+        online_out = self.agent_network.learner_inference(
+            {"observations": observations}
+        )
 
         with torch.no_grad():
             next_online_out = self.agent_network.learner_inference(
@@ -174,18 +176,27 @@ class RainbowLearner(BaseLearner):
         Updates the target network weights.
         Uses soft update (EMA) if config.soft_update is True, else hard copy.
         """
-        if self.config.soft_update:
-            # Soft update: target = beta * target + (1 - beta) * online
-            for target_param, online_param in zip(
-                self.target_agent_network.parameters(), self.agent_network.parameters()
-            ):
-                target_param.data.copy_(
-                    self.config.ema_beta * target_param.data
-                    + (1.0 - self.config.ema_beta) * online_param.data
-                )
-        else:
-            # Hard update
-            self.target_agent_network.load_state_dict(self.agent_network.state_dict())
+        with torch.no_grad():
+            if self.config.soft_update:
+                # Soft update: target = beta * target + (1 - beta) * online
+                for target_param, online_param in zip(
+                    self.target_agent_network.parameters(),
+                    self.agent_network.parameters(),
+                ):
+                    target_param.data.mul_(self.config.ema_beta).add_(
+                        online_param.data, alpha=1.0 - self.config.ema_beta
+                    )
+            else:
+                # Hard update
+                for target_param, online_param in zip(
+                    self.target_agent_network.parameters(),
+                    self.agent_network.parameters(),
+                ):
+                    target_param.data.copy_(online_param.data, non_blocking=True)
+                for target_buf, online_buf in zip(
+                    self.target_agent_network.buffers(), self.agent_network.buffers()
+                ):
+                    target_buf.data.copy_(online_buf.data, non_blocking=True)
 
     def predict(self, states: torch.Tensor) -> torch.Tensor:
         """

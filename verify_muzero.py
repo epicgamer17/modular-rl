@@ -50,7 +50,7 @@ trainer = MuZeroTrainer(
 )
 
 trainer.checkpoint_interval = 1000
-trainer.test_interval = 200
+trainer.test_interval = 20
 trainer.test_trials = 20
 
 trainer.train()

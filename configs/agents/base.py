@@ -10,7 +10,11 @@ from configs.base import (
     NoisyConfig,
 )
 import torch.nn.functional as F
-from modules.utils import prepare_activations, prepare_kernel_initializers, kernel_initializer_wrapper
+from modules.utils import (
+    prepare_activations,
+    prepare_kernel_initializers,
+    kernel_initializer_wrapper,
+)
 from configs.games.game import GameConfig
 from configs.selectors import SelectorConfig
 
@@ -41,6 +45,7 @@ class AgentConfig(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig):
         self.save_intermediate_weights: bool = self.parse_field(
             "save_intermediate_weights", False
         )
+        self.test_trials: int = self.parse_field("test_trials", 5)
 
         # Loss & Activation
         self.loss_function = self.parse_field("loss_function", F.mse_loss)

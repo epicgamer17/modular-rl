@@ -4,7 +4,7 @@ from typing import Optional, List, Dict, Any, Tuple
 from agents.trainers.base_trainer import BaseTrainer
 from agents.learners.imitation_learner import ImitationLearner
 from agents.action_selectors.factory import SelectorFactory
-from agents.actors.actors import get_actor_class
+from agents.workers.actors import get_actor_class
 from modules.agent_nets.policy_imitation import SupervisedNetwork
 from stats.stats import StatTracker, PlotType
 from agents.executors.local_executor import LocalExecutor
@@ -159,7 +159,11 @@ class ImitationTrainer(BaseTrainer):
         """
         for i in range(len(sequence.action_history)):
             obs = sequence.observation_history[i]
-            legal_moves = sequence.legal_moves_history[i] if i < len(sequence.legal_moves_history) else []
+            legal_moves = (
+                sequence.legal_moves_history[i]
+                if i < len(sequence.legal_moves_history)
+                else []
+            )
             action = sequence.action_history[i]
 
             # Create one-hot target policy from action

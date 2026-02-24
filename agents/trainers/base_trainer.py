@@ -47,6 +47,111 @@ class BaseTrainer:
         self.test_interval = max(total_steps // 30, 1)
         self.test_trials = 5
 
+        # Test execution state
+        self.test_executor = None
+        self._tester_step = 0
+
+    def setup_tester(self):
+        """Initializes the Tester using the TestFactory and launched via an Executor."""
+        from agents.workers.tester import TestFactory, Tester
+        from agents.executors.local_executor import LocalExecutor
+        from agents.executors.torch_mp_executor import TorchMPExecutor
+
+        # 1. Initialize Executor
+        if self.config.multi_process:
+            self.test_executor = TorchMPExecutor()
+        else:
+            self.test_executor = LocalExecutor()
+
+        # 2. Prepare test types
+        test_types = TestFactory.create_default_test_types(self.config)
+        if self.test_agents:
+            from agents.workers.tester import VsAgentTest
+
+            for agent in self.test_agents:
+                for player_idx in range(self.num_players):
+                    test_types.append(
+                        VsAgentTest(
+                            name=f"vs_{agent.name}_p{player_idx}",
+                            num_trials=self.test_trials,
+                            opponent=agent,
+                            player_idx=player_idx,
+                        )
+                    )
+
+        # 3. Launch Tester
+        launch_args = TestFactory.get_launch_args(
+            config=self.config,
+            agent_network=self.agent_network,
+            action_selector=self.action_selector,
+            device=torch.device("cpu"),
+            name=f"{self.name}_tester",
+            test_types=test_types,
+        )
+        self.test_executor.launch(Tester, launch_args, num_workers=1)
+
+    def trigger_test(self, state_dict: Dict[str, Any], step: int):
+        """
+        Triggers evaluation. For LocalExecutor, this runs immediately.
+        For TorchMPExecutor, it ensures weights are synced.
+        """
+        if self.test_executor is None:
+            self.setup_tester()
+            if self.test_executor is None:
+                return
+
+        # Update step (weights are shared via shared_memory if multi_process=True)
+        self._tester_step = step
+
+        # If local, run synchronously now
+        if not self.config.multi_process:
+            # LocalExecutor._fetch_available_results runs play_sequence
+            results, _ = self.test_executor.collect_data(min_samples=1)
+            for res in results:
+                self._process_test_results(res, step)
+
+    def poll_test(self):
+        """Polls for background test results from the executor."""
+        if self.test_executor is None or not self.config.multi_process:
+            return
+
+        # Fetch whatever is available in the result queue
+        results, _ = self.test_executor.collect_data(min_samples=None)
+        if results:
+            # We only care about the most recent test result for logging
+            self._process_test_results(results[-1], self._tester_step)
+
+    def stop_test(self):
+        """Stops the test executor."""
+        if self.test_executor is not None:
+            self.test_executor.stop()
+            self.test_executor = None
+
+    def _process_test_results(self, all_results: Dict[str, Dict[str, Any]], step: int):
+        """Logs results from all test types."""
+        if not isinstance(all_results, dict):
+            return
+
+        for test_name, res in all_results.items():
+            if not isinstance(res, dict):
+                continue
+
+            if "score" in res:
+                self.stats.append(f"{test_name}_score", res["score"], subkey="avg")
+            if "min_score" in res:
+                self.stats.append(f"{test_name}_score", res["min_score"], subkey="min")
+            if "max_score" in res:
+                self.stats.append(f"{test_name}_score", res["max_score"], subkey="max")
+
+            # Log player-specific scores
+            for key, val in res.items():
+                if key.startswith("p") and key.endswith("_score"):
+                    self.stats.append(
+                        f"{test_name}_score", val, subkey=key.split("_")[0]
+                    )
+
+            print(f"[{test_name}] score: {res.get('score', 0):.3f} (step {step})")
+
     def _detect_player_id(self, env) -> str:
         if self.config.game.num_players > 1:
             return env.possible_agents[0]

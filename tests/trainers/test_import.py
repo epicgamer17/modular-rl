@@ -16,7 +16,7 @@ print("Importing muzero_policy...", flush=True)
 import agents.muzero_policy
 
 print("Importing actors...", flush=True)
-import agents.actors
+import agents.workers
 
 print("Importing Network...", flush=True)
 from modules.agent_nets.muzero import Network

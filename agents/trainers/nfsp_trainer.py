@@ -6,7 +6,7 @@ from agents.trainers.base_trainer import BaseTrainer
 from agents.learners.nfsp_learner import NFSPLearner
 from agents.policies.nfsp_policy import NFSPPolicy
 from agents.action_selectors.selectors import EpsilonGreedySelector, CategoricalSelector
-from agents.actors.actors import get_actor_class
+from agents.workers.actors import get_actor_class
 from agents.executors.local_executor import LocalExecutor
 from agents.executors.torch_mp_executor import TorchMPExecutor
 from replay_buffers.transition import TransitionBatch, Transition

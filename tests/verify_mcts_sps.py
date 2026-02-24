@@ -4,7 +4,7 @@ import unittest
 from typing import Any, Dict, List, Tuple, Type, Optional
 from agents.action_selectors.decorators import MCTSDecorator
 from agents.action_selectors.selectors import CategoricalSelector
-from agents.actors.actors import BaseActor, TransitionBatch
+from agents.workers.actors import BaseActor, TransitionBatch
 from replay_buffers.sequence import Sequence
 from utils.schedule import ScheduleConfig
 
