@@ -53,6 +53,7 @@ class Conv2dStack(BaseStack):
             )
 
             # --- START: Building the Layer ---
+            use_bias = norm_type == "none"
             conv = nn.Conv2d(
                 in_channels=current_input_channels,
                 out_channels=filters[i],
@@ -61,6 +62,7 @@ class Conv2dStack(BaseStack):
                 padding=(
                     torch_padding if not torch_padding is None else 0
                 ),  # Use 0 if manual
+                bias=use_bias,
             )
 
             norm_layer = build_normalization_layer(norm_type, filters[i], dim=2)
@@ -131,6 +133,7 @@ class ConvTranspose2dStack(BaseStack):
             # Dreamer TF implementation often uses padding='valid' (0 in PyTorch) for Decoder
             # but relies on the kernel size to upscale.
 
+            use_bias = norm_type == "none"
             conv = nn.ConvTranspose2d(
                 in_channels=current_input_channels,
                 out_channels=filters[i],
@@ -138,6 +141,7 @@ class ConvTranspose2dStack(BaseStack):
                 stride=s,
                 padding=0,  # Defaulting to valid as per common Dreamer impl
                 output_padding=op,
+                bias=use_bias,
             )
 
             norm_layer = build_normalization_layer(norm_type, filters[i], dim=2)

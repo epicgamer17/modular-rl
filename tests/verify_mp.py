@@ -1,9 +1,9 @@
 import torch
 import time
 import os
-from trainers.muzero_trainer import MuZeroTrainer
+from agents.trainers.muzero_trainer import MuZeroTrainer
 from configs.agents.muzero import MuZeroConfig
-from configs.games.cartpole_config import CartPoleConfig
+from configs.games.cartpole import CartPoleConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 import torch.nn.functional as F
 
@@ -14,6 +14,17 @@ def action_as_onehot(action, num_actions):
     one_hot = torch.zeros(num_actions)
     one_hot[action] = 1.0
     return one_hot
+
+
+import torch.multiprocessing as mp
+
+try:
+    import platform
+
+    if platform.system() == "Darwin":
+        mp.set_sharing_strategy("file_system")
+except Exception:
+    pass
 
 
 def verify():
@@ -48,6 +59,9 @@ def verify():
         "reward_loss_function": F.cross_entropy,
         "policy_loss_function": F.cross_entropy,
         "support_range": 31,
+        "policy_loss_function": F.cross_entropy,
+        "support_range": 31,
+        "action_selector": {"type": "argmax", "base": {"type": "argmax"}},
     }
 
     config = MuZeroConfig(config_dict, game_config)
@@ -68,6 +82,20 @@ def verify():
 
         print("Training step:", trainer.training_step)
         assert trainer.training_step >= 1
+
+        # Check num_slots
+        num_slots = trainer.executor.shared_pool.num_slots
+        print(f"Pool size: {num_slots}")
+        assert num_slots >= 64, f"Expected at least 64 slots, got {num_slots}"
+
+        # All slots should have been released after train() stops the executor
+        # Wait a bit for async cleanup
+        time.sleep(1.0)
+        free_slots = trainer.executor.shared_pool.free_slots.qsize()
+        print(f"Free slots after train(): {free_slots} / {num_slots}")
+        assert (
+            free_slots == num_slots
+        ), f"Slot leak detected! {num_slots - free_slots} slots not returned."
 
         print("MuZeroTrainer MP Verification PASSED!")
 

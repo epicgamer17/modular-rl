@@ -116,46 +116,53 @@ class NoisyDense(nn.Module):
         return f"in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None}, initial_sigma={self.initial_sigma}, use_factorized={self.use_factorized}"
 
 
-def build_dense(in_features: int, out_features: int, sigma: float = 0):
+def build_dense(
+    in_features: int, out_features: int, sigma: float = 0, bias: bool = True
+):
     if sigma == 0:
-        return Dense(in_features, out_features)
+        return Dense(in_features, out_features, bias=bias)
     else:
-        return NoisyDense(in_features, out_features, initial_sigma=sigma)
+        return NoisyDense(in_features, out_features, initial_sigma=sigma, bias=bias)
 
 
 # modules/dense_stack.py
-from typing import Callable
+from typing import Callable, List
 from torch import nn, Tensor
-from modules.blocks.base_stack import BaseStack  # Assuming new structure
+from modules.blocks.base_stack import BaseStack
+from modules.utils import build_normalization_layer
 
 
 class DenseStack(BaseStack):
     def __init__(
         self,
         initial_width: int,
-        widths: list[int],
+        widths: List[int],
         activation: nn.Module = nn.ReLU(),
         noisy_sigma: float = 0,
         norm_type: Literal["batch", "layer", "none"] = "none",
     ):
         super().__init__(activation=activation, noisy_sigma=noisy_sigma)
 
-        # Use _layers from BaseStack
-        self._layers = nn.ModuleList()
         self.norm_type = norm_type
+        self.initial_width = initial_width
 
         current_input_width = initial_width
         for width in widths:
             # Build the layer (Dense or NoisyDense)
+            use_bias = norm_type == "none"
             dense_layer = build_dense(
                 in_features=current_input_width,
                 out_features=width,
                 sigma=noisy_sigma,
+                bias=use_bias,
             )
-            self._layers.append(dense_layer)
+
+            norm_layer = build_normalization_layer(norm_type, width, dim=1)
+
+            layer = nn.Sequential(dense_layer, norm_layer)
+            self._layers.append(layer)
             current_input_width = width
 
-        self.initial_width = initial_width
         self._output_len = current_input_width
 
     @property

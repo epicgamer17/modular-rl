@@ -291,18 +291,20 @@ def create_muzero_buffer(
 
     obs_dtype = observation_dtype
     obs_shape = observation_dimensions
-    
+
     if observation_compression:
         import numpy as np
+
         obs_size = int(np.prod(observation_dimensions))
         if observation_quantization == "float16":
             obs_bytes = obs_size * 2
         else:
             obs_bytes = obs_size * 4
-        
-        import zlib
-        sample_data = bytes(obs_bytes)
-        max_compressed = len(zlib.compress(sample_data, level=1)) + 4
+
+        # Use a safe upper bound for compressed size.
+        # For zlib, the maximum expansion is roughly 0.03% + 11 bytes.
+        # We use a conservative 1% + 128 bytes to be safe for small observations.
+        max_compressed = obs_bytes + (obs_bytes // 100) + 128
         obs_dtype = torch.uint8
         obs_shape = (max_compressed,)
     elif observation_quantization == "float16":
@@ -342,19 +344,23 @@ def create_muzero_buffer(
         ),
     ]
 
-    base_processor = SequenceTensorProcessor(num_actions, num_players, player_id_mapping)
-    
+    base_processor = SequenceTensorProcessor(
+        num_actions, num_players, player_id_mapping
+    )
+
     if observation_quantization or observation_compression:
-        input_processor = StackedInputProcessor([
-            base_processor,
-            ObservationCompressionProcessor(
-                quantization=observation_quantization,
-                compression=observation_compression,
-            ),
-        ])
+        input_processor = StackedInputProcessor(
+            [
+                base_processor,
+                ObservationCompressionProcessor(
+                    quantization=observation_quantization,
+                    compression=observation_compression,
+                ),
+            ]
+        )
     else:
         input_processor = base_processor
-    
+
     inner_output_processor = NStepUnrollProcessor(
         unroll_steps,
         n_step,
@@ -366,7 +372,7 @@ def create_muzero_buffer(
         value_prefix,
         tau,
     )
-    
+
     if observation_quantization or observation_compression:
         output_processor = ObservationDecompressionProcessor(
             inner_processor=inner_output_processor,
