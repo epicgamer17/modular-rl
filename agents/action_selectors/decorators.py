@@ -108,10 +108,27 @@ class MCTSDecorator(BaseActionSelector):
 
         # 1. Determine "to_play"
         to_play = 0
-        if info and "player" in info:
-            to_play = info["player"]
-        elif info and "agent_selection" in info:
-            to_play = info.get("to_play", 0)
+
+        player_id = kwargs.get("player_id")
+        if player_id is not None:
+            if isinstance(player_id, int):
+                to_play = player_id
+            elif isinstance(player_id, str):
+                try:
+                    # Attempt to parse PettingZoo style "player_1" or just "1"
+                    if "_" in player_id:
+                        to_play = int(player_id.split("_")[-1])
+                    else:
+                        to_play = int(player_id)
+                except ValueError:
+                    pass
+
+        # Fallback to info dict if not found
+        if to_play == 0 and info:
+            if "player" in info:
+                to_play = info["player"]
+            elif "to_play" in info:
+                to_play = info["to_play"]
 
         # Get episode step for temperature
         # If exploration is explicitly False, we can skip temperature decay to avoid massive loops.

@@ -205,7 +205,9 @@ class BaseActor(ABC):
 
         state, info = self.reset()
         legal_moves = info.get("legal_moves", []) if info else []
-        sequence.append(state, terminated=False, truncated=False, legal_moves=legal_moves)
+        sequence.append(
+            state, terminated=False, truncated=False, legal_moves=legal_moves
+        )
 
         while not self._done:
             player_id = self._get_player_id()
@@ -222,7 +224,9 @@ class BaseActor(ABC):
 
             next_info = transition["next_info"]
             next_legal_moves = next_info.get("legal_moves", []) if next_info else []
-            all_player_rewards = next_info.get("all_player_rewards", None) if next_info else None
+            all_player_rewards = (
+                next_info.get("all_player_rewards", None) if next_info else None
+            )
 
             sequence.append(
                 observation=transition["next_state"],
@@ -274,8 +278,16 @@ class BaseActor(ABC):
                     done=transition["done"],
                     terminated=transition["terminated"],
                     truncated=transition["truncated"],
-                    legal_moves=transition["info"].get("legal_moves", []) if transition.get("info") else [],
-                    next_legal_moves=transition["next_info"].get("legal_moves", []) if transition.get("next_info") else [],
+                    legal_moves=(
+                        transition["info"].get("legal_moves", [])
+                        if transition.get("info")
+                        else []
+                    ),
+                    next_legal_moves=(
+                        transition["next_info"].get("legal_moves", [])
+                        if transition.get("next_info")
+                        else []
+                    ),
                     metadata=transition.get("metadata"),
                 )
             )
@@ -380,15 +392,30 @@ class PettingZooActor(BaseActor):
     def _detect_num_players(self) -> int:
         return len(self.env.possible_agents)
 
-    def _get_player_id(self) -> Optional[str]:
-        return self.env.agent_selection
+    def _get_player_id(self) -> Optional[int]:
+        agent = self.env.agent_selection
+        if hasattr(self.env, "possible_agents") and self.env.possible_agents:
+            try:
+                return self.env.possible_agents.index(agent)
+            except ValueError:
+                pass
+
+        # Fallback string parsing
+        if isinstance(agent, str):
+            try:
+                return int(agent.split("_")[-1])
+            except ValueError:
+                pass
+        return 0
 
     def _finalize_episode_info(self, sequence: Sequence) -> None:
         sequence.stats["final_player_rewards"] = dict(self.env.rewards)
 
     def _get_score(self, sequence: Sequence) -> float:
         final_rewards = dict(self.env.rewards)
-        agent_id = self.env.possible_agents[0] if self.env.possible_agents else "player_0"
+        agent_id = (
+            self.env.possible_agents[0] if self.env.possible_agents else "player_0"
+        )
         return final_rewards.get(agent_id, 0.0)
 
     def _reset_env(self) -> Tuple[Any, Dict[str, Any]]:
