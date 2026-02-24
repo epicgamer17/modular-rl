@@ -11,6 +11,9 @@ class BaseExecutor(ABC):
     def __init__(self):
         self.workers = []
         self._last_stats_time = time.time()
+        # Buffer for results from different worker types
+        # Stores {worker_type_name: [results]}
+        self.result_buffer = {}
 
     @abstractmethod
     def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int):
@@ -27,38 +30,61 @@ class BaseExecutor(ABC):
         """Updates the weights of the workers."""
         pass
 
-    @abstractmethod
-    def stop(self):
-        """Stops all workers."""
-        pass
-
     def launch(self, worker_cls: Type, args: Tuple, num_workers: int):
-        """Initializes and starts the workers."""
+        """Initializes and starts a group of workers. Appends to existing workers."""
         self._launch_workers(worker_cls, args, num_workers)
 
     def collect_data(
-        self, min_samples: Optional[int] = None
+        self, min_samples: Optional[int] = None, worker_type: Optional[Type] = None
     ) -> Tuple[List[Any], Dict[str, Any]]:
         """
         Collects data from workers, accumulating until min_samples is reached.
         If min_samples is None, returns whatever is currently available.
 
+        Args:
+            min_samples: Minimum number of samples to collect before returning.
+            worker_type: If provided, only returns results from this worker type.
+                         Other types are buffered internally.
+
         Returns:
             Tuple of (list of data items, dict of statistics).
         """
         results = []
+        type_name = worker_type.__name__ if worker_type else None
+
+        # 1. Take from buffer first if type specified
+        if type_name and type_name in self.result_buffer:
+            results.extend(self.result_buffer.pop(type_name))
+
+        # 2. Fetch new results and route them
+        def fetch_and_route():
+            new_batch = self._fetch_available_results()
+            for obj in new_batch:
+                # Results should be tuples/dicts/objects with type info if mixed
+                # For backward compatibility, if it's not a (type, data) tuple,
+                # we assume it matches the current request or default.
+                if isinstance(obj, tuple) and len(obj) == 2 and isinstance(obj[0], str):
+                    t_name, data = obj
+                    if type_name and t_name == type_name:
+                        results.append(data)
+                    else:
+                        if t_name not in self.result_buffer:
+                            self.result_buffer[t_name] = []
+                        self.result_buffer[t_name].append(data)
+                else:
+                    # Default: assume it's what we asked for
+                    results.append(obj)
 
         if min_samples is not None:
             while len(results) < min_samples:
-                new_results = self._fetch_available_results()
-                if new_results:
-                    results.extend(new_results)
-                else:
-                    time.sleep(0.01)  # Minimal backoff
+                fetch_and_route()
+                if len(results) >= min_samples:
+                    break
+                time.sleep(0.01)
         else:
-            results.extend(self._fetch_available_results())
+            fetch_and_route()
 
-        # Stats calculation logic
+        # Stats calculation logic (only for TransitionBatch-like objects)
         stats = self._calculate_stats(results)
 
         return results, stats
@@ -72,6 +98,15 @@ class BaseExecutor(ABC):
             total_transitions = 0
             mcts_sps_values = []
             for res in results:
+                # Only calculate stats for items that look like TransitionBatch or have expected keys
+                is_transition_batch = hasattr(res, "rewards") or (
+                    isinstance(res, dict)
+                    and ("transitions" in res or "episode_stats" in res)
+                )
+
+                if not is_transition_batch:
+                    continue
+
                 total_transitions += len(res)
                 if hasattr(res, "stats") and "mcts_sps" in res.stats:
                     mcts_sps_values.append(res.stats["mcts_sps"])

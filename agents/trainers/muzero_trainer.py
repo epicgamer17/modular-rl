@@ -111,8 +111,8 @@ class MuZeroTrainer(BaseTrainer):
         )
         from agents.workers.actors import get_actor_class
 
-        actor_cls = get_actor_class(env)
-        self.executor.launch(actor_cls, worker_args, num_workers)
+        self.actor_cls = get_actor_class(env)
+        self.executor.launch(self.actor_cls, worker_args, num_workers)
 
     def train(self):
         """
@@ -127,7 +127,9 @@ class MuZeroTrainer(BaseTrainer):
             # 1. Collect data from executor
             # We use collect_data which accumulates until min_samples if needed
             # For MuZero, we might want to collect at least 1 game before learning
-            data, collect_stats = self.executor.collect_data(min_samples=1)
+            data, collect_stats = self.executor.collect_data(
+                min_samples=1, worker_type=self.actor_cls
+            )
 
             # 2. Store data in buffer
             for sequence in data:
@@ -204,7 +206,7 @@ class MuZeroTrainer(BaseTrainer):
         from stats.stats import PlotType
 
         test_score_keys = (
-            [f"test_score_vs_{agent.name}" for agent in self.test_agents]
+            [f"vs_{agent.name}_score" for agent in self.test_agents]
             if hasattr(self, "test_agents")
             else []
         )
@@ -231,8 +233,13 @@ class MuZeroTrainer(BaseTrainer):
         # Initialize keys
         for key in stat_keys:
             if key not in self.stats.stats:
-                if "test_score" in key:
-                    self.stats._init_key(key, subkeys=["avg", "min", "max"])
+                if key == "test_score":
+                    self.stats._init_key(
+                        key
+                    )  # Removed min/max subkeys as they are no longer logged
+                elif "_score" in key:
+                    # Player-specific subkeys for vs_agent tests
+                    self.stats._init_key(key, subkeys=["p0", "p1", "p2", "avg"])
                 else:
                     self.stats._init_key(key)
 

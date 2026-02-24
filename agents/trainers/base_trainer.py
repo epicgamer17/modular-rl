@@ -47,8 +47,9 @@ class BaseTrainer:
         self.test_interval = max(total_steps // 30, 1)
         self.test_trials = 5
 
-        # Test execution state
-        self.test_executor = None
+        # Executor state
+        self.executor = None
+        self._tester_launched = False
         self._tester_step = 0
 
     def setup_tester(self):
@@ -57,11 +58,12 @@ class BaseTrainer:
         from agents.executors.local_executor import LocalExecutor
         from agents.executors.torch_mp_executor import TorchMPExecutor
 
-        # 1. Initialize Executor
-        if self.config.multi_process:
-            self.test_executor = TorchMPExecutor()
-        else:
-            self.test_executor = LocalExecutor()
+        # 1. Initialize Executor if not already done
+        if self.executor is None:
+            if self.config.multi_process:
+                self.executor = TorchMPExecutor()
+            else:
+                self.executor = LocalExecutor()
 
         # 2. Prepare test types
         test_types = TestFactory.create_default_test_types(self.config)
@@ -88,16 +90,19 @@ class BaseTrainer:
             name=f"{self.name}_tester",
             test_types=test_types,
         )
-        self.test_executor.launch(Tester, launch_args, num_workers=1)
+        self.executor.launch(Tester, launch_args, num_workers=1)
 
     def trigger_test(self, state_dict: Dict[str, Any], step: int):
         """
         Triggers evaluation. For LocalExecutor, this runs immediately.
         For TorchMPExecutor, it ensures weights are synced.
         """
-        if self.test_executor is None:
+        from agents.workers.tester import Tester
+
+        if not self._tester_launched:
             self.setup_tester()
-            if self.test_executor is None:
+            self._tester_launched = True
+            if self.executor is None:
                 return
 
         # Update step (weights are shared via shared_memory if multi_process=True)
@@ -106,26 +111,28 @@ class BaseTrainer:
         # If local, run synchronously now
         if not self.config.multi_process:
             # LocalExecutor._fetch_available_results runs play_sequence
-            results, _ = self.test_executor.collect_data(min_samples=1)
+            results, _ = self.executor.collect_data(min_samples=1, worker_type=Tester)
             for res in results:
                 self._process_test_results(res, step)
 
     def poll_test(self):
         """Polls for background test results from the executor."""
-        if self.test_executor is None or not self.config.multi_process:
+        from agents.workers.tester import Tester
+
+        if self.executor is None or not self.config.multi_process:
             return
 
-        # Fetch whatever is available in the result queue
-        results, _ = self.test_executor.collect_data(min_samples=None)
+        # Fetch whatever is available in the result queue for Tester
+        results, _ = self.executor.collect_data(min_samples=None, worker_type=Tester)
         if results:
             # We only care about the most recent test result for logging
             self._process_test_results(results[-1], self._tester_step)
 
     def stop_test(self):
-        """Stops the test executor."""
-        if self.test_executor is not None:
-            self.test_executor.stop()
-            self.test_executor = None
+        """Stops the executor (stops everything)."""
+        if self.executor is not None:
+            self.executor.stop()
+            self.executor = None
 
     def _process_test_results(self, all_results: Dict[str, Dict[str, Any]], step: int):
         """Logs results from all test types."""
@@ -136,19 +143,40 @@ class BaseTrainer:
             if not isinstance(res, dict):
                 continue
 
-            if "score" in res:
-                self.stats.append(f"{test_name}_score", res["score"], subkey="avg")
-            if "min_score" in res:
-                self.stats.append(f"{test_name}_score", res["min_score"], subkey="min")
-            if "max_score" in res:
-                self.stats.append(f"{test_name}_score", res["max_score"], subkey="max")
+            # Standard evaluation (e.g., standard, self_play)
+            if test_name == "self_play":
+                # Only log p0_score for self_play to show consistent training progress
+                if "p0_score" in res:
+                    self.stats.append("test_score", res["p0_score"])
+                elif "score" in res:
+                    self.stats.append("test_score", res["score"])
 
-            # Log player-specific scores
-            for key, val in res.items():
-                if key.startswith("p") and key.endswith("_score"):
-                    self.stats.append(
-                        f"{test_name}_score", val, subkey=key.split("_")[0]
-                    )
+            elif test_name == "standard":
+                if "score" in res:
+                    self.stats.append("test_score", res["score"])
+
+            # Vs Agent evaluations (e.g., vs_Random_p0, vs_Random_p1)
+            elif test_name.startswith("vs_"):
+                # Parse base agent name (e.g., vs_Random_p0 -> vs_Random)
+                parts = test_name.split("_")
+                # Expected format: vs_{agent_name}_p{idx}
+                if (
+                    len(parts) >= 3
+                    and parts[-1].startswith("p")
+                    and parts[-1][1:].isdigit()
+                ):
+                    agent_name = "_".join(parts[:-1])  # e.g. vs_Random
+                    player_idx = parts[-1]  # e.g. p0
+
+                    if "score" in res:
+                        # Group by agent name, use player_idx as subkey
+                        self.stats.append(
+                            f"{agent_name}_score", res["score"], subkey=player_idx
+                        )
+                else:
+                    # Fallback for non-indexed vs tests
+                    if "score" in res:
+                        self.stats.append(f"{test_name}_score", res["score"])
 
             print(f"[{test_name}] score: {res.get('score', 0):.3f} (step {step})")
 
@@ -449,12 +477,13 @@ class BaseTrainer:
                 stat_keys.append(f"vs_{agent.name}_score")
 
         # Initialize keys
-        player_subkeys = [f"p{p}" for p in range(self.config.game.num_players)]
-        test_subkeys = ["avg", "min", "max"] + player_subkeys
+        player_subkeys = [f"p{p}" for p in range(self.num_players)]
+        # Simplified subkeys to reduce clutter as requested by user
+        test_subkeys = ["avg"] + player_subkeys
 
         for key in stat_keys:
             if key not in self.stats.stats:
-                if "test_score" in key:
+                if "test_score" in key or "_score" in key:
                     self.stats._init_key(key, subkeys=test_subkeys)
                 else:
                     self.stats._init_key(key)

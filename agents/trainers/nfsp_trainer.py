@@ -112,8 +112,8 @@ class NFSPTrainer(BaseTrainer):
             self.device,
             self.name,
         )
-        actor_cls = get_actor_class(self._env)
-        self.executor.launch(actor_cls, worker_args, self.config.num_workers)
+        self.actor_cls = get_actor_class(self._env)
+        self.executor.launch(self.actor_cls, worker_args, self.config.num_workers)
 
     def _init_separate_networks(self, obs_dim, num_actions):
         """Initialize networks and learners for separate networks per player."""
@@ -196,8 +196,8 @@ class NFSPTrainer(BaseTrainer):
             self.device,
             self.name,
         )
-        actor_cls = get_actor_class(self._env)
-        self.executor.launch(actor_cls, worker_args, self.config.num_workers)
+        self.actor_cls = get_actor_class(self._env)
+        self.executor.launch(self.actor_cls, worker_args, self.config.num_workers)
 
     def train(self) -> None:
         """Main training loop."""
@@ -216,7 +216,8 @@ class NFSPTrainer(BaseTrainer):
 
             # 2. Collect data from workers
             sequences, collection_stats = self.executor.collect_data(
-                self.config.replay_interval
+                min_samples=self.config.replay_interval,
+                worker_type=self.actor_cls,
             )
 
             # Log collection stats
@@ -634,9 +635,10 @@ class NFSPTrainer(BaseTrainer):
         return self.policy.compute_action(state, info, eta=0.0).item()
 
     def _setup_stats(self) -> None:
-        # Basic stat keys
-        basic_keys = ["score", "rl_loss", "sl_loss", "sl_policy", "test_score"]
-        for key in basic_keys:
+        super()._setup_stats()
+        # Additional NFSP specific keys
+        stat_keys = ["rl_loss", "sl_loss", "sl_policy"]
+        for key in stat_keys:
             if key not in self.stats.stats:
                 self.stats._init_key(key)
 

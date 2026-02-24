@@ -97,8 +97,8 @@ class RainbowTrainer(BaseTrainer):
             device,
             self.name,
         )
-        actor_cls = get_actor_class(env)
-        self.executor.launch(actor_cls, worker_args, num_workers)
+        self.actor_cls = get_actor_class(env)
+        self.executor.launch(self.actor_cls, worker_args, num_workers)
 
     def train(self) -> None:
         """
@@ -120,7 +120,9 @@ class RainbowTrainer(BaseTrainer):
             )
 
             # 3. Collect data from executor (returns TransitionBatch objects)
-            data, collect_stats = self.executor.collect_data(min_samples=1)
+            data, collect_stats = self.executor.collect_data(
+                min_samples=1, worker_type=self.actor_cls
+            )
 
             # 4. Store transitions in buffer
             for batch in data:
@@ -237,21 +239,16 @@ class RainbowTrainer(BaseTrainer):
         """
         Initializes the stat tracker with all required keys and plot types.
         """
+        super()._setup_stats()
         stat_keys = [
-            "score",
             "loss",
-            "test_score",
-            "episode_length",
             "learner_fps",
             "actor_fps",
         ]
 
         for key in stat_keys:
             if key not in self.stats.stats:
-                if "test_score" in key:
-                    self.stats._init_key(key, subkeys=["avg", "min", "max"])
-                else:
-                    self.stats._init_key(key)
+                self.stats._init_key(key)
 
         self.stats.add_plot_types(
             "score",
