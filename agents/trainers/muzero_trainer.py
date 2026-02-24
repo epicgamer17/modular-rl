@@ -225,6 +225,7 @@ class MuZeroTrainer(BaseTrainer):
             "policy_improvement",
             "learner_fps",
             "actor_fps",
+            "mcts_sps",
             "chance_probs",
         ] + test_score_keys
 
@@ -280,4 +281,5 @@ class MuZeroTrainer(BaseTrainer):
             "learner_fps", PlotType.ROLLING_AVG, rolling_window=100
         )
         self.stats.add_plot_types("actor_fps", PlotType.ROLLING_AVG, rolling_window=100)
+        self.stats.add_plot_types("mcts_sps", PlotType.ROLLING_AVG, rolling_window=100)
         self.stats.add_plot_types("chance_probs", PlotType.BAR)

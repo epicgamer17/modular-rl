@@ -10,6 +10,7 @@ class BaseExecutor(ABC):
 
     def __init__(self):
         self.workers = []
+        self._last_stats_time = time.time()
 
     @abstractmethod
     def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int):
@@ -68,8 +69,20 @@ class BaseExecutor(ABC):
         if results:
             scores = []
             lengths = []
-            fps_values = []
+            total_transitions = 0
+            mcts_sps_values = []
             for res in results:
+                total_transitions += len(res)
+                if hasattr(res, "stats") and "mcts_sps" in res.stats:
+                    mcts_sps_values.append(res.stats["mcts_sps"])
+                elif (
+                    isinstance(res, dict)
+                    and "episode_stats" in res
+                    and "mcts_sps" in res["episode_stats"]
+                ):
+                    # Handle TransitionBatch-like dicts
+                    mcts_sps_values.append(res["episode_stats"]["mcts_sps"])
+
                 if hasattr(res, "rewards") and hasattr(res, "stats"):
                     # For multiplayer: get player 0's final reward from stats
                     final_player_rewards = res.stats.get("final_player_rewards", None)
@@ -85,15 +98,18 @@ class BaseExecutor(ABC):
                         scores.append(sum(res.rewards))
                     lengths.append(len(res))
 
-                    # FPS tracking from game duration
-                    if hasattr(res, "duration_seconds") and res.duration_seconds > 0:
-                        fps_values.append(len(res) / res.duration_seconds)
+            current_time = time.time()
+            elapsed = current_time - self._last_stats_time
+            self._last_stats_time = current_time
 
             if scores:
                 stats["score"] = sum(scores) / len(scores)
                 stats["episode_length"] = sum(lengths) / len(lengths)
                 stats["num_episodes"] = len(results)
-            if fps_values:
-                stats["actor_fps"] = sum(fps_values) / len(fps_values)
+
+            if elapsed > 0:
+                stats["actor_fps"] = total_transitions / elapsed
+            if mcts_sps_values:
+                stats["mcts_sps"] = sum(mcts_sps_values) / len(mcts_sps_values)
 
         return stats

@@ -209,11 +209,17 @@ class BaseActor(ABC):
             state, terminated=False, truncated=False, legal_moves=legal_moves
         )
 
+        mcts_sps_values = []
         while not self._done:
             player_id = self._get_player_id()
             transition = self.step()
 
             metadata = transition["metadata"]
+            if (
+                "search_metadata" in metadata
+                and "mcts_sps" in metadata["search_metadata"]
+            ):
+                mcts_sps_values.append(metadata["search_metadata"]["mcts_sps"])
 
             # Extract policies/values from metadata if available
             # This logic depends on what decorators inject
@@ -242,6 +248,8 @@ class BaseActor(ABC):
             )
 
         sequence.duration_seconds = time.time() - start_time
+        if mcts_sps_values:
+            sequence.stats["mcts_sps"] = sum(mcts_sps_values) / len(mcts_sps_values)
         self._finalize_episode_info(sequence)
 
         if stats_tracker:
@@ -265,9 +273,16 @@ class BaseActor(ABC):
         start_time = time.time()
         transitions: List[Transition] = []
         episodes_completed = 0
+        mcts_sps_values = []
 
         for _ in range(n_transitions):
             transition = self.step()
+            metadata = transition.get("metadata", {})
+            if (
+                "search_metadata" in metadata
+                and "mcts_sps" in metadata["search_metadata"]
+            ):
+                mcts_sps_values.append(metadata["search_metadata"]["mcts_sps"])
 
             transitions.append(
                 Transition(
@@ -300,21 +315,30 @@ class BaseActor(ABC):
                 episodes_completed += 1
 
         duration = time.time() - start_time
+        episode_stats = {
+            "episodes_completed": episodes_completed,
+            "duration_seconds": duration,
+        }
+        if mcts_sps_values:
+            episode_stats["mcts_sps"] = sum(mcts_sps_values) / len(mcts_sps_values)
+
         if stats_tracker and duration > 0:
             stats_tracker.append("actor_fps", len(transitions) / duration)
+            if "mcts_sps" in episode_stats:
+                stats_tracker.append("mcts_sps", episode_stats["mcts_sps"])
 
         return TransitionBatch(
             transitions=transitions,
-            episode_stats={
-                "episodes_completed": episodes_completed,
-                "duration_seconds": duration,
-            },
+            episode_stats=episode_stats,
         )
 
     def _update_stats(self, sequence: Sequence, stats_tracker: Any):
         """Internal helper to log sequence stats."""
         if sequence.duration_seconds > 0:
             stats_tracker.append("actor_fps", len(sequence) / sequence.duration_seconds)
+
+        if "mcts_sps" in sequence.stats:
+            stats_tracker.append("mcts_sps", sequence.stats["mcts_sps"])
 
         score = self._get_score(sequence)
         stats_tracker.append("score", score)

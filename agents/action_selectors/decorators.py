@@ -1,3 +1,4 @@
+import time
 from typing import Any, Dict, Optional, Tuple
 import torch
 from agents.action_selectors.selectors import BaseActionSelector
@@ -139,9 +140,17 @@ class MCTSDecorator(BaseActionSelector):
 
         # 3. Run MCTS
         # Search algorithms usually expect: run(state, info, to_play, agent_network)
+        start_search_time = time.time()
         root_value, exploratory_policy, target_policy, best_action, search_metadata = (
             self.search.run(obs, info, to_play, agent_network)
         )
+        search_duration = time.time() - start_search_time
+        mcts_sps = (
+            self.config.num_simulations / search_duration
+            if search_duration > 0
+            else 0.0
+        )
+        search_metadata["mcts_sps"] = mcts_sps
 
         from modules.world_models.inference_output import InferenceOutput
 
