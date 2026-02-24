@@ -108,6 +108,10 @@ class BaseTrainer:
         # Update step (weights are shared via shared_memory if multi_process=True)
         self._tester_step = step
 
+        # Signal background worker to run test (if multi-process)
+        if self.config.multi_process:
+            self.executor.request_work(Tester)
+
         # If local, run synchronously now
         if not self.config.multi_process:
             # LocalExecutor._fetch_available_results runs play_sequence

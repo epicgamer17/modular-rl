@@ -73,9 +73,7 @@ class SearchAlgorithm:
 
             # Avoid .cpu() if already on CPU
             if batch_logits.device.type != "cpu":
-                batch_logits = batch_logits.detach().cpu()
-            else:
-                batch_logits = batch_logits.detach()
+                batch_logits = batch_logits.cpu()
 
             return Categorical(logits=batch_logits)
 
@@ -87,14 +85,13 @@ class SearchAlgorithm:
                 batch_probs = probs[index]
 
             if batch_probs.device.type != "cpu":
-                batch_probs = batch_probs.detach().cpu()
-            else:
-                batch_probs = batch_probs.detach()
+                batch_probs = batch_probs.cpu()
 
             return Categorical(probs=batch_probs)
 
         return None
 
+    @torch.inference_mode()
     def run(
         self,
         observation: Any,
@@ -142,7 +139,7 @@ class SearchAlgorithm:
         legal_moves = legal_moves[0]
         policy = masked_policy[0].cpu()  # ensure CPU for manipulation
         network_policy = policy.clone()
-        network_policy_dist = Categorical(logits=masked_logits[0].detach().cpu())
+        network_policy_dist = Categorical(logits=masked_logits[0].cpu())
         policy_dist_for_injectors = network_policy_dist
 
         # Initialize reward hidden states (empty for root)

@@ -21,10 +21,19 @@ class TorchMPExecutor(BaseExecutor):
         self.stop_flag = mp.Value("i", 0)
         self.result_queue = mp.Queue()
         self.error_queue = mp.Queue()
+        self.worker_events = {}  # {worker_type_name: mp.Event}
 
     def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int):
         self.stop_flag.value = 0
         self.workers = []
+
+        # Create a trigger event for this worker type if it doesn't exist
+        type_name = worker_cls.__name__
+        if type_name not in self.worker_events:
+            self.worker_events[type_name] = mp.Event()
+
+        trigger_event = self.worker_events[type_name]
+
         for i in range(num_workers):
             p = mp.Process(
                 target=self._worker_loop,
@@ -35,20 +44,44 @@ class TorchMPExecutor(BaseExecutor):
                     self.stop_flag,
                     self.result_queue,
                     self.error_queue,
+                    trigger_event,
                 ),
             )
             p.start()
             self.workers.append(p)
 
     @staticmethod
-    def _worker_loop(worker_cls, args, worker_id, stop_flag, result_queue, error_queue):
+    def _worker_loop(
+        worker_cls,
+        args,
+        worker_id,
+        stop_flag,
+        result_queue,
+        error_queue,
+        trigger_event=None,
+    ):
         try:
             worker = worker_cls(*args, worker_id=worker_id)
             worker.setup()
 
+            # Determine if we should use signaling based on the worker type
+            # We explicitly want signaling for Tester
+            use_signaling = worker_cls.__name__ == "Tester"
+
             while not stop_flag.value:
+                if use_signaling and trigger_event is not None:
+                    # Wait for a signal to perform work
+                    # Check stop_flag periodically while waiting
+                    while not stop_flag.value:
+                        if trigger_event.wait(timeout=0.1):
+                            trigger_event.clear()
+                            break
+
+                    if stop_flag.value:
+                        break
+
                 data = worker.play_sequence()
-                result_queue.put(data)
+                result_queue.put((worker_cls.__name__, data))
         except Exception as e:
             error_queue.put((e, traceback.format_exc()))
             # We don't re-raise here to avoid polluting stdout,
@@ -97,6 +130,12 @@ class TorchMPExecutor(BaseExecutor):
         # on the shared model. This method is here for compatibility.
         # If the models aren't shared, this would need a different mechanism.
         pass
+
+    def request_work(self, worker_type: Type):
+        """Signals the trigger event for the specified worker type."""
+        type_name = worker_type.__name__
+        if type_name in self.worker_events:
+            self.worker_events[type_name].set()
 
     def stop(self):
         self.stop_flag.value = 1

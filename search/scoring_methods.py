@@ -124,7 +124,7 @@ class PriorScoring(ScoringMethod):
 
     def score(self, node, child, min_max_stats) -> float:
         p = child.prior
-        return p.detach().item() if torch.is_tensor(p) else p
+        return p.item() if torch.is_tensor(p) else p
 
     def score_initial(self, prior: float, action: int) -> float:
         return prior
@@ -143,7 +143,7 @@ class QValueScoring(ScoringMethod):
             v = node.get_child_q_from_parent(child)
         else:
             v = child.value()
-        return v.detach().item() if torch.is_tensor(v) else v
+        return v.item() if torch.is_tensor(v) else v
 
     def get_scores(self, node, min_max_stats) -> torch.Tensor:
         # TODO: handle unvisited nodes?

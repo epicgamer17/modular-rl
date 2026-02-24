@@ -299,12 +299,12 @@ class ModularReplayBuffer:
                 if "ids" in self.buffers:
                     indices_np = np.asarray(indices, dtype=np.int64)
                     priorities_np = (
-                        priorities.detach().cpu().numpy()
+                        priorities.cpu().numpy()
                         if isinstance(priorities, torch.Tensor)
                         else np.asarray(priorities)
                     )
                     ids_np = (
-                        ids.detach().cpu().numpy()
+                        ids.cpu().numpy()
                         if isinstance(ids, torch.Tensor)
                         else np.asarray(ids)
                     )
@@ -325,7 +325,9 @@ class ModularReplayBuffer:
                     filtered_indices = np.asarray(valid_indices, dtype=np.int64)
                     filtered_priorities = np.asarray(valid_priorities)
                 else:
-                    warning("IDs provided, but buffer has no 'ids' tensor; skipping ID filtering.")
+                    warning(
+                        "IDs provided, but buffer has no 'ids' tensor; skipping ID filtering."
+                    )
 
             self.sampler.update_priorities(filtered_indices, filtered_priorities)
 

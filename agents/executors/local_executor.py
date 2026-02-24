@@ -30,5 +30,9 @@ class LocalExecutor(BaseExecutor):
             worker.agent_network.load_state_dict(state_dict)
             worker.update_parameters(params)
 
+    def request_work(self, worker_type: Type):
+        """No-op for LocalExecutor as work is done synchronously in collect_data."""
+        pass
+
     def stop(self):
         self.workers = []

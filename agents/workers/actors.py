@@ -189,6 +189,7 @@ class BaseActor(ABC):
 
             return transition_info
 
+    @torch.inference_mode()
     def play_sequence(self, stats_tracker: Optional[Any] = None) -> Sequence:
         """
         Runs one complete episode and returns a Sequence object.
@@ -256,6 +257,7 @@ class BaseActor(ABC):
 
         return sequence
 
+    @torch.inference_mode()
     def collect_transitions(
         self, n_transitions: int = 1, stats_tracker: Optional[Any] = None
     ) -> TransitionBatch:

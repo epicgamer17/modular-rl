@@ -89,7 +89,7 @@ class GumbelInjector(PriorInjector):
         if policy_dist is not None and hasattr(policy_dist, "logits"):
             logits = policy_dist.logits
             if logits is not None:
-                logits = logits.detach().cpu()
+                logits = logits.cpu()
         if logits is None:
             logits = _safe_log_probs(policy).cpu()
         if logits.dim() > 1:

@@ -77,7 +77,7 @@ class ChanceNode:
         }
 
         # Initialize vectorized stats
-        self.child_priors = code_probs.detach().cpu()
+        self.child_priors = code_probs.cpu()
         if self.child_priors.dim() == 0:
             self.child_priors = self.child_priors.unsqueeze(0)
 
@@ -257,7 +257,7 @@ class DecisionNode:
         self.reward = reward
         self.network_state = network_state
 
-        self.network_policy = network_policy.detach().cpu()
+        self.network_policy = network_policy.cpu()
         self.network_policy_dist = network_policy_dist
         self.network_value = value
 
@@ -272,7 +272,7 @@ class DecisionNode:
         self._v_mix = None
 
         if priors is not None:
-            self.child_priors = priors.detach().cpu()
+            self.child_priors = priors.cpu()
         else:
             self.child_priors = self.network_policy
 

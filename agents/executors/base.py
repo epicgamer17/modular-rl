@@ -30,6 +30,14 @@ class BaseExecutor(ABC):
         """Updates the weights of the workers."""
         pass
 
+    @abstractmethod
+    def request_work(self, worker_type: Type):
+        """
+        Requests that workers of a specific type perform their task.
+        For some executors, this signals an event to wake up idle workers.
+        """
+        pass
+
     def launch(self, worker_cls: Type, args: Tuple, num_workers: int):
         """Initializes and starts a group of workers. Appends to existing workers."""
         self._launch_workers(worker_cls, args, num_workers)

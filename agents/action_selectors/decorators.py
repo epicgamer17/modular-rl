@@ -44,8 +44,8 @@ class PPODecorator(BaseActionSelector):
         # otherwise fallback to the one in network_output.
         dist = metadata.get("dist", network_output.policy)
         if dist is not None:
-            metadata["log_prob"] = dist.log_prob(action).detach().cpu()
-        metadata["value"] = network_output.value.detach().cpu()
+            metadata["log_prob"] = dist.log_prob(action).cpu()
+        metadata["value"] = network_output.value.cpu()
 
         return action, metadata
 
@@ -198,28 +198,20 @@ class MCTSDecorator(BaseActionSelector):
             **kwargs,
         )
 
-        # 5. Metadata
-        # Helper to detach
-        def detach_all(obj):
-            if isinstance(obj, torch.Tensor):
-                if obj.device.type != "cpu":
-                    return obj.detach().cpu()
-                return obj.detach()
-            elif isinstance(obj, dict):
-                return {k: detach_all(v) for k, v in obj.items()}
-            elif isinstance(obj, list):
-                return [detach_all(v) for v in obj]
-            return obj
-
         metadata = {
+            # Convert to standard Python list so PyTorch can instantly free the tensor memory
             "policy": (
-                target_policy.detach().cpu()
+                target_policy.tolist()
                 if isinstance(target_policy, torch.Tensor)
                 else target_policy
             ),
             "value": float(root_value),
             "best_action": int(action),
-            "search_metadata": detach_all(search_metadata),
+            # DO NOT save the whole search_metadata dict!
+            # Only extract the specific float you need for logging so the rest can be garbage collected.
+            "search_metadata": {
+                "mcts_sps": float(search_metadata.get("mcts_sps", 0.0))
+            },
             "root_value": float(root_value),
         }
 
