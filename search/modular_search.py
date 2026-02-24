@@ -62,18 +62,38 @@ class SearchAlgorithm:
         )
 
     def _dist_for_batch_index(self, policy_dist, index: int):
+        # Optimization: If the distribution is already a single-batch distribution, return it.
+        # However, for batched distributions, we need to slice the logits/probs.
         logits = policy_dist.logits
-        if logits is None:
-            probs = policy_dist.probs
-            if probs is None:
-                return None
-            logits = self._safe_log_probs(probs)
+        if logits is not None:
+            if logits.dim() <= 1:
+                batch_logits = logits
+            else:
+                batch_logits = logits[index]
 
-        if logits.dim() == 1:
-            batch_logits = logits
-        else:
-            batch_logits = logits[index]
-        return Categorical(logits=batch_logits.detach().cpu())
+            # Avoid .cpu() if already on CPU
+            if batch_logits.device.type != "cpu":
+                batch_logits = batch_logits.detach().cpu()
+            else:
+                batch_logits = batch_logits.detach()
+
+            return Categorical(logits=batch_logits)
+
+        probs = policy_dist.probs
+        if probs is not None:
+            if probs.dim() <= 1:
+                batch_probs = probs
+            else:
+                batch_probs = probs[index]
+
+            if batch_probs.device.type != "cpu":
+                batch_probs = batch_probs.detach().cpu()
+            else:
+                batch_probs = batch_probs.detach()
+
+            return Categorical(probs=batch_probs)
+
+        return None
 
     def run(
         self,
@@ -725,7 +745,7 @@ class SearchAlgorithm:
         if recurrent_inputs:
             # 1. Batch full opaque states recursively
             full_states = [x["state"] for x in recurrent_inputs]
-            batched_states = agent_network.batch_network_states(full_states)
+            batched_states = type(full_states[0]).batch(full_states)
 
             # 2. Prepare actions
             act_list = []
@@ -751,12 +771,13 @@ class SearchAlgorithm:
             )
 
             # 4. Unbatch everything recursively
-            unbatched_next_states = agent_network.unbatch_network_states(
-                outputs.network_state
-            )
+            unbatched_next_states = outputs.network_state.unbatch()
 
             rewards = outputs.reward
             values = outputs.value
+            to_plays = outputs.to_play
+
+            # Pre-calculate policies if needed for expansion
             policies = outputs.policy.probs
             if policies is None:
                 policy_logits = outputs.policy.logits
@@ -765,8 +786,6 @@ class SearchAlgorithm:
                         "hidden_state_inference policy must expose probs/logits."
                     )
                 policies = torch.softmax(policy_logits, dim=-1)
-            policy_logits = outputs.policy.logits
-            to_plays = outputs.to_play
 
             for local_i, x in enumerate(recurrent_inputs):
                 idx = x["idx"]
@@ -774,23 +793,20 @@ class SearchAlgorithm:
                     "reward": rewards[local_i],
                     "network_state": unbatched_next_states[local_i],
                     "value": values[local_i],
-                    "policy": policies[local_i : local_i + 1],
-                    "policy_logits": (
-                        None
-                        if policy_logits is None
-                        else policy_logits[local_i : local_i + 1]
-                    ),
-                    "to_play": to_plays[local_i : local_i + 1],
+                    "policy": policies[local_i],
+                    "policy_dist": self._dist_for_batch_index(outputs.policy, local_i),
+                    "to_play": to_plays[local_i],
                 }
 
         if afterstate_inputs:
             # 1. Batch opaque states
             full_after_states = [x["state"] for x in afterstate_inputs]
-            batched_after_states = agent_network.batch_network_states(full_after_states)
+            batched_after_states = type(full_after_states[0]).batch(full_after_states)
 
             actions = (
-                torch.tensor([x["action"] for x in afterstate_inputs])
-                .to(self.device)
+                torch.tensor(
+                    [x["action"] for x in afterstate_inputs], device=self.device
+                )
                 .float()
                 .unsqueeze(1)
             )
@@ -800,9 +816,7 @@ class SearchAlgorithm:
             )
 
             # 2. Unbatch opaque states
-            unbatched_afterstates = agent_network.unbatch_network_states(
-                outputs.network_state
-            )
+            unbatched_afterstates = outputs.network_state.unbatch()
 
             values = outputs.value
             code_probs_batch = outputs.policy.probs
@@ -812,7 +826,7 @@ class SearchAlgorithm:
                 sim_data[idx]["result"] = {
                     "network_state": unbatched_afterstates[local_i],
                     "value": values[local_i],
-                    "code_probs": code_probs_batch[local_i : local_i + 1],
+                    "code_probs": code_probs_batch[local_i],
                 }
 
         # 3. Expansion & Backprop
@@ -839,15 +853,11 @@ class SearchAlgorithm:
                     node._v_mix = None
 
             # CRITICAL FIX: Revert child_visits tensor
-            # path has [Root, Child1, Child2, ...]
-            # action_path has [Act1, Act2, ...]
-            # We iterate up to len(action_path)
             for i in range(len(d["action_path"])):
                 parent = path[i]
                 action = d["action_path"][i]
                 act_idx = int(action)
                 parent.child_visits[act_idx] -= 1
-                # No need to invalidate v_mix again, handled above (parent in path)
 
         # B. Backpropagation Phase
         for d in sim_data:
@@ -863,6 +873,8 @@ class SearchAlgorithm:
             if node.is_decision:
                 reward = res["reward"]
                 value = res["value"]
+
+                # Check for distributional support range
                 if self.config.support_range is not None:
                     if reward.numel() > 1:
                         reward = support_to_scalar(
@@ -883,7 +895,7 @@ class SearchAlgorithm:
                 to_play = int(res["to_play"])
                 to_play_for_backprop = to_play
 
-                policy = res["policy"][0]
+                policy = res["policy"]
                 actions_to_expand = self.internal_searchset.create_initial_searchset(
                     policy,
                     list(range(self.num_actions)),
@@ -896,11 +908,7 @@ class SearchAlgorithm:
                     to_play=to_play,
                     priors=policy,
                     network_policy=policy,
-                    network_policy_dist=(
-                        None
-                        if res.get("policy_logits") is None
-                        else Categorical(logits=res["policy_logits"][0].detach().cpu())
-                    ),
+                    network_policy_dist=res.get("policy_dist"),
                     network_state=res["network_state"],
                     reward=reward,
                     value=value,

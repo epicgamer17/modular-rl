@@ -20,6 +20,117 @@ class MuZeroNetworkState(NamedTuple):
     dynamics: Tensor
     wm_memory: Any = None
 
+    @classmethod
+    def batch(cls, states: list["MuZeroNetworkState"]) -> "MuZeroNetworkState":
+        """Batches a list of single-item states into one batched state."""
+        dynamics = torch.cat([s.dynamics for s in states], dim=0)
+
+        # Handle wm_memory which can be None, Tuple (LSTM), or Tensor
+        wm_mem_list = [s.wm_memory for s in states]
+        if wm_mem_list[0] is None:
+            wm_memory = None
+        elif isinstance(wm_mem_list[0], tuple):
+            # E.g. LSTM states: (h_n, c_n), each shape [num_layers, batch, hidden]
+            # Since we expand MCTS states, we usually stack along the batch dim (dim=1)
+            # However, batch dimension is 0 for inference inputs, wait, LSTM hidden states
+            # usually expect batch dim as dim 1. Let's stack along dim 1.
+            # Wait, MuZero recurrent state inputs usually keep batch dim at 0 or 1 depending on backbone.
+            # `utils.recursive_batch` stacked them along dim=1. Let's check exactly.
+            # If shape[1] == 1, cat dim 1.
+            batched_lstm = []
+            for i in range(len(wm_mem_list[0])):
+                tensors = [mem[i] for mem in wm_mem_list]
+                if tensors[0].dim() == 3 and tensors[0].shape[1] == 1:
+                    batched_lstm.append(torch.cat(tensors, dim=1))
+                else:
+                    batched_lstm.append(torch.cat(tensors, dim=0))
+            wm_memory = tuple(batched_lstm)
+        elif isinstance(wm_mem_list[0], torch.Tensor):
+            wm_memory = torch.cat(wm_mem_list, dim=0)
+        elif isinstance(wm_mem_list[0], dict):
+            batched_dict = {}
+            for k in wm_mem_list[0].keys():
+                tensors = [mem[k] for mem in wm_mem_list]
+                if tensors[0] is None:
+                    batched_dict[k] = None
+                elif isinstance(tensors[0], torch.Tensor):
+                    if tensors[0].dim() == 3 and tensors[0].shape[1] == 1:
+                        batched_dict[k] = torch.cat(tensors, dim=1)
+                    else:
+                        batched_dict[k] = torch.cat(tensors, dim=0)
+                else:
+                    raise ValueError(
+                        f"Unknown wm_memory dict value type: {type(tensors[0])}"
+                    )
+            wm_memory = batched_dict
+        else:
+            raise ValueError(f"Unknown wm_memory type: {type(wm_mem_list[0])}")
+
+        return cls(dynamics=dynamics, wm_memory=wm_memory)
+
+    def unbatch(self) -> list["MuZeroNetworkState"]:
+        """Unbatches this state into a list of single-batch states."""
+        batch_size = self.dynamics.shape[0]
+        unbatched_dynamics = [self.dynamics[i : i + 1] for i in range(batch_size)]
+
+        if self.wm_memory is None:
+            unbatched_memory = [None for _ in range(batch_size)]
+        elif isinstance(self.wm_memory, tuple):
+            unbatched_memory = []
+            for j in range(batch_size):
+                mem_j = []
+                for t in self.wm_memory:
+                    if t.dim() == 3:
+                        mem_j.append(t[:, j : j + 1])
+                    else:
+                        mem_j.append(t[j : j + 1])
+                unbatched_memory.append(tuple(mem_j))
+        elif isinstance(self.wm_memory, torch.Tensor):
+            if self.wm_memory.dim() == 0:
+                unbatched_memory = [self.wm_memory] * batch_size  # Broadcast
+            else:
+                s_batch = self.wm_memory.shape[0]
+                if s_batch == 1 and batch_size > 1:
+                    unbatched_memory = [self.wm_memory] * batch_size  # Broadcast
+                else:
+                    unbatched_memory = [
+                        self.wm_memory[i : i + 1] for i in range(batch_size)
+                    ]
+        elif isinstance(self.wm_memory, dict):
+            unbatched_memory = [{} for _ in range(batch_size)]
+            for k, v in self.wm_memory.items():
+                if v is None:
+                    for j in range(batch_size):
+                        unbatched_memory[j][k] = None
+                elif isinstance(v, torch.Tensor):
+                    if v.dim() == 0:
+                        for j in range(batch_size):
+                            unbatched_memory[j][k] = v  # Broadcast
+                    else:
+                        s_batch = v.shape[0] if v.dim() != 3 else v.shape[1]
+                        if s_batch == 1 and batch_size > 1:
+                            for j in range(batch_size):
+                                unbatched_memory[j][k] = v  # Broadcast
+                        else:
+                            for j in range(batch_size):
+                                if v.dim() == 3:
+                                    unbatched_memory[j][k] = v[:, j : j + 1]
+                                else:
+                                    unbatched_memory[j][k] = v[j : j + 1]
+                else:
+                    # Generic broadcasting for non-tensors
+                    for j in range(batch_size):
+                        unbatched_memory[j][k] = v
+        else:
+            raise ValueError(f"Unknown wm_memory type: {type(self.wm_memory)}")
+
+        return [
+            MuZeroNetworkState(
+                dynamics=unbatched_dynamics[i], wm_memory=unbatched_memory[i]
+            )
+            for i in range(batch_size)
+        ]
+
 
 class WorldModelOutput(NamedTuple):
     """

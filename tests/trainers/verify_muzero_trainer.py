@@ -32,21 +32,20 @@ def build_minimal_config():
         "multi_process": False,
         "num_workers": 1,
         "world_model_cls": MuzeroWorldModel,
-        # Simplified network architecture
-        "residual_layers": [],
-        "representation_residual_layers": [],
-        "dynamics_residual_layers": [],
-        "dense_layer_widths": [16],
-        "representation_dense_layer_widths": [16],
-        "dynamics_dense_layer_widths": [16],
-        "reward_dense_layer_widths": [16],
-        "to_play_dense_layer_widths": [16],
-        "critic_dense_layer_widths": [16],
-        "actor_dense_layer_widths": [16],
-        "reward_conv_layers": [],
-        "to_play_conv_layers": [],
-        "critic_conv_layers": [],
-        "actor_conv_layers": [],
+        "action_selector": {
+            "base": {"type": "categorical", "kwargs": {"exploration": True}}
+        },
+        "backbone": {"type": "dense", "widths": [16]},
+        "reward_head": {
+            "neck": {"type": "dense", "widths": [16]},
+            "output_strategy": {"type": "scalar"},
+        },
+        "value_head": {
+            "neck": {"type": "dense", "widths": [16]},
+            "output_strategy": {"type": "scalar"},
+        },
+        "policy_head": {"neck": {"type": "dense", "widths": [16]}},
+        "to_play_head": {"neck": {"type": "dense", "widths": [16]}},
     }
 
     return MuZeroConfig(config_dict, game_config)
@@ -93,7 +92,9 @@ def test_muzero_trainer_init():
     print("Creating environment...", flush=True)
     env = config.game.make_env()
     print("Initializing MuZeroTrainer...", flush=True)
-    trainer = MuZeroTrainer(config, env, torch.device("cpu"), name="test_muzero_trainer", stats=MockStats())
+    trainer = MuZeroTrainer(
+        config, env, torch.device("cpu"), name="test_muzero_trainer", stats=MockStats()
+    )
     assert trainer.learner is not None
     assert trainer.executor is not None
     assert trainer.buffer is not None

@@ -14,8 +14,6 @@ from search.search_selectors import SelectionStrategy
 from search.backpropogation import Backpropagator
 from search.search_factories import create_mcts
 from search.nodes import DecisionNode, ChanceNode
-
-
 from configs.games.game import GameConfig
 
 
@@ -37,11 +35,11 @@ class TicTacToeGameConfig(GameConfig):
         )
 
 
-def get_muzero_config():
+def get_muzero_config(search_batch_size=0):
     game_config = TicTacToeGameConfig()
     config_dict = {
         "num_simulations": 25,
-        "search_batch_size": 0,  # Single simulation for benchmark
+        "search_batch_size": search_batch_size,
         "discount_factor": 0.99,
         "pb_c_init": 1.25,
         "pb_c_base": 19652,
@@ -72,13 +70,18 @@ def run_benchmark(agent_network, search_algo, num_steps=50):
     info = {"legal_moves": [list(range(9))]}
     to_play = 0
 
+    # Warmup
+    for _ in range(5):
+        search_algo.run(obs, info, to_play, agent_network)
+
     start_time = time.time()
     for _ in range(num_steps):
         search_algo.run(obs, info, to_play, agent_network)
     end_time = time.time()
 
     duration = end_time - start_time
-    fps = (num_steps * 25) / duration  # Total sims / time
+    # Total simulations = num_steps * num_simulations
+    fps = (num_steps * 25) / duration
     return fps, duration
 
 
@@ -89,7 +92,6 @@ class MockDist:
         if logits is not None and probs is None:
             self.probs = torch.softmax(logits, dim=-1)
         elif probs is not None and logits is None:
-            # Simple log probs for logits
             self.logits = torch.log(probs + 1e-10)
 
     def sample(self):
@@ -98,105 +100,158 @@ class MockDist:
         return torch.argmax(self.probs, dim=-1)
 
 
-def main():
-    device = torch.device("cpu")
-    config = get_muzero_config()
-    input_shape = (3, 3, 3)
-    num_actions = 9
+# Distribution Bypass Components
+class NoDistSearchAlgorithm(SearchAlgorithm):
+    def _dist_for_batch_index(self, policy_dist, index: int):
+        logits = policy_dist.logits
+        if logits is None:
+            probs = policy_dist.probs
+            logits = self._safe_log_probs(probs)
 
-    agent_network = ModularAgentNetwork(config, input_shape, num_actions)
-    agent_network.eval()
+        if logits.dim() == 1:
+            batch_logits = logits
+        else:
+            batch_logits = logits[index]
 
-    # Standard Search Algorithm
-    search_algo = create_mcts(config, device, num_actions)
+        return SimpleNamespace(logits=batch_logits.detach().cpu())
 
-    print("Starting Standard MCTS Benchmark...")
-    fps_std, dur_std = run_benchmark(agent_network, search_algo)
-    print(f"Standard MCTS FPS: {fps_std:.2f} (Duration: {dur_std:.4f}s)")
 
-    # --- Distribution Bypass ---
+original_run = SearchAlgorithm.run
 
-    # 1. Monkey-patch SearchAlgorithm to avoid Categorical creation
-    class NoDistSearchAlgorithm(SearchAlgorithm):
-        def _dist_for_batch_index(self, policy_dist, index: int):
-            # Instead of returning Categorical, return a mock or just the logits
-            # But the rest of the code might expect a distribution-like object
-            logits = policy_dist.logits
-            if logits is None:
-                probs = policy_dist.probs
-                logits = self._safe_log_probs(probs)
 
-            if logits.dim() == 1:
-                batch_logits = logits
-            else:
-                batch_logits = logits[index]
+def run_no_dist(
+    self, observation, info, to_play, agent_network, trajectory_action=None
+):
+    import search.modular_search as ms
 
-            # Return a simple object that has .logits
-            return SimpleNamespace(logits=batch_logits.detach().cpu())
+    original_categorical = ms.Categorical
+    ms.Categorical = MockDist
+    try:
+        return original_run(
+            self, observation, info, to_play, agent_network, trajectory_action
+        )
+    finally:
+        ms.Categorical = original_categorical
 
-    # Replace Categorical call in root expansion
-    original_run = SearchAlgorithm.run
 
-    def run_no_dist(
-        self, observation, info, to_play, agent_network, trajectory_action=None
-    ):
-        # We need to monkey-patch the Categorical call inside run
-        # This is tricky because it's a local import or global in modular_search.py
-        # For the benchmark, let's just use a subclass that overrides run if needed,
-        # or monkey-patch the Categorical class itself in the context of the search module.
-        import search.modular_search as ms
+def run_test_case(agent_network, batch_size, use_dist, num_steps=50):
+    config = get_muzero_config(search_batch_size=batch_size)
+    device = agent_network.device
+    num_actions = agent_network.num_actions
 
-        original_categorical = ms.Categorical
-        ms.Categorical = MockDist
-        try:
-            return original_run(
-                self, observation, info, to_play, agent_network, trajectory_action
-            )
-        finally:
-            ms.Categorical = original_categorical
+    std_algo = create_mcts(config, device, num_actions)
 
-    # 2. Monkey-patch PolicyHead to return MockDist
+    # Debugging unbatching
+    original_unbatch = agent_network.unbatch_network_states
+
+    def debug_unbatch(batched_state):
+        res = original_unbatch(batched_state)
+        # if isinstance(batched_state, MuZeroNetworkState):
+        #     print(f"DEBUG: Unbatching MuZeroNetworkState. Batch size detected: {len(res)}")
+        return res
+
+    agent_network.unbatch_network_states = debug_unbatch
+
+    if use_dist:
+        search_algo = std_algo
+    else:
+        search_algo = NoDistSearchAlgorithm(
+            config,
+            device,
+            num_actions,
+            std_algo.root_selection_strategy,
+            std_algo.decision_selection_strategy,
+            std_algo.chance_selection_strategy,
+            std_algo.root_target_policy,
+            std_algo.root_exploratory_policy,
+            std_algo.prior_injectors,
+            std_algo.root_searchset,
+            std_algo.internal_searchset,
+            std_algo.pruning_method,
+            std_algo.internal_pruning_method,
+            std_algo.backpropagator,
+        )
+        # Use our patched run
+        search_algo.run = run_no_dist.__get__(search_algo, NoDistSearchAlgorithm)
+
+    # Monkey-patch PolicyHead if using bypass
     from modules.heads.policy import PolicyHead
 
     original_policy_forward = PolicyHead.forward
 
-    def policy_forward_no_dist(self, x, state=None):
-        logits, new_state = super(PolicyHead, self).forward(x, state)
-        # Return logits and a MockDist instead of a real one
-        return logits, new_state, MockDist(logits)
+    if not use_dist:
 
-    NoDistSearchAlgorithm.run = run_no_dist
-    search_algo_no_dist = NoDistSearchAlgorithm(
-        config,
-        device,
-        num_actions,
-        search_algo.root_selection_strategy,
-        search_algo.decision_selection_strategy,
-        search_algo.chance_selection_strategy,
-        search_algo.root_target_policy,
-        search_algo.root_exploratory_policy,
-        search_algo.prior_injectors,
-        search_algo.root_searchset,
-        search_algo.internal_searchset,
-        search_algo.pruning_method,
-        search_algo.internal_pruning_method,
-        search_algo.backpropagator,
-    )
+        def policy_forward_no_dist(self, x, state=None):
+            logits, new_state = super(PolicyHead, self).forward(x, state)
+            return logits, new_state, MockDist(logits)
 
-    print("\nStarting Optimized (No-Dist) MCTS Benchmark...")
-    # Apply monkey-patch to PolicyHead
-    PolicyHead.forward = policy_forward_no_dist
+        PolicyHead.forward = policy_forward_no_dist
 
     try:
-        fps_opt, dur_opt = run_benchmark(agent_network, search_algo_no_dist)
+        sps, duration = run_benchmark(agent_network, search_algo, num_steps)
     finally:
-        # Restore original forward
         PolicyHead.forward = original_policy_forward
 
-    print(f"Optimized MCTS FPS: {fps_opt:.2f} (Duration: {dur_opt:.4f}s)")
+    return sps, duration
 
-    overhead = (fps_opt - fps_std) / fps_std * 100
-    print(f"\nDistribution Overhead: {overhead:.2f}%")
+
+def main():
+    device = torch.device("cpu")
+    # Base config for network initialization
+    base_config = get_muzero_config()
+    input_shape = (3, 3, 3)
+    num_actions = 9
+
+    agent_network = ModularAgentNetwork(base_config, input_shape, num_actions)
+    agent_network.eval()
+
+    test_cases = [
+        {"batch_size": 0, "use_dist": True, "label": "Sequential, With Dist"},
+        {"batch_size": 0, "use_dist": False, "label": "Sequential, No Dist"},
+        {"batch_size": 5, "use_dist": True, "label": "Batched (5), With Dist"},
+        {"batch_size": 5, "use_dist": False, "label": "Batched (5), No Dist"},
+    ]
+
+    print(f"{'Configuration':<30} | {'Sims/sec':<10} | {'Duration':<10}")
+    print("-" * 55)
+
+    results = {}
+    for case in test_cases:
+        label = case["label"]
+        sps, duration = run_test_case(
+            agent_network, case["batch_size"], case["use_dist"]
+        )
+        results[label] = sps
+        print(f"{label:<30} | {sps:<10.2f} | {duration:<10.4f}s")
+
+    # Analysis
+    print("\nImpact of Distribution Creation:")
+    seq_overhead = (
+        (results["Sequential, No Dist"] - results["Sequential, With Dist"])
+        / results["Sequential, With Dist"]
+        * 100
+    )
+    batch_overhead = (
+        (results["Batched (5), No Dist"] - results["Batched (5), With Dist"])
+        / results["Batched (5), With Dist"]
+        * 100
+    )
+    print(f"  Sequential Overhead: {seq_overhead:.2f}%")
+    print(f"  Batched Overhead:    {batch_overhead:.2f}%")
+
+    print("\nImpact of Batching:")
+    dist_speedup = (
+        (results["Batched (5), With Dist"] - results["Sequential, With Dist"])
+        / results["Sequential, With Dist"]
+        * 100
+    )
+    nodist_speedup = (
+        (results["Batched (5), No Dist"] - results["Sequential, No Dist"])
+        / results["Sequential, No Dist"]
+        * 100
+    )
+    print(f"  Batching Speedup (With Dist): {dist_speedup:.2f}%")
+    print(f"  Batching Speedup (No Dist):   {nodist_speedup:.2f}%")
 
 
 if __name__ == "__main__":

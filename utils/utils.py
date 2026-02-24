@@ -207,23 +207,36 @@ def recursive_batch(states: list | dict | torch.Tensor | tuple):
 
 
 def recursive_unbatch(batched_state: dict | torch.Tensor | tuple):
+    if isinstance(batched_state, torch.Tensor):
+        if batched_state.dim() == 0:
+            return [batched_state]
+        batch_size = (
+            batched_state.shape[1]
+            if batched_state.dim() == 3
+            else batched_state.shape[0]
+        )
+        if batched_state.dim() == 3:
+            return [batched_state[:, i : i + 1] for i in range(batch_size)]
+        return [batched_state[i : i + 1] for i in range(batch_size)]
+
     if isinstance(batched_state, dict):
-        keys = list(batched_state.keys())
-        if not keys:
+        if not batched_state:
             return [{}]
-        unbatched_values = [recursive_unbatch(batched_state[k]) for k in keys]
-        batch_size = max(len(v) for v in unbatched_values)
+
+        # Pre-unbatch all values
+        unbatched_dict = {k: recursive_unbatch(v) for k, v in batched_state.items()}
+
+        # Determine batch size from any unbatched list
+        batch_size = 1
+        for v in unbatched_dict.values():
+            if isinstance(v, list):
+                batch_size = max(batch_size, len(v))
+
         return [
-            {
-                k: (
-                    unbatched_values[i][j]
-                    if len(unbatched_values[i]) > 1
-                    else unbatched_values[i][0]
-                )
-                for i, k in enumerate(keys)
-            }
+            {k: (v[j] if len(v) > 1 else v[0]) for k, v in unbatched_dict.items()}
             for j in range(batch_size)
         ]
+
     if isinstance(batched_state, tuple):
         cls = type(batched_state)
         unbatched_items = [recursive_unbatch(t) for t in batched_state]
@@ -232,24 +245,15 @@ def recursive_unbatch(batched_state: dict | torch.Tensor | tuple):
                 return [cls._make([])]
             except (AttributeError, TypeError):
                 return [()]
+
         batch_size = max(len(v) for v in unbatched_items)
         result = []
         for j in range(batch_size):
-            elems = tuple(
-                (
-                    unbatched_items[i][j]
-                    if len(unbatched_items[i]) > 1
-                    else unbatched_items[i][0]
-                )
-                for i in range(len(batched_state))
-            )
+            elems = tuple((v[j] if len(v) > 1 else v[0]) for v in unbatched_items)
             try:
                 result.append(cls._make(elems))
             except (AttributeError, TypeError):
                 result.append(elems)
         return result
-    if isinstance(batched_state, torch.Tensor):
-        if batched_state.dim() == 3:
-            return [batched_state[:, i : i + 1] for i in range(batched_state.shape[1])]
-        return [batched_state[i : i + 1] for i in range(batched_state.shape[0])]
+
     return [batched_state]

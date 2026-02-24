@@ -15,7 +15,6 @@ from modules.heads.value import ValueHead
 from modules.heads.q import QHead, DuelingQHead
 from modules.heads.strategy_factory import OutputStrategyFactory
 from modules.projectors.sim_siam import Projector
-from utils.utils import recursive_batch, recursive_unbatch
 
 from configs.agents.muzero import MuZeroConfig
 from configs.agents.ppo import PPOConfig
@@ -197,14 +196,6 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 self.components["feature_block"].reset_noise()
             if hasattr(self.components["q_head"], "reset_noise"):
                 self.components["q_head"].reset_noise()
-
-    def batch_network_states(self, states: List[Dict[str, Any]]) -> Dict[str, Any]:
-        return recursive_batch(states)
-
-    def unbatch_network_states(
-        self, batched_state: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
-        return recursive_unbatch(batched_state)
 
     @torch.inference_mode()
     def obs_inference(self, obs: Tensor) -> InferenceOutput:

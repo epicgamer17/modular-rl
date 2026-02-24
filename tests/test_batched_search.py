@@ -77,8 +77,7 @@ def test_batched_search():
             observation=obs,
             info=info,
             to_play=0,
-            inference_fns=inference_fns,
-            inference_agent_network=model,
+            agent_network=model,
         )
         print("Batched search passed successfully!")
     except Exception as e:

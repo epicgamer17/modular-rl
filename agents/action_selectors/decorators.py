@@ -85,14 +85,27 @@ class MCTSDecorator(BaseActionSelector):
             self.temperature_schedule = create_schedule(
                 ScheduleConfig.stepwise(steps=[5], values=[1.0, 0.0])
             )
+        # Cache for temperature schedule to avoid O(N^2)
+        self._last_step = -1
 
     def _get_current_temperature(self, steps_in_episode: int) -> float:
         """Determines exploration temperature based on episode step."""
         if not self.temperature_schedule.config.with_training_steps:
-            temp_schedule = create_schedule(self.config.temperature_schedule)
-            for _ in range(int(steps_in_episode)):
-                temp_schedule.step()
-            return temp_schedule.get_value()
+            # If we haven't reached this step yet, we can't step forward blindly
+            # but usually steps_in_episode increases monotonically.
+            if steps_in_episode > self._last_step:
+                for _ in range(steps_in_episode - self._last_step):
+                    self.temperature_schedule.step()
+                self._last_step = steps_in_episode
+            elif steps_in_episode < self._last_step:
+                # Fallback: recreate if we go backwards (e.g. new episode)
+                self.temperature_schedule = create_schedule(
+                    self.config.temperature_schedule
+                )
+                for _ in range(steps_in_episode):
+                    self.temperature_schedule.step()
+                self._last_step = steps_in_episode
+            return self.temperature_schedule.get_value()
         return self.temperature_schedule.get_value()
 
     def select_action(
@@ -189,7 +202,9 @@ class MCTSDecorator(BaseActionSelector):
         # Helper to detach
         def detach_all(obj):
             if isinstance(obj, torch.Tensor):
-                return obj.detach().cpu()
+                if obj.device.type != "cpu":
+                    return obj.detach().cpu()
+                return obj.detach()
             elif isinstance(obj, dict):
                 return {k: detach_all(v) for k, v in obj.items()}
             elif isinstance(obj, list):
