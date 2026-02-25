@@ -125,7 +125,9 @@ class TorchMPExecutor(BaseExecutor):
                         f"Worker process {i} died unexpectedly with exit code {w.exitcode}"
                     )
 
-    def update_weights(self, state_dict: Dict[str, Any]):
+    def update_weights(
+        self, state_dict: Dict[str, Any], params: Optional[Dict[str, Any]] = None
+    ):
         # In TorchMP with shared memory, weights are often updated in-place
         # on the shared model. This method is here for compatibility.
         # If the models aren't shared, this would need a different mechanism.

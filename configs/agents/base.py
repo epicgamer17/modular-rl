@@ -8,6 +8,7 @@ from configs.base import (
     RecordConfig,
     DistributionalConfig,
     NoisyConfig,
+    ExecutionConfig,
 )
 import torch.nn.functional as F
 from modules.utils import (
@@ -19,7 +20,9 @@ from configs.games.game import GameConfig
 from configs.selectors import SelectorConfig
 
 
-class AgentConfig(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig):
+class AgentConfig(
+    ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig, ExecutionConfig
+):
     """
     Base configuration for all agents.
     Inherits from various mixins to provide standard capabilities.
@@ -27,19 +30,19 @@ class AgentConfig(ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig):
     """
 
     def __init__(self, config_dict: dict, game_config: GameConfig) -> None:
-        # Initialize ConfigBase
         super().__init__(config_dict)
-
         self.game = game_config
+
+        self.results_path: str = self.parse_field("results_path", "results")
         self._verify_game()
 
         # Initialize Mixins
         self.parse_optimization_params()
         self.parse_replay_params()
         self.parse_record_params()
-        self.multi_process: bool = self.parse_field("multi_process", False)
-        self.num_workers: int = self.parse_field("num_workers", 1)
-        self.num_envs: int = self.parse_field("num_envs", 1)
+
+        # Execution Config
+        self.parse_execution_params()
 
         # Core/Common Params
         self.save_intermediate_weights: bool = self.parse_field(

@@ -193,6 +193,12 @@ class MuZeroLearner(BaseLearner):
         gradient_scales = self._gradient_scales()
         context = self._build_context(targets)
 
+        # print("Predictions: ", predictions)
+        # print("Targets: ", targets)
+        # print("Context: ", context)
+        # print("Weights: ", weights)
+        # print("Gradient Scales: ", gradient_scales)
+
         loss_mean, loss_dict, priorities = self.loss_pipeline.run(
             predictions=predictions,
             targets=targets,

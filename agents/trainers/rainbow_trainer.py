@@ -79,19 +79,16 @@ class RainbowTrainer(BaseTrainer):
         self.buffer = self.learner.replay_buffer
 
         # 5. Initialize Executor
-        from agents.executors.local_executor import LocalExecutor
-        from agents.executors.torch_mp_executor import TorchMPExecutor
+        from agents.executors.factory import create_executor
 
-        if config.multi_process:
-            self.executor = TorchMPExecutor()
-        else:
-            self.executor = LocalExecutor()
+        self.executor = create_executor(config)
 
         num_workers = config.num_workers
         worker_args = (
             config.game.make_env,
             self.agent_network,
             self.action_selector,
+            self.buffer,
             config.game.num_players,
             config,
             device,
@@ -119,20 +116,18 @@ class RainbowTrainer(BaseTrainer):
                 params={"epsilon": self.current_epsilon},
             )
 
-            # 3. Collect data from executor (returns TransitionBatch objects)
-            data, collect_stats = self.executor.collect_data(
-                min_samples=1, worker_type=self.actor_cls
+            # 3. Wait for data to be collected
+            # The actors push directly to the buffer.
+            # We use collect_data just to retrieve their stats and sync.
+            _, collect_stats = self.executor.collect_data(
+                min_samples=None, worker_type=self.actor_cls
             )
 
-            # 4. Store transitions in buffer
-            for batch in data:
-                self._store_transitions(batch)
-
-            # 5. Log collection stats
+            # 4. Log collection stats
             for key, val in collect_stats.items():
                 self.stats.append(key, val)
 
-            # 6. Learning step
+            # 5. Learning step
             if self.buffer.size >= self.config.min_replay_buffer_size:
                 for _ in range(self.config.num_minibatches):
                     loss_stats = self.learner.step(self.stats)
@@ -179,38 +174,6 @@ class RainbowTrainer(BaseTrainer):
         self.epsilon_schedule.step()
         self.current_epsilon = self.epsilon_schedule.get_value()
         self.action_selector.update_parameters({"epsilon": self.current_epsilon})
-
-    def _store_transitions(self, batch: TransitionBatch) -> None:
-        """
-        Stores transitions in the replay buffer.
-
-        Args:
-            batch: TransitionBatch containing individual transitions.
-        """
-        for transition in batch:
-            self._store_transition(transition)
-
-    def _store_transition(self, transition: Transition) -> None:
-        """
-        Stores a single transition in the replay buffer.
-
-        Args:
-            transition: Single Transition object.
-        """
-        self.buffer.store(
-            observations=transition.observation,
-            actions=transition.action,
-            rewards=transition.reward,
-            next_observations=transition.next_observation,
-            next_legal_moves=(
-                transition.next_legal_moves if transition.next_legal_moves else []
-            ),
-            terminated=transition.terminated,
-            truncated=transition.truncated,
-            dones=transition.done,
-        )
-
-    # test() removed, handled by Tester
 
     def _save_checkpoint(self) -> None:
         """Saves Rainbow checkpoint."""

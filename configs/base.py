@@ -238,11 +238,26 @@ class DistributionalConfig:
         self.v_max = self.game.max_score
 
 
+class ExecutionConfig:
+    def parse_execution_params(self):
+        self.executor_type = self.parse_field("executor_type", "torch_mp")
+        self.num_workers = self.parse_field("num_workers", 4, wrapper=int)
+        self.num_envs_per_worker = self.parse_field(
+            "num_envs_per_worker", 32, wrapper=int
+        )
+        self.num_puffer_threads = self.parse_field("num_puffer_threads", 2, wrapper=int)
+        self.multi_process = self.executor_type != "local"
+
+
 class Config(
-    ConfigBase, OptimizationConfig, ReplayConfig, RecordConfig, DistributionalConfig
+    ConfigBase,
+    OptimizationConfig,
+    ReplayConfig,
+    RecordConfig,
+    DistributionalConfig,
+    ExecutionConfig,
 ):
     def __init__(self, config_dict: dict, game_config: GameConfig) -> None:
-        self.multi_process = False
         super().__init__(config_dict)
         self.game = game_config
         self._verify_game()
@@ -253,6 +268,7 @@ class Config(
         self.parse_replay_params()
         self.parse_record_params()
         self.parse_distributional_params()
+        self.parse_execution_params()
         self.loss_function = self.parse_field("loss_function", F.mse_loss)
         self.activation = self.parse_field(
             "activation", "relu", wrapper=prepare_activations
@@ -272,7 +288,6 @@ class Config(
         self.norm_type: str = self.parse_field("norm_type", "none")
         self.soft_update: bool = self.parse_field("soft_update", False)
         self.min_max_epsilon: float = self.parse_field("min_max_epsilon", 0.01)
-        self.num_workers: int = self.parse_field("num_workers", 1, wrapper=int)
         self.replay_interval: int = self.parse_field("replay_interval", 1, wrapper=int)
 
     def _verify_game(self):

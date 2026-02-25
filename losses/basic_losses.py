@@ -24,7 +24,9 @@ def _select_next_actions(
     return masked_q.argmax(dim=-1)
 
 
-def _resolve_weights(batch: dict, device: torch.device, batch_size: int) -> torch.Tensor:
+def _resolve_weights(
+    batch: dict, device: torch.device, batch_size: int
+) -> torch.Tensor:
     weights = batch.get("weights")
     if weights is None:
         return torch.ones(batch_size, device=device, dtype=torch.float32)
@@ -52,9 +54,10 @@ class PPOPolicyLoss:
 
         ratio = torch.exp(log_probs - old_log_probs)
         surr1 = ratio * advantages
-        surr2 = torch.clamp(
-            ratio, 1.0 - self.clip_param, 1.0 + self.clip_param
-        ) * advantages
+        surr2 = (
+            torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param)
+            * advantages
+        )
 
         entropy = dist.entropy().mean()
         loss = -torch.min(surr1, surr2).mean() - self.entropy_coefficient * entropy
@@ -98,7 +101,9 @@ class PPOValueLoss:
             "(v_min/v_max)."
         )
 
-    def compute(self, value_logits: torch.Tensor, returns: torch.Tensor) -> torch.Tensor:
+    def compute(
+        self, value_logits: torch.Tensor, returns: torch.Tensor
+    ) -> torch.Tensor:
         values = self._to_scalar_values(value_logits)
         return self.critic_coefficient * ((returns - values) ** 2).mean()
 
@@ -165,7 +170,12 @@ class StandardDQNLossModule:
             torch.arange(batch_size, device=self.device), next_actions
         ]
 
-        targets = rewards + self.config.discount_factor * (~terminal_mask) * max_q_next
+        targets = (
+            rewards
+            + (self.config.discount_factor**self.config.n_step)
+            * (~terminal_mask)
+            * max_q_next
+        )
 
         elementwise = self.config.loss_function(selected_q, targets)
         weights = _resolve_weights(batch, self.device, batch_size)
@@ -181,7 +191,10 @@ class C51LossModule:
 
     def __post_init__(self) -> None:
         self.support = torch.linspace(
-            self.config.v_min, self.config.v_max, self.config.atom_size, device=self.device
+            self.config.v_min,
+            self.config.v_max,
+            self.config.atom_size,
+            device=self.device,
         )
 
     def _project_target_distribution(
@@ -269,7 +282,9 @@ class C51LossModule:
             next_probs=chosen_next_probs,
         )
 
-        chosen_logits = online_q_logits[torch.arange(batch_size, device=self.device), actions]
+        chosen_logits = online_q_logits[
+            torch.arange(batch_size, device=self.device), actions
+        ]
         log_probs = F.log_softmax(chosen_logits, dim=-1)
         elementwise = -(target_dist * log_probs).sum(dim=-1)
 

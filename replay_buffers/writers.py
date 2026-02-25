@@ -157,8 +157,17 @@ class PPOWriter(Writer):
         self.size += 1
         return idx
 
-    def store_batch(self, batch_size):
-        raise NotImplementedError("Batch store not implemented for PPOWriter.")
+    def store_batch(self, batch_size: int) -> list[slice] | None:
+        if self.size + batch_size > self.max_size:
+            raise IndexError(
+                f"PPO Buffer Overflow: Attempted to write {batch_size} beyond max_size ({self.max_size}). PPO buffer should be cleared after sampling."
+            )
+
+        start = self.pointer
+        end = start + batch_size
+        self.pointer += batch_size
+        self.size += batch_size
+        return [slice(start, end)]
 
     def clear(self):
         super().clear()

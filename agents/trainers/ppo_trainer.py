@@ -76,24 +76,14 @@ class PPOTrainer(BaseTrainer):
         )
 
         # 5. Initialize Executor
-        if config.multi_process:
-            self.executor = TorchMPExecutor()
-        else:
-            self.executor = LocalExecutor()
+        from agents.executors.factory import create_executor
 
-        # Launch workers (default to 1 worker if not specified)
-        num_workers = config.num_workers
-        actor_cls = get_actor_class(env)
-        worker_args = (
-            config.game.make_env,
-            self.agent_network,
-            self.action_selector,
-            config.game.num_players,
-            config,
-            device,
-            self.name,
-        )
-        self.executor.launch(actor_cls, worker_args, num_workers)
+        self.executor = create_executor(config)
+
+        # Note: We do not launch actor workers here because PPOTrainer currently uses an
+        # inline data collection loop within `train()`. Launching workers would cause them
+        # to execute `play_sequence()`, which PPOLearner's buffer does not currently support
+        # (raises NotImplementedError for sequence processing).
 
     def train(self) -> None:
         """
@@ -261,7 +251,7 @@ class PPOTrainer(BaseTrainer):
                 self.stats.drain_queue()
 
         self.stop_test()
-        self.executor.stop()
+        # stop_test() already calls executor.stop() and sets it to None
         self._save_checkpoint()
         print("Training finished.")
 

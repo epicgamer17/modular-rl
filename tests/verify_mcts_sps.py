@@ -4,7 +4,7 @@ import unittest
 from typing import Any, Dict, List, Tuple, Type, Optional
 from agents.action_selectors.decorators import MCTSDecorator
 from agents.action_selectors.selectors import CategoricalSelector
-from agents.workers.actors import BaseActor, TransitionBatch
+from agents.workers.actors import BaseActor
 from replay_buffers.sequence import Sequence
 from utils.schedule import ScheduleConfig
 
@@ -74,21 +74,24 @@ class TestMCTSSPS(unittest.TestCase):
         self.assertGreater(sps, 0)
 
         # Test Actor aggregation
+        mock_buffer = torch.nn.Module()
+        mock_buffer.store_aggregate = lambda x: None
         actor = MockActor(
-            lambda: None, agent_net, decorator, num_players=1, config=config
+            lambda: None,
+            agent_net,
+            decorator,
+            mock_buffer,
+            num_players=1,
+            config=config,
+            name="test",
         )
 
         # 1. play_sequence
         seq = actor.play_sequence()
-        self.assertIn("mcts_sps", seq.stats)
-        print(f"MCTS SPS in Sequence stats: {seq.stats['mcts_sps']:.2f}")
+        self.assertIn("mcts_sps", seq)
+        print(f"MCTS SPS in Sequence stats: {seq['mcts_sps']:.2f}")
 
-        # 2. collect_transitions
-        batch = actor.collect_transitions(n_transitions=2)
-        self.assertIn("mcts_sps", batch.episode_stats)
-        print(
-            f"MCTS SPS in TransitionBatch stats: {batch.episode_stats['mcts_sps']:.2f}"
-        )
+        # 2. collect_transitions (Removed)
 
 
 if __name__ == "__main__":

@@ -88,15 +88,13 @@ class MuZeroTrainer(BaseTrainer):
         )
 
         self.buffer = self.learner.replay_buffer
+        if config.multi_process:
+            self.buffer.share_memory()
 
         # 6. Initialize Executor
-        from agents.executors.local_executor import LocalExecutor
-        from agents.executors.torch_mp_executor import TorchMPExecutor
+        from agents.executors.factory import create_executor
 
-        if config.multi_process:
-            self.executor = TorchMPExecutor()
-        else:
-            self.executor = LocalExecutor()
+        self.executor = create_executor(config)
 
         # Launch workers
         num_workers = config.num_workers
@@ -104,6 +102,7 @@ class MuZeroTrainer(BaseTrainer):
             config.game.make_env,
             self.agent_network,
             self.action_selector,
+            self.buffer,
             config.game.num_players,
             config,
             device,
@@ -124,22 +123,18 @@ class MuZeroTrainer(BaseTrainer):
         start_time = time.time()
 
         while self.training_step < self.config.training_steps:
-            # 1. Collect data from executor
-            # We use collect_data which accumulates until min_samples if needed
-            # For MuZero, we might want to collect at least 1 game before learning
-            data, collect_stats = self.executor.collect_data(
-                min_samples=1, worker_type=self.actor_cls
+            # 1. Wait for data to be collected
+            # The actors push directly to the buffer.
+            # We use collect_data just to retrieve their stats and sync.
+            _, collect_stats = self.executor.collect_data(
+                min_samples=None, worker_type=self.actor_cls
             )
 
-            # 2. Store data in buffer
-            for sequence in data:
-                self.buffer.store_aggregate(sequence_object=sequence)
-
-            # 3. Log collection stats
+            # 2. Log collection stats
             for key, val in collect_stats.items():
                 self.stats.append(key, val)
 
-            # 4. Learning step
+            # 3. Learning step
             # Learner.step samples from buffer and performs optimization
             if self.buffer.size >= self.config.min_replay_buffer_size:
                 for _ in range(self.config.num_minibatches):

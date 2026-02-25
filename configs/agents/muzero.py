@@ -209,8 +209,6 @@ class MuZeroConfig(
 
         # Mixin: Distributional (Support Range) - Moved to top
 
-        self.multi_process: bool = self.parse_field("multi_process", True)
-        self.num_workers: int = self.parse_field("num_workers", 4)
         self.lr_ratio: float = self.parse_field("lr_ratio", float("inf"))
         self.transfer_interval: int = self.parse_field("transfer_interval", 1000)
 

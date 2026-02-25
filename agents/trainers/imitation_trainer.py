@@ -63,18 +63,17 @@ class ImitationTrainer(BaseTrainer):
         self.buffer = self.learner.replay_buffer
 
         # 5. Initialize Executor
-        if config.multi_process:
-            self.executor = TorchMPExecutor()
-        else:
-            self.executor = LocalExecutor()
+        from agents.executors.factory import create_executor
+
+        self.executor = create_executor(config)
 
         # Launch workers (default to 1 worker if not specified)
         num_workers = config.num_workers
         worker_args = (
             config.game.make_env,
-            config.game.make_env,
             self.agent_network,
             self.action_selector,
+            self.buffer,
             config.game.num_players,
             config,
             device,

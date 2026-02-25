@@ -26,7 +26,9 @@ class BaseExecutor(ABC):
         pass
 
     @abstractmethod
-    def update_weights(self, state_dict: Dict[str, Any]):
+    def update_weights(
+        self, state_dict: Dict[str, Any], params: Optional[Dict[str, Any]] = None
+    ):
         """Updates the weights of the workers."""
         pass
 
@@ -104,45 +106,32 @@ class BaseExecutor(ABC):
             scores = []
             lengths = []
             total_transitions = 0
+            total_duration = 0.0
             mcts_sps_values = []
+
             for res in results:
-                # Only calculate stats for items that look like TransitionBatch or have expected keys
-                is_transition_batch = hasattr(res, "rewards") or (
-                    isinstance(res, dict)
-                    and ("transitions" in res or "episode_stats" in res)
-                )
+                # If res is a dictionary representing episode_stats from BaseActor
+                if isinstance(res, dict) and "episode_length" in res:
+                    total_transitions += res["episode_length"]
+                    total_duration += res.get("duration_seconds", 0.0)
 
-                if not is_transition_batch:
-                    continue
+                    if "mcts_sps" in res:
+                        mcts_sps_values.append(res["mcts_sps"])
 
-                total_transitions += len(res)
-                if hasattr(res, "stats") and "mcts_sps" in res.stats:
-                    mcts_sps_values.append(res.stats["mcts_sps"])
-                elif (
-                    isinstance(res, dict)
-                    and "episode_stats" in res
-                    and "mcts_sps" in res["episode_stats"]
-                ):
-                    # Handle TransitionBatch-like dicts
-                    mcts_sps_values.append(res["episode_stats"]["mcts_sps"])
-
-                if hasattr(res, "rewards") and hasattr(res, "stats"):
-                    # For multiplayer: get player 0's final reward from stats
-                    final_player_rewards = res.stats.get("final_player_rewards", None)
-                    if final_player_rewards:
-                        # This is the proper multi-agent reward dict
-                        player_ids = list(final_player_rewards.keys())
+                    if "final_player_rewards" in res:
+                        player_ids = list(res["final_player_rewards"].keys())
                         if player_ids:
-                            scores.append(final_player_rewards[player_ids[0]])
+                            scores.append(res["final_player_rewards"][player_ids[0]])
                         else:
-                            scores.append(sum(res.rewards))
+                            scores.append(res.get("score", 0.0))
                     else:
-                        # Single player: sum all rewards
-                        scores.append(sum(res.rewards))
-                    lengths.append(len(res))
+                        scores.append(res.get("score", 0.0))
+
+                    lengths.append(res["episode_length"])
+                # We skip Tester results here, as they are processed elsewhere (e.g. Trainers' process_test_results)
 
             current_time = time.time()
-            elapsed = current_time - self._last_stats_time
+            elapsed_wall = current_time - self._last_stats_time
             self._last_stats_time = current_time
 
             if scores:
@@ -150,8 +139,8 @@ class BaseExecutor(ABC):
                 stats["episode_length"] = sum(lengths) / len(lengths)
                 stats["num_episodes"] = len(results)
 
-            if elapsed > 0:
-                stats["actor_fps"] = total_transitions / elapsed
+            if elapsed_wall > 0 and total_transitions > 0:
+                stats["actor_fps"] = total_transitions / elapsed_wall
             if mcts_sps_values:
                 stats["mcts_sps"] = sum(mcts_sps_values) / len(mcts_sps_values)
 

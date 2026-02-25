@@ -225,6 +225,7 @@ class Tester:
         env_factory,
         agent_network: ModularAgentNetwork,
         action_selector: BaseActionSelector,
+        replay_buffer: Any,
         num_players: int,  # For compatibility with standard actor launch args
         config: Config,
         device: torch.device,
@@ -235,6 +236,7 @@ class Tester:
         self.env_factory = env_factory
         self.agent_network = agent_network
         self.action_selector = action_selector
+        self.replay_buffer = replay_buffer
         self.num_players = num_players
         self.config = config
         self.device = device
@@ -345,6 +347,7 @@ class TestFactory:
             config.game.make_env,
             agent_network,
             action_selector,
+            None,  # replay_buffer (Tester doesn't use it)
             config.game.num_players,
             config,
             device,

@@ -26,11 +26,69 @@ class InputProcessor(ABC):
         """
         pass
 
-    def process_sequence(self, sequence, *args, **kwargs):
+    def process_sequence(self, sequence, **kwargs):
         """Optional hook for processing entire sequence objects."""
-        raise NotImplementedError(
-            "Sequence processing not implemented for this processor."
-        )
+        # Default behavior: iterate over transitions and apply process_single
+        transitions = kwargs.get("transitions")
+        if transitions is None:
+            transitions = self._sequence_to_transitions(sequence)
+
+        processed = []
+        for t in transitions:
+            res = self.process_single(**t)
+            if res is not None:
+                processed.append(res)
+        return {"transitions": processed}
+
+    def _sequence_to_transitions(self, sequence):
+        """
+        Helper to convert a Sequence object into a list of transition dictionaries
+        compatible with process_single.
+        """
+        transitions = []
+        for i in range(len(sequence.action_history)):
+            t = {
+                "observations": sequence.observation_history[i],
+                "actions": sequence.action_history[i],
+                "rewards": (
+                    float(sequence.rewards[i]) if i < len(sequence.rewards) else 0.0
+                ),
+                "next_observations": sequence.observation_history[i + 1],
+                "terminated": bool(sequence.terminated_history[i + 1]),
+                "truncated": bool(sequence.truncated_history[i + 1]),
+                "dones": bool(sequence.done_history[i + 1]),
+                "player": (
+                    sequence.player_id_history[i]
+                    if i < len(sequence.player_id_history)
+                    else 0
+                ),
+                "values": (
+                    sequence.value_history[i]
+                    if i < len(sequence.value_history)
+                    else 0.0
+                ),
+                "policies": (
+                    sequence.policy_history[i]
+                    if i < len(sequence.policy_history)
+                    else None
+                ),
+                "legal_moves": (
+                    sequence.legal_moves_history[i]
+                    if i < len(sequence.legal_moves_history)
+                    else None
+                ),
+                "next_legal_moves": (
+                    sequence.legal_moves_history[i + 1]
+                    if i + 1 < len(sequence.legal_moves_history)
+                    else None
+                ),
+            }
+            # Add next_infos if available (usually not in Sequence but for completeness)
+            if hasattr(sequence, "next_infos") and i < len(sequence.next_infos):
+                t["next_infos"] = sequence.next_infos[i]
+
+            transitions.append(t)
+        return transitions
 
     def finish_trajectory(self, buffers, trajectory_slice, **kwargs):
         """
@@ -96,9 +154,10 @@ class StackedInputProcessor(InputProcessor):
     def process_sequence(self, sequence, **kwargs):
         data = {"sequence": sequence, **kwargs}
         for p in self.processors:
-            data = p.process_sequence(**data)
-            if data is None:
+            result = p.process_sequence(**data)
+            if result is None:
                 return None
+            data.update(result)
         return data
 
     def finish_trajectory(self, buffers, trajectory_slice, **kwargs):
@@ -281,17 +340,29 @@ class NStepInputProcessor(InputProcessor):
         if len(self.n_step_buffers[player]) < self.n_step:
             return None
 
+        res = self._emit_oldest(player)
+        self.n_step_buffers[player].popleft()
+        return res
+
+    def _emit_oldest(self, player):
+        """
+        Calculates the n-step return for the oldest transition in the buffer
+        and returns the processed transition.
+        """
+        buffer = self.n_step_buffers[player]
+        if not buffer:
+            return None
+
         # Calculate N-Step Return
         # We look at the buffer to calculate discounted reward sum
         # The 'transition' to be returned is the oldest one in the deque (s_t)
         # The 'next_observation' will be the one from the newest transition (s_t+n)
 
-        buffer = self.n_step_buffers[player]
-
         # 1. Calculate Discounted Reward
         final_reward = 0.0
         final_next_obs = buffer[-1].get("next_observations")
         final_next_info = buffer[-1].get("next_infos")
+        final_next_legal_moves = buffer[-1].get("next_legal_moves")
         final_done = buffer[-1].get(self.done_key, False)
         final_terminated = buffer[-1].get(self.terminated_key, final_done)
         final_truncated = buffer[-1].get(self.truncated_key, False)
@@ -306,6 +377,7 @@ class NStepInputProcessor(InputProcessor):
                 final_reward = r
                 final_next_obs = transition.get("next_observations")
                 final_next_info = transition.get("next_infos")
+                final_next_legal_moves = transition.get("next_legal_moves")
                 final_done = True
                 final_terminated = transition.get(self.terminated_key, True)
                 final_truncated = transition.get(self.truncated_key, False)
@@ -318,11 +390,43 @@ class NStepInputProcessor(InputProcessor):
         head_transition[self.reward_key] = final_reward
         head_transition["next_observations"] = final_next_obs
         head_transition["next_infos"] = final_next_info
+        head_transition["next_legal_moves"] = final_next_legal_moves
         head_transition[self.done_key] = final_done
         head_transition[self.terminated_key] = final_terminated
         head_transition[self.truncated_key] = final_truncated
 
         return head_transition
+
+    def process_sequence(self, sequence, **kwargs):
+        """
+        Processes a sequence of transitions.
+        """
+        self.clear()
+        transitions = kwargs.get("transitions")
+        if transitions is None:
+            transitions = self._sequence_to_transitions(sequence)
+        processed_transitions = []
+
+        for t in transitions:
+            processed = self.process_single(**t)
+            if processed is not None:
+                processed_transitions.append(processed)
+
+        # Flush remaining transitions if sequence is terminal
+        is_done = sequence.done_history[-1] if sequence.done_history else False
+        if is_done:
+            active_players = set()
+            for t in transitions:
+                active_players.add(t.get("player", 0))
+
+            for p in active_players:
+                while self.n_step_buffers[p]:
+                    res = self._emit_oldest(p)
+                    if res:
+                        processed_transitions.append(res)
+                    self.n_step_buffers[p].popleft()
+
+        return {"transitions": processed_transitions}
 
     def clear(self):
         self.n_step_buffers = [
@@ -410,9 +514,11 @@ class SequenceTensorProcessor(InputProcessor):
         # To Plays
         tps_t = torch.tensor(
             [
-                self._resolve_player_id(sequence.player_id_history[i])
-                if i < len(sequence.player_id_history)
-                else 0
+                (
+                    self._resolve_player_id(sequence.player_id_history[i])
+                    if i < len(sequence.player_id_history)
+                    else 0
+                )
                 for i in range(n_states)
             ],
             dtype=torch.int16,
@@ -467,7 +573,7 @@ class ObservationCompressionProcessor(InputProcessor):
     """
     Compresses and/or quantizes observations before storage.
     Applied during process_sequence in MuZero buffer pipeline.
-    
+
     Supports:
     - Quantization: float32 -> float16 (50% reduction)
     - Compression: zlib or lz4 (additional ~70% reduction)
@@ -476,10 +582,11 @@ class ObservationCompressionProcessor(InputProcessor):
     def __init__(self, quantization=None, compression=None):
         self.quantization = quantization
         self.compression = compression
-        
+
         if compression == "lz4":
             try:
                 import lz4.frame as _lz4_frame
+
                 self._lz4 = _lz4_frame
             except ImportError:
                 raise ImportError(
@@ -487,10 +594,14 @@ class ObservationCompressionProcessor(InputProcessor):
                     "Install with: pip install lz4"
                 )
         elif compression not in (None, "zlib"):
-            raise ValueError(f"Unsupported compression: {compression}. Use None, 'zlib', or 'lz4'")
-        
+            raise ValueError(
+                f"Unsupported compression: {compression}. Use None, 'zlib', or 'lz4'"
+            )
+
         if quantization not in (None, "float16"):
-            raise ValueError(f"Unsupported quantization: {quantization}. Use None or 'float16'")
+            raise ValueError(
+                f"Unsupported quantization: {quantization}. Use None or 'float16'"
+            )
 
     def process_single(self, **kwargs):
         raise NotImplementedError(
@@ -500,41 +611,42 @@ class ObservationCompressionProcessor(InputProcessor):
     def process_sequence(self, sequence, **kwargs):
         if "observations" not in kwargs:
             return kwargs
-        
+
         obs_tensor = kwargs["observations"]
-        
+
         if self.quantization == "float16":
             obs_tensor = obs_tensor.to(torch.float16)
-        
+
         if self.compression:
             obs_tensor = self._compress_observations(obs_tensor)
-        
+
         kwargs["observations"] = obs_tensor
         return kwargs
 
     def _compress_observations(self, obs_tensor):
         n_states = obs_tensor.shape[0]
         compressed_list = []
-        
+
         for i in range(n_states):
             obs = obs_tensor[i]
             obs_bytes = obs.numpy().tobytes()
-            
+
             if self.compression == "zlib":
                 import zlib
+
                 compressed = zlib.compress(obs_bytes, level=1)
             else:
                 compressed = self._lz4.compress(obs_bytes, compression_level=0)
-            
+
             size_bytes = len(compressed).to_bytes(4, byteorder="little")
             compressed_list.append(size_bytes + compressed)
-        
+
         max_len = max(len(c) for c in compressed_list)
-        
+
         result = torch.zeros((n_states, max_len), dtype=torch.uint8)
         for i, c in enumerate(compressed_list):
-            result[i, :len(c)] = torch.frombuffer(bytearray(c), dtype=torch.uint8)
-        
+            result[i, : len(c)] = torch.frombuffer(bytearray(c), dtype=torch.uint8)
+
         return result
 
 
@@ -543,7 +655,7 @@ class LazyDecompressedBuffer:
     A buffer-like wrapper that decompresses observations on-demand.
     Supports tensor indexing like the original buffer.
     """
-    
+
     def __init__(self, compressed_buffer, decompressor, obs_shape, obs_dtype, device):
         self.compressed_buffer = compressed_buffer
         self.decompressor = decompressor
@@ -551,47 +663,56 @@ class LazyDecompressedBuffer:
         self.obs_dtype = obs_dtype
         self._device = device
         self._cache = {}
-    
+
     @property
     def device(self):
         return self._device
-    
+
     def __getitem__(self, indices):
         if isinstance(indices, torch.Tensor):
             indices = indices.tolist() if indices.dim() > 0 else [indices.item()]
         elif isinstance(indices, int):
             indices = [indices]
-        
+
         if tuple(indices) in self._cache:
             return self._cache[tuple(indices)]
-        
+
         batch_size = len(indices)
-        result = torch.zeros((batch_size, *self.obs_shape), dtype=self.obs_dtype, device=self._device)
-        
+        result = torch.zeros(
+            (batch_size, *self.obs_shape), dtype=self.obs_dtype, device=self._device
+        )
+
         for i, idx in enumerate(indices):
             compressed_data = self.compressed_buffer[idx]
             non_zero = compressed_data[compressed_data > 0]
             if len(non_zero) == 0:
                 continue
-            
+
             size_bytes = bytes(compressed_data[:4].tolist())
             size = int.from_bytes(size_bytes, byteorder="little")
-            compressed = bytes(compressed_data[4:4+size].tolist())
-            
+            compressed = bytes(compressed_data[4 : 4 + size].tolist())
+
             if self.decompressor.compression == "zlib":
                 import zlib
+
                 decompressed = zlib.decompress(compressed)
             else:
                 decompressed = self.decompressor._lz4.decompress(compressed)
-            
-            dtype = torch.float16 if self.decompressor.quantization == "float16" else self.obs_dtype
-            obs = torch.frombuffer(bytearray(decompressed), dtype=dtype).reshape(self.obs_shape)
-            
+
+            dtype = (
+                torch.float16
+                if self.decompressor.quantization == "float16"
+                else self.obs_dtype
+            )
+            obs = torch.frombuffer(bytearray(decompressed), dtype=dtype).reshape(
+                self.obs_shape
+            )
+
             if self.decompressor.quantization == "float16":
                 obs = obs.to(self.obs_dtype)
-            
+
             result[i] = obs
-        
+
         self._cache[tuple(indices)] = result
         return result
 
@@ -602,16 +723,24 @@ class ObservationDecompressionProcessor(OutputProcessor):
     Wraps an inner OutputProcessor (e.g., NStepUnrollProcessor).
     """
 
-    def __init__(self, inner_processor, quantization=None, compression=None, obs_shape=None, obs_dtype=torch.float32):
+    def __init__(
+        self,
+        inner_processor,
+        quantization=None,
+        compression=None,
+        obs_shape=None,
+        obs_dtype=torch.float32,
+    ):
         self.inner_processor = inner_processor
         self.quantization = quantization
         self.compression = compression
         self.obs_shape = obs_shape
         self.obs_dtype = obs_dtype
-        
+
         if compression == "lz4":
             try:
                 import lz4.frame as _lz4_frame
+
                 self._lz4 = _lz4_frame
             except ImportError:
                 raise ImportError(
@@ -619,11 +748,13 @@ class ObservationDecompressionProcessor(OutputProcessor):
                     "Install with: pip install lz4"
                 )
         elif compression not in (None, "zlib"):
-            raise ValueError(f"Unsupported compression: {compression}. Use None, 'zlib', or 'lz4'")
+            raise ValueError(
+                f"Unsupported compression: {compression}. Use None, 'zlib', or 'lz4'"
+            )
 
     def process_batch(self, indices, buffers, **kwargs):
         decompressed_buffers = dict(buffers)
-        
+
         if self.compression or self.quantization:
             device = buffers["observations"].device
             decompressed_buffers["observations"] = LazyDecompressedBuffer(
@@ -633,8 +764,10 @@ class ObservationDecompressionProcessor(OutputProcessor):
                 obs_dtype=self.obs_dtype,
                 device=device,
             )
-        
-        return self.inner_processor.process_batch(indices, decompressed_buffers, **kwargs)
+
+        return self.inner_processor.process_batch(
+            indices, decompressed_buffers, **kwargs
+        )
 
     def clear(self):
         self.inner_processor.clear()
@@ -653,9 +786,63 @@ class GAEProcessor(InputProcessor):
     def process_single(self, *args, **kwargs):
         return kwargs
 
+    def process_sequence(self, sequence, **kwargs):
+        """
+        Computes GAE over a full sequence of transitions.
+        """
+        transitions = kwargs.get("transitions")
+        if transitions is None:
+            transitions = self._sequence_to_transitions(sequence)
+
+        if transitions is None or len(transitions) == 0:
+            return {"transitions": []}
+
+        # Extract rewards and values
+        rewards_np = np.array(
+            [t.get("rewards", 0.0) for t in transitions], dtype=np.float32
+        )
+        values_np = np.array(
+            [t.get("values", 0.0) for t in transitions], dtype=np.float32
+        )
+
+        # PPO usually expects a last value for the next state of the final transition.
+        # Check if sequence has value_history that is n+1 long
+        if (
+            sequence is not None
+            and hasattr(sequence, "value_history")
+            and len(sequence.value_history) > len(transitions)
+        ):
+            last_value = sequence.value_history[-1]
+        else:
+            last_value = 0.0
+
+        dones_np = np.array([t.get("dones", False) for t in transitions], dtype=bool)
+
+        rewards_pad = np.append(rewards_np, last_value)
+        values_pad = np.append(values_np, last_value)
+
+        # Vectorized GAE
+        deltas = (
+            rewards_pad[:-1]
+            + self.gamma * values_pad[1:] * (~dones_np)
+            - values_pad[:-1]
+        )
+
+        advantages = discounted_cumulative_sums(
+            deltas, self.gamma * self.gae_lambda
+        ).copy()
+        returns = discounted_cumulative_sums(rewards_pad, self.gamma).copy()[:-1]
+
+        for i, t in enumerate(transitions):
+            t["advantages"] = float(advantages[i])
+            t["returns"] = float(returns[i])
+            t["log_probabilities"] = t.get("policies", 0.0)
+
+        return {"transitions": transitions}
+
     def finish_trajectory(self, buffers, trajectory_slice, last_value=0):
         """
-        Compute GAE advantages and returns for a trajectory segment.
+        Compute GAE advantages and returns for a trajectory segment in old single-step mode.
         """
         rewards = torch.cat(
             (

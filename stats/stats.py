@@ -285,9 +285,15 @@ class StatTracker:
                 print(f"plotting {key}")
 
                 if isinstance(data, Dict):
-                    # Check for min/avg/max pattern
+                    # Check for min/avg/max pattern OR player-specific keys
                     has_min_max = all(k in data for k in ["min", "max"])
-                    if has_min_max and PlotType.VARIATION_FILL in config["types"]:
+                    has_player_keys = any(
+                        k.startswith("p") and k[1:].isdigit() for k in data.keys()
+                    )
+
+                    if (
+                        has_min_max or has_player_keys
+                    ) and PlotType.VARIATION_FILL in config["types"]:
                         self._plot_consolidated(ax, data, key, config)
                     else:
                         for subkey, subtensor in data.items():
@@ -391,24 +397,31 @@ class StatTracker:
     def _plot_consolidated(
         self, ax, data: Dict[str, List[Any]], label: str, config: Dict
     ):
-        """Plots min/avg/max as a consolidated variation fill."""
-        avg_data = self._to_numpy(data.get("avg", data.get("score", [])))
-        min_data = self._to_numpy(data.get("min", []))
-        max_data = self._to_numpy(data.get("max", []))
-
+        """Plots min/avg/max (or individual players) as a consolidated variation fill."""
         # Check for player-specific keys (p0, p1, p2, etc.)
         player_keys = sorted(
             [k for k in data.keys() if k.startswith("p") and k[1:].isdigit()]
         )
         player_data = {k: self._to_numpy(data[k]) for k in player_keys}
 
-        if len(avg_data) == 0:
-            if player_data:
-                # Use mean of players as avg if not present
-                stacked_players = np.stack(list(player_data.values()))
+        avg_data = self._to_numpy(data.get("avg", data.get("score", [])))
+        min_data = self._to_numpy(data.get("min", []))
+        max_data = self._to_numpy(data.get("max", []))
+
+        # If avg_data is empty, try to compute it from players
+        if len(avg_data) == 0 and player_data:
+            # Filter for players that actually have data
+            active_players = {k: pd for k, pd in player_data.items() if len(pd) > 0}
+            if active_players:
+                # Find the minimum length among all players to allow stacking
+                min_len = min(len(pd) for pd in active_players.values())
+                stacked_players = np.stack(
+                    [pd[:min_len] for pd in active_players.values()]
+                )
                 avg_data = np.mean(stacked_players, axis=0)
-            else:
-                return
+
+        if len(avg_data) == 0:
+            return
 
         x = np.arange(len(avg_data))
         params = config["params"]
@@ -417,27 +430,36 @@ class StatTracker:
 
         # Plot player-specific lines first (fainter)
         for pk, pd in player_data.items():
-            if len(pd) == len(x):
-                ax.plot(x, pd, alpha=0.3, linestyle="--", label=f"{label} ({pk})")
+            if len(pd) >= len(x):
+                ax.plot(
+                    x, pd[: len(x)], alpha=0.3, linestyle="--", label=f"{label} ({pk})"
+                )
 
         # Plot main average line
         ax.plot(x, avg_data, label=f"{label} (avg)", linewidth=2)
 
         # Handle fill_between
-        if len(min_data) == len(x) and len(max_data) == len(x):
+        if len(min_data) >= len(x) and len(max_data) >= len(x):
             ax.fill_between(
-                x, min_data, max_data, alpha=0.2, label=f"{label} (min-max)"
+                x,
+                min_data[: len(x)],
+                max_data[: len(x)],
+                alpha=0.2,
+                label=f"{label} (min-max)",
             )
         elif player_data:
             # If we have player data but no min/max keys, use min/max of players for fill
-            stacked_players = np.stack(
-                [pd for pd in player_data.values() if len(pd) == len(x)]
-            )
-            if stacked_players.size > 0:
+            active_players = [pd for pd in player_data.values() if len(pd) >= len(x)]
+            if active_players:
+                stacked_players = np.stack([pd[: len(x)] for pd in active_players])
                 p_min = np.min(stacked_players, axis=0)
                 p_max = np.max(stacked_players, axis=0)
                 ax.fill_between(
-                    x, p_min, p_max, alpha=0.2, label=f"{label} (P1-P2 fill)"
+                    x,
+                    p_min,
+                    p_max,
+                    alpha=0.2,
+                    label=f"{label} (P1-P{len(active_players)} fill)",
                 )
 
         ax.set_title(f"{self.name} - {label}")

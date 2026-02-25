@@ -64,6 +64,14 @@ class ActionMaskInInfoWrapper(BaseWrapper):
         info = self.env.infos[agent]
         _ = action_mask_to_info(obs, info, agent_index)
 
+    def last(self, observe: bool = True):
+        _, reward, term, trunc, info = self.env.last(observe=False)
+        obs = self.observe(self.env.agent_selection) if observe else None
+        return obs, reward, term, trunc, info
+
+    def state(self) -> np.ndarray:
+        return self.env.state()
+
 
 class ChannelLastToFirstWrapper(BaseWrapper):
     """Wrapper to convert image observations from HWC to CHW."""
@@ -111,6 +119,14 @@ class ChannelLastToFirstWrapper(BaseWrapper):
 
     def reset(self, seed: int | None = None, options: dict | None = None):
         self.env.reset(seed=seed, options=options)
+
+    def last(self, observe: bool = True):
+        _, reward, term, trunc, info = self.env.last(observe=False)
+        obs = self.observe(self.env.agent_selection) if observe else None
+        return obs, reward, term, trunc, info
+
+    def state(self) -> np.ndarray:
+        return self.env.state()
 
 
 class AppendAgentSelectionWrapper(BaseWrapper):
@@ -214,6 +230,14 @@ class AppendAgentSelectionWrapper(BaseWrapper):
     def step(self, action: ActionType) -> None:
         return self.env.step(action)
 
+    def last(self, observe: bool = True):
+        _, reward, term, trunc, info = self.env.last(observe=False)
+        obs = self.observe(self.env.agent_selection) if observe else None
+        return obs, reward, term, trunc, info
+
+    def state(self) -> np.ndarray:
+        return self.env.state()
+
 
 class TwoPlayerPlayerPlaneWrapper(BaseWrapper):
     """
@@ -297,6 +321,14 @@ class TwoPlayerPlayerPlaneWrapper(BaseWrapper):
 
     def reset(self, seed: int | None = None, options: dict | None = None):
         self.env.reset(seed=seed, options=options)
+
+    def last(self, observe: bool = True):
+        _, reward, term, trunc, info = self.env.last(observe=False)
+        obs = self.observe(self.env.agent_selection) if observe else None
+        return obs, reward, term, trunc, info
+
+    def state(self) -> np.ndarray:
+        return self.env.state()
 
 
 class FrameStackWrapper(BaseWrapper):
@@ -391,6 +423,14 @@ class FrameStackWrapper(BaseWrapper):
     def step(self, action: ActionType) -> None:
         self.env.step(action)
 
+    def last(self, observe: bool = True):
+        _, reward, term, trunc, info = self.env.last(observe=False)
+        obs = self.observe(self.env.agent_selection) if observe else None
+        return obs, reward, term, trunc, info
+
+    def state(self) -> np.ndarray:
+        return self.env.state()
+
 
 class InitialMovesWrapper(BaseWrapper):
     """
@@ -415,6 +455,14 @@ class InitialMovesWrapper(BaseWrapper):
         # Clear stacks
         for move in self.initial_moves:
             self.step(move)
+
+    def last(self, observe: bool = True):
+        _, reward, term, trunc, info = self.env.last(observe=False)
+        obs = self.observe(self.env.agent_selection) if observe else None
+        return obs, reward, term, trunc, info
+
+    def state(self) -> np.ndarray:
+        return self.env.state()
 
 
 import gymnasium as gym
@@ -560,6 +608,11 @@ class RecordVideo(BaseWrapper):
         # Ensure environment has render capability
         if not hasattr(env, "render"):
             raise ValueError("Environment must support rendering to record video")
+
+    def last(self, observe: bool = True):
+        _, reward, term, trunc, info = self.env.last(observe=False)
+        obs = self.observe(self.env.agent_selection) if observe else None
+        return obs, reward, term, trunc, info
 
     def reset(
         self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None
@@ -865,3 +918,51 @@ def wrap_recording(env, **kwargs):
         return RecordVideo(env, **kwargs)
     else:
         return GymRecordVideo(env, **kwargs)
+
+
+import pufferlib.emulation
+
+
+def make_puffer_env_creator(config):
+    """
+    Creates an environment creator function for PufferLib.
+
+    Args:
+        config: Configuration object containing env_type, env_name, and env_kwargs.
+
+    Returns:
+        A callable that returns a PufferLib-wrapped environment.
+    """
+
+    def env_creator():
+        if config.env_type == "pettingzoo":
+            # For Catan, TicTacToe, etc.
+            if config.env_name == "catan":
+                from custom_gym_envs_pkg.custom_gym_envs.envs import catan
+
+                raw_env = catan.env(**config.env_kwargs)
+            elif config.env_name == "tictactoe":
+                from custom_gym_envs_pkg.custom_gym_envs.envs import tictactoe
+
+                raw_env = tictactoe.env(**config.env_kwargs)
+            else:
+                raise ValueError(
+                    f"Unsupported pettingzoo environment: {config.env_name}"
+                )
+            # PufferLib automatically groups agents into flat batches!
+            return pufferlib.emulation.PettingZooPufferEnv(env=raw_env)
+
+        elif config.env_type == "gym":
+            import gymnasium as gym
+
+            raw_env = gym.make(config.env_name, **config.env_kwargs)
+            return pufferlib.emulation.GymnasiumPufferEnv(env=raw_env)
+
+        elif config.env_type == "ocean":
+            import pufferlib.ocean
+
+            return pufferlib.ocean.make(config.env_name)
+        else:
+            raise ValueError(f"Unsupported environment type: {config.env_type}")
+
+    return env_creator

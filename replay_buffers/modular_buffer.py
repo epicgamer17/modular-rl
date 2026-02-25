@@ -98,6 +98,16 @@ class ModularReplayBuffer:
 
         self.buffers[config.name] = tensor
 
+    def share_memory(self):
+        """
+        Shares memory of the internal buffers for multiprocessing.
+        If using TorchMPBackend, tensors are already shared upon creation.
+        """
+        for key, tensor in self.buffers.items():
+            if hasattr(tensor, "share_memory_"):
+                tensor.share_memory_()
+        return self
+
     def store(self, **kwargs):
         """
         Stores a single transition (DQN, PPO, NFSP style).
@@ -108,9 +118,11 @@ class ModularReplayBuffer:
         if processed is None:
             return None  # Processor indicates accumulation (e.g. N-step)
 
+        return self._store_processed(processed, **kwargs)
+
+    def _store_processed(self, processed, **kwargs):
+        """Helper to store already-processed data (dict of buffer items)."""
         # 2. Determine Write Index
-        # Locking priority_lock before write_lock ensures the sampler (which also uses priority_lock)
-        # sees an atomic update of size and priorities.
         with self.priority_lock:
             with self.write_lock:
                 idx = self.writer.store()
@@ -119,13 +131,10 @@ class ModularReplayBuffer:
 
                 # 3. Map Processed Data to Buffers
                 if isinstance(processed, dict):
-                    # Direct mapping (Processor returns dict keys matching buffer names)
                     for key, val in processed.items():
-                        # warn if key not in buffers
                         if key in self.buffers:
                             self._write_to_buffer(key, idx, val)
                         else:
-                            # warn only once per key
                             if not hasattr(self, "_warned_keys"):
                                 self._warned_keys = set()
                             if key not in self._warned_keys:
@@ -135,38 +144,38 @@ class ModularReplayBuffer:
                                 self._warned_keys.add(key)
                 else:
                     raise ValueError(
-                        "Input processor must return a dict mapping buffer names to values"
+                        "Processed data must be a dict mapping buffer names to values"
                     )
 
             # 4. Update Sampler (Priorities)
-            priority = kwargs.get("priority", None)
-
-            # We assume tree_pointer logic is handled by the sampler or writer if specific
-            # For CircularWriter, the writer doesn't track 'tree_pointer' distinct from 'pointer' usually
-            # But specific samplers might need hooks.
-            self.sampler.on_store(
-                idx,
-                priority=priority,
-            )
+            priority = kwargs.get("priority", processed.get("priority", None))
+            self.sampler.on_store(idx, priority=priority)
 
         return idx
 
     def store_aggregate(self, sequence_object, **kwargs):
         """
-        Stores a complete sequence/trajectory (MuZero style).
+        Stores a complete sequence/trajectory.
         Uses process_sequence instead of process_single.
         """
         # 1. Process Sequence
-        # Expecting a dictionary of tensors: {'observations': ..., 'actions': ...}
         data = self.input_processor.process_sequence(sequence_object, **kwargs)
 
-        # We need to know how many items to write to reserve space
-        # We assume the input processor returns a dict where values are arrays/tensors of equal length
-        # or it returns a 'n_states' key (like MuZeroGameInputProcessor)
+        if data is None:
+            return
+
+        # 2. Handle List of Transitions (e.g. N-Step, PPO/GAE)
+        if "transitions" in data:
+            transitions = data["transitions"]
+            for t in transitions:
+                self._store_processed(t, **kwargs)
+            return
+
+        # 3. Handle Sequence-Aligned Data (e.g. MuZero)
         n_items = data.get("n_states")
         if n_items is None:
             raise KeyError(
-                "process_sequence must return 'n_states' key. "
+                "process_sequence must return 'n_states' key (unless it returns 'transitions'). "
                 "This is required to determine the number of items to store."
             )
         priorities = kwargs.get("priorities", [None] * n_items)

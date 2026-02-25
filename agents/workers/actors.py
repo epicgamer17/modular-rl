@@ -1,11 +1,10 @@
 import time
 import torch
 import numpy as np
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Tuple
 from abc import ABC, abstractmethod
 
 from replay_buffers.sequence import Sequence
-from replay_buffers.transition import Transition, TransitionBatch
 from agents.action_selectors.selectors import BaseActionSelector
 from utils.wrappers import wrap_recording
 
@@ -21,6 +20,7 @@ class BaseActor(ABC):
         env_factory: Callable[[], Any],
         agent_network: Any,
         action_selector: BaseActionSelector,
+        replay_buffer: Any,
         num_players: Optional[int] = None,
         config: Optional[Any] = None,
         device: Optional[torch.device] = None,
@@ -40,6 +40,7 @@ class BaseActor(ABC):
         self.env_factory = env_factory
         self.agent_network = agent_network
         self.selector = action_selector
+        self.replay_buffer = replay_buffer
         self.config = config
         self.worker_id = worker_id
         self.env = env_factory()
@@ -190,15 +191,15 @@ class BaseActor(ABC):
             return transition_info
 
     @torch.inference_mode()
-    def play_sequence(self, stats_tracker: Optional[Any] = None) -> Sequence:
+    def play_sequence(self, stats_tracker: Optional[Any] = None) -> Dict[str, Any]:
         """
-        Runs one complete episode and returns a Sequence object.
+        Runs one complete episode, stores it in the replay buffer, and returns stats.
 
         Args:
             stats_tracker: Optional statistics tracker for logging.
 
         Returns:
-            A Sequence object containing the episode transcript.
+            A dictionary containing episode statistics.
         """
         start_time = time.time()
         sequence = Sequence(self.num_players)
@@ -252,99 +253,37 @@ class BaseActor(ABC):
             sequence.stats["mcts_sps"] = sum(mcts_sps_values) / len(mcts_sps_values)
         self._finalize_episode_info(sequence)
 
+        # Write directly to the buffer
+        self.replay_buffer.store_aggregate(sequence)
+
         if stats_tracker:
-            self._update_stats(sequence, stats_tracker)
-
-        return sequence
-
-    @torch.inference_mode()
-    def collect_transitions(
-        self, n_transitions: int = 1, stats_tracker: Optional[Any] = None
-    ) -> TransitionBatch:
-        """
-        Collects n transitions and returns them as a batch.
-
-        Args:
-            n_transitions: Number of transitions to collect.
-            stats_tracker: Optional statistics tracker for logging.
-
-        Returns:
-            A TransitionBatch object.
-        """
-        start_time = time.time()
-        transitions: List[Transition] = []
-        episodes_completed = 0
-        mcts_sps_values = []
-
-        for _ in range(n_transitions):
-            transition = self.step()
-            metadata = transition.get("metadata", {})
-            if (
-                "search_metadata" in metadata
-                and "mcts_sps" in metadata["search_metadata"]
-            ):
-                mcts_sps_values.append(metadata["search_metadata"]["mcts_sps"])
-
-            transitions.append(
-                Transition(
-                    observation=transition["state"],
-                    action=transition["action"],
-                    reward=float(transition["reward"]),
-                    next_observation=transition["next_state"],
-                    done=transition["done"],
-                    terminated=transition["terminated"],
-                    truncated=transition["truncated"],
-                    legal_moves=(
-                        transition["info"].get("legal_moves", [])
-                        if transition.get("info")
-                        else []
-                    ),
-                    next_legal_moves=(
-                        transition["next_info"].get("legal_moves", [])
-                        if transition.get("next_info")
-                        else []
-                    ),
-                    metadata=transition.get("metadata"),
+            if sequence.duration_seconds > 0:
+                stats_tracker.append(
+                    "actor_fps", len(sequence) / sequence.duration_seconds
                 )
-            )
 
-            if transition["done"]:
-                if stats_tracker:
-                    stats_tracker.append("score", self._episode_reward)
-                    stats_tracker.append("episode_length", self._episode_length)
-                    stats_tracker.increment_steps(self._episode_length)
-                episodes_completed += 1
+            if "mcts_sps" in sequence.stats:
+                stats_tracker.append("mcts_sps", sequence.stats["mcts_sps"])
 
-        duration = time.time() - start_time
+            score = self._get_score(sequence)
+            stats_tracker.append("score", score)
+            stats_tracker.append("episode_length", len(sequence))
+            stats_tracker.increment_steps(len(sequence))
+
+        # Return stats dictionary instead of Sequence directly
         episode_stats = {
-            "episodes_completed": episodes_completed,
-            "duration_seconds": duration,
+            "duration_seconds": sequence.duration_seconds,
+            "episode_length": len(sequence),
+            "score": self._get_score(sequence),
         }
-        if mcts_sps_values:
-            episode_stats["mcts_sps"] = sum(mcts_sps_values) / len(mcts_sps_values)
-
-        if stats_tracker and duration > 0:
-            stats_tracker.append("actor_fps", len(transitions) / duration)
-            if "mcts_sps" in episode_stats:
-                stats_tracker.append("mcts_sps", episode_stats["mcts_sps"])
-
-        return TransitionBatch(
-            transitions=transitions,
-            episode_stats=episode_stats,
-        )
-
-    def _update_stats(self, sequence: Sequence, stats_tracker: Any):
-        """Internal helper to log sequence stats."""
-        if sequence.duration_seconds > 0:
-            stats_tracker.append("actor_fps", len(sequence) / sequence.duration_seconds)
-
         if "mcts_sps" in sequence.stats:
-            stats_tracker.append("mcts_sps", sequence.stats["mcts_sps"])
+            episode_stats["mcts_sps"] = sequence.stats["mcts_sps"]
+        if "final_player_rewards" in sequence.stats:
+            episode_stats["final_player_rewards"] = sequence.stats[
+                "final_player_rewards"
+            ]
 
-        score = self._get_score(sequence)
-        stats_tracker.append("score", score)
-        stats_tracker.append("episode_length", len(sequence))
-        stats_tracker.increment_steps(len(sequence))
+        return episode_stats
 
     def update_parameters(self, params_dict: Dict[str, Any]) -> None:
         """

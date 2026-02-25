@@ -60,10 +60,9 @@ class BaseTrainer:
 
         # 1. Initialize Executor if not already done
         if self.executor is None:
-            if self.config.multi_process:
-                self.executor = TorchMPExecutor()
-            else:
-                self.executor = LocalExecutor()
+            from agents.executors.factory import create_executor
+
+            self.executor = create_executor(self.config)
 
         # 2. Prepare test types
         test_types = TestFactory.create_default_test_types(self.config)
@@ -108,9 +107,8 @@ class BaseTrainer:
         # Update step (weights are shared via shared_memory if multi_process=True)
         self._tester_step = step
 
-        # Signal background worker to run test (if multi-process)
-        if self.config.multi_process:
-            self.executor.request_work(Tester)
+        # Signal executor to run test (both local and multi-process need this now)
+        self.executor.request_work(Tester)
 
         # If local, run synchronously now
         if not self.config.multi_process:
@@ -151,13 +149,13 @@ class BaseTrainer:
             if test_name == "self_play":
                 # Only log p0_score for self_play to show consistent training progress
                 if "p0_score" in res:
-                    self.stats.append("test_score", res["p0_score"])
+                    self.stats.append("test_score", res["p0_score"], subkey="p0")
                 elif "score" in res:
-                    self.stats.append("test_score", res["score"])
+                    self.stats.append("test_score", res["score"], subkey="avg")
 
             elif test_name == "standard":
                 if "score" in res:
-                    self.stats.append("test_score", res["score"])
+                    self.stats.append("test_score", res["score"], subkey="avg")
 
             # Vs Agent evaluations (e.g., vs_Random_p0, vs_Random_p1)
             elif test_name.startswith("vs_"):
