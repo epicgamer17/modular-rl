@@ -99,6 +99,7 @@ class SearchAlgorithm:
         to_play: int,
         agent_network: BaseAgentNetwork,
         trajectory_action=None,
+        exploration: bool = True,
     ):
         self._set_node_configs()
         root = DecisionNode(0.0)
@@ -160,6 +161,7 @@ class SearchAlgorithm:
                 self.config,
                 trajectory_action,
                 policy_dist=policy_dist_for_injectors,
+                exploration=exploration,
             )
             # Keep distribution/logits in sync for subsequent injectors.
             policy_dist_for_injectors = Categorical(probs=policy)
@@ -252,6 +254,7 @@ class SearchAlgorithm:
         batched_to_play: List[int],
         agent_network: BaseAgentNetwork,
         trajectory_actions=None,
+        exploration: bool = True,
     ):
         self._set_node_configs()
 
@@ -323,6 +326,7 @@ class SearchAlgorithm:
                     self.config,
                     trajectory_actions[b],
                     policy_dist=policy_dist_for_injectors,
+                    exploration=exploration,
                 )
                 policy_dist_for_injectors = Categorical(probs=policy)
 

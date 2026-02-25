@@ -155,7 +155,7 @@ class MCTSDecorator(BaseActionSelector):
         # Search algorithms usually expect: run(state, info, to_play, agent_network)
         start_search_time = time.time()
         root_value, exploratory_policy, target_policy, best_action, search_metadata = (
-            self.search.run(obs, info, to_play, agent_network)
+            self.search.run(obs, info, to_play, agent_network, exploration=exploration)
         )
         search_duration = time.time() - start_search_time
         mcts_sps = (

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Any
+from typing import Optional, Any, List
 
 import numpy as np
 import torch
@@ -13,16 +13,31 @@ def _safe_log_probs(probs: torch.Tensor) -> torch.Tensor:
 class PriorInjector(ABC):
     @abstractmethod
     def inject(
-        self, policy, legal_moves, config, trajectory_action=None, policy_dist=None
-    ):
+        self,
+        policy: torch.Tensor,
+        legal_moves: List[int],
+        config: Any,
+        trajectory_action: Optional[int] = None,
+        policy_dist: Optional[Any] = None,
+        exploration: bool = True,
+    ) -> torch.Tensor:
         """Modifies the context (policy, scores, etc.) in place."""
         pass
 
 
 class DirichletInjector(PriorInjector):
     def inject(
-        self, policy, legal_moves, config, trajectory_action=None, policy_dist=None
-    ):
+        self,
+        policy: torch.Tensor,
+        legal_moves: List[int],
+        config: Any,
+        trajectory_action: Optional[int] = None,
+        policy_dist: Optional[Any] = None,
+        exploration: bool = True,
+    ) -> torch.Tensor:
+        if not exploration:
+            return policy
+
         # Only apply noise to legal moves
         if config.root_dirichlet_alpha_adaptive:
             alpha = 1.0 / np.sqrt(len(legal_moves))
@@ -48,9 +63,16 @@ class ActionTargetInjector(PriorInjector):
     """
 
     def inject(
-        self, policy, legal_moves, config, trajectory_action=None, policy_dist=None
-    ):
-        # TODO: a clean way of properly ensuring policy is masked here using legal moves
+        self,
+        policy: torch.Tensor,
+        legal_moves: List[int],
+        config: Any,
+        trajectory_action: Optional[int] = None,
+        policy_dist: Optional[Any] = None,
+        exploration: bool = True,
+    ) -> torch.Tensor:
+        # Note: Action injection is usually for re-analysis, not stochastic exploration.
+        # We keep it as is regardless of exploration flag unless explicitly asked.
         if trajectory_action is None:
             return policy
 
@@ -79,8 +101,17 @@ class GumbelInjector(PriorInjector):
     """
 
     def inject(
-        self, policy, legal_moves, config, trajectory_action=None, policy_dist=None
-    ):
+        self,
+        policy: torch.Tensor,
+        legal_moves: List[int],
+        config: Any,
+        trajectory_action: Optional[int] = None,
+        policy_dist: Optional[Any] = None,
+        exploration: bool = True,
+    ) -> torch.Tensor:
+        if not exploration:
+            return policy
+
         assert legal_moves and len(legal_moves) > 0
 
         # Prefer distribution logits (from model output/masked dist) to avoid

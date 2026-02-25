@@ -255,6 +255,7 @@ class Tester:
         """Initializes/resets the environment."""
         self.env = self.env_factory()
         self.actor_state = None
+        self.agent_network.eval()
 
     def update_parameters(self, params: Dict[str, Any]) -> None:
         """
