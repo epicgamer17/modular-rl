@@ -243,7 +243,7 @@ class ExecutionConfig:
         self.executor_type = self.parse_field("executor_type", "torch_mp")
         self.num_workers = self.parse_field("num_workers", 4, wrapper=int)
         self.num_envs_per_worker = self.parse_field(
-            "num_envs_per_worker", 32, wrapper=int
+            "num_envs_per_worker", 1, wrapper=int
         )
         self.num_puffer_threads = self.parse_field("num_puffer_threads", 2, wrapper=int)
         self.multi_process = self.executor_type != "local"

@@ -94,7 +94,8 @@ class RainbowTrainer(BaseTrainer):
             device,
             self.name,
         )
-        self.actor_cls = get_actor_class(env)
+        self.actor_cls = get_actor_class(env, config)
+
         self.executor.launch(self.actor_cls, worker_args, num_workers)
 
     def train(self) -> None:
@@ -136,6 +137,10 @@ class RainbowTrainer(BaseTrainer):
                             self.stats.append(key, val)
 
                 self.training_step += 1
+
+                # 6. Reset noise for Noisy Networks if applicable
+                if hasattr(self.agent_network, "reset_noise"):
+                    self.agent_network.reset_noise()
 
                 # 7. Update target network
                 if self.training_step % self.config.transfer_interval == 0:

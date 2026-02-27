@@ -207,21 +207,64 @@ class C51LossModule:
         discount = self.config.discount_factor**self.config.n_step
         delta_z = (self.config.v_max - self.config.v_min) / (self.config.atom_size - 1)
 
+        # Compute the projected support: Tz = r + gamma * z
         tz = (
             rewards.view(-1, 1)
             + discount * (~terminal_mask).view(-1, 1) * self.support.view(1, -1)
         ).clamp(self.config.v_min, self.config.v_max)
-        b = (tz - self.config.v_min) / delta_z
-        lower = b.floor().long().clamp(0, self.config.atom_size - 1)
-        upper = b.ceil().long().clamp(0, self.config.atom_size - 1)
 
-        same = lower == upper
-        lower[(upper > 0) & same] -= 1
-        upper[(lower < (self.config.atom_size - 1)) & same] += 1
+        # Map back to index space: b = (Tz - v_min) / delta_z
+        b = (tz - self.config.v_min) / delta_z
+        l = b.floor().long()
+        u = b.ceil().long()
+
+        # Fix for points that are exactly on the boundary or exactly integers
+        # If l == u, the probability should all go to index l.
+        # But we can simplify by just using the standard projection form:
+        # projected[l] += probs * (u - b)
+        # projected[u] += probs * (b - l)
+        # If l == u, then (u - b) = 0 and (b - l) = 0 if b is integer, which is wrong.
+        # So we handle l == u by making u = l + 1 and clamping, OR just using a small epsilon.
+        # Standard approach from "A Distributional Perspective on Reinforcement Learning":
 
         projected = torch.zeros((batch_size, self.config.atom_size), device=self.device)
-        projected.scatter_add_(1, lower, next_probs * (upper.float() - b))
-        projected.scatter_add_(1, upper, next_probs * (b - lower.float()))
+
+        # Interpolate probabilities into the nearest atoms
+        # For each atom j:
+        # bj = (Tz_j - v_min) / delta_z
+        # l = floor(bj), u = ceil(bj)
+        # projected[l] += next_probs_j * (u - bj)
+        # projected[u] += next_probs_j * (bj - l)
+
+        # We need to iterate over the atoms of the next state distribution (self.support)
+        # But wait, next_probs is already [batch, atom_size].
+        # So we are projecting next_probs[i, j] (prob of atom j) onto the new support atoms.
+
+        for j in range(self.config.atom_size):
+            bj = b[:, j]
+            lj = l[:, j]
+            uj = u[:, j]
+
+            # If l == u, bj is an integer. Weight should be 1 for l.
+            # We can use (uj - bj) and (bj - lj). If lj == uj, these are 0.
+            # Fix:
+            mask_equal = lj == uj
+
+            # Non-equal case
+            dist_l = uj.float() - bj
+            dist_u = bj - lj.float()
+
+            # Equal case (bj is integer)
+            dist_l = torch.where(mask_equal, torch.ones_like(dist_l), dist_l)
+            # dist_u remains 0 for equal case if we want to add nothing to uj (which is lj)
+            # but we scatter_add twice to the same index if lj == uj?
+            # No, scatter_add is additive, so it would be fine if we ensure they sum to 1.
+
+            prob_j = next_probs[:, j]
+
+            projected.scatter_add_(1, lj.view(-1, 1), (prob_j * dist_l).view(-1, 1))
+            projected.scatter_add_(1, uj.view(-1, 1), (prob_j * dist_u).view(-1, 1))
+
         return projected
 
     def compute(

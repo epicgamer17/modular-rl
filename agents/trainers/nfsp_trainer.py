@@ -112,7 +112,8 @@ class NFSPTrainer(BaseTrainer):
             self.device,
             self.name,
         )
-        self.actor_cls = get_actor_class(self._env)
+        self.actor_cls = get_actor_class(self._env, self.config)
+
         self.executor.launch(self.actor_cls, worker_args, self.config.num_workers)
 
     def _init_separate_networks(self, obs_dim, num_actions):
@@ -196,7 +197,8 @@ class NFSPTrainer(BaseTrainer):
             self.device,
             self.name,
         )
-        self.actor_cls = get_actor_class(self._env)
+        self.actor_cls = get_actor_class(self._env, self.config)
+
         self.executor.launch(self.actor_cls, worker_args, self.config.num_workers)
 
     def train(self) -> None:

@@ -144,8 +144,24 @@ class PrioritizedSampler(Sampler):
         self.max_priority = max(self.max_priority, priority)
 
     def update_priorities(self, indices, priorities, **kwargs):
+        # Handle scalar or 0-d inputs by ensuring they are at least 1-dimensional
+        if isinstance(indices, (int, float, np.integer, np.floating)):
+            indices = np.array([indices])
+        else:
+            indices = np.atleast_1d(indices)
+
+        if isinstance(priorities, torch.Tensor):
+            if priorities.dim() == 0:
+                priorities = priorities.view(1)
+        elif np.isscalar(priorities):
+            priorities = np.array([priorities])
+        else:
+            priorities = np.atleast_1d(priorities)
+
         priorities = priorities + self.epsilon
-        assert len(indices) == len(priorities)
+        assert len(indices) == len(
+            priorities
+        ), f"Length mismatch: {len(indices)} vs {len(priorities)}"
         for index, priority in zip(indices, priorities):
             assert priority > 0, "Negative priority: {}".format(priority)
             # TODO: ADD THIS ASSERT BACK SOME HOW

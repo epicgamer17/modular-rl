@@ -79,7 +79,8 @@ class ImitationTrainer(BaseTrainer):
             device,
             self.name,
         )
-        actor_cls = get_actor_class(env)
+        actor_cls = get_actor_class(env, config)
+
         self.executor.launch(actor_cls, worker_args, num_workers)
 
     def train(self) -> None:

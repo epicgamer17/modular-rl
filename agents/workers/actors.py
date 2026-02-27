@@ -293,17 +293,24 @@ class BaseActor(ABC):
         self.selector.update_parameters(params_dict)
 
 
-def get_actor_class(env: Any) -> type[BaseActor]:
+def get_actor_class(env: Any, config: Optional[Any] = None) -> type[BaseActor]:
     """
     Determines the appropriate actor class for a given environment instance.
 
     Args:
         env: An environment instance.
+        config: Optional configuration object to detect vectorized execution.
 
     Returns:
-        The actor class (GymActor or PettingZooActor).
+        The actor class (PufferActor, GymActor, or PettingZooActor).
     """
-    # Check both the wrapper and the unwrapped environment for PettingZoo indicators
+    # 1. Check for Vectorized Execution (Fat Workers)
+    if config.num_envs_per_worker > 1:
+        from agents.workers.puffer_actor import PufferActor
+
+        return PufferActor
+
+    # 2. Check both the wrapper and the unwrapped environment for PettingZoo indicators
     # PettingZoo AEC environments have 'possible_agents'
     is_pz = hasattr(env, "possible_agents")
     if not is_pz and hasattr(env, "unwrapped"):
@@ -313,7 +320,7 @@ def get_actor_class(env: Any) -> type[BaseActor]:
     if is_pz:
         return PettingZooActor
 
-    # Default to GymActor for standard Gymnasium environments
+    # 3. Default to GymActor for standard Gymnasium environments
     return GymActor
 
 

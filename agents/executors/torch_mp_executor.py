@@ -21,6 +21,7 @@ class TorchMPExecutor(BaseExecutor):
         self.stop_flag = mp.Value("i", 0)
         self.result_queue = mp.Queue()
         self.error_queue = mp.Queue()
+        self.param_queue = mp.Queue()
         self.worker_events = {}  # {worker_type_name: mp.Event}
 
     def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int):
@@ -44,6 +45,7 @@ class TorchMPExecutor(BaseExecutor):
                     self.stop_flag,
                     self.result_queue,
                     self.error_queue,
+                    self.param_queue,
                     trigger_event,
                 ),
             )
@@ -58,8 +60,17 @@ class TorchMPExecutor(BaseExecutor):
         stop_flag,
         result_queue,
         error_queue,
+        param_queue,
         trigger_event=None,
     ):
+        # Configure thread affinity to avoid OpenMP contention
+        import os
+        import torch
+
+        os.environ["OMP_NUM_THREADS"] = "1"
+        os.environ["MKL_NUM_THREADS"] = "1"
+        torch.set_num_threads(1)
+
         try:
             worker = worker_cls(*args, worker_id=worker_id)
             worker.setup()
@@ -69,6 +80,21 @@ class TorchMPExecutor(BaseExecutor):
             use_signaling = worker_cls.__name__ == "Tester"
 
             while not stop_flag.value:
+                # Check for parameter updates
+                while not param_queue.empty():
+                    try:
+                        params = param_queue.get_nowait()
+                        if params is not None:
+                            worker.update_parameters(params)
+                            if params.get("reset_noise") and hasattr(
+                                worker.agent_network, "reset_noise"
+                            ):
+                                worker.agent_network.reset_noise()
+                            if hasattr(worker, "action_selector"):
+                                worker.action_selector.update_parameters(params)
+                    except mp.queues.Empty:
+                        break
+
                 if use_signaling and trigger_event is not None:
                     # Wait for a signal to perform work
                     # Check stop_flag periodically while waiting
@@ -89,7 +115,16 @@ class TorchMPExecutor(BaseExecutor):
         finally:
             # Ensure resources are cleaned up if worker has a close method
             if "worker" in locals():
-                worker.env.close()
+                if hasattr(worker, "env") and worker.env is not None:
+                    try:
+                        worker.env.close()
+                    except:
+                        pass
+                if hasattr(worker, "vec_env") and worker.vec_env is not None:
+                    try:
+                        worker.vec_env.close()
+                    except:
+                        pass
 
     def _fetch_available_results(self) -> List[Any]:
         self._check_errors()
@@ -128,10 +163,21 @@ class TorchMPExecutor(BaseExecutor):
     def update_weights(
         self, state_dict: Dict[str, Any], params: Optional[Dict[str, Any]] = None
     ):
-        # In TorchMP with shared memory, weights are often updated in-place
-        # on the shared model. This method is here for compatibility.
-        # If the models aren't shared, this would need a different mechanism.
-        pass
+        # In TorchMP with shared memory, weights are updated in-place on the shared model.
+        # However, we still need to propagate parameters and signal noise resets.
+        if params is None:
+            params = {}
+
+        # Signal noise reset if this is a learning update
+        params["reset_noise"] = True
+
+        # Send to all workers via the queue
+        # For simplicity, we send it once and each worker drains it.
+        # Wait, if we send it once, only ONE worker gets it if they all call get().
+        # We need to send it N times, or use a different mechanism.
+        # Using N times (num_workers) is easiest here.
+        for _ in range(len(self.workers)):
+            self.param_queue.put(params)
 
     def request_work(self, worker_type: Type):
         """Signals the trigger event for the specified worker type."""

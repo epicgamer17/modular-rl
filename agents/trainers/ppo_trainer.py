@@ -8,7 +8,9 @@ from agents.executors.local_executor import LocalExecutor
 from agents.executors.torch_mp_executor import TorchMPExecutor
 from agents.learners.ppo_learner import PPOLearner
 from agents.action_selectors.factory import SelectorFactory
-from agents.workers.actors import get_actor_class
+
+# from agents.workers.actors import get_actor_class # REMOVED as unused
+
 from modules.agent_nets.modular import ModularAgentNetwork
 
 # from agents.policies.ppo_policy import PPOPolicy # REMOVED
@@ -131,6 +133,11 @@ class PPOTrainer(BaseTrainer):
 
                         log_prob = metadata.get("log_prob")
                         value = metadata.get("value")
+
+                        assert (
+                            log_prob is not None
+                        ), f"log_prob is None. Metadata: {metadata}"
+                        assert value is not None, f"value is None. Metadata: {metadata}"
 
                         action_val = action.item()
 

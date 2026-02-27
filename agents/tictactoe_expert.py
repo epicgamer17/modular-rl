@@ -9,8 +9,16 @@ class TicTacToeBestAgent:
         return observation, info
 
     def select_actions(self, prediction, info, *args, **kwargs):
+        # Handle both (obs, info) tuple and raw obs for robustness
+        obs = prediction[0] if isinstance(prediction, (tuple, list)) else prediction
+
+        # Handle batch dimension if present (use first sample)
+        if obs.ndim == 4:
+            obs = obs[0]
+
         # Reconstruct board: +1 for current player, -1 for opponent, 0 otherwise
-        board = prediction[0][0] - prediction[0][1]
+        # current player is Plane 0, opponent is Plane 1
+        board = obs[0] - obs[1]
         # print(board)
         # Default: random legal move
         action = np.random.choice(info["legal_moves"])

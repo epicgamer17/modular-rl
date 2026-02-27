@@ -44,6 +44,8 @@ class LocalExecutor(BaseExecutor):
     ):
         for _, w in self.workers:
             w.agent_network.load_state_dict(state_dict)
+            if hasattr(w.agent_network, "reset_noise"):
+                w.agent_network.reset_noise()
             if params is not None and hasattr(w, "action_selector"):
                 w.action_selector.update_parameters(params)
             w.update_parameters(params)

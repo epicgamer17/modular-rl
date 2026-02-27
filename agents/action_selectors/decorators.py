@@ -42,7 +42,7 @@ class PPODecorator(BaseActionSelector):
         # 3. Inject PPO metadata
         # Use the (potentially masked) distribution from metadata if available,
         # otherwise fallback to the one in network_output.
-        dist = metadata.get("dist", network_output.policy)
+        dist = metadata.get("policy", network_output.policy)
         if dist is not None:
             metadata["log_prob"] = dist.log_prob(action).cpu()
         metadata["value"] = network_output.value.cpu()
@@ -127,6 +127,8 @@ class MCTSDecorator(BaseActionSelector):
         if player_id is not None:
             if isinstance(player_id, int):
                 to_play = player_id
+            elif isinstance(player_id, (list, tuple)):
+                to_play = list(player_id)
             elif isinstance(player_id, str):
                 try:
                     # Attempt to parse PettingZoo style "player_1" or just "1"
@@ -138,21 +140,84 @@ class MCTSDecorator(BaseActionSelector):
                     pass
 
         # Fallback to info dict if not found
-        if to_play == 0 and info:
+        if (to_play == 0 or to_play == [0]) and info:
             if "player" in info:
                 to_play = info["player"]
             elif "to_play" in info:
                 to_play = info["to_play"]
 
         # Get episode step for temperature
-        # If exploration is explicitly False, we can skip temperature decay to avoid massive loops.
         episode_step = kwargs.get("episode_step", 0)
         curr_temp = (
             0.0 if exploration is False else self._get_current_temperature(episode_step)
         )
 
-        # 3. Run MCTS
-        # Search algorithms usually expect: run(state, info, to_play, agent_network)
+        from modules.world_models.inference_output import InferenceOutput
+
+        # 2. Check for Batching
+        # We only use the vectorized path if we have multiple environments (B > 1)
+        # Some actors (like PettingZooActor) unsqueeze single observations, which can
+        # trigger this check incorrectly if we don't check for B > 1.
+        is_batched = obs.dim() > len(agent_network.input_shape) and obs.shape[0] > 1
+
+        if is_batched:
+            # Vectorized Search Path
+            infos_list = [
+                {"legal_moves": lm, "player": p}
+                for lm, p in zip(info["legal_moves"], info["player"])
+            ]
+            res = self.search.run_vectorized(obs, infos_list, to_play, agent_network)
+            (
+                root_values,
+                exploratory_policies,
+                target_policies,
+                best_actions,
+                sm_list,
+            ) = res
+
+            # Stack outputs for vectorized temperature and selection
+            root_values_t = torch.as_tensor(
+                root_values, device=obs.device, dtype=torch.float32
+            )
+            exploratory_policies_t = torch.stack(exploratory_policies).to(obs.device)
+
+            if curr_temp != 1.0 and curr_temp > 0:
+                log_probs = torch.log(exploratory_policies_t + 1e-8)
+                log_probs = log_probs / curr_temp
+                heated_probs = torch.softmax(log_probs, dim=-1)
+                mcts_policy_dist = Categorical(probs=heated_probs)
+            else:
+                mcts_policy_dist = Categorical(probs=exploratory_policies_t)
+
+            mcts_output = InferenceOutput(value=root_values_t, policy=mcts_policy_dist)
+
+            kwargs["temperature"] = curr_temp
+            action, _ = self.inner_selector.select_action(
+                agent_network,
+                obs,
+                info,
+                network_output=mcts_output,
+                exploration=exploration,
+                **kwargs,
+            )
+
+            # Collate metadata
+            metadata = {
+                "policy": [
+                    tp.tolist() if isinstance(tp, torch.Tensor) else tp
+                    for tp in target_policies
+                ],
+                "value": [float(rv) for rv in root_values],
+                "best_action": [int(a) for a in best_actions],
+                "search_metadata": {
+                    "mcts_sps": [float(sm.get("mcts_sps", 0.0)) for sm in sm_list]
+                },
+                "root_value": [float(rv) for rv in root_values],
+            }
+
+            return action, metadata
+
+        # 3. Single Action Search Path
         start_search_time = time.time()
         root_value, exploratory_policy, target_policy, best_action, search_metadata = (
             self.search.run(obs, info, to_play, agent_network, exploration=exploration)
@@ -165,12 +230,8 @@ class MCTSDecorator(BaseActionSelector):
         )
         search_metadata["mcts_sps"] = mcts_sps
 
-        from modules.world_models.inference_output import InferenceOutput
-
         # Apply temperature to probabilities
-        # exploratory_policy is a tensor of probabilities (from MCTS)
         if curr_temp != 1.0 and curr_temp > 0:
-            # Avoid numerical instability with log
             log_probs = torch.log(exploratory_policy + 1e-8)
             log_probs = log_probs / curr_temp
             heated_probs = torch.softmax(log_probs, dim=-1)
@@ -178,17 +239,11 @@ class MCTSDecorator(BaseActionSelector):
         else:
             mcts_policy_dist = Categorical(probs=exploratory_policy)
 
-        # We can construct a InferenceOutput-like object
-        # MCTS returns probs usually.
         mcts_output = InferenceOutput(
             value=torch.tensor(root_value), policy=mcts_policy_dist
         )
 
-        # Delegate to Inner Selector
-        # Note: We pass kwargs (like temperature) through
-        # Update kwargs with temperature
         kwargs["temperature"] = curr_temp
-
         action, _ = self.inner_selector.select_action(
             agent_network,
             obs,
@@ -199,7 +254,6 @@ class MCTSDecorator(BaseActionSelector):
         )
 
         metadata = {
-            # Convert to standard Python list so PyTorch can instantly free the tensor memory
             "policy": (
                 target_policy.tolist()
                 if isinstance(target_policy, torch.Tensor)
@@ -207,11 +261,7 @@ class MCTSDecorator(BaseActionSelector):
             ),
             "value": float(root_value),
             "best_action": int(action),
-            # DO NOT save the whole search_metadata dict!
-            # Only extract the specific float you need for logging so the rest can be garbage collected.
-            "search_metadata": {
-                "mcts_sps": float(search_metadata.get("mcts_sps", 0.0))
-            },
+            "search_metadata": {"mcts_sps": float(search_metadata.get("mcts_sps"))},
             "root_value": float(root_value),
         }
 

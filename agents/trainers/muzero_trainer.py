@@ -110,7 +110,8 @@ class MuZeroTrainer(BaseTrainer):
         )
         from agents.workers.actors import get_actor_class
 
-        self.actor_cls = get_actor_class(env)
+        self.actor_cls = get_actor_class(env, config)
+
         self.executor.launch(self.actor_cls, worker_args, num_workers)
 
     def train(self):

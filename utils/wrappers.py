@@ -941,14 +941,7 @@ def make_puffer_env_creator(config):
                 from custom_gym_envs_pkg.custom_gym_envs.envs import catan
 
                 raw_env = catan.env(**config.env_kwargs)
-            elif config.env_name == "tictactoe":
-                from custom_gym_envs_pkg.custom_gym_envs.envs import tictactoe
-
-                raw_env = tictactoe.env(**config.env_kwargs)
-            else:
-                raise ValueError(
-                    f"Unsupported pettingzoo environment: {config.env_name}"
-                )
+            # TODO: getting of raw envs for standard pettingzoo envs
             # PufferLib automatically groups agents into flat batches!
             return pufferlib.emulation.PettingZooPufferEnv(env=raw_env)
 

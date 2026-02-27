@@ -19,39 +19,8 @@ class BaseActionSelector(ABC):
         exploration: Optional[bool] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        # Ensure obs is a tensor
-        if not torch.is_tensor(obs):
-            # Try to convert if it's a numpy array, but ideally caller handles this
-            if isinstance(obs, np.ndarray):
-                obs = torch.as_tensor(
-                    obs,
-                    device=next(agent_network.parameters()).device,
-                    dtype=torch.float32,
-                )
-                if obs.dim() == len(agent_network.config.backbone.input_shape):
-                    obs = obs.unsqueeze(0)
-            else:
-                raise ValueError(f"Observation must be a torch.Tensor, got {type(obs)}")
-        """
-        Selects an action based on the agent network and observation.
+        raise NotImplementedError
 
-        Args:
-            agent_network: The neural network used to compute values/logits.
-            obs: The current observation.
-            info: Optional dictionary containing additional information (e.g., legal moves).
-            network_output: Optional pre-computed network output to avoid re-computation.
-            exploration: Whether to use exploration policies (e.g. sampling, epsilon-greedy).
-                         If False, should return deterministic/greedy action.
-            **kwargs: Additional parameters for selection.
-
-        Returns:
-            A tuple containing:
-            - action: The selected action tensor.
-            - metadata: A dictionary containing metadata (e.g., log_probs, q_values).
-        """
-        pass
-
-    @abstractmethod
     def mask_actions(
         self,
         values: torch.Tensor,
@@ -71,7 +40,38 @@ class BaseActionSelector(ABC):
         Returns:
             The masked tensor.
         """
-        pass
+        if device is None:
+            device = values.device
+
+        # Core masking logic (adapted from utils.action_mask)
+        mask = torch.zeros_like(values, dtype=torch.bool).to(device)
+
+        if values.dim() == 1:
+            if isinstance(legal_moves, (list, np.ndarray, torch.Tensor)):
+                mask[legal_moves] = True
+            else:
+                raise ValueError(
+                    f"For 1D actions, legal_moves must be an iterable of indices, got {type(legal_moves)}"
+                )
+        elif values.dim() == 2:
+            # Batch of legal moves: [[...], [...]]
+            # Special case: if batch size is 1 and legal_moves is a single list of moves
+            if (
+                values.shape[0] == 1
+                and len(legal_moves) > 0
+                and not isinstance(legal_moves[0], (list, np.ndarray, torch.Tensor))
+            ):
+                mask[0, legal_moves] = True
+            else:
+                for i, legal in enumerate(legal_moves):
+                    if legal is not None:
+                        mask[i, legal] = True
+        else:
+            raise ValueError(
+                f"mask_actions expects 1D or 2D tensor, got {values.dim()}D"
+            )
+
+        return torch.where(mask, values, torch.tensor(mask_value, device=device))
 
     def update_parameters(self, params_dict: Dict[str, Any]) -> None:
         """
@@ -136,7 +136,7 @@ class CategoricalSelector(BaseActionSelector):
             policy = Categorical(logits=masked_logits)
 
         # Always store distribution for decorators (e.g. PPODecorator)
-        metadata["dist"] = policy
+        metadata["policy"] = policy
 
         if should_explore:
             action = policy.sample()
@@ -145,37 +145,6 @@ class CategoricalSelector(BaseActionSelector):
             action = torch.argmax(policy.probs, dim=-1)
 
         return action, metadata
-
-    def mask_actions(
-        self,
-        values: torch.Tensor,
-        legal_moves: Any,
-        mask_value: float = -float("inf"),
-        device: Optional[torch.device] = None,
-    ) -> torch.Tensor:
-        if device is None:
-            device = values.device
-
-        # Core masking logic (adapted from utils.action_mask)
-        mask = torch.zeros_like(values, dtype=torch.bool).to(device)
-
-        if values.dim() == 1:
-            if isinstance(legal_moves, (list, np.ndarray, torch.Tensor)):
-                mask[legal_moves] = True
-            else:
-                raise ValueError(
-                    f"For 1D actions, legal_moves must be an iterable of indices, got {type(legal_moves)}"
-                )
-        elif values.dim() == 2:
-            for i, legal in enumerate(legal_moves):
-                if legal is not None:
-                    mask[i, legal] = True
-        else:
-            raise ValueError(
-                f"mask_actions expects 1D or 2D tensor, got {values.dim()}D"
-            )
-
-        return torch.where(mask, values, torch.tensor(mask_value, device=device))
 
 
 class EpsilonGreedySelector(BaseActionSelector):
@@ -194,71 +163,66 @@ class EpsilonGreedySelector(BaseActionSelector):
         if network_output is None:
             network_output = agent_network.obs_inference(obs)
 
+        q_values = network_output.q_values
+        batch_size = q_values.shape[0] if q_values.dim() == 2 else 1
+
         # Check if legal moves are provided
         legal_moves = None
         if info is not None:
             legal_moves = info.get("legal_moves")
 
         # Determine effective epsilon
-        # Default exploration to True if None (EpsilonGreedy is usually exploratory)
         should_explore = exploration if exploration is not None else True
         effective_epsilon = self.epsilon if should_explore else 0.0
 
-        # Epsilon-greedy logic
-        if np.random.rand() < effective_epsilon:
-            # Random action
-            if legal_moves is not None and len(legal_moves) > 0:
-                action = torch.tensor(np.random.choice(legal_moves), device=obs.device)
-            else:
-                # Assumes q_values is [B, A]
-                action = torch.randint(
-                    0, network_output.q_values.shape[-1], (), device=obs.device
-                )
-        else:
-            # Greedy action
-            # Apply masking if needed
-            if legal_moves is not None and len(legal_moves) > 0:
-                masked_values = self.mask_actions(
-                    network_output.q_values,
-                    legal_moves,
-                    mask_value=-float("inf"),
-                    device=obs.device,
-                )
-                action = masked_values.argmax(dim=-1)
-            else:
-                action = network_output.q_values.argmax(dim=-1)
+        # Epsilon-greedy logic with batched independent exploration
+        random_vals = torch.rand(batch_size, device=q_values.device)
+        explore_mask = random_vals < effective_epsilon
 
-        return action, {}
-
-    def mask_actions(
-        self,
-        values: torch.Tensor,
-        legal_moves: Any,
-        mask_value: float = -float("inf"),
-        device: Optional[torch.device] = None,
-    ) -> torch.Tensor:
-        if device is None:
-            device = values.device
-
-        mask = torch.zeros_like(values, dtype=torch.bool).to(device)
-
-        if values.dim() == 1:
-            if isinstance(legal_moves, (list, np.ndarray, torch.Tensor)):
-                mask[legal_moves] = True
-            else:
-                raise ValueError(
-                    f"For 1D actions, legal_moves must be an iterable of indices, got {type(legal_moves)}"
-                )
-        elif values.dim() == 2:
-            for i, legal in enumerate(legal_moves):
-                if legal is not None:
-                    mask[i, legal] = True
-        else:
-            raise ValueError(
-                f"mask_actions expects 1D or 2D tensor, got {values.dim()}D"
+        # Greedy action (with masking if needed)
+        if legal_moves is not None:
+            masked_values = self.mask_actions(
+                q_values,
+                legal_moves,
+                mask_value=-float("inf"),
+                device=q_values.device,
             )
+            greedy_actions = masked_values.argmax(dim=-1)
+        else:
+            greedy_actions = q_values.argmax(dim=-1)
 
-        return torch.where(mask, values, torch.tensor(mask_value, device=device))
+        if not should_explore or effective_epsilon == 0:
+            return greedy_actions, {}
+
+        # Handle exploration
+        if batch_size == 1:
+            if explore_mask.item():
+                if legal_moves is not None and len(legal_moves) > 0:
+                    # legal_moves could be a single list [idx1, idx2] or [[idx1, idx2]]
+                    actual_legal = (
+                        legal_moves[0] if q_values.dim() == 2 else legal_moves
+                    )
+                    action = torch.tensor(
+                        np.random.choice(actual_legal), device=q_values.device
+                    )
+                else:
+                    action = torch.randint(
+                        0, q_values.shape[-1], (), device=q_values.device
+                    )
+                return action, {}
+            return greedy_actions, {}
+        else:
+            # Batched case
+            actions = greedy_actions.clone()
+            for i in range(batch_size):
+                if explore_mask[i]:
+                    if legal_moves is not None and legal_moves[i] is not None:
+                        actions[i] = np.random.choice(legal_moves[i])
+                    else:
+                        actions[i] = torch.randint(
+                            0, q_values.shape[-1], (), device=q_values.device
+                        )
+            return actions, {}
 
     def update_parameters(self, params: Dict[str, Any]) -> None:
         if "epsilon" in params:
@@ -311,25 +275,3 @@ class ArgmaxSelector(BaseActionSelector):
 
         action = values.argmax(dim=-1)
         return action, {}
-
-    def mask_actions(
-        self,
-        values: torch.Tensor,
-        legal_moves: Any,
-        mask_value: float = -float("inf"),
-        device: Optional[torch.device] = None,
-    ) -> torch.Tensor:
-        # Reuse common logic
-        if device is None:
-            device = values.device
-
-        mask = torch.zeros_like(values, dtype=torch.bool).to(device)
-
-        if values.dim() == 1:
-            mask[legal_moves] = True
-        elif values.dim() == 2:
-            for i, legal in enumerate(legal_moves):
-                if legal is not None:
-                    mask[i, legal] = True
-
-        return torch.where(mask, values, torch.tensor(mask_value, device=device))
