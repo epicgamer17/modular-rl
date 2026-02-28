@@ -99,6 +99,21 @@ public:
     int update_leaves_and_backprop(
         const HiddenInferenceUpdateBatch& hidden_updates,
         const AfterstateInferenceUpdateBatch& afterstate_updates);
+    int update_leaves_and_backprop_raw(
+        const int32_t* hidden_request_ids,
+        const int64_t* hidden_next_state_handles,
+        const double* hidden_rewards,
+        const double* hidden_values,
+        const int32_t* hidden_to_plays,
+        const double* hidden_priors,
+        std::size_t hidden_count,
+        int hidden_num_actions,
+        const int32_t* afterstate_request_ids,
+        const int64_t* afterstate_next_state_handles,
+        const double* afterstate_values,
+        const double* afterstate_code_probs,
+        std::size_t afterstate_count,
+        int afterstate_num_codes);
 
     double root_value() const;
     std::vector<double> root_child_priors() const;
@@ -131,6 +146,20 @@ private:
     int ensure_child_for_edge(int parent_index, int action);
     void apply_hidden_update(const HiddenInferenceUpdateBatch& updates, int i);
     void apply_afterstate_update(const AfterstateInferenceUpdateBatch& updates, int i);
+    void apply_hidden_update_raw(
+        int32_t request_id,
+        int64_t next_state_handle,
+        double reward,
+        double value,
+        int32_t to_play,
+        const double* priors_row,
+        int num_actions);
+    void apply_afterstate_update_raw(
+        int32_t request_id,
+        int64_t next_state_handle,
+        double value,
+        const double* code_probs_row,
+        int num_codes);
     PendingSimulation& pending_or_throw(int request_id);
 
     SearchConfig search_config_;

@@ -10,6 +10,7 @@
 #include "selection.hpp"
 
 #include <random>
+#include <stdexcept>
 #include <string>
 
 using search::AverageDiscountedReturnBackpropagator;
@@ -17,7 +18,6 @@ using search::BackpropConfig;
 using search::BackpropMethodType;
 using search::ChanceNode;
 using search::DecisionNode;
-using search::HiddenInferenceUpdateBatch;
 using search::LeafBatchRequest;
 using search::MinimaxBackpropagator;
 using search::MinMaxStats;
@@ -59,61 +59,12 @@ std::mt19937_64 build_rng(const SelectionConfig &config) {
 }
 
 template <typename T>
-py::array_t<T> vector_to_array_1d(const std::vector<T> &values) {
-  py::array_t<T> out(values.size());
-  auto view = out.template mutable_unchecked<1>();
-  for (ssize_t i = 0; i < static_cast<ssize_t>(values.size()); ++i) {
-    view(i) = values[static_cast<std::size_t>(i)];
-  }
-  return out;
-}
-
-template <typename T>
-std::vector<T> array_to_vector_1d(
-    const py::array_t<T, py::array::c_style | py::array::forcecast> &arr) {
-  std::vector<T> out(static_cast<std::size_t>(arr.size()));
-  auto view = arr.template unchecked<1>();
-  for (ssize_t i = 0; i < view.shape(0); ++i) {
-    out[static_cast<std::size_t>(i)] = view(i);
-  }
-  return out;
-}
-
-template <typename T>
-std::vector<T> array_to_vector_2d_flat(
-    const py::array_t<T, py::array::c_style | py::array::forcecast> &arr,
-    int &rows, int &cols) {
-  auto view = arr.template unchecked<2>();
-  rows = static_cast<int>(view.shape(0));
-  cols = static_cast<int>(view.shape(1));
-  std::vector<T> out(static_cast<std::size_t>(rows) *
-                     static_cast<std::size_t>(cols));
-  for (int r = 0; r < rows; ++r) {
-    for (int c = 0; c < cols; ++c) {
-      out[static_cast<std::size_t>(r) * static_cast<std::size_t>(cols) +
-          static_cast<std::size_t>(c)] = view(r, c);
-    }
-  }
-  return out;
-}
-
-py::dict leaf_batch_request_to_dict(const LeafBatchRequest &req) {
-  py::dict out;
-  out["hidden_request_ids"] =
-      vector_to_array_1d<int32_t>(req.hidden_request_ids);
-  out["hidden_parent_state_handles"] =
-      vector_to_array_1d<int64_t>(req.hidden_parent_state_handles);
-  out["hidden_actions"] = vector_to_array_1d<int32_t>(req.hidden_actions);
-  out["hidden_action_is_one_hot"] =
-      vector_to_array_1d<uint8_t>(req.hidden_action_is_one_hot);
-  out["hidden_num_codes"] = vector_to_array_1d<int32_t>(req.hidden_num_codes);
-  out["afterstate_request_ids"] =
-      vector_to_array_1d<int32_t>(req.afterstate_request_ids);
-  out["afterstate_parent_state_handles"] =
-      vector_to_array_1d<int64_t>(req.afterstate_parent_state_handles);
-  out["afterstate_actions"] =
-      vector_to_array_1d<int32_t>(req.afterstate_actions);
-  return out;
+py::array_t<T> vector_to_numpy_view(std::vector<T> &values, py::handle owner) {
+  return py::array_t<T>(
+      {static_cast<py::ssize_t>(values.size())},
+      {static_cast<py::ssize_t>(sizeof(T))},
+      values.empty() ? nullptr : values.data(),
+      owner);
 }
 
 } // namespace
@@ -181,6 +132,67 @@ PYBIND11_MODULE(mcts_cpp_backend, m) {
       .def_readwrite("alternating_minimax",
                      &BackpropConfig::alternating_minimax)
       .def_readwrite("perspective_player", &BackpropConfig::perspective_player);
+
+  py::class_<LeafBatchRequest>(m, "LeafBatchRequest")
+      .def(py::init<>())
+      .def_property_readonly("hidden_request_ids",
+                             [](LeafBatchRequest &req) {
+                               py::object owner = py::cast(
+                                   &req, py::return_value_policy::reference_internal);
+                               return vector_to_numpy_view(req.hidden_request_ids,
+                                                           owner);
+                             })
+      .def_property_readonly("hidden_parent_state_handles",
+                             [](LeafBatchRequest &req) {
+                               py::object owner = py::cast(
+                                   &req, py::return_value_policy::reference_internal);
+                               return vector_to_numpy_view(
+                                   req.hidden_parent_state_handles, owner);
+                             })
+      .def_property_readonly("hidden_actions",
+                             [](LeafBatchRequest &req) {
+                               py::object owner = py::cast(
+                                   &req, py::return_value_policy::reference_internal);
+                               return vector_to_numpy_view(req.hidden_actions,
+                                                           owner);
+                             })
+      .def_property_readonly("hidden_action_is_one_hot",
+                             [](LeafBatchRequest &req) {
+                               py::object owner = py::cast(
+                                   &req, py::return_value_policy::reference_internal);
+                               return vector_to_numpy_view(
+                                   req.hidden_action_is_one_hot, owner);
+                             })
+      .def_property_readonly("hidden_num_codes",
+                             [](LeafBatchRequest &req) {
+                               py::object owner = py::cast(
+                                   &req, py::return_value_policy::reference_internal);
+                               return vector_to_numpy_view(req.hidden_num_codes,
+                                                           owner);
+                             })
+      .def_property_readonly("afterstate_request_ids",
+                             [](LeafBatchRequest &req) {
+                               py::object owner = py::cast(
+                                   &req, py::return_value_policy::reference_internal);
+                               return vector_to_numpy_view(
+                                   req.afterstate_request_ids, owner);
+                             })
+      .def_property_readonly("afterstate_parent_state_handles",
+                             [](LeafBatchRequest &req) {
+                               py::object owner = py::cast(
+                                   &req, py::return_value_policy::reference_internal);
+                               return vector_to_numpy_view(
+                                   req.afterstate_parent_state_handles, owner);
+                             })
+      .def_property_readonly("afterstate_actions",
+                             [](LeafBatchRequest &req) {
+                               py::object owner = py::cast(
+                                   &req, py::return_value_policy::reference_internal);
+                               return vector_to_numpy_view(req.afterstate_actions,
+                                                           owner);
+                             })
+      .def_property_readonly("total_size", &LeafBatchRequest::total_size)
+      .def_property_readonly("empty", &LeafBatchRequest::empty);
 
   py::class_<MinMaxStats>(m, "MinMaxStats")
       .def(py::init<const std::vector<double> &, bool, double>(),
@@ -329,7 +341,7 @@ PYBIND11_MODULE(mcts_cpp_backend, m) {
               py::gil_scoped_release release;
               req = search.step_search_until_leaves(batch_size);
             }
-            return leaf_batch_request_to_dict(req);
+            return req;
           },
           py::arg("batch_size") = -1)
       .def(
@@ -363,49 +375,83 @@ PYBIND11_MODULE(mcts_cpp_backend, m) {
              const py::array_t<double,
                                py::array::c_style | py::array::forcecast>
                  &afterstate_code_probs) {
-            HiddenInferenceUpdateBatch hidden_updates;
-            hidden_updates.request_ids =
-                array_to_vector_1d<int32_t>(hidden_request_ids);
-            hidden_updates.next_state_handles =
-                array_to_vector_1d<int64_t>(hidden_next_state_handles);
-            hidden_updates.rewards = array_to_vector_1d<double>(hidden_rewards);
-            hidden_updates.values = array_to_vector_1d<double>(hidden_values);
-            hidden_updates.to_plays =
-                array_to_vector_1d<int32_t>(hidden_to_plays);
-            int hidden_rows = 0;
-            int hidden_cols = 0;
-            hidden_updates.priors = array_to_vector_2d_flat<double>(
-                hidden_priors, hidden_rows, hidden_cols);
-            hidden_updates.num_actions = hidden_cols;
+            auto hidden_request_ids_view = hidden_request_ids.unchecked<1>();
+            auto hidden_next_state_handles_view =
+                hidden_next_state_handles.unchecked<1>();
+            auto hidden_rewards_view = hidden_rewards.unchecked<1>();
+            auto hidden_values_view = hidden_values.unchecked<1>();
+            auto hidden_to_plays_view = hidden_to_plays.unchecked<1>();
+            auto hidden_priors_view = hidden_priors.unchecked<2>();
 
-            HiddenInferenceUpdateBatch empty_hidden;
-            if (hidden_rows == 0 && hidden_updates.request_ids.empty()) {
-              hidden_updates = std::move(empty_hidden);
+            auto afterstate_request_ids_view =
+                afterstate_request_ids.unchecked<1>();
+            auto afterstate_next_state_handles_view =
+                afterstate_next_state_handles.unchecked<1>();
+            auto afterstate_values_view = afterstate_values.unchecked<1>();
+            auto afterstate_code_probs_view = afterstate_code_probs.unchecked<2>();
+
+            const py::ssize_t hidden_count = hidden_request_ids_view.shape(0);
+            const py::ssize_t afterstate_count =
+                afterstate_request_ids_view.shape(0);
+            const int hidden_num_actions =
+                static_cast<int>(hidden_priors_view.shape(1));
+            const int afterstate_num_codes =
+                static_cast<int>(afterstate_code_probs_view.shape(1));
+
+            if (hidden_next_state_handles_view.shape(0) != hidden_count ||
+                hidden_rewards_view.shape(0) != hidden_count ||
+                hidden_values_view.shape(0) != hidden_count ||
+                hidden_to_plays_view.shape(0) != hidden_count ||
+                hidden_priors_view.shape(0) != hidden_count) {
+              throw std::invalid_argument(
+                  "Hidden update arrays must agree on batch dimension.");
+            }
+            if (afterstate_next_state_handles_view.shape(0) != afterstate_count ||
+                afterstate_values_view.shape(0) != afterstate_count ||
+                afterstate_code_probs_view.shape(0) != afterstate_count) {
+              throw std::invalid_argument(
+                  "Afterstate update arrays must agree on batch dimension.");
             }
 
-            search::AfterstateInferenceUpdateBatch after_updates;
-            after_updates.request_ids =
-                array_to_vector_1d<int32_t>(afterstate_request_ids);
-            after_updates.next_state_handles =
-                array_to_vector_1d<int64_t>(afterstate_next_state_handles);
-            after_updates.values =
-                array_to_vector_1d<double>(afterstate_values);
-            int after_rows = 0;
-            int after_cols = 0;
-            after_updates.code_probs = array_to_vector_2d_flat<double>(
-                afterstate_code_probs, after_rows, after_cols);
-            after_updates.num_codes = after_cols;
+            const int32_t *hidden_request_ids_ptr =
+                hidden_count > 0 ? &hidden_request_ids_view(0) : nullptr;
+            const int64_t *hidden_next_state_handles_ptr =
+                hidden_count > 0 ? &hidden_next_state_handles_view(0) : nullptr;
+            const double *hidden_rewards_ptr =
+                hidden_count > 0 ? &hidden_rewards_view(0) : nullptr;
+            const double *hidden_values_ptr =
+                hidden_count > 0 ? &hidden_values_view(0) : nullptr;
+            const int32_t *hidden_to_plays_ptr =
+                hidden_count > 0 ? &hidden_to_plays_view(0) : nullptr;
+            const double *hidden_priors_ptr =
+                (hidden_count > 0 && hidden_num_actions > 0)
+                    ? &hidden_priors_view(0, 0)
+                    : nullptr;
 
-            search::AfterstateInferenceUpdateBatch empty_after;
-            if (after_rows == 0 && after_updates.request_ids.empty()) {
-              after_updates = std::move(empty_after);
-            }
+            const int32_t *afterstate_request_ids_ptr =
+                afterstate_count > 0 ? &afterstate_request_ids_view(0) : nullptr;
+            const int64_t *afterstate_next_state_handles_ptr =
+                afterstate_count > 0 ? &afterstate_next_state_handles_view(0)
+                                     : nullptr;
+            const double *afterstate_values_ptr =
+                afterstate_count > 0 ? &afterstate_values_view(0) : nullptr;
+            const double *afterstate_code_probs_ptr =
+                (afterstate_count > 0 && afterstate_num_codes > 0)
+                    ? &afterstate_code_probs_view(0, 0)
+                    : nullptr;
 
             int processed = 0;
             {
               py::gil_scoped_release release;
-              processed = search.update_leaves_and_backprop(hidden_updates,
-                                                            after_updates);
+              processed = search.update_leaves_and_backprop_raw(
+                  hidden_request_ids_ptr, hidden_next_state_handles_ptr,
+                  hidden_rewards_ptr, hidden_values_ptr, hidden_to_plays_ptr,
+                  hidden_priors_ptr, static_cast<std::size_t>(hidden_count),
+                  hidden_num_actions, afterstate_request_ids_ptr,
+                  afterstate_next_state_handles_ptr, afterstate_values_ptr,
+                  afterstate_code_probs_ptr,
+                  static_cast<std::size_t>(afterstate_count),
+                  afterstate_num_codes);
             }
             return processed;
           },

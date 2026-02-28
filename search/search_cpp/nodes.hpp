@@ -89,6 +89,12 @@ public:
         const std::vector<int>& allowed_actions = {},
         double reward = 0.0,
         double network_value = 0.0);
+    void expand_dense(
+        int to_play,
+        const double* priors,
+        int num_actions,
+        double reward = 0.0,
+        double network_value = 0.0);
 
     double reward() const;
     void set_reward(double reward);
@@ -121,6 +127,11 @@ public:
         int to_play,
         double network_value,
         const std::vector<double>& code_probs);
+    void expand_dense(
+        int to_play,
+        double network_value,
+        const double* code_probs,
+        int num_codes);
 
     double network_value() const;
     void set_network_value(double network_value);

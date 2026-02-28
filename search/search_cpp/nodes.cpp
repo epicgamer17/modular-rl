@@ -229,6 +229,29 @@ void DecisionNode::expand(
     mutable_child_priors() = std::move(selected_priors);
 }
 
+void DecisionNode::expand_dense(
+    const int to_play,
+    const double* priors,
+    const int num_actions,
+    const double reward,
+    const double network_value) {
+    if (priors == nullptr) {
+        throw std::invalid_argument("DecisionNode::expand_dense priors pointer is null.");
+    }
+    if (num_actions <= 0) {
+        throw std::invalid_argument("DecisionNode::expand_dense requires num_actions > 0.");
+    }
+
+    set_to_play(to_play);
+    set_reward(reward);
+    set_network_value(network_value);
+    clear_v_mix_cache();
+
+    network_policy_.assign(priors, priors + num_actions);
+    set_child_stats_size(static_cast<std::size_t>(num_actions));
+    mutable_child_priors().assign(priors, priors + num_actions);
+}
+
 double DecisionNode::reward() const {
     return reward_;
 }
@@ -286,6 +309,29 @@ void ChanceNode::expand(
     mutable_child_priors() = code_probs;
     for (std::size_t i = 0; i < code_probs.size(); ++i) {
         code_probs_[static_cast<int>(i)] = code_probs[i];
+    }
+}
+
+void ChanceNode::expand_dense(
+    const int to_play,
+    const double network_value,
+    const double* code_probs,
+    const int num_codes) {
+    if (code_probs == nullptr) {
+        throw std::invalid_argument("ChanceNode::expand_dense code_probs pointer is null.");
+    }
+    if (num_codes <= 0) {
+        throw std::invalid_argument("ChanceNode::expand_dense requires num_codes > 0.");
+    }
+
+    set_to_play(to_play);
+    set_network_value(network_value);
+    clear_code_probabilities();
+
+    set_child_stats_size(static_cast<std::size_t>(num_codes));
+    mutable_child_priors().assign(code_probs, code_probs + num_codes);
+    for (int i = 0; i < num_codes; ++i) {
+        code_probs_[i] = code_probs[i];
     }
 }
 

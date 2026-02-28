@@ -296,25 +296,50 @@ SearchAlgorithm::PendingSimulation& SearchAlgorithm::pending_or_throw(const int 
 }
 
 void SearchAlgorithm::apply_hidden_update(const HiddenInferenceUpdateBatch& updates, const int i) {
-    PendingSimulation& pending = pending_or_throw(updates.request_ids[static_cast<std::size_t>(i)]);
+    const std::size_t row_start = static_cast<std::size_t>(i) * static_cast<std::size_t>(updates.num_actions);
+    const double* priors_row = updates.num_actions > 0
+        ? updates.priors.data() + row_start
+        : nullptr;
+    apply_hidden_update_raw(
+        updates.request_ids[static_cast<std::size_t>(i)],
+        updates.next_state_handles[static_cast<std::size_t>(i)],
+        updates.rewards[static_cast<std::size_t>(i)],
+        updates.values[static_cast<std::size_t>(i)],
+        updates.to_plays[static_cast<std::size_t>(i)],
+        priors_row,
+        updates.num_actions);
+}
+
+void SearchAlgorithm::apply_afterstate_update(const AfterstateInferenceUpdateBatch& updates, const int i) {
+    const std::size_t row_start = static_cast<std::size_t>(i) * static_cast<std::size_t>(updates.num_codes);
+    const double* code_probs_row = updates.num_codes > 0
+        ? updates.code_probs.data() + row_start
+        : nullptr;
+    apply_afterstate_update_raw(
+        updates.request_ids[static_cast<std::size_t>(i)],
+        updates.next_state_handles[static_cast<std::size_t>(i)],
+        updates.values[static_cast<std::size_t>(i)],
+        code_probs_row,
+        updates.num_codes);
+}
+
+void SearchAlgorithm::apply_hidden_update_raw(
+    const int32_t request_id,
+    const int64_t next_state_handle,
+    const double reward,
+    const double value,
+    const int32_t to_play,
+    const double* priors_row,
+    const int num_actions) {
+    PendingSimulation& pending = pending_or_throw(request_id);
     if (pending.inference_kind != InferenceKind::kHiddenState) {
         throw std::logic_error("Received hidden-state update for a non-hidden request.");
     }
 
-    const std::size_t row_start = static_cast<std::size_t>(i) * static_cast<std::size_t>(updates.num_actions);
-    std::vector<double> priors(static_cast<std::size_t>(updates.num_actions), 0.0);
-    std::copy_n(
-        updates.priors.begin() + static_cast<long>(row_start),
-        updates.num_actions,
-        priors.begin());
-
     DecisionNode& leaf = arena_.decision(pending.leaf_index);
-    const int to_play = updates.to_plays[static_cast<std::size_t>(i)];
-    const double reward = updates.rewards[static_cast<std::size_t>(i)];
-    const double value = updates.values[static_cast<std::size_t>(i)];
-    leaf.expand(to_play, priors, priors, {}, reward, value);
+    leaf.expand_dense(to_play, priors_row, num_actions, reward, value);
     leaf.set_stochastic(search_config_.stochastic);
-    leaf.set_state_handle(updates.next_state_handles[static_cast<std::size_t>(i)]);
+    leaf.set_state_handle(next_state_handle);
 
     backpropagate_with_method(
         backprop_method_,
@@ -330,23 +355,20 @@ void SearchAlgorithm::apply_hidden_update(const HiddenInferenceUpdateBatch& upda
     --active_pending_count_;
 }
 
-void SearchAlgorithm::apply_afterstate_update(const AfterstateInferenceUpdateBatch& updates, const int i) {
-    PendingSimulation& pending = pending_or_throw(updates.request_ids[static_cast<std::size_t>(i)]);
+void SearchAlgorithm::apply_afterstate_update_raw(
+    const int32_t request_id,
+    const int64_t next_state_handle,
+    const double value,
+    const double* code_probs_row,
+    const int num_codes) {
+    PendingSimulation& pending = pending_or_throw(request_id);
     if (pending.inference_kind != InferenceKind::kAfterstate) {
         throw std::logic_error("Received afterstate update for a non-afterstate request.");
     }
 
-    const std::size_t row_start = static_cast<std::size_t>(i) * static_cast<std::size_t>(updates.num_codes);
-    std::vector<double> code_probs(static_cast<std::size_t>(updates.num_codes), 0.0);
-    std::copy_n(
-        updates.code_probs.begin() + static_cast<long>(row_start),
-        updates.num_codes,
-        code_probs.begin());
-
     ChanceNode& leaf = arena_.chance(pending.leaf_index);
-    const double value = updates.values[static_cast<std::size_t>(i)];
-    leaf.expand(pending.parent_to_play, value, code_probs);
-    leaf.set_state_handle(updates.next_state_handles[static_cast<std::size_t>(i)]);
+    leaf.expand_dense(pending.parent_to_play, value, code_probs_row, num_codes);
+    leaf.set_state_handle(next_state_handle);
 
     backpropagate_with_method(
         backprop_method_,
@@ -367,50 +389,127 @@ int SearchAlgorithm::update_leaves_and_backprop(
     const AfterstateInferenceUpdateBatch& afterstate_updates) {
     const std::size_t hidden_n = hidden_updates.request_ids.size();
     const std::size_t afterstate_n = afterstate_updates.request_ids.size();
-
     if (hidden_n != hidden_updates.next_state_handles.size() ||
         hidden_n != hidden_updates.rewards.size() ||
         hidden_n != hidden_updates.values.size() ||
         hidden_n != hidden_updates.to_plays.size()) {
-        throw std::invalid_argument("Hidden update batch fields must have equal lengths.");
+        throw std::invalid_argument(
+            "Hidden update batch fields must have equal lengths.");
     }
     if (hidden_updates.num_actions < 0) {
         throw std::invalid_argument("hidden_updates.num_actions must be non-negative.");
     }
-    if (static_cast<std::size_t>(hidden_updates.num_actions) * hidden_n != hidden_updates.priors.size()) {
-        throw std::invalid_argument("Hidden priors matrix shape does not match [batch, num_actions].");
+    if (static_cast<std::size_t>(hidden_updates.num_actions) * hidden_n !=
+        hidden_updates.priors.size()) {
+        throw std::invalid_argument(
+            "Hidden priors matrix shape does not match [batch, num_actions].");
     }
-
     if (afterstate_n != afterstate_updates.next_state_handles.size() ||
         afterstate_n != afterstate_updates.values.size()) {
-        throw std::invalid_argument("Afterstate update batch fields must have equal lengths.");
+        throw std::invalid_argument(
+            "Afterstate update batch fields must have equal lengths.");
     }
     if (afterstate_updates.num_codes < 0) {
-        throw std::invalid_argument("afterstate_updates.num_codes must be non-negative.");
+        throw std::invalid_argument(
+            "afterstate_updates.num_codes must be non-negative.");
     }
-    if (static_cast<std::size_t>(afterstate_updates.num_codes) * afterstate_n != afterstate_updates.code_probs.size()) {
-        throw std::invalid_argument("Afterstate code_probs matrix shape does not match [batch, num_codes].");
+    if (static_cast<std::size_t>(afterstate_updates.num_codes) * afterstate_n !=
+        afterstate_updates.code_probs.size()) {
+        throw std::invalid_argument(
+            "Afterstate code_probs matrix shape does not match [batch, num_codes].");
+    }
+
+    const int32_t* hidden_request_ids = hidden_n > 0 ? hidden_updates.request_ids.data() : nullptr;
+    const int64_t* hidden_next_state_handles = hidden_n > 0 ? hidden_updates.next_state_handles.data() : nullptr;
+    const double* hidden_rewards = hidden_n > 0 ? hidden_updates.rewards.data() : nullptr;
+    const double* hidden_values = hidden_n > 0 ? hidden_updates.values.data() : nullptr;
+    const int32_t* hidden_to_plays = hidden_n > 0 ? hidden_updates.to_plays.data() : nullptr;
+    const double* hidden_priors = hidden_n > 0 ? hidden_updates.priors.data() : nullptr;
+
+    const int32_t* afterstate_request_ids = afterstate_n > 0 ? afterstate_updates.request_ids.data() : nullptr;
+    const int64_t* afterstate_next_state_handles = afterstate_n > 0 ? afterstate_updates.next_state_handles.data() : nullptr;
+    const double* afterstate_values = afterstate_n > 0 ? afterstate_updates.values.data() : nullptr;
+    const double* afterstate_code_probs = afterstate_n > 0 ? afterstate_updates.code_probs.data() : nullptr;
+
+    return update_leaves_and_backprop_raw(
+        hidden_request_ids,
+        hidden_next_state_handles,
+        hidden_rewards,
+        hidden_values,
+        hidden_to_plays,
+        hidden_priors,
+        hidden_n,
+        hidden_updates.num_actions,
+        afterstate_request_ids,
+        afterstate_next_state_handles,
+        afterstate_values,
+        afterstate_code_probs,
+        afterstate_n,
+        afterstate_updates.num_codes);
+}
+
+int SearchAlgorithm::update_leaves_and_backprop_raw(
+    const int32_t* hidden_request_ids,
+    const int64_t* hidden_next_state_handles,
+    const double* hidden_rewards,
+    const double* hidden_values,
+    const int32_t* hidden_to_plays,
+    const double* hidden_priors,
+    const std::size_t hidden_count,
+    const int hidden_num_actions,
+    const int32_t* afterstate_request_ids,
+    const int64_t* afterstate_next_state_handles,
+    const double* afterstate_values,
+    const double* afterstate_code_probs,
+    const std::size_t afterstate_count,
+    const int afterstate_num_codes) {
+    if (hidden_num_actions < 0) {
+        throw std::invalid_argument("hidden_num_actions must be non-negative.");
+    }
+    if (afterstate_num_codes < 0) {
+        throw std::invalid_argument("afterstate_num_codes must be non-negative.");
+    }
+    if (hidden_count > 0 && hidden_num_actions <= 0) {
+        throw std::invalid_argument("hidden_num_actions must be > 0 when hidden_count > 0.");
+    }
+    if (afterstate_count > 0 && afterstate_num_codes <= 0) {
+        throw std::invalid_argument("afterstate_num_codes must be > 0 when afterstate_count > 0.");
+    }
+    if (hidden_count > 0 &&
+        (hidden_request_ids == nullptr || hidden_next_state_handles == nullptr ||
+         hidden_rewards == nullptr || hidden_values == nullptr || hidden_to_plays == nullptr)) {
+        throw std::invalid_argument("Hidden update pointers must not be null when hidden_count > 0.");
+    }
+    if (afterstate_count > 0 &&
+        (afterstate_request_ids == nullptr || afterstate_next_state_handles == nullptr || afterstate_values == nullptr)) {
+        throw std::invalid_argument("Afterstate update pointers must not be null when afterstate_count > 0.");
+    }
+    if (hidden_count > 0 && hidden_num_actions > 0 && hidden_priors == nullptr) {
+        throw std::invalid_argument("hidden_priors pointer must not be null when hidden updates are present.");
+    }
+    if (afterstate_count > 0 && afterstate_num_codes > 0 && afterstate_code_probs == nullptr) {
+        throw std::invalid_argument("afterstate_code_probs pointer must not be null when afterstate updates are present.");
     }
 
     std::unordered_map<int, int> hidden_lookup;
-    hidden_lookup.reserve(hidden_n);
-    for (std::size_t i = 0; i < hidden_n; ++i) {
-        hidden_lookup[hidden_updates.request_ids[i]] = static_cast<int>(i);
+    hidden_lookup.reserve(hidden_count);
+    for (std::size_t i = 0; i < hidden_count; ++i) {
+        hidden_lookup[hidden_request_ids[i]] = static_cast<int>(i);
     }
 
     std::unordered_map<int, int> after_lookup;
-    after_lookup.reserve(afterstate_n);
-    for (std::size_t i = 0; i < afterstate_n; ++i) {
-        after_lookup[afterstate_updates.request_ids[i]] = static_cast<int>(i);
+    after_lookup.reserve(afterstate_count);
+    for (std::size_t i = 0; i < afterstate_count; ++i) {
+        after_lookup[afterstate_request_ids[i]] = static_cast<int>(i);
     }
 
     std::vector<int> process_order;
-    process_order.reserve(hidden_n + afterstate_n);
-    for (const int req : hidden_updates.request_ids) {
-        process_order.push_back(req);
+    process_order.reserve(hidden_count + afterstate_count);
+    for (std::size_t i = 0; i < hidden_count; ++i) {
+        process_order.push_back(hidden_request_ids[i]);
     }
-    for (const int req : afterstate_updates.request_ids) {
-        process_order.push_back(req);
+    for (std::size_t i = 0; i < afterstate_count; ++i) {
+        process_order.push_back(afterstate_request_ids[i]);
     }
     std::sort(process_order.begin(), process_order.end());
     process_order.erase(std::unique(process_order.begin(), process_order.end()), process_order.end());
@@ -419,13 +518,33 @@ int SearchAlgorithm::update_leaves_and_backprop(
     for (const int request_id : process_order) {
         const auto hit = hidden_lookup.find(request_id);
         if (hit != hidden_lookup.end()) {
-            apply_hidden_update(hidden_updates, hit->second);
+            const std::size_t i = static_cast<std::size_t>(hit->second);
+            const double* priors_row = hidden_num_actions > 0
+                ? hidden_priors + (i * static_cast<std::size_t>(hidden_num_actions))
+                : nullptr;
+            apply_hidden_update_raw(
+                hidden_request_ids[i],
+                hidden_next_state_handles[i],
+                hidden_rewards[i],
+                hidden_values[i],
+                hidden_to_plays[i],
+                priors_row,
+                hidden_num_actions);
             ++processed;
             continue;
         }
         const auto ait = after_lookup.find(request_id);
         if (ait != after_lookup.end()) {
-            apply_afterstate_update(afterstate_updates, ait->second);
+            const std::size_t i = static_cast<std::size_t>(ait->second);
+            const double* code_probs_row = afterstate_num_codes > 0
+                ? afterstate_code_probs + (i * static_cast<std::size_t>(afterstate_num_codes))
+                : nullptr;
+            apply_afterstate_update_raw(
+                afterstate_request_ids[i],
+                afterstate_next_state_handles[i],
+                afterstate_values[i],
+                code_probs_row,
+                afterstate_num_codes);
             ++processed;
         }
     }
