@@ -7,7 +7,7 @@
 #include "min_max_stats.hpp"
 #include "nodes.hpp"
 
-namespace rainbow::search {
+namespace search {
 
 enum class ScoringMethodType {
     kUcb = 0,
@@ -76,4 +76,4 @@ std::vector<double> compute_scores(
     const MinMaxStats& min_max_stats,
     const ScoringConfig& config);
 
-}  // namespace rainbow::search
+}  // namespace search

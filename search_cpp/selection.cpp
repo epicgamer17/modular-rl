@@ -6,7 +6,7 @@
 #include <numeric>
 #include <stdexcept>
 
-namespace rainbow::search {
+namespace search {
 
 namespace {
 
@@ -184,7 +184,7 @@ int select_max_visit_count(
     const Node& node,
     const SelectionConfig& config,
     std::mt19937_64& rng) {
-    return sample_from_probabilities(node.child_visits(), config, rng);
+    return select_top_score(node.child_visits(), config, rng);
 }
 
 int select_chance_outcome(
@@ -232,4 +232,4 @@ int select_action(
     return fn(scores, config, rng);
 }
 
-}  // namespace rainbow::search
+}  // namespace search

@@ -6,7 +6,7 @@
 
 #include "nodes.hpp"
 
-namespace rainbow::search {
+namespace search {
 
 enum class SelectionMethodType {
     kTopScore = 0,
@@ -71,4 +71,4 @@ int select_action(
     const SelectionConfig& config,
     std::mt19937_64& rng);
 
-}  // namespace rainbow::search
+}  // namespace search

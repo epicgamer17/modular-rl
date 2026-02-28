@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-namespace rainbow::search {
+namespace search {
 
 class MinMaxStats {
 public:
@@ -29,4 +29,4 @@ private:
     double min_;
 };
 
-}  // namespace rainbow::search
+}  // namespace search

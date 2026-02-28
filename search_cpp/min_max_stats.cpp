@@ -5,7 +5,7 @@
 #include <sstream>
 #include <stdexcept>
 
-namespace rainbow::search {
+namespace search {
 
 MinMaxStats::MinMaxStats(
     const std::vector<double>& known_bounds,
@@ -58,4 +58,4 @@ std::string MinMaxStats::repr() const {
     return out.str();
 }
 
-}  // namespace rainbow::search
+}  // namespace search

@@ -21,6 +21,7 @@ pybind11_add_module(
     bindings.cpp
     backprop.cpp
     min_max_stats.cpp
+    modular_search.cpp
     nodes.cpp
     scoring.cpp
     selection.cpp

@@ -5,7 +5,7 @@
 #include "min_max_stats.hpp"
 #include "nodes.hpp"
 
-namespace rainbow::search {
+namespace search {
 
 enum class BackpropMethodType {
     kAverageDiscountedReturn = 0,
@@ -84,4 +84,4 @@ double compute_child_q_from_parent(
     int child_index,
     const BackpropConfig& config);
 
-}  // namespace rainbow::search
+}  // namespace search

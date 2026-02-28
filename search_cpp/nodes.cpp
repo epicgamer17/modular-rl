@@ -4,7 +4,7 @@
 #include <numeric>
 #include <stdexcept>
 
-namespace rainbow::search {
+namespace search {
 
 Node::Node(const NodeType node_type, const double prior, const int parent_index)
     : node_type_(node_type),
@@ -12,6 +12,7 @@ Node::Node(const NodeType node_type, const double prior, const int parent_index)
       parent_index_(parent_index),
       visits_(0),
       to_play_(-1),
+      state_handle_(-1),
       prior_(prior),
       value_sum_(0.0) {}
 
@@ -81,6 +82,14 @@ int Node::to_play() const {
 
 void Node::set_to_play(const int to_play) {
     to_play_ = to_play;
+}
+
+int64_t Node::state_handle() const {
+    return state_handle_;
+}
+
+void Node::set_state_handle(const int64_t state_handle) {
+    state_handle_ = state_handle;
 }
 
 double Node::value(const double bootstrap) const {
@@ -408,4 +417,4 @@ const NodeArena::Entry& NodeArena::entry_or_throw(const int node_index) const {
     return entries_.at(static_cast<std::size_t>(node_index));
 }
 
-}  // namespace rainbow::search
+}  // namespace search

@@ -1,8 +1,10 @@
+#include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
 #include "backprop.hpp"
 #include "min_max_stats.hpp"
+#include "modular_search.hpp"
 #include "nodes.hpp"
 #include "scoring.hpp"
 #include "selection.hpp"
@@ -10,20 +12,24 @@
 #include <random>
 #include <string>
 
-using rainbow::search::AverageDiscountedReturnBackpropagator;
-using rainbow::search::BackpropConfig;
-using rainbow::search::BackpropMethodType;
-using rainbow::search::ChanceNode;
-using rainbow::search::DecisionNode;
-using rainbow::search::MinMaxStats;
-using rainbow::search::MinimaxBackpropagator;
-using rainbow::search::Node;
-using rainbow::search::NodeArena;
-using rainbow::search::NodeType;
-using rainbow::search::ScoringConfig;
-using rainbow::search::ScoringMethodType;
-using rainbow::search::SelectionConfig;
-using rainbow::search::SelectionMethodType;
+using search::AverageDiscountedReturnBackpropagator;
+using search::BackpropConfig;
+using search::BackpropMethodType;
+using search::ChanceNode;
+using search::DecisionNode;
+using search::HiddenInferenceUpdateBatch;
+using search::LeafBatchRequest;
+using search::MinMaxStats;
+using search::MinimaxBackpropagator;
+using search::Node;
+using search::NodeArena;
+using search::NodeType;
+using search::SearchAlgorithm;
+using search::SearchConfig;
+using search::ScoringConfig;
+using search::ScoringMethodType;
+using search::SelectionConfig;
+using search::SelectionMethodType;
 namespace py = pybind11;
 
 namespace {
@@ -48,6 +54,58 @@ std::mt19937_64 build_rng(const SelectionConfig& config) {
     std::random_device rd;
     const uint64_t seed = config.seed == 0 ? (static_cast<uint64_t>(rd()) << 32U) ^ rd() : config.seed;
     return std::mt19937_64(seed);
+}
+
+template <typename T>
+py::array_t<T> vector_to_array_1d(const std::vector<T>& values) {
+    py::array_t<T> out(values.size());
+    auto view = out.template mutable_unchecked<1>();
+    for (ssize_t i = 0; i < static_cast<ssize_t>(values.size()); ++i) {
+        view(i) = values[static_cast<std::size_t>(i)];
+    }
+    return out;
+}
+
+template <typename T>
+std::vector<T> array_to_vector_1d(
+    const py::array_t<T, py::array::c_style | py::array::forcecast>& arr) {
+    std::vector<T> out(static_cast<std::size_t>(arr.size()));
+    auto view = arr.template unchecked<1>();
+    for (ssize_t i = 0; i < view.shape(0); ++i) {
+        out[static_cast<std::size_t>(i)] = view(i);
+    }
+    return out;
+}
+
+template <typename T>
+std::vector<T> array_to_vector_2d_flat(
+    const py::array_t<T, py::array::c_style | py::array::forcecast>& arr,
+    int& rows,
+    int& cols) {
+    auto view = arr.template unchecked<2>();
+    rows = static_cast<int>(view.shape(0));
+    cols = static_cast<int>(view.shape(1));
+    std::vector<T> out(static_cast<std::size_t>(rows) * static_cast<std::size_t>(cols));
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            out[static_cast<std::size_t>(r) * static_cast<std::size_t>(cols) + static_cast<std::size_t>(c)] =
+                view(r, c);
+        }
+    }
+    return out;
+}
+
+py::dict leaf_batch_request_to_dict(const LeafBatchRequest& req) {
+    py::dict out;
+    out["hidden_request_ids"] = vector_to_array_1d<int32_t>(req.hidden_request_ids);
+    out["hidden_parent_state_handles"] = vector_to_array_1d<int64_t>(req.hidden_parent_state_handles);
+    out["hidden_actions"] = vector_to_array_1d<int32_t>(req.hidden_actions);
+    out["hidden_action_is_one_hot"] = vector_to_array_1d<uint8_t>(req.hidden_action_is_one_hot);
+    out["hidden_num_codes"] = vector_to_array_1d<int32_t>(req.hidden_num_codes);
+    out["afterstate_request_ids"] = vector_to_array_1d<int32_t>(req.afterstate_request_ids);
+    out["afterstate_parent_state_handles"] = vector_to_array_1d<int64_t>(req.afterstate_parent_state_handles);
+    out["afterstate_actions"] = vector_to_array_1d<int32_t>(req.afterstate_actions);
+    return out;
 }
 
 }  // namespace
@@ -79,6 +137,19 @@ PYBIND11_MODULE(rainbow_search_cpp, m) {
         .value("AVERAGE_DISCOUNTED_RETURN", BackpropMethodType::kAverageDiscountedReturn)
         .value("MINIMAX", BackpropMethodType::kMinimax)
         .export_values();
+
+    py::class_<SearchConfig>(m, "SearchConfig")
+        .def(py::init<>())
+        .def_readwrite("num_actions", &SearchConfig::num_actions)
+        .def_readwrite("num_players", &SearchConfig::num_players)
+        .def_readwrite("default_batch_size", &SearchConfig::default_batch_size)
+        .def_readwrite("stochastic", &SearchConfig::stochastic)
+        .def_readwrite("known_bounds", &SearchConfig::known_bounds)
+        .def_readwrite("soft_update_minmax", &SearchConfig::soft_update_minmax)
+        .def_readwrite("min_max_epsilon", &SearchConfig::min_max_epsilon)
+        .def_readwrite("discount_factor", &SearchConfig::discount_factor)
+        .def_readwrite("alternating_minimax", &SearchConfig::alternating_minimax)
+        .def_readwrite("perspective_player", &SearchConfig::perspective_player);
 
     py::class_<ScoringConfig>(m, "ScoringConfig")
         .def(py::init<>())
@@ -121,6 +192,7 @@ PYBIND11_MODULE(rainbow_search_cpp, m) {
         .def_property("prior", &Node::prior, &Node::set_prior)
         .def_property("value_sum", &Node::value_sum, &Node::set_value_sum)
         .def_property("to_play", &Node::to_play, &Node::set_to_play)
+        .def_property("state_handle", &Node::state_handle, &Node::set_state_handle)
         .def_property_readonly("node_type", &Node::node_type)
         .def_property_readonly("is_decision", &Node::is_decision)
         .def_property_readonly("is_chance", &Node::is_chance)
@@ -204,6 +276,124 @@ PYBIND11_MODULE(rainbow_search_cpp, m) {
             return node_to_dict(arena.node(node_index));
         });
 
+    py::class_<SearchAlgorithm>(m, "SearchAlgorithm")
+        .def(
+            py::init<
+                const SearchConfig&,
+                const ScoringConfig&,
+                const SelectionConfig&,
+                const SelectionConfig&,
+                const SelectionConfig&,
+                const BackpropConfig&,
+                ScoringMethodType,
+                ScoringMethodType,
+                SelectionMethodType,
+                SelectionMethodType,
+                SelectionMethodType,
+                BackpropMethodType>(),
+            py::arg("search_config"),
+            py::arg("scoring_config") = ScoringConfig{},
+            py::arg("root_selection_config") = SelectionConfig{},
+            py::arg("decision_selection_config") = SelectionConfig{},
+            py::arg("chance_selection_config") = SelectionConfig{},
+            py::arg("backprop_config") = BackpropConfig{},
+            py::arg("root_scoring_type") = ScoringMethodType::kUcb,
+            py::arg("decision_scoring_type") = ScoringMethodType::kUcb,
+            py::arg("root_selection_type") = SelectionMethodType::kTopScore,
+            py::arg("decision_selection_type") = SelectionMethodType::kTopScore,
+            py::arg("chance_selection_type") = SelectionMethodType::kProbabilitySample,
+            py::arg("backprop_method") = BackpropMethodType::kAverageDiscountedReturn)
+        .def("clear", &SearchAlgorithm::clear)
+        .def_property_readonly("has_root", &SearchAlgorithm::has_root)
+        .def_property_readonly("root_index", &SearchAlgorithm::root_index)
+        .def_property_readonly("node_count", &SearchAlgorithm::node_count)
+        .def_property_readonly("pending_count", &SearchAlgorithm::pending_count)
+        .def(
+            "initialize_root",
+            &SearchAlgorithm::initialize_root,
+            py::arg("policy_priors"),
+            py::arg("to_play"),
+            py::arg("state_handle"),
+            py::arg("root_value") = 0.0,
+            py::arg("allowed_actions") = std::vector<int>{})
+        .def(
+            "step_search_until_leaves",
+            [](SearchAlgorithm& search, int batch_size) {
+                LeafBatchRequest req;
+                {
+                    py::gil_scoped_release release;
+                    req = search.step_search_until_leaves(batch_size);
+                }
+                return leaf_batch_request_to_dict(req);
+            },
+            py::arg("batch_size") = -1)
+        .def(
+            "update_leaves_and_backprop",
+            [](SearchAlgorithm& search,
+               const py::array_t<int32_t, py::array::c_style | py::array::forcecast>& hidden_request_ids,
+               const py::array_t<int64_t, py::array::c_style | py::array::forcecast>& hidden_next_state_handles,
+               const py::array_t<double, py::array::c_style | py::array::forcecast>& hidden_rewards,
+               const py::array_t<double, py::array::c_style | py::array::forcecast>& hidden_values,
+               const py::array_t<int32_t, py::array::c_style | py::array::forcecast>& hidden_to_plays,
+               const py::array_t<double, py::array::c_style | py::array::forcecast>& hidden_priors,
+               const py::array_t<int32_t, py::array::c_style | py::array::forcecast>& afterstate_request_ids,
+               const py::array_t<int64_t, py::array::c_style | py::array::forcecast>& afterstate_next_state_handles,
+               const py::array_t<double, py::array::c_style | py::array::forcecast>& afterstate_values,
+               const py::array_t<double, py::array::c_style | py::array::forcecast>& afterstate_code_probs) {
+                HiddenInferenceUpdateBatch hidden_updates;
+                hidden_updates.request_ids = array_to_vector_1d<int32_t>(hidden_request_ids);
+                hidden_updates.next_state_handles = array_to_vector_1d<int64_t>(hidden_next_state_handles);
+                hidden_updates.rewards = array_to_vector_1d<double>(hidden_rewards);
+                hidden_updates.values = array_to_vector_1d<double>(hidden_values);
+                hidden_updates.to_plays = array_to_vector_1d<int32_t>(hidden_to_plays);
+                int hidden_rows = 0;
+                int hidden_cols = 0;
+                hidden_updates.priors = array_to_vector_2d_flat<double>(hidden_priors, hidden_rows, hidden_cols);
+                hidden_updates.num_actions = hidden_cols;
+
+                HiddenInferenceUpdateBatch empty_hidden;
+                if (hidden_rows == 0 && hidden_updates.request_ids.empty()) {
+                    hidden_updates = std::move(empty_hidden);
+                }
+
+                search::AfterstateInferenceUpdateBatch after_updates;
+                after_updates.request_ids = array_to_vector_1d<int32_t>(afterstate_request_ids);
+                after_updates.next_state_handles = array_to_vector_1d<int64_t>(afterstate_next_state_handles);
+                after_updates.values = array_to_vector_1d<double>(afterstate_values);
+                int after_rows = 0;
+                int after_cols = 0;
+                after_updates.code_probs =
+                    array_to_vector_2d_flat<double>(afterstate_code_probs, after_rows, after_cols);
+                after_updates.num_codes = after_cols;
+
+                search::AfterstateInferenceUpdateBatch empty_after;
+                if (after_rows == 0 && after_updates.request_ids.empty()) {
+                    after_updates = std::move(empty_after);
+                }
+
+                int processed = 0;
+                {
+                    py::gil_scoped_release release;
+                    processed = search.update_leaves_and_backprop(hidden_updates, after_updates);
+                }
+                return processed;
+            },
+            py::arg("hidden_request_ids"),
+            py::arg("hidden_next_state_handles"),
+            py::arg("hidden_rewards"),
+            py::arg("hidden_values"),
+            py::arg("hidden_to_plays"),
+            py::arg("hidden_priors"),
+            py::arg("afterstate_request_ids"),
+            py::arg("afterstate_next_state_handles"),
+            py::arg("afterstate_values"),
+            py::arg("afterstate_code_probs"))
+        .def("root_value", &SearchAlgorithm::root_value)
+        .def("root_child_priors", &SearchAlgorithm::root_child_priors)
+        .def("root_child_values", &SearchAlgorithm::root_child_values)
+        .def("root_child_visits", &SearchAlgorithm::root_child_visits)
+        .def("select_root_action", &SearchAlgorithm::select_root_action, py::arg("method") = SelectionMethodType::kMaxVisit);
+
     py::class_<AverageDiscountedReturnBackpropagator>(m, "AverageDiscountedReturnBackpropagator")
         .def(py::init<>())
         .def(
@@ -262,10 +452,10 @@ PYBIND11_MODULE(rainbow_search_cpp, m) {
             py::arg("min_max_stats"),
             py::arg("config"));
 
-    m.def("score_initial", &rainbow::search::score_initial, py::arg("type"), py::arg("prior"), py::arg("action"));
+    m.def("score_initial", &search::score_initial, py::arg("type"), py::arg("prior"), py::arg("action"));
     m.def(
         "compute_scores",
-        &rainbow::search::compute_scores,
+        &search::compute_scores,
         py::arg("type"),
         py::arg("arena"),
         py::arg("node_index"),
@@ -273,18 +463,18 @@ PYBIND11_MODULE(rainbow_search_cpp, m) {
         py::arg("config"));
     m.def(
         "compute_gumbel_scores_with_policy",
-        &rainbow::search::compute_gumbel_scores_with_policy,
+        &search::compute_gumbel_scores_with_policy,
         py::arg("arena"),
         py::arg("node_index"),
         py::arg("improved_policy"),
         py::arg("config"));
 
-    m.def("mask_actions", &rainbow::search::mask_actions, py::arg("values"), py::arg("legal_moves"), py::arg("mask_value") = -1e30);
+    m.def("mask_actions", &search::mask_actions, py::arg("values"), py::arg("legal_moves"), py::arg("mask_value") = -1e30);
     m.def(
         "select_top_score",
         [](const std::vector<double>& scores, const SelectionConfig& config) {
             auto rng = build_rng(config);
-            return rainbow::search::select_top_score(scores, config, rng);
+            return search::select_top_score(scores, config, rng);
         },
         py::arg("scores"),
         py::arg("config"));
@@ -292,7 +482,7 @@ PYBIND11_MODULE(rainbow_search_cpp, m) {
         "select_top_score_with_tiebreak",
         [](const std::vector<double>& scores, const std::vector<double>& tiebreak_scores, const SelectionConfig& config) {
             auto rng = build_rng(config);
-            return rainbow::search::select_top_score_with_tiebreak(scores, tiebreak_scores, config, rng);
+            return search::select_top_score_with_tiebreak(scores, tiebreak_scores, config, rng);
         },
         py::arg("scores"),
         py::arg("tiebreak_scores"),
@@ -301,7 +491,7 @@ PYBIND11_MODULE(rainbow_search_cpp, m) {
         "sample_from_softmax",
         [](const std::vector<double>& logits, const SelectionConfig& config) {
             auto rng = build_rng(config);
-            return rainbow::search::sample_from_softmax(logits, config, rng);
+            return search::sample_from_softmax(logits, config, rng);
         },
         py::arg("logits"),
         py::arg("config"));
@@ -309,7 +499,7 @@ PYBIND11_MODULE(rainbow_search_cpp, m) {
         "sample_from_probabilities",
         [](const std::vector<double>& probs, const SelectionConfig& config) {
             auto rng = build_rng(config);
-            return rainbow::search::sample_from_probabilities(probs, config, rng);
+            return search::sample_from_probabilities(probs, config, rng);
         },
         py::arg("probs"),
         py::arg("config"));
@@ -317,7 +507,7 @@ PYBIND11_MODULE(rainbow_search_cpp, m) {
         "select_max_visit_count",
         [](const NodeArena& arena, const int node_index, const SelectionConfig& config) {
             auto rng = build_rng(config);
-            return rainbow::search::select_max_visit_count(arena.node(node_index), config, rng);
+            return search::select_max_visit_count(arena.node(node_index), config, rng);
         },
         py::arg("arena"),
         py::arg("node_index"),
@@ -326,7 +516,7 @@ PYBIND11_MODULE(rainbow_search_cpp, m) {
         "select_chance_outcome",
         [](const NodeArena& arena, const int node_index, const SelectionConfig& config) {
             auto rng = build_rng(config);
-            return rainbow::search::select_chance_outcome(arena.chance(node_index), config, rng);
+            return search::select_chance_outcome(arena.chance(node_index), config, rng);
         },
         py::arg("arena"),
         py::arg("node_index"),
@@ -335,7 +525,7 @@ PYBIND11_MODULE(rainbow_search_cpp, m) {
         "select_action",
         [](const SelectionMethodType type, const std::vector<double>& scores, const SelectionConfig& config) {
             auto rng = build_rng(config);
-            return rainbow::search::select_action(type, scores, config, rng);
+            return search::select_action(type, scores, config, rng);
         },
         py::arg("type"),
         py::arg("scores"),
@@ -343,14 +533,14 @@ PYBIND11_MODULE(rainbow_search_cpp, m) {
 
     m.def(
         "compute_child_q_from_parent",
-        &rainbow::search::compute_child_q_from_parent,
+        &search::compute_child_q_from_parent,
         py::arg("arena"),
         py::arg("parent_index"),
         py::arg("child_index"),
         py::arg("config"));
     m.def(
         "backpropagate_with_method",
-        &rainbow::search::backpropagate_with_method,
+        &search::backpropagate_with_method,
         py::arg("type"),
         py::arg("arena"),
         py::arg("search_path"),

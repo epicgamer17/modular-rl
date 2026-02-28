@@ -1,10 +1,11 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <unordered_map>
 #include <vector>
 
-namespace rainbow::search {
+namespace search {
 
 enum class NodeType {
     kDecision = 0,
@@ -40,6 +41,9 @@ public:
     int to_play() const;
     void set_to_play(int to_play);
 
+    int64_t state_handle() const;
+    void set_state_handle(int64_t state_handle);
+
     double value(double bootstrap = 0.0) const;
     bool expanded() const;
 
@@ -65,6 +69,7 @@ private:
     int parent_index_;
     int visits_;
     int to_play_;
+    int64_t state_handle_;
     double prior_;
     double value_sum_;
     std::unordered_map<int, int> children_;
@@ -166,4 +171,4 @@ private:
     std::vector<ChanceNode> chance_nodes_;
 };
 
-}  // namespace rainbow::search
+}  // namespace search

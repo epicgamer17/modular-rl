@@ -6,7 +6,7 @@
 #include <numeric>
 #include <stdexcept>
 
-namespace rainbow::search {
+namespace search {
 
 namespace {
 
@@ -312,4 +312,4 @@ double compute_child_q_from_parent(
     return reward + config.discount_factor * (sign * child_value);
 }
 
-}  // namespace rainbow::search
+}  // namespace search

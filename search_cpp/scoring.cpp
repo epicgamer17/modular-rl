@@ -6,7 +6,7 @@
 #include <numeric>
 #include <stdexcept>
 
-namespace rainbow::search {
+namespace search {
 
 namespace {
 
@@ -162,4 +162,4 @@ std::vector<double> compute_scores(
     return fn(arena, node_index, min_max_stats, config);
 }
 
-}  // namespace rainbow::search
+}  // namespace search
