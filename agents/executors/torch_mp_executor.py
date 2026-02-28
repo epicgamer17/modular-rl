@@ -1,3 +1,4 @@
+import queue
 import torch.multiprocessing as mp
 import traceback
 import time
@@ -92,7 +93,7 @@ class TorchMPExecutor(BaseExecutor):
                                 worker.agent_network.reset_noise()
                             if hasattr(worker, "action_selector"):
                                 worker.action_selector.update_parameters(params)
-                    except mp.queues.Empty:
+                    except queue.Empty:
                         break
 
                 if use_signaling and trigger_event is not None:
@@ -133,7 +134,7 @@ class TorchMPExecutor(BaseExecutor):
             try:
                 # Use non-blocking get
                 results.append(self.result_queue.get_nowait())
-            except mp.queues.Empty:
+            except queue.Empty:
                 break
         return results
 
