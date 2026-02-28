@@ -1,6 +1,7 @@
 #include "scoring.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <limits>
 #include <numeric>
@@ -42,6 +43,9 @@ void compute_ucb_scores_into(
     const std::vector<double>& priors = node.child_priors();
     const std::vector<double>& visits = node.child_visits();
     const std::vector<double>& values = node.child_values();
+    assert(priors.size() == n);
+    assert(visits.size() == n);
+    assert(values.size() == n);
 
     const double pb_c_base = std::max(config.pb_c_base, 1e-12);
     double pb_c = std::log(
@@ -50,9 +54,9 @@ void compute_ucb_scores_into(
     pb_c *= std::sqrt(std::max(0.0, static_cast<double>(node.visits())));
 
     for (std::size_t i = 0; i < n; ++i) {
-        const double child_visit = i < visits.size() ? visits[i] : 0.0;
-        const double prior = i < priors.size() ? priors[i] : 0.0;
-        const double q = (child_visit > 0.0 && i < values.size())
+        const double child_visit = visits[i];
+        const double prior = priors[i];
+        const double q = (child_visit > 0.0)
             ? values[i]
             : config.unvisited_value_bootstrap;
         const double prior_score = (pb_c / (child_visit + 1.0)) * prior;
