@@ -16,5 +16,10 @@ if(NOT pybind11_FOUND)
     FetchContent_MakeAvailable(pybind11)
 endif()
 
-pybind11_add_module(rainbow_search_cpp bindings.cpp)
+pybind11_add_module(
+    rainbow_search_cpp
+    bindings.cpp
+    min_max_stats.cpp
+    nodes.cpp
+)
 target_compile_features(rainbow_search_cpp PRIVATE cxx_std_17)
