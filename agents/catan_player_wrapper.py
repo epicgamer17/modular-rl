@@ -100,7 +100,9 @@ class CatanPlayerWrapper:
         """
         # Unpack env from the prediction (per your predict() return)
         env = prediction[2]
-        game = env.game
+        # PettingZoo's OrderEnforcingWrapper blocks unknown attrs like `game`.
+        # Use the base env for direct Catan state access.
+        game = env.unwrapped.game
 
         # IMPORTANT: set the player's color to the game's current color so
         # the AlphaBeta (or other search) uses the correct color in its logic.

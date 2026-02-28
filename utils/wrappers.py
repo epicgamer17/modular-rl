@@ -618,8 +618,10 @@ class RecordVideo(BaseWrapper):
         self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None
     ):
         """Reset environment and potentially start recording new episode"""
-        # Call parent reset
-        super().reset(seed=seed, options=options)
+        # Delegate directly to the wrapped env. Using BaseWrapper.reset() can
+        # fail through wrapper chains because it tries to read private attrs
+        # (e.g. _cumulative_rewards) from another wrapper.
+        self.env.reset(seed=seed, options=options)
 
         # Check if we should record this episode
         should_record = self.episode_trigger(self.episode_id)
@@ -638,8 +640,8 @@ class RecordVideo(BaseWrapper):
 
     def step(self, action):
         """Step environment and capture frame if recording"""
-        # Call parent step - this updates env state but returns nothing
-        super().step(action)
+        # Delegate directly for the same wrapper-chain compatibility reason as reset().
+        self.env.step(action)
 
         # Capture frame if recording
         if self.recording:
@@ -647,9 +649,9 @@ class RecordVideo(BaseWrapper):
 
         # Check if episode ended
         episode_ended = (
-            not self.agents  # No more agents
-            or all(self.terminations.values())
-            or all(self.truncations.values())
+            not self.env.agents  # No more agents
+            or all(self.env.terminations.values())
+            or all(self.env.truncations.values())
         )
 
         # Stop recording if episode ended or max frames reached
