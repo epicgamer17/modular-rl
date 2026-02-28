@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(rainbow_search_cpp LANGUAGES CXX)
+project(search_cpp LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,7 +17,7 @@ if(NOT pybind11_FOUND)
 endif()
 
 pybind11_add_module(
-    rainbow_search_cpp
+    search_cpp
     bindings.cpp
     backprop.cpp
     min_max_stats.cpp
@@ -26,4 +26,4 @@ pybind11_add_module(
     scoring.cpp
     selection.cpp
 )
-target_compile_features(rainbow_search_cpp PRIVATE cxx_std_17)
+target_compile_features(search_cpp PRIVATE cxx_std_17)
