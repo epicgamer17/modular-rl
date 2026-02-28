@@ -1,18 +1,30 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include "backprop.hpp"
 #include "min_max_stats.hpp"
 #include "nodes.hpp"
+#include "scoring.hpp"
+#include "selection.hpp"
 
+#include <random>
 #include <string>
 
-namespace py = pybind11;
+using rainbow::search::AverageDiscountedReturnBackpropagator;
+using rainbow::search::BackpropConfig;
+using rainbow::search::BackpropMethodType;
 using rainbow::search::ChanceNode;
 using rainbow::search::DecisionNode;
 using rainbow::search::MinMaxStats;
+using rainbow::search::MinimaxBackpropagator;
 using rainbow::search::Node;
 using rainbow::search::NodeArena;
 using rainbow::search::NodeType;
+using rainbow::search::ScoringConfig;
+using rainbow::search::ScoringMethodType;
+using rainbow::search::SelectionConfig;
+using rainbow::search::SelectionMethodType;
+namespace py = pybind11;
 
 namespace {
 
@@ -32,6 +44,12 @@ py::dict node_to_dict(const Node& node) {
     return out;
 }
 
+std::mt19937_64 build_rng(const SelectionConfig& config) {
+    std::random_device rd;
+    const uint64_t seed = config.seed == 0 ? (static_cast<uint64_t>(rd()) << 32U) ^ rd() : config.seed;
+    return std::mt19937_64(seed);
+}
+
 }  // namespace
 
 PYBIND11_MODULE(rainbow_search_cpp, m) {
@@ -41,6 +59,46 @@ PYBIND11_MODULE(rainbow_search_cpp, m) {
         .value("DECISION", NodeType::kDecision)
         .value("CHANCE", NodeType::kChance)
         .export_values();
+
+    py::enum_<ScoringMethodType>(m, "ScoringMethodType")
+        .value("UCB", ScoringMethodType::kUcb)
+        .value("GUMBEL", ScoringMethodType::kGumbel)
+        .value("LEAST_VISITED", ScoringMethodType::kLeastVisited)
+        .value("PRIOR", ScoringMethodType::kPrior)
+        .value("Q_VALUE", ScoringMethodType::kQValue)
+        .export_values();
+
+    py::enum_<SelectionMethodType>(m, "SelectionMethodType")
+        .value("TOP_SCORE", SelectionMethodType::kTopScore)
+        .value("SOFTMAX_SAMPLE", SelectionMethodType::kSoftmaxSample)
+        .value("PROBABILITY_SAMPLE", SelectionMethodType::kProbabilitySample)
+        .value("MAX_VISIT", SelectionMethodType::kMaxVisit)
+        .export_values();
+
+    py::enum_<BackpropMethodType>(m, "BackpropMethodType")
+        .value("AVERAGE_DISCOUNTED_RETURN", BackpropMethodType::kAverageDiscountedReturn)
+        .value("MINIMAX", BackpropMethodType::kMinimax)
+        .export_values();
+
+    py::class_<ScoringConfig>(m, "ScoringConfig")
+        .def(py::init<>())
+        .def_readwrite("pb_c_init", &ScoringConfig::pb_c_init)
+        .def_readwrite("pb_c_base", &ScoringConfig::pb_c_base)
+        .def_readwrite("unvisited_value_bootstrap", &ScoringConfig::unvisited_value_bootstrap);
+
+    py::class_<SelectionConfig>(m, "SelectionConfig")
+        .def(py::init<>())
+        .def_readwrite("temperature", &SelectionConfig::temperature)
+        .def_readwrite("random_tiebreak", &SelectionConfig::random_tiebreak)
+        .def_readwrite("seed", &SelectionConfig::seed)
+        .def_readwrite("mask_value", &SelectionConfig::mask_value);
+
+    py::class_<BackpropConfig>(m, "BackpropConfig")
+        .def(py::init<>())
+        .def_readwrite("num_players", &BackpropConfig::num_players)
+        .def_readwrite("discount_factor", &BackpropConfig::discount_factor)
+        .def_readwrite("alternating_minimax", &BackpropConfig::alternating_minimax)
+        .def_readwrite("perspective_player", &BackpropConfig::perspective_player);
 
     py::class_<MinMaxStats>(m, "MinMaxStats")
         .def(
@@ -145,4 +203,160 @@ PYBIND11_MODULE(rainbow_search_cpp, m) {
         .def("node_to_dict", [](const NodeArena& arena, const int node_index) {
             return node_to_dict(arena.node(node_index));
         });
+
+    py::class_<AverageDiscountedReturnBackpropagator>(m, "AverageDiscountedReturnBackpropagator")
+        .def(py::init<>())
+        .def(
+            "backpropagate",
+            [](const AverageDiscountedReturnBackpropagator& bp,
+               NodeArena& arena,
+               const std::vector<int>& search_path,
+               const std::vector<int>& action_path,
+               const double leaf_value,
+               const int leaf_to_play,
+               MinMaxStats& min_max_stats,
+               const BackpropConfig& config) {
+                bp.backpropagate(
+                    arena,
+                    search_path,
+                    action_path,
+                    leaf_value,
+                    leaf_to_play,
+                    min_max_stats,
+                    config);
+            },
+            py::arg("arena"),
+            py::arg("search_path"),
+            py::arg("action_path"),
+            py::arg("leaf_value"),
+            py::arg("leaf_to_play"),
+            py::arg("min_max_stats"),
+            py::arg("config"));
+
+    py::class_<MinimaxBackpropagator>(m, "MinimaxBackpropagator")
+        .def(py::init<>())
+        .def(
+            "backpropagate",
+            [](const MinimaxBackpropagator& bp,
+               NodeArena& arena,
+               const std::vector<int>& search_path,
+               const std::vector<int>& action_path,
+               const double leaf_value,
+               const int leaf_to_play,
+               MinMaxStats& min_max_stats,
+               const BackpropConfig& config) {
+                bp.backpropagate(
+                    arena,
+                    search_path,
+                    action_path,
+                    leaf_value,
+                    leaf_to_play,
+                    min_max_stats,
+                    config);
+            },
+            py::arg("arena"),
+            py::arg("search_path"),
+            py::arg("action_path"),
+            py::arg("leaf_value"),
+            py::arg("leaf_to_play"),
+            py::arg("min_max_stats"),
+            py::arg("config"));
+
+    m.def("score_initial", &rainbow::search::score_initial, py::arg("type"), py::arg("prior"), py::arg("action"));
+    m.def(
+        "compute_scores",
+        &rainbow::search::compute_scores,
+        py::arg("type"),
+        py::arg("arena"),
+        py::arg("node_index"),
+        py::arg("min_max_stats"),
+        py::arg("config"));
+    m.def(
+        "compute_gumbel_scores_with_policy",
+        &rainbow::search::compute_gumbel_scores_with_policy,
+        py::arg("arena"),
+        py::arg("node_index"),
+        py::arg("improved_policy"),
+        py::arg("config"));
+
+    m.def("mask_actions", &rainbow::search::mask_actions, py::arg("values"), py::arg("legal_moves"), py::arg("mask_value") = -1e30);
+    m.def(
+        "select_top_score",
+        [](const std::vector<double>& scores, const SelectionConfig& config) {
+            auto rng = build_rng(config);
+            return rainbow::search::select_top_score(scores, config, rng);
+        },
+        py::arg("scores"),
+        py::arg("config"));
+    m.def(
+        "select_top_score_with_tiebreak",
+        [](const std::vector<double>& scores, const std::vector<double>& tiebreak_scores, const SelectionConfig& config) {
+            auto rng = build_rng(config);
+            return rainbow::search::select_top_score_with_tiebreak(scores, tiebreak_scores, config, rng);
+        },
+        py::arg("scores"),
+        py::arg("tiebreak_scores"),
+        py::arg("config"));
+    m.def(
+        "sample_from_softmax",
+        [](const std::vector<double>& logits, const SelectionConfig& config) {
+            auto rng = build_rng(config);
+            return rainbow::search::sample_from_softmax(logits, config, rng);
+        },
+        py::arg("logits"),
+        py::arg("config"));
+    m.def(
+        "sample_from_probabilities",
+        [](const std::vector<double>& probs, const SelectionConfig& config) {
+            auto rng = build_rng(config);
+            return rainbow::search::sample_from_probabilities(probs, config, rng);
+        },
+        py::arg("probs"),
+        py::arg("config"));
+    m.def(
+        "select_max_visit_count",
+        [](const NodeArena& arena, const int node_index, const SelectionConfig& config) {
+            auto rng = build_rng(config);
+            return rainbow::search::select_max_visit_count(arena.node(node_index), config, rng);
+        },
+        py::arg("arena"),
+        py::arg("node_index"),
+        py::arg("config"));
+    m.def(
+        "select_chance_outcome",
+        [](const NodeArena& arena, const int node_index, const SelectionConfig& config) {
+            auto rng = build_rng(config);
+            return rainbow::search::select_chance_outcome(arena.chance(node_index), config, rng);
+        },
+        py::arg("arena"),
+        py::arg("node_index"),
+        py::arg("config"));
+    m.def(
+        "select_action",
+        [](const SelectionMethodType type, const std::vector<double>& scores, const SelectionConfig& config) {
+            auto rng = build_rng(config);
+            return rainbow::search::select_action(type, scores, config, rng);
+        },
+        py::arg("type"),
+        py::arg("scores"),
+        py::arg("config"));
+
+    m.def(
+        "compute_child_q_from_parent",
+        &rainbow::search::compute_child_q_from_parent,
+        py::arg("arena"),
+        py::arg("parent_index"),
+        py::arg("child_index"),
+        py::arg("config"));
+    m.def(
+        "backpropagate_with_method",
+        &rainbow::search::backpropagate_with_method,
+        py::arg("type"),
+        py::arg("arena"),
+        py::arg("search_path"),
+        py::arg("action_path"),
+        py::arg("leaf_value"),
+        py::arg("leaf_to_play"),
+        py::arg("min_max_stats"),
+        py::arg("config"));
 }
