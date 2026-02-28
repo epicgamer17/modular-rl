@@ -86,10 +86,20 @@ class BaseExecutor(ABC):
                     results.append(obj)
 
         if min_samples is not None:
-            while len(results) < min_samples:
-                fetch_and_route()
-                if len(results) >= min_samples:
+            while True:
+                current_transitions = sum(
+                    r.get("episode_length", 0) for r in results if isinstance(r, dict)
+                )
+                if current_transitions >= min_samples:
                     break
+
+                old_len = len(results)
+                fetch_and_route()
+                if len(results) == old_len:
+                    # No new results being returned, break to avoid infinite loop
+                    break
+
+                # Sleep more if no progress made to avoid busy waiting in multi-process case
                 time.sleep(0.01)
         else:
             fetch_and_route()
@@ -127,7 +137,10 @@ class BaseExecutor(ABC):
                     else:
                         scores.append(res.get("score", 0.0))
 
-                    lengths.append(res["episode_length"])
+                    if "final_episode_length" in res:
+                        lengths.append(res["final_episode_length"])
+                    else:
+                        lengths.append(res["episode_length"])
                 # We skip Tester results here, as they are processed elsewhere (e.g. Trainers' process_test_results)
 
             current_time = time.time()

@@ -138,11 +138,7 @@ class RainbowTrainer(BaseTrainer):
 
                 self.training_step += 1
 
-                # 6. Reset noise for Noisy Networks if applicable
-                if hasattr(self.agent_network, "reset_noise"):
-                    self.agent_network.reset_noise()
-
-                # 7. Update target network
+                # 6. Update target network
                 if self.training_step % self.config.transfer_interval == 0:
                     self.learner.update_target_network()
 
