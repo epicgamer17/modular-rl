@@ -71,7 +71,11 @@ SearchAlgorithm::SearchAlgorithm(
         ? (simulation_capacity * 2U) + 10U
         : simulation_capacity + 10U;
     arena_.reserve(node_capacity);
-    pending_.reserve(simulation_capacity);
+    pending_.resize(simulation_capacity);
+    for (PendingSimulation& pending : pending_) {
+        pending.search_path.reserve(simulation_capacity + 1U);
+        pending.action_path.reserve(simulation_capacity);
+    }
     score_buffer_.reserve(
         search_config_.num_actions > 0
             ? static_cast<std::size_t>(search_config_.num_actions)
@@ -87,8 +91,9 @@ void SearchAlgorithm::clear() {
         ? (simulation_capacity * 2U) + 10U
         : simulation_capacity + 10U;
     arena_.reserve(node_capacity);
-    pending_.clear();
-    pending_.reserve(simulation_capacity);
+    for (PendingSimulation& pending : pending_) {
+        pending.active = false;
+    }
     score_buffer_.clear();
     task_buffer_.clear();
     task_buffer_.reserve(simulation_capacity);
@@ -156,17 +161,31 @@ int SearchAlgorithm::initialize_root(
     return root_index_;
 }
 
-SearchAlgorithm::PendingSimulation SearchAlgorithm::build_single_pending_simulation() {
-    PendingSimulation pending;
+bool SearchAlgorithm::build_single_pending_simulation(PendingSimulation& pending) {
     if (!has_root()) {
-        return pending;
+        return false;
     }
 
     const int max_depth = search_config_.num_simulations > 0
         ? search_config_.num_simulations
         : 4096;
-    pending.search_path.reserve(static_cast<std::size_t>(max_depth) + 1U);
-    pending.action_path.reserve(static_cast<std::size_t>(max_depth));
+    const std::size_t path_capacity = static_cast<std::size_t>(max_depth);
+    if (pending.search_path.capacity() < (path_capacity + 1U)) {
+        pending.search_path.reserve(path_capacity + 1U);
+    }
+    if (pending.action_path.capacity() < path_capacity) {
+        pending.action_path.reserve(path_capacity);
+    }
+    pending.active = false;
+    pending.leaf_index = -1;
+    pending.parent_index = -1;
+    pending.action = -1;
+    pending.inference_kind = InferenceKind::kHiddenState;
+    pending.action_is_one_hot = false;
+    pending.num_codes = 0;
+    pending.parent_to_play = -1;
+    pending.search_path.clear();
+    pending.action_path.clear();
 
     int node_index = root_index_;
     pending.search_path.push_back(node_index);
@@ -180,7 +199,7 @@ SearchAlgorithm::PendingSimulation SearchAlgorithm::build_single_pending_simulat
         const bool is_root_node = node_index == root_index_;
         const int action = select_action_for_node(node_index, is_root_node);
         if (action < 0) {
-            return PendingSimulation{};
+            return false;
         }
 
         const int child_index = ensure_child_for_edge(node_index, action);
@@ -190,7 +209,7 @@ SearchAlgorithm::PendingSimulation SearchAlgorithm::build_single_pending_simulat
     }
 
     if (pending.search_path.size() < 2 || pending.action_path.empty()) {
-        return PendingSimulation{};
+        return false;
     }
 
     pending.active = true;
@@ -212,7 +231,7 @@ SearchAlgorithm::PendingSimulation SearchAlgorithm::build_single_pending_simulat
             ? static_cast<int>(parent.child_priors().size())
             : 0;
     }
-    return pending;
+    return true;
 }
 
 int SearchAlgorithm::select_action_for_node(const int node_index, const bool is_root_node) {
@@ -291,6 +310,21 @@ LeafBatchRequest SearchAlgorithm::step_search_until_leaves(int batch_size) {
     if (batch_size <= 0) {
         batch_size = std::max(1, search_config_.default_batch_size);
     }
+    if (batch_size < 0) {
+        throw std::invalid_argument("batch_size must be non-negative.");
+    }
+
+    const std::size_t requested_slots = static_cast<std::size_t>(batch_size);
+    if (pending_.size() < requested_slots) {
+        const std::size_t old_size = pending_.size();
+        pending_.resize(requested_slots);
+        const std::size_t simulation_capacity =
+            static_cast<std::size_t>(std::max(1, search_config_.num_simulations));
+        for (std::size_t i = old_size; i < pending_.size(); ++i) {
+            pending_[i].search_path.reserve(simulation_capacity + 1U);
+            pending_[i].action_path.reserve(simulation_capacity);
+        }
+    }
 
     LeafBatchRequest request;
     request.hidden_request_ids.reserve(static_cast<std::size_t>(batch_size));
@@ -303,15 +337,13 @@ LeafBatchRequest SearchAlgorithm::step_search_until_leaves(int batch_size) {
     request.afterstate_actions.reserve(static_cast<std::size_t>(batch_size));
 
     for (int i = 0; i < batch_size; ++i) {
-        PendingSimulation pending = build_single_pending_simulation();
-        if (!pending.active) {
+        const int request_id = i;
+        PendingSimulation& stored = pending_[static_cast<std::size_t>(request_id)];
+        if (!build_single_pending_simulation(stored)) {
             break;
         }
 
-        const int request_id = static_cast<int>(pending_.size());
-        pending_.push_back(std::move(pending));
         ++active_pending_count_;
-        PendingSimulation& stored = pending_.back();
 
         const int64_t parent_state = arena_.node(stored.parent_index).state_handle();
         if (stored.inference_kind == InferenceKind::kHiddenState) {

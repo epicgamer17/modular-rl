@@ -152,7 +152,7 @@ private:
         std::vector<int> action_path;
     };
 
-    PendingSimulation build_single_pending_simulation();
+    bool build_single_pending_simulation(PendingSimulation& pending);
     int select_action_for_node(int node_index, bool is_root_node);
     int ensure_child_for_edge(int parent_index, int action);
     void apply_hidden_update(const HiddenInferenceUpdateBatch& updates, int i);
