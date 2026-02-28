@@ -1,5 +1,6 @@
 import torch
 import yaml
+import os
 from modules.utils import (
     prepare_kernel_initializers,
     prepare_activations,
@@ -165,6 +166,17 @@ class ReplayConfig:
 
 class SearchConfig:
     def parse_search_params(self):
+        backend_default = self.config_dict.get(
+            "search_backend", os.getenv("MCTS_BACKEND", "python")
+        )
+        self.backend: str = str(self.parse_field("backend", backend_default)).lower()
+        if self.backend not in {"python", "cpp"}:
+            raise ValueError(
+                f"Unsupported search backend {self.backend!r}. Expected 'python' or 'cpp'."
+            )
+        # Alias retained for compatibility with code that references `search_backend`.
+        self.search_backend: str = self.backend
+
         self.num_simulations: int = self.parse_field("num_simulations", 800)
         self.search_batch_size: int = self.parse_field("search_batch_size", 0)
         self.use_virtual_mean: bool = self.parse_field("use_virtual_mean", False)

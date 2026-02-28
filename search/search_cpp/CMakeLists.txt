@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(search_cpp LANGUAGES CXX)
+project(mcts_cpp_backend LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,7 +17,7 @@ if(NOT pybind11_FOUND)
 endif()
 
 pybind11_add_module(
-    search_cpp
+    mcts_cpp_backend
     bindings.cpp
     backprop.cpp
     min_max_stats.cpp
@@ -26,4 +26,4 @@ pybind11_add_module(
     scoring.cpp
     selection.cpp
 )
-target_compile_features(search_cpp PRIVATE cxx_std_17)
+target_compile_features(mcts_cpp_backend PRIVATE cxx_std_17)

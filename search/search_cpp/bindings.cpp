@@ -118,7 +118,7 @@ py::dict leaf_batch_request_to_dict(const LeafBatchRequest &req) {
 
 } // namespace
 
-PYBIND11_MODULE(search_cpp, m) {
+PYBIND11_MODULE(mcts_cpp_backend, m) {
   m.doc() = "C++ search backend for Tree Search";
 
   py::enum_<NodeType>(m, "NodeType")
