@@ -152,6 +152,7 @@ public:
 
     int create_decision(double prior = 0.0, int parent_index = -1);
     int create_chance(double prior = 0.0, int parent_index = -1);
+    void reserve(std::size_t capacity);
 
     bool valid_index(int node_index) const;
     void clear();

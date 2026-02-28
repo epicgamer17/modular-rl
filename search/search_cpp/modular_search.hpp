@@ -20,6 +20,7 @@ enum class InferenceKind {
 struct SearchConfig {
     int num_actions = 0;
     int num_players = 2;
+    int num_simulations = 800;
     int default_batch_size = 1;
     bool stochastic = true;
 
@@ -191,6 +192,7 @@ private:
     int root_index_;
 
     std::vector<PendingSimulation> pending_;
+    std::vector<double> score_buffer_;
     std::vector<UpdateTask> task_buffer_;
     std::size_t active_pending_count_;
 

@@ -102,6 +102,7 @@ PYBIND11_MODULE(mcts_cpp_backend, m) {
       .def(py::init<>())
       .def_readwrite("num_actions", &SearchConfig::num_actions)
       .def_readwrite("num_players", &SearchConfig::num_players)
+      .def_readwrite("num_simulations", &SearchConfig::num_simulations)
       .def_readwrite("default_batch_size", &SearchConfig::default_batch_size)
       .def_readwrite("stochastic", &SearchConfig::stochastic)
       .def_readwrite("known_bounds", &SearchConfig::known_bounds)
@@ -276,6 +277,7 @@ PYBIND11_MODULE(mcts_cpp_backend, m) {
            py::arg("prior") = 0.0, py::arg("parent_index") = -1)
       .def("create_chance", &NodeArena::create_chance, py::arg("prior") = 0.0,
            py::arg("parent_index") = -1)
+      .def("reserve", &NodeArena::reserve, py::arg("capacity"))
       .def("valid_index", &NodeArena::valid_index, py::arg("node_index"))
       .def("clear", &NodeArena::clear)
       .def_property_readonly("size", &NodeArena::size)
@@ -503,9 +505,16 @@ PYBIND11_MODULE(mcts_cpp_backend, m) {
 
   m.def("score_initial", &search::score_initial, py::arg("type"),
         py::arg("prior"), py::arg("action"));
-  m.def("compute_scores", &search::compute_scores, py::arg("type"),
-        py::arg("arena"), py::arg("node_index"), py::arg("min_max_stats"),
-        py::arg("config"));
+  m.def(
+      "compute_scores",
+      static_cast<std::vector<double> (*)(
+          ScoringMethodType,
+          const NodeArena &,
+          int,
+          const MinMaxStats &,
+          const ScoringConfig &)>(&search::compute_scores),
+      py::arg("type"), py::arg("arena"), py::arg("node_index"),
+      py::arg("min_max_stats"), py::arg("config"));
   m.def("compute_gumbel_scores_with_policy",
         &search::compute_gumbel_scores_with_policy, py::arg("arena"),
         py::arg("node_index"), py::arg("improved_policy"), py::arg("config"));

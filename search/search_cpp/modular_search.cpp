@@ -48,6 +48,9 @@ SearchAlgorithm::SearchAlgorithm(
     if (search_config_.num_actions < 0) {
         throw std::invalid_argument("num_actions must be non-negative.");
     }
+    if (search_config_.num_simulations <= 0) {
+        throw std::invalid_argument("num_simulations must be positive.");
+    }
 
     if (backprop_config_.num_players <= 0) {
         backprop_config_.num_players = std::max(1, search_config_.num_players);
@@ -62,16 +65,33 @@ SearchAlgorithm::SearchAlgorithm(
         : root_selection_config_.seed;
     rng_.seed(seed);
 
-    const std::size_t initial_task_capacity = search_config_.default_batch_size > 0
-        ? static_cast<std::size_t>(search_config_.default_batch_size)
-        : 0U;
-    task_buffer_.reserve(initial_task_capacity);
+    const std::size_t simulation_capacity =
+        static_cast<std::size_t>(search_config_.num_simulations);
+    const std::size_t node_capacity = search_config_.stochastic
+        ? (simulation_capacity * 2U) + 10U
+        : simulation_capacity + 10U;
+    arena_.reserve(node_capacity);
+    pending_.reserve(simulation_capacity);
+    score_buffer_.reserve(
+        search_config_.num_actions > 0
+            ? static_cast<std::size_t>(search_config_.num_actions)
+            : 64U);
+    task_buffer_.reserve(simulation_capacity);
 }
 
 void SearchAlgorithm::clear() {
     arena_.clear();
+    const std::size_t simulation_capacity =
+        static_cast<std::size_t>(search_config_.num_simulations);
+    const std::size_t node_capacity = search_config_.stochastic
+        ? (simulation_capacity * 2U) + 10U
+        : simulation_capacity + 10U;
+    arena_.reserve(node_capacity);
     pending_.clear();
+    pending_.reserve(simulation_capacity);
+    score_buffer_.clear();
     task_buffer_.clear();
+    task_buffer_.reserve(simulation_capacity);
     active_pending_count_ = 0;
     root_index_ = -1;
     min_max_stats_ = MinMaxStats(
@@ -111,6 +131,9 @@ int SearchAlgorithm::initialize_root(
     if (search_config_.num_actions == 0) {
         search_config_.num_actions = static_cast<int>(policy_priors.size());
     }
+    if (score_buffer_.capacity() < policy_priors.size()) {
+        score_buffer_.reserve(policy_priors.size());
+    }
 
     clear();
     root_index_ = arena_.create_decision(0.0, -1);
@@ -139,11 +162,16 @@ SearchAlgorithm::PendingSimulation SearchAlgorithm::build_single_pending_simulat
         return pending;
     }
 
+    const int max_depth = search_config_.num_simulations > 0
+        ? search_config_.num_simulations
+        : 4096;
+    pending.search_path.reserve(static_cast<std::size_t>(max_depth) + 1U);
+    pending.action_path.reserve(static_cast<std::size_t>(max_depth));
+
     int node_index = root_index_;
     pending.search_path.push_back(node_index);
-    constexpr int kMaxDepth = 4096;
 
-    for (int depth = 0; depth < kMaxDepth; ++depth) {
+    for (int depth = 0; depth < max_depth; ++depth) {
         const Node& node = arena_.node(node_index);
         if (!node.expanded()) {
             break;
@@ -193,10 +221,18 @@ int SearchAlgorithm::select_action_for_node(const int node_index, const bool is_
         const ScoringMethodType scoring_type = is_root_node ? root_scoring_type_ : decision_scoring_type_;
         const SelectionMethodType selection_type = is_root_node ? root_selection_type_ : decision_selection_type_;
         const SelectionConfig& selection_cfg = is_root_node ? root_selection_config_ : decision_selection_config_;
-        const std::vector<double> scores = compute_scores(scoring_type, arena_, node_index, min_max_stats_, scoring_config_);
-        int action = select_action(selection_type, scores, selection_cfg, rng_);
-        if (action < 0 && !scores.empty()) {
-            action = static_cast<int>(std::distance(scores.begin(), std::max_element(scores.begin(), scores.end())));
+        compute_scores(
+            scoring_type,
+            arena_,
+            node_index,
+            min_max_stats_,
+            scoring_config_,
+            score_buffer_);
+        int action = select_action(selection_type, score_buffer_, selection_cfg, rng_);
+        if (action < 0 && !score_buffer_.empty()) {
+            action = static_cast<int>(
+                std::distance(score_buffer_.begin(),
+                              std::max_element(score_buffer_.begin(), score_buffer_.end())));
         }
         return action;
     }
@@ -258,7 +294,13 @@ LeafBatchRequest SearchAlgorithm::step_search_until_leaves(int batch_size) {
 
     LeafBatchRequest request;
     request.hidden_request_ids.reserve(static_cast<std::size_t>(batch_size));
+    request.hidden_parent_state_handles.reserve(static_cast<std::size_t>(batch_size));
+    request.hidden_actions.reserve(static_cast<std::size_t>(batch_size));
+    request.hidden_action_is_one_hot.reserve(static_cast<std::size_t>(batch_size));
+    request.hidden_num_codes.reserve(static_cast<std::size_t>(batch_size));
     request.afterstate_request_ids.reserve(static_cast<std::size_t>(batch_size));
+    request.afterstate_parent_state_handles.reserve(static_cast<std::size_t>(batch_size));
+    request.afterstate_actions.reserve(static_cast<std::size_t>(batch_size));
 
     for (int i = 0; i < batch_size; ++i) {
         PendingSimulation pending = build_single_pending_simulation();
@@ -585,13 +627,14 @@ int SearchAlgorithm::select_root_action(const SelectionMethodType method) {
     if (method == SelectionMethodType::kMaxVisit) {
         return select_max_visit_count(root, root_selection_config_, rng_);
     }
-    const std::vector<double> scores = compute_scores(
+    compute_scores(
         root_scoring_type_,
         arena_,
         root_index_,
         min_max_stats_,
-        scoring_config_);
-    return select_action(method, scores, root_selection_config_, rng_);
+        scoring_config_,
+        score_buffer_);
+    return select_action(method, score_buffer_, root_selection_config_, rng_);
 }
 
 const MinMaxStats& SearchAlgorithm::min_max_stats() const {

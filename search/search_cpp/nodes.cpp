@@ -379,6 +379,12 @@ int NodeArena::create_chance(const double prior, const int parent_index) {
     return global_index;
 }
 
+void NodeArena::reserve(const std::size_t capacity) {
+    entries_.reserve(capacity);
+    decision_nodes_.reserve(capacity);
+    chance_nodes_.reserve(capacity);
+}
+
 bool NodeArena::valid_index(const int node_index) const {
     return node_index >= 0 && static_cast<std::size_t>(node_index) < entries_.size();
 }

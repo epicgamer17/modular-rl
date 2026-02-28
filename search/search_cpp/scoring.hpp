@@ -75,5 +75,12 @@ std::vector<double> compute_scores(
     int node_index,
     const MinMaxStats& min_max_stats,
     const ScoringConfig& config);
+void compute_scores(
+    ScoringMethodType type,
+    const NodeArena& arena,
+    int node_index,
+    const MinMaxStats& min_max_stats,
+    const ScoringConfig& config,
+    std::vector<double>& out_scores);
 
 }  // namespace search
