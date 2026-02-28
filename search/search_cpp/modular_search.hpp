@@ -128,6 +128,16 @@ public:
     NodeArena& mutable_arena();
 
 private:
+    struct UpdateTask {
+        int request_id = -1;
+        int array_index = -1;
+        bool is_hidden = false;
+
+        bool operator<(const UpdateTask& other) const {
+            return request_id < other.request_id;
+        }
+    };
+
     struct PendingSimulation {
         bool active = false;
         int leaf_index = -1;
@@ -181,6 +191,7 @@ private:
     int root_index_;
 
     std::vector<PendingSimulation> pending_;
+    std::vector<UpdateTask> task_buffer_;
     std::size_t active_pending_count_;
 
     std::mt19937_64 rng_;

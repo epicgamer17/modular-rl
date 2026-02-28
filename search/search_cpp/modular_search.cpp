@@ -1,10 +1,8 @@
 #include "modular_search.hpp"
 
 #include <algorithm>
-#include <numeric>
 #include <random>
 #include <stdexcept>
-#include <unordered_map>
 
 namespace search {
 
@@ -63,11 +61,17 @@ SearchAlgorithm::SearchAlgorithm(
         ? (static_cast<uint64_t>(rd()) << 32U) ^ rd()
         : root_selection_config_.seed;
     rng_.seed(seed);
+
+    const std::size_t initial_task_capacity = search_config_.default_batch_size > 0
+        ? static_cast<std::size_t>(search_config_.default_batch_size)
+        : 0U;
+    task_buffer_.reserve(initial_task_capacity);
 }
 
 void SearchAlgorithm::clear() {
     arena_.clear();
     pending_.clear();
+    task_buffer_.clear();
     active_pending_count_ = 0;
     root_index_ = -1;
     min_max_stats_ = MinMaxStats(
@@ -491,62 +495,55 @@ int SearchAlgorithm::update_leaves_and_backprop_raw(
         throw std::invalid_argument("afterstate_code_probs pointer must not be null when afterstate updates are present.");
     }
 
-    std::unordered_map<int, int> hidden_lookup;
-    hidden_lookup.reserve(hidden_count);
-    for (std::size_t i = 0; i < hidden_count; ++i) {
-        hidden_lookup[hidden_request_ids[i]] = static_cast<int>(i);
+    const std::size_t total_tasks = hidden_count + afterstate_count;
+    if (task_buffer_.capacity() < total_tasks) {
+        task_buffer_.reserve(total_tasks);
     }
+    task_buffer_.clear();
 
-    std::unordered_map<int, int> after_lookup;
-    after_lookup.reserve(afterstate_count);
-    for (std::size_t i = 0; i < afterstate_count; ++i) {
-        after_lookup[afterstate_request_ids[i]] = static_cast<int>(i);
-    }
-
-    std::vector<int> process_order;
-    process_order.reserve(hidden_count + afterstate_count);
     for (std::size_t i = 0; i < hidden_count; ++i) {
-        process_order.push_back(hidden_request_ids[i]);
+        task_buffer_.push_back(UpdateTask{
+            hidden_request_ids[i],
+            static_cast<int>(i),
+            true});
     }
     for (std::size_t i = 0; i < afterstate_count; ++i) {
-        process_order.push_back(afterstate_request_ids[i]);
+        task_buffer_.push_back(UpdateTask{
+            afterstate_request_ids[i],
+            static_cast<int>(i),
+            false});
     }
-    std::sort(process_order.begin(), process_order.end());
-    process_order.erase(std::unique(process_order.begin(), process_order.end()), process_order.end());
+
+    std::sort(task_buffer_.begin(), task_buffer_.end());
 
     int processed = 0;
-    for (const int request_id : process_order) {
-        const auto hit = hidden_lookup.find(request_id);
-        if (hit != hidden_lookup.end()) {
-            const std::size_t i = static_cast<std::size_t>(hit->second);
+    for (const UpdateTask& task : task_buffer_) {
+        if (task.is_hidden) {
+            const std::size_t i = static_cast<std::size_t>(task.array_index);
             const double* priors_row = hidden_num_actions > 0
                 ? hidden_priors + (i * static_cast<std::size_t>(hidden_num_actions))
                 : nullptr;
             apply_hidden_update_raw(
-                hidden_request_ids[i],
+                task.request_id,
                 hidden_next_state_handles[i],
                 hidden_rewards[i],
                 hidden_values[i],
                 hidden_to_plays[i],
                 priors_row,
                 hidden_num_actions);
-            ++processed;
-            continue;
-        }
-        const auto ait = after_lookup.find(request_id);
-        if (ait != after_lookup.end()) {
-            const std::size_t i = static_cast<std::size_t>(ait->second);
+        } else {
+            const std::size_t i = static_cast<std::size_t>(task.array_index);
             const double* code_probs_row = afterstate_num_codes > 0
                 ? afterstate_code_probs + (i * static_cast<std::size_t>(afterstate_num_codes))
                 : nullptr;
             apply_afterstate_update_raw(
-                afterstate_request_ids[i],
+                task.request_id,
                 afterstate_next_state_handles[i],
                 afterstate_values[i],
                 code_probs_row,
                 afterstate_num_codes);
-            ++processed;
         }
+        ++processed;
     }
 
     return processed;
