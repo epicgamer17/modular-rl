@@ -46,20 +46,20 @@ class ActionMaskInInfoWrapper(BaseWrapper):
         for agent in self.env.agents:
             obs = self.env.observe(agent)
             self.env.infos[agent] = getattr(self.env, "infos", {}).get(agent, {})
-            agent_index = self.env.agents.index(agent)
+            agent_index = self.env.possible_agents.index(agent)
             _ = action_mask_to_info(obs, self.env.infos[agent], agent_index)
 
     def observe(self, agent: AgentID) -> np.ndarray:
         obs = self.env.observe(agent)
         info = self.env.infos[agent]
-        agent_index = self.env.agents.index(agent)
+        agent_index = self.env.possible_agents.index(agent)
         return action_mask_to_info(obs, info, agent_index)
 
     def step(self, action: ActionType):
         self.env.step(action)
         # Process observation and info for current agent
         agent = self.env.agent_selection
-        agent_index = self.env.agents.index(agent)
+        agent_index = self.env.possible_agents.index(agent)
         obs = self.env.observe(agent)
         info = self.env.infos[agent]
         _ = action_mask_to_info(obs, info, agent_index)
@@ -925,39 +925,108 @@ def wrap_recording(env, **kwargs):
 import pufferlib.emulation
 
 
-def make_puffer_env_creator(config):
+import gymnasium as gym
+
+
+class AECSequentialWrapper(gym.Env):
     """
-    Creates an environment creator function for PufferLib.
-
-    Args:
-        config: Configuration object containing env_type, env_name, and env_kwargs.
-
-    Returns:
-        A callable that returns a PufferLib-wrapped environment.
+    Flattens a PettingZoo AEC environment into a standard Gymnasium interface.
+    Short-circuits the PettingZoo lifecycle: ends the episode immediately upon
+    a terminal action without cycling to the next player.
     """
 
-    def env_creator():
-        if config.env_type == "pettingzoo":
-            # For Catan, TicTacToe, etc.
-            if config.env_name == "catan":
-                from custom_gym_envs_pkg.custom_gym_envs.envs import catan
+    def __init__(self, env):
+        self.env = env
+        first_agent = self.env.possible_agents[0]
+        self.action_space = self.env.action_space(first_agent)
+        self.observation_space = self.env.observation_space(first_agent)
+        self.possible_agents = self.env.possible_agents
 
-                raw_env = catan.env(**config.env_kwargs)
-            # TODO: getting of raw envs for standard pettingzoo envs
-            # PufferLib automatically groups agents into flat batches!
-            return pufferlib.emulation.PettingZooPufferEnv(env=raw_env)
+    def _get_player_idx(self, agent_str):
+        """Converts PettingZoo string IDs ('player_0') to integer indices (0)"""
+        try:
+            return self.possible_agents.index(agent_str)
+        except ValueError:
+            return 0
 
-        elif config.env_type == "gym":
-            import gymnasium as gym
+    def reset(self, seed=None, options=None):
+        self.env.reset(seed=seed, options=options)
+        obs, reward, term, trunc, info = self.env.last()
 
-            raw_env = gym.make(config.env_name, **config.env_kwargs)
-            return pufferlib.emulation.GymnasiumPufferEnv(env=raw_env)
+        if info is None:
+            info = {}
 
-        elif config.env_type == "ocean":
-            import pufferlib.ocean
+        info["player"] = self._get_player_idx(self.env.agent_selection)
+        info["all_player_rewards"] = dict(self.env.rewards)
 
-            return pufferlib.ocean.make(config.env_name)
-        else:
-            raise ValueError(f"Unsupported environment type: {config.env_type}")
+        return obs, info
 
-    return env_creator
+    def step(self, action):
+        """Step the flattened AEC environment and stash terminal state.
+
+        When the game ends, PufferLib's auto-reset replaces the true terminal
+        observation with the first observation of a new episode.  This method
+        stashes copies of the true terminal observation, legal moves, player,
+        and per-player rewards into the info dict under dedicated keys so the
+        actor can recover them.
+
+        Info-Stash keys (only present when ``was_terminal is True``):
+            ``terminal_observation``  — true final board state (numpy copy)
+            ``terminal_legal_moves``  — legal moves at the terminal state
+            ``terminal_player``       — player index at the terminal state
+            ``terminal_all_player_rewards`` — per-player reward dict
+
+        Top-level ``player``, ``legal_moves``, ``all_player_rewards`` are
+        overwritten with fresh-game data so PufferLib's auto-reset obs stays
+        in sync.
+
+        Args:
+            action: The action to take in the environment.
+
+        Returns:
+            Tuple of (obs, reward, done, truncated, info) in Gymnasium format.
+        """
+        acting_player_str = self.env.agent_selection
+        acting_player_idx = self._get_player_idx(acting_player_str)
+
+        # 1. Take the action in the underlying AEC env
+        self.env.step(action)
+        obs, reward, term, trunc, info = self.env.last()
+        done = term or trunc
+
+        step_reward = float(self.env.rewards.get(acting_player_str, 0.0))
+        if info is None:
+            info = {}
+
+        info["player"] = self._get_player_idx(self.env.agent_selection)
+        info["acting_player"] = acting_player_idx
+        info["all_player_rewards"] = dict(self.env.rewards)
+        info["was_terminal"] = done
+
+        if done:
+            # === STASH the true terminal state ===
+            # Deep-copy the observation so it survives PufferLib's
+            # auto-reset overwriting the environment's internal buffers.
+            info["terminal_observation"] = obs.copy() if hasattr(obs, "copy") else obs
+            info["terminal_legal_moves"] = info.get("legal_moves", [])
+            info["terminal_player"] = info["player"]
+            info["terminal_all_player_rewards"] = dict(self.env.rewards)
+
+            # === DESYNC FIX ===
+            # PufferLib auto-resets and returns the NEW episode's observation
+            # paired with THIS info dict.  Peek at the new game so the
+            # top-level keys match the auto-reset observation.
+            self.env.reset()
+            _, _, _, _, new_info = self.env.last()
+
+            if new_info is not None and "legal_moves" in new_info:
+                info["legal_moves"] = new_info["legal_moves"]
+            elif new_info is not None and "action_mask" in new_info:
+                info["legal_moves"] = [
+                    i for i, v in enumerate(new_info["action_mask"]) if v == 1
+                ]
+
+            info["player"] = self._get_player_idx(self.env.agent_selection)
+            info["all_player_rewards"] = dict(self.env.rewards)
+
+        return obs, step_reward, done, False, info

@@ -228,7 +228,7 @@ class MuZeroConfig(
         # Mixin: Consistency
         self.parse_consistency_params()
 
-        self.mask_absorbing = self.parse_field("mask_absorbing", False)
+        self.mask_absorbing = self.parse_field("mask_absorbing", True)
 
         # Mixin: Value Prefix
         # Moved up

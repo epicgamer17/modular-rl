@@ -1,58 +1,44 @@
 """
 PufferActor Module
 
-This module defines the PufferActor, which is a 'Fat Worker' that runs PufferLib
-and pivots the data from horizontal batches back into vertical, chronological Sequence objects.
+This module defines the PufferActor subclasses, which are 'Fat Workers' that run PufferLib
+and pivot the data from horizontal batches back into vertical, chronological Sequence objects.
 """
 
 import torch
-from typing import Callable, Any, Optional, Tuple, Dict
+import numpy as np
+import time
+from typing import Callable, Any, Optional, Tuple, Dict, List
+from abc import abstractmethod
 
 import pufferlib.vector
 from replay_buffers.sequence import Sequence
 from agents.workers.actors import BaseActor
+from utils.wrappers import AECSequentialWrapper
 
 
-def _make_puffer_env(env_factory: Callable[[], Any], buf: Any = None, seed: Any = None):
-    import pufferlib.emulation
+def _make_puffer_env(env_factory, buf=None, seed=None):
+    raw_env = env_factory()
 
-    env = pufferlib.emulation.GymnasiumPufferEnv(
-        env_creator=env_factory, buf=buf, seed=seed
-    )
+    is_aec = hasattr(raw_env, "agent_selection")
+    if not is_aec and hasattr(raw_env, "unwrapped"):
+        is_aec = hasattr(raw_env.unwrapped, "agent_selection")
 
-    # Note: PufferLib Multiprocessing skips sending info if it's empty/False.
-    # This causes a desync between obs and infos in the batch.
-    # We ensure info is always truthy.
-    original_step = env.step
-
-    def patched_step(action):
-        obs, reward, term, trunc, info = original_step(action)
-        if not info:
-            info["_puffer_keep"] = True
-        return obs, reward, term, trunc, info
-
-    env.step = patched_step
-
-    original_reset = env.reset
-
-    def patched_reset(**kwargs):
-        obs, info = original_reset(**kwargs)
-        if not info:
-            info["_puffer_keep"] = True
-        return obs, info
-
-    env.reset = patched_reset
-
-    return env
+    if is_aec:
+        # Wrap the AEC env into a Sequential Gym env safely
+        wrapped_env = AECSequentialWrapper(raw_env)
+        # Because we flattened it, PufferLib can treat it like a standard Gym Env!
+        return pufferlib.emulation.GymnasiumPufferEnv(
+            env=wrapped_env, buf=buf, seed=seed
+        )
+    else:
+        return pufferlib.emulation.GymnasiumPufferEnv(env=raw_env, buf=buf, seed=seed)
 
 
-class PufferActor(BaseActor):
+class BasePufferActor(BaseActor):
     """
-    The Active Episode Tracker that runs PufferLib as a 'Fat Worker'.
-
-    This actor leverages PufferLib for vectorized environment execution and bridges
-    the horizontal batched outputs from PufferLib back into chronological vertical
-    Sequence objects for RL training.
+    Abstract base class for Puffer-based 'Fat Workers'.
+    Handles vectorized execution and sequence pivoting.
     """
 
     def __init__(
@@ -68,9 +54,6 @@ class PufferActor(BaseActor):
         *,
         worker_id: int = 0,
     ):
-        """
-        Initializes the PufferActor.
-        """
         super().__init__(
             env_factory=env_factory,
             agent_network=agent_network,
@@ -88,39 +71,24 @@ class PufferActor(BaseActor):
         self.active_sequences = None
         self._initialized = False
 
-        # Renamed for consistency with BaseActor
         self._obs = None
         self._infos = None
 
-    def _detect_num_players(self) -> int:
-        return self.num_players
-
-    def _get_player_id(self) -> Optional[str]:
-        return None
-
-    def _finalize_episode_info(self, sequence: Sequence) -> None:
-        pass
-
-    def _get_score(self, sequence: Sequence) -> float:
-        return sum(sequence.rewards)
-
     def _reset_env(self) -> Tuple[Any, Dict[str, Any]]:
-        """
-        Initializes the vectorized environment on the first call.
-        """
+        """Initializes the vectorized environment on the first call."""
         if not self._initialized:
+            num_workers = getattr(self.config, "num_puffer_workers", 2)
             self.vec_env = pufferlib.vector.Multiprocessing(
                 env_creators=[_make_puffer_env] * self.num_envs,
                 env_args=[(self.env_factory,)] * self.num_envs,
                 env_kwargs=[{}] * self.num_envs,
                 num_envs=self.num_envs,
-                num_workers=2,
+                num_workers=num_workers,
             )
             self.active_sequences = [
                 Sequence(self.num_players) for _ in range(self.num_envs)
             ]
 
-            # Initial reset of the vectorized environment
             self.vec_env.async_reset()
             self._obs, _, _, _, self._infos, _, _ = self.vec_env.recv()
             self._initialized = True
@@ -128,20 +96,21 @@ class PufferActor(BaseActor):
         return self._obs, self._infos
 
     def _step_env(self, action: Any) -> Any:
-        # Not typically used in vectorized mode, which overrides play_sequence
         raise NotImplementedError(
-            "PufferActor uses vectorized execution; use play_sequence()"
+            "PufferActors use play_sequence() for vectorized stepping"
         )
+
+    @abstractmethod
+    def _extract_batched_info(
+        self, infos: List[Dict[str, Any]]
+    ) -> Dict[str, List[Any]]:
+        """Extracts player IDs and legal moves from a batch of infos."""
+        pass
 
     @torch.inference_mode()
     def play_sequence(self, stats_tracker: Optional[Any] = None) -> Dict[str, Any]:
-        """
-        Runs the vectorized environments until at least one episode completes.
-        This provides compatibility with LocalExecutor.
-
-        Returns:
-            The stats of the first completed episode in this batch.
-        """
+        """Runs vectorized environments until at least one episode completes."""
+        start_time = time.time()
         if not self._initialized:
             self.reset()
 
@@ -149,14 +118,18 @@ class PufferActor(BaseActor):
 
         while not completed_stats:
             # 1. Batched Action Selection
-            batched_info = {
-                "legal_moves": [info.get("legal_moves", []) for info in self._infos],
-                "player": [info.get("player", 0) for info in self._infos],
-            }
+            batched_info = self._extract_batched_info(self._infos)
+
+            obs_tensor = torch.as_tensor(
+                self._obs, dtype=torch.float32, device=self.device
+            )
+            # Ensure batch dimension
+            if obs_tensor.dim() == len(self.agent_network.input_shape):
+                obs_tensor = obs_tensor.unsqueeze(0)
 
             actions_tensor, metadata = self.selector.select_action(
                 agent_network=self.agent_network,
-                obs=torch.as_tensor(self._obs, dtype=torch.float32, device=self.device),
+                obs=obs_tensor,
                 info=batched_info,
                 exploration=True,
             )
@@ -167,54 +140,182 @@ class PufferActor(BaseActor):
             next_obs, rewards, terminals, truncs, next_infos, _, _ = self.vec_env.recv()
 
             # 3. Pivot Batch to Chronological Sequences
-            # Metadata keys (policy, value) are likely batched lists or tensors
             policies = metadata.get("policy")
             values = metadata.get("value")
 
             for i in range(self.num_envs):
+                # Robustly get current and next info
+                info = self._infos[i] if (self._infos and i < len(self._infos)) else {}
+                next_info = (
+                    next_infos[i] if (next_infos and i < len(next_infos)) else {}
+                )
+
+                # Handle potential None from PufferLib
+                if info is None:
+                    info = {}
+                if next_info is None:
+                    next_info = {}
+
                 self.active_sequences[i].append(
                     observation=self._obs[i],
                     action=actions[i],
-                    reward=rewards[i],
+                    reward=float(rewards[i]),
                     policy=policies[i] if policies is not None else None,
                     value=values[i] if values is not None else None,
                     terminated=terminals[i],
                     truncated=truncs[i],
                     player_id=batched_info["player"][i],
-                    legal_moves=batched_info["legal_moves"][i],
+                    legal_moves=info.get("legal_moves", []),
+                    all_player_rewards=next_info.get("all_player_rewards"),
                 )
 
-                # 4. Handle End of Episode
+                # 4. Handle End of Episode — Unwrap the Info-Stash
                 if terminals[i] or truncs[i]:
+                    # --- Extract the TRUE terminal state from the stash ---
+                    # The wrapper stashes the real final board state before
+                    # PufferLib's auto-reset overwrites it.  Fall back to
+                    # next_obs[i] (auto-reset obs) if stash is missing
+                    # (e.g. single-player Gym envs without the wrapper).
+                    terminal_obs = next_info.get("terminal_observation", next_obs[i])
+                    terminal_legal_moves = next_info.get(
+                        "terminal_legal_moves",
+                        next_info.get("legal_moves", []),
+                    )
+
+                    # Close the old sequence with the TRUE terminal data
                     self.active_sequences[i].append(
-                        observation=next_obs[i],
+                        observation=terminal_obs,
                         terminated=terminals[i],
                         truncated=truncs[i],
+                        legal_moves=terminal_legal_moves,
                     )
                     completed_seq = self.active_sequences[i]
+                    completed_seq.duration_seconds = time.time() - start_time
 
-                    # Store safely in the locked shared buffer
+                    # Use stashed terminal rewards for correct score tracking
+                    terminal_info = {}
+                    if "terminal_all_player_rewards" in next_info:
+                        terminal_info["all_player_rewards"] = next_info[
+                            "terminal_all_player_rewards"
+                        ]
+                    elif "all_player_rewards" in next_info:
+                        terminal_info["all_player_rewards"] = next_info[
+                            "all_player_rewards"
+                        ]
+                    self._finalize_episode_info(completed_seq, terminal_info)
                     self.replay_buffer.store_aggregate(completed_seq)
 
-                    # Collect stats
+                    score = self._get_score(completed_seq)
                     ep_stats = {
                         "episode_length": len(completed_seq),
-                        "score": self._get_score(completed_seq),
+                        "score": score,
+                        "duration_seconds": completed_seq.duration_seconds,
                     }
                     completed_stats.append(ep_stats)
 
-                    # Log to tracker if provided
                     if stats_tracker:
-                        score = ep_stats["score"]
-                        length = ep_stats["episode_length"]
                         stats_tracker.append("score", score)
-                        stats_tracker.append("episode_length", length)
-                        stats_tracker.increment_steps(length)
+                        stats_tracker.append("episode_length", len(completed_seq))
+                        stats_tracker.increment_steps(len(completed_seq))
 
-                    # Reset sequence
+                    # --- Start a NEW sequence for the next episode ---
+                    # PufferLib already reset the env; next_obs[i] is step-0
+                    # of the new episode.  Do NOT seed it here — the next
+                    # loop iteration will append self._obs[i] (= next_obs[i])
+                    # with its action, maintaining the Sequence invariant:
+                    #   len(obs_history) == len(action_history) + 1
                     self.active_sequences[i] = Sequence(self.num_players)
 
             self._obs, self._infos = next_obs, next_infos
 
-        # Return the first completed episode's stats
         return completed_stats[0]
+
+    @abstractmethod
+    def _finalize_episode_info(
+        self, sequence: Sequence, final_info: Dict[str, Any]
+    ) -> None:
+        pass
+
+
+class GymPufferActor(BasePufferActor):
+    """PufferActor specialized for Gymnasium single-player environments."""
+
+    def _detect_num_players(self) -> int:
+        return 1
+
+    def _get_player_id(self) -> None:
+        return None
+
+    def _finalize_episode_info(
+        self, sequence: Sequence, final_info: Dict[str, Any]
+    ) -> None:
+        pass
+
+    def _get_score(self, sequence: Sequence) -> float:
+        return sum(sequence.rewards)
+
+    def _extract_batched_info(
+        self, infos: List[Dict[str, Any]]
+    ) -> Dict[str, List[Any]]:
+        # Robustly handle None entries or empty list
+        if not infos:
+            return {"legal_moves": [[]] * self.num_envs, "player": [0] * self.num_envs}
+
+        extracted_infos = []
+        for i in range(self.num_envs):
+            info = infos[i] if i < len(infos) else {}
+            if info is None:
+                info = {}
+            extracted_infos.append(info.get("legal_moves", []))
+
+        return {
+            "legal_moves": extracted_infos,
+            "player": [0] * self.num_envs,
+        }
+
+
+class PettingZooPufferActor(BasePufferActor):
+    """PufferActor specialized for PettingZoo AEC multi-player environments."""
+
+    def _detect_num_players(self) -> int:
+        return len(self.env.possible_agents)
+
+    def _get_player_id(self) -> Optional[str]:
+        return None
+
+    def _finalize_episode_info(
+        self, sequence: Sequence, final_info: Dict[str, Any]
+    ) -> None:
+        if final_info and "all_player_rewards" in final_info:
+            sequence.stats["final_player_rewards"] = final_info["all_player_rewards"]
+
+    def _get_score(self, sequence: Sequence) -> float:
+        if "final_player_rewards" in sequence.stats:
+            final_rewards = sequence.stats["final_player_rewards"]
+            # player_0 mapping
+            return final_rewards.get("player_0", 0.0)
+        return sum(sequence.rewards)
+
+    def _extract_batched_info(
+        self, infos: List[Dict[str, Any]]
+    ) -> Dict[str, List[Any]]:
+        if not infos:
+            return {
+                "legal_moves": [[]] * self.num_envs,
+                "player": ["player_0"] * self.num_envs,
+            }
+
+        extracted_moves = []
+        extracted_players = []
+        for i in range(self.num_envs):
+            info = infos[i] if i < len(infos) else {}
+            if info is None:
+                info = {}
+            extracted_moves.append(info.get("legal_moves", []))
+            # Grab the player injected by AECSequentialWrapper
+            extracted_players.append(info.get("player", "player_0"))
+
+        return {
+            "legal_moves": extracted_moves,
+            "player": extracted_players,
+        }

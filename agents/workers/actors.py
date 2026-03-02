@@ -302,13 +302,21 @@ def get_actor_class(env: Any, config: Optional[Any] = None) -> type[BaseActor]:
         config: Optional configuration object to detect vectorized execution.
 
     Returns:
-        The actor class (PufferActor, GymActor, or PettingZooActor).
+        The actor class (GymPufferActor, PettingZooPufferActor, GymActor, or PettingZooActor).
     """
     # 1. Check for Vectorized Execution (Fat Workers)
     if config.num_envs_per_worker > 1:
-        from agents.workers.puffer_actor import PufferActor
+        from agents.workers.puffer_actor import GymPufferActor, PettingZooPufferActor
 
-        return PufferActor
+        # Detect PettingZoo for Puffer
+        is_pz = hasattr(env, "possible_agents")
+        if not is_pz and hasattr(env, "unwrapped"):
+            unwrapped = env.unwrapped
+            is_pz = hasattr(unwrapped, "possible_agents")
+
+        if is_pz:
+            return PettingZooPufferActor
+        return GymPufferActor
 
     # 2. Check both the wrapper and the unwrapped environment for PettingZoo indicators
     # PettingZoo AEC environments have 'possible_agents'
