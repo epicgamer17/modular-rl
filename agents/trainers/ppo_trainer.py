@@ -82,6 +82,12 @@ class PPOTrainer(BaseTrainer):
 
         self.executor = create_executor(config)
 
+        # 6. Compile network for the learner (main process)
+        if config.compilation.enabled:
+            self.agent_network.compile(
+                mode=config.compilation.mode, fullgraph=config.compilation.fullgraph
+            )
+
         # Note: We do not launch actor workers here because PPOTrainer currently uses an
         # inline data collection loop within `train()`. Launching workers would cause them
         # to execute `play_sequence()`, which PPOLearner's buffer does not currently support

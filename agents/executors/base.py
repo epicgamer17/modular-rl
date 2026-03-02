@@ -117,7 +117,8 @@ class BaseExecutor(ABC):
             lengths = []
             total_transitions = 0
             total_duration = 0.0
-            mcts_sps_values = []
+            total_mcts_simulations = 0
+            total_mcts_search_time = 0.0
 
             for res in results:
                 # If res is a dictionary representing episode_stats from BaseActor
@@ -125,8 +126,10 @@ class BaseExecutor(ABC):
                     total_transitions += res["episode_length"]
                     total_duration += res.get("duration_seconds", 0.0)
 
-                    if "mcts_sps" in res:
-                        mcts_sps_values.append(res["mcts_sps"])
+                    if "mcts_simulations" in res:
+                        total_mcts_simulations += res["mcts_simulations"]
+                    if "mcts_search_time" in res:
+                        total_mcts_search_time += res["mcts_search_time"]
 
                     if "final_player_rewards" in res:
                         player_ids = list(res["final_player_rewards"].keys())
@@ -154,7 +157,8 @@ class BaseExecutor(ABC):
 
             if elapsed_wall > 0 and total_transitions > 0:
                 stats["actor_fps"] = total_transitions / elapsed_wall
-            if mcts_sps_values:
-                stats["mcts_sps"] = sum(mcts_sps_values) / len(mcts_sps_values)
+
+            if total_mcts_search_time > 0:
+                stats["mcts_sps"] = total_mcts_simulations / total_mcts_search_time
 
         return stats

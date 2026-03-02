@@ -98,6 +98,16 @@ class RainbowTrainer(BaseTrainer):
 
         self.executor.launch(self.actor_cls, worker_args, num_workers)
 
+        # 6. Compile networks for the learner (main process)
+        if config.compilation.enabled:
+            self.agent_network.compile(
+                mode=config.compilation.mode, fullgraph=config.compilation.fullgraph
+            )
+            # Optionally compile target network
+            self.target_agent_network.compile(
+                mode=config.compilation.mode, fullgraph=config.compilation.fullgraph
+            )
+
     def train(self) -> None:
         """
         Main training loop.

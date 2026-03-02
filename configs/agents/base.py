@@ -9,6 +9,7 @@ from configs.base import (
     DistributionalConfig,
     NoisyConfig,
     ExecutionConfig,
+    CompilationConfig,
 )
 import torch.nn.functional as F
 from modules.utils import (
@@ -49,6 +50,10 @@ class AgentConfig(
             "save_intermediate_weights", False
         )
         self.test_trials: int = self.parse_field("test_trials", 5)
+
+        # Compilation Config
+        compilation_dict = self.parse_field("compilation", default={}, required=False)
+        self.compilation = CompilationConfig(compilation_dict)
 
         # Loss & Activation
         self.loss_function = self.parse_field("loss_function", F.mse_loss)

@@ -8,6 +8,7 @@ from modules.utils import (
 )
 import torch.nn.functional as F
 from configs.games.game import GameConfig
+from configs.modules.compilation import CompilationConfig
 from utils.schedule import ScheduleConfig
 
 
@@ -301,6 +302,9 @@ class Config(
         self.soft_update: bool = self.parse_field("soft_update", False)
         self.min_max_epsilon: float = self.parse_field("min_max_epsilon", 0.01)
         self.replay_interval: int = self.parse_field("replay_interval", 1, wrapper=int)
+
+        compilation_dict = self.parse_field("compilation", default={}, required=False)
+        self.compilation = CompilationConfig(compilation_dict)
 
     def _verify_game(self):
         assert (

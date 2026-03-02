@@ -257,6 +257,16 @@ class Tester:
         self.actor_state = None
         self.agent_network.eval()
 
+        if (
+            self.config is not None
+            and hasattr(self.config, "compilation")
+            and self.config.compilation.enabled
+        ):
+            self.agent_network.compile(
+                mode=self.config.compilation.mode,
+                fullgraph=self.config.compilation.fullgraph,
+            )
+
     def update_parameters(self, params: Dict[str, Any]) -> None:
         """
         Standard Actor API for updating parameters (epsilon, etc.)

@@ -98,6 +98,16 @@ class BaseActor(ABC):
                 episode_trigger=lambda ep_id: ep_id % interval == 0,
             )
 
+        if (
+            self.config is not None
+            and hasattr(self.config, "compilation")
+            and self.config.compilation.enabled
+        ):
+            self.agent_network.compile(
+                mode=self.config.compilation.mode,
+                fullgraph=self.config.compilation.fullgraph,
+            )
+
         self._done = True
 
     def reset(self) -> Tuple[Any, Dict[str, Any]]:
@@ -210,17 +220,20 @@ class BaseActor(ABC):
             state, terminated=False, truncated=False, legal_moves=legal_moves
         )
 
-        mcts_sps_values = []
+        mcts_sims_total = 0
+        mcts_search_total = 0.0
         while not self._done:
             player_id = self._get_player_id()
             transition = self.step()
 
             metadata = transition["metadata"]
-            if (
-                "search_metadata" in metadata
-                and "mcts_sps" in metadata["search_metadata"]
-            ):
-                mcts_sps_values.append(metadata["search_metadata"]["mcts_sps"])
+            if "search_metadata" in metadata:
+                mcts_sims_total += int(
+                    metadata["search_metadata"].get("mcts_simulations", 0)
+                )
+                mcts_search_total += float(
+                    metadata["search_metadata"].get("mcts_search_time", 0.0)
+                )
 
             # Extract policies/values from metadata if available
             # This logic depends on what decorators inject
@@ -249,22 +262,14 @@ class BaseActor(ABC):
             )
 
         sequence.duration_seconds = time.time() - start_time
-        if mcts_sps_values:
-            sequence.stats["mcts_sps"] = sum(mcts_sps_values) / len(mcts_sps_values)
+        sequence.stats["mcts_simulations"] = mcts_sims_total
+        sequence.stats["mcts_search_time"] = mcts_search_total
         self._finalize_episode_info(sequence)
 
         # Write directly to the buffer
         self.replay_buffer.store_aggregate(sequence)
 
         if stats_tracker:
-            if sequence.duration_seconds > 0:
-                stats_tracker.append(
-                    "actor_fps", len(sequence) / sequence.duration_seconds
-                )
-
-            if "mcts_sps" in sequence.stats:
-                stats_tracker.append("mcts_sps", sequence.stats["mcts_sps"])
-
             score = self._get_score(sequence)
             stats_tracker.append("score", score)
             stats_tracker.append("episode_length", len(sequence))
@@ -275,9 +280,9 @@ class BaseActor(ABC):
             "duration_seconds": sequence.duration_seconds,
             "episode_length": len(sequence),
             "score": self._get_score(sequence),
+            "mcts_simulations": mcts_sims_total,
+            "mcts_search_time": mcts_search_total,
         }
-        if "mcts_sps" in sequence.stats:
-            episode_stats["mcts_sps"] = sequence.stats["mcts_sps"]
         if "final_player_rewards" in sequence.stats:
             episode_stats["final_player_rewards"] = sequence.stats[
                 "final_player_rewards"

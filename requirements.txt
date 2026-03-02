@@ -1,7 +1,7 @@
 ﻿torch
 numpy
 gymnasium
-opencv-python
+opencv-python-headless
 matplotlib
 pandas
 scipy

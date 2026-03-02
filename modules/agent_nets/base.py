@@ -95,3 +95,53 @@ class BaseAgentNetwork(nn.Module, ABC):
             Algorithm-specific learner predictions (typically a flat dict).
         """
         pass
+
+    def compile(self, mode: str = "reduce-overhead", fullgraph: bool = False):
+        """
+        Compiles the network's inference and learner methods for performance.
+        Skip on MPS as it's not supported.
+        Also skip on Mac CPU to avoid 'PythonDispatcher' crashes in some torch versions.
+        """
+        import platform
+
+        # is_mac = platform.system() == "Darwin"
+
+        # if self.device.type == "mps":
+        #     print("Notice: torch.compile is not supported on MPS. Skipping.")
+        #     return
+
+        # if is_mac and self.device.type == "cpu":
+        #     print("Notice: torch.compile is often unstable on Mac CPU. Skipping.")
+        #     return
+
+        print(f"Compiling {self.__class__.__name__} with mode={mode}...")
+
+        try:
+            # Inference passes
+            self.obs_inference = torch.compile(
+                self.obs_inference, mode=mode, fullgraph=fullgraph
+            )
+
+            # Recurrent Search passes (if they don't already throw NotImplementedError)
+            try:
+                self.hidden_state_inference = torch.compile(
+                    self.hidden_state_inference, mode=mode, fullgraph=fullgraph
+                )
+            except (AttributeError, NotImplementedError):
+                pass
+
+            try:
+                self.afterstate_inference = torch.compile(
+                    self.afterstate_inference, mode=mode, fullgraph=fullgraph
+                )
+            except (AttributeError, NotImplementedError):
+                pass
+
+            # Learner pass
+            self.learner_inference = torch.compile(
+                self.learner_inference, mode=mode, fullgraph=fullgraph
+            )
+        except Exception as e:
+            print(
+                f"Warning: torch.compile failed with error: {e}. Falling back to eager."
+            )

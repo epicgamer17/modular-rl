@@ -66,6 +66,8 @@ class BasePufferActor(BaseActor):
             worker_id=worker_id,
         )
 
+        print("PufferActor initialized", worker_id)
+
         self.num_envs = config.num_envs_per_worker
         self.vec_env = None
         self.active_sequences = None
@@ -115,6 +117,8 @@ class BasePufferActor(BaseActor):
             self.reset()
 
         completed_stats = []
+        mcts_sims_total = 0
+        mcts_search_total = 0.0
 
         while not completed_stats:
             # 1. Batched Action Selection
@@ -134,6 +138,12 @@ class BasePufferActor(BaseActor):
                 exploration=True,
             )
             actions = actions_tensor.cpu().numpy()
+
+            # Collect MCTS metrics from search metadata
+            search_meta = metadata.get("search_metadata")
+            if search_meta:
+                mcts_sims_total += int(search_meta.get("mcts_simulations", 0))
+                mcts_search_total += float(search_meta.get("mcts_search_time", 0.0))
 
             # 2. Step Environments
             self.vec_env.send(actions)
@@ -157,13 +167,17 @@ class BasePufferActor(BaseActor):
                     next_info = {}
 
                 self.active_sequences[i].append(
-                    observation=self._obs[i],
+                    observation=np.copy(self._obs[i]),
                     action=actions[i],
                     reward=float(rewards[i]),
                     policy=policies[i] if policies is not None else None,
                     value=values[i] if values is not None else None,
-                    terminated=terminals[i],
-                    truncated=truncs[i],
+                    # IMPORTANT: terminated/truncated describe the STATE of the
+                    # observation, NOT the result of the action.  self._obs[i]
+                    # is the pre-action state and is NEVER terminal.  The done
+                    # flags belong exclusively on the terminal-close append.
+                    terminated=False,
+                    truncated=False,
                     player_id=batched_info["player"][i],
                     legal_moves=info.get("legal_moves", []),
                     all_player_rewards=next_info.get("all_player_rewards"),
@@ -176,7 +190,8 @@ class BasePufferActor(BaseActor):
                     # PufferLib's auto-reset overwrites it.  Fall back to
                     # next_obs[i] (auto-reset obs) if stash is missing
                     # (e.g. single-player Gym envs without the wrapper).
-                    terminal_obs = next_info.get("terminal_observation", next_obs[i])
+                    terminal_obs = next_info.get("terminal_observation")
+                    assert terminal_obs is not None
                     terminal_legal_moves = next_info.get(
                         "terminal_legal_moves",
                         next_info.get("legal_moves", []),
@@ -191,6 +206,10 @@ class BasePufferActor(BaseActor):
                     )
                     completed_seq = self.active_sequences[i]
                     completed_seq.duration_seconds = time.time() - start_time
+
+                    # Store MCTS metrics in sequence stats for executor aggregation
+                    completed_seq.stats["mcts_simulations"] = mcts_sims_total
+                    completed_seq.stats["mcts_search_time"] = mcts_search_total
 
                     # Use stashed terminal rewards for correct score tracking
                     terminal_info = {}
@@ -210,6 +229,8 @@ class BasePufferActor(BaseActor):
                         "episode_length": len(completed_seq),
                         "score": score,
                         "duration_seconds": completed_seq.duration_seconds,
+                        "mcts_simulations": mcts_sims_total,
+                        "mcts_search_time": mcts_search_total,
                     }
                     completed_stats.append(ep_stats)
 
@@ -217,6 +238,11 @@ class BasePufferActor(BaseActor):
                         stats_tracker.append("score", score)
                         stats_tracker.append("episode_length", len(completed_seq))
                         stats_tracker.increment_steps(len(completed_seq))
+                        # Log MCTS SPS to stats_tracker
+                        if "mcts_sps" in completed_seq.stats:
+                            stats_tracker.append(
+                                "mcts_sps", completed_seq.stats["mcts_sps"]
+                            )
 
                     # --- Start a NEW sequence for the next episode ---
                     # PufferLib already reset the env; next_obs[i] is step-0

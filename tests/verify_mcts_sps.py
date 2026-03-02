@@ -13,12 +13,28 @@ class MockSearch:
     def __init__(self, num_sims):
         self.num_sims = num_sims
 
-    def run(self, obs, info, to_play, agent_network):
+    def run(self, obs, info, to_play, agent_network, exploration=True):
         # Simulate some search time
         time.sleep(0.01)
         # Return dummy values - uniform policy
         policy = torch.ones(9) / 9
         return 0.0, policy, policy, 0, {"sims": self.num_sims}
+
+    def run_vectorized(self, obs, info, to_play, agent_network):
+        # Simulate some search time
+        time.sleep(0.01)
+        B = obs.shape[0]
+        policy = torch.ones(B, 9) / 9
+        # In the real system, sm['sims'] is per-tree, but MCTSDecorator
+        # overwrites it with total_sims.
+        sm_list = [{"sims": self.num_sims} for _ in range(B)]
+        return (
+            [0.0] * B,
+            [torch.ones(9) / 9] * B,
+            [torch.ones(9) / 9] * B,
+            [0] * B,
+            sm_list,
+        )
 
 
 class MockConfig:
@@ -50,7 +66,8 @@ class MockActor(BaseActor):
 
 
 class TestMCTSSPS(unittest.TestCase):
-    def test_sps_calculation_and_aggregation(self):
+    def test_sps_metrics_propagation(self):
+        """Verifies that MCTSDecorator provides simulations and search time."""
         num_sims = 100
         config = MockConfig(num_sims)
         search = MockSearch(num_sims)
@@ -59,21 +76,25 @@ class TestMCTSSPS(unittest.TestCase):
 
         agent_net = torch.nn.Module()
         agent_net.input_shape = (3, 3, 3)
-        # Device needs to be set for the selector
-        agent_net.obs_inference = lambda x: None  # Minimal mock
+        agent_net.obs_inference = lambda x: None
 
         obs = torch.zeros(1, 3, 3, 3)
 
-        # Test Decorator
-        action, metadata = decorator.select_action(agent_net, obs)
+        # 1. Test Single Action Path
+        _, metadata = decorator.select_action(agent_net, obs)
         self.assertIn("search_metadata", metadata)
-        self.assertIn("mcts_sps", metadata["search_metadata"])
-        sps = metadata["search_metadata"]["mcts_sps"]
-        print(f"MCTS SPS in metadata: {sps:.2f}")
-        # Expect ~100 / 0.01 = 10000
-        self.assertGreater(sps, 0)
+        self.assertEqual(metadata["search_metadata"]["mcts_simulations"], num_sims)
+        self.assertGreater(metadata["search_metadata"]["mcts_search_time"], 0)
 
-        # Test Actor aggregation
+        # 2. Test Vectorized Path
+        obs_vec = torch.zeros(4, 3, 3, 3)
+        info_vec = {"legal_moves": [list(range(9))] * 4, "player": [0] * 4}
+        _, metadata_vec = decorator.select_action(agent_net, obs_vec, info=info_vec)
+        # 4 trees * 100 sims = 400
+        self.assertEqual(metadata_vec["search_metadata"]["mcts_simulations"], 400)
+        self.assertGreater(metadata_vec["search_metadata"]["mcts_search_time"], 0)
+
+        # 3. Test Actor aggregation
         mock_buffer = torch.nn.Module()
         mock_buffer.store_aggregate = lambda x: None
         actor = MockActor(
@@ -86,12 +107,9 @@ class TestMCTSSPS(unittest.TestCase):
             name="test",
         )
 
-        # 1. play_sequence
-        seq = actor.play_sequence()
-        self.assertIn("mcts_sps", seq)
-        print(f"MCTS SPS in Sequence stats: {seq['mcts_sps']:.2f}")
-
-        # 2. collect_transitions (Removed)
+        ep_stats = actor.play_sequence()
+        self.assertEqual(ep_stats["mcts_simulations"], num_sims)
+        self.assertGreater(ep_stats["mcts_search_time"], 0)
 
 
 if __name__ == "__main__":

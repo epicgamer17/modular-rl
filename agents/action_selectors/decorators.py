@@ -162,11 +162,14 @@ class MCTSDecorator(BaseActionSelector):
 
         if is_batched:
             # Vectorized Search Path
+            B = obs.shape[0]
             infos_list = [
                 {"legal_moves": lm, "player": p}
                 for lm, p in zip(info["legal_moves"], info["player"])
             ]
+            start_search_time = time.time()
             res = self.search.run_vectorized(obs, infos_list, to_play, agent_network)
+            search_duration = time.time() - start_search_time
             (
                 root_values,
                 exploratory_policies,
@@ -210,7 +213,8 @@ class MCTSDecorator(BaseActionSelector):
                 "value": [float(rv) for rv in root_values],
                 "best_action": [int(a) for a in best_actions],
                 "search_metadata": {
-                    "mcts_sps": [float(sm.get("mcts_sps", 0.0)) for sm in sm_list]
+                    "mcts_simulations": self.config.num_simulations * B,
+                    "mcts_search_time": search_duration,
                 },
                 "root_value": [float(rv) for rv in root_values],
             }
@@ -223,12 +227,8 @@ class MCTSDecorator(BaseActionSelector):
             self.search.run(obs, info, to_play, agent_network, exploration=exploration)
         )
         search_duration = time.time() - start_search_time
-        mcts_sps = (
-            self.config.num_simulations / search_duration
-            if search_duration > 0
-            else 0.0
-        )
-        search_metadata["mcts_sps"] = mcts_sps
+        search_metadata["mcts_simulations"] = self.config.num_simulations
+        search_metadata["mcts_search_time"] = search_duration
 
         # Apply temperature to probabilities
         if curr_temp != 1.0 and curr_temp > 0:
@@ -261,7 +261,10 @@ class MCTSDecorator(BaseActionSelector):
             ),
             "value": float(root_value),
             "best_action": int(action),
-            "search_metadata": {"mcts_sps": float(search_metadata.get("mcts_sps"))},
+            "search_metadata": {
+                "mcts_simulations": int(search_metadata.get("mcts_simulations", 0)),
+                "mcts_search_time": float(search_metadata.get("mcts_search_time", 0.0)),
+            },
             "root_value": float(root_value),
         }
 
