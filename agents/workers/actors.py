@@ -98,11 +98,7 @@ class BaseActor(ABC):
                 episode_trigger=lambda ep_id: ep_id % interval == 0,
             )
 
-        if (
-            self.config is not None
-            and hasattr(self.config, "compilation")
-            and self.config.compilation.enabled
-        ):
+        if self.config.compilation.enabled:
             self.agent_network.compile(
                 mode=self.config.compilation.mode,
                 fullgraph=self.config.compilation.fullgraph,

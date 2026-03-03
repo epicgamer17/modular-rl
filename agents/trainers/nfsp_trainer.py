@@ -56,7 +56,11 @@ class NFSPTrainer(BaseTrainer):
             input_shape=obs_dim,  # Exclude batch dim
             num_actions=num_actions,
         ).to(self.device)
-        self.br_target_agent_network.load_state_dict(self.br_agent_network.state_dict())
+        # Sync target network (cleaning state dict in case agent_network is compiled)
+        from modules.utils import get_clean_state_dict
+
+        clean_state = get_clean_state_dict(self.br_agent_network)
+        self.br_target_agent_network.load_state_dict(clean_state, strict=False)
 
         # SL Network (Average Strategy)
         self.avg_agent_network = SupervisedNetwork(
@@ -139,7 +143,11 @@ class NFSPTrainer(BaseTrainer):
                 input_shape=obs_dim,  # Exclude batch dim
                 num_actions=num_actions,
             ).to(self.device)
-            br_target_agent_network.load_state_dict(br_agent_network.state_dict())
+            # Sync target network (cleaning state dict in case agent_network is compiled)
+            from modules.utils import get_clean_state_dict
+
+            clean_state = get_clean_state_dict(br_agent_network)
+            br_target_agent_network.load_state_dict(clean_state, strict=False)
 
             # AVG Network
             avg_agent_network = SupervisedNetwork(

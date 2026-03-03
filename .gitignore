@@ -16,8 +16,8 @@
 .venv/
 */deprecated/*
 *.patch
-debug_*.py
-reproduce_*.py
+# debug_*.py
+# reproduce_*.py
 debug_*.txt
 pylint_output.txt
 ffmpeg

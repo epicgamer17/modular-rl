@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
 import gymnasium as gym
 from stats.stats import StatTracker
+from modules.utils import get_uncompiled_model
 
 
 class BaseTrainer:
@@ -81,9 +82,13 @@ class BaseTrainer:
                     )
 
         # 3. Launch Tester
+        # 1. Safely unwrap the network before passing across process boundaries
+        uncompiled_network = get_uncompiled_model(self.agent_network)
+
+        # 2. Launch Tester
         launch_args = TestFactory.get_launch_args(
             config=self.config,
-            agent_network=self.agent_network,
+            agent_network=uncompiled_network,  # Pass the uncompiled version!
             action_selector=self.action_selector,
             device=torch.device("cpu"),
             name=f"{self.name}_tester",

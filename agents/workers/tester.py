@@ -257,11 +257,7 @@ class Tester:
         self.actor_state = None
         self.agent_network.eval()
 
-        if (
-            self.config is not None
-            and hasattr(self.config, "compilation")
-            and self.config.compilation.enabled
-        ):
+        if self.config.compilation.enabled:
             self.agent_network.compile(
                 mode=self.config.compilation.mode,
                 fullgraph=self.config.compilation.fullgraph,
@@ -275,7 +271,14 @@ class Tester:
         if isinstance(params, dict):
             # Check if this looks like a state_dict or just hyperparameters
             if any(isinstance(v, (torch.Tensor, dict)) for v in params.values()):
-                self.agent_network.load_state_dict(params)
+                # CLEAN THE KEYS: Strip out any '_orig_mod.' prefixes
+                # that might have come from the Learner's compiled network
+                clean_params = {
+                    k.replace("_orig_mod.", ""): v for k, v in params.items()
+                }
+
+                # strict=False is safer here as compilation might inject internal state keys
+                self.agent_network.load_state_dict(clean_params, strict=False)
             else:
                 self.action_selector.update_parameters(params)
 

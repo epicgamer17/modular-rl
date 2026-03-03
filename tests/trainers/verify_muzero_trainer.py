@@ -10,6 +10,13 @@ sys.modules["matplotlib"] = MagicMock()
 sys.modules["matplotlib.pyplot"] = MagicMock()
 
 import torch
+import torch.multiprocessing as mp
+
+try:
+    mp.set_sharing_strategy("file_system")
+except Exception:
+    pass
+
 from agents.trainers.muzero_trainer import MuZeroTrainer
 from configs.agents.muzero import MuZeroConfig
 from configs.games.cartpole import CartPoleConfig

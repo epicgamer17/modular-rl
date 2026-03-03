@@ -72,6 +72,13 @@ class TorchMPExecutor(BaseExecutor):
         os.environ["MKL_NUM_THREADS"] = "1"
         torch.set_num_threads(1)
 
+        # Stagger start times to avoid overwhelming the compiler (and avoid race conditions in Triton cache)
+        config = args[5]
+        if config.compilation.enabled:
+            time.sleep(worker_id * 1.0)
+        elif worker_id > 0:
+            time.sleep(worker_id * 0.1)
+
         try:
             worker = worker_cls(*args, worker_id=worker_id)
             worker.setup()
@@ -165,7 +172,10 @@ class TorchMPExecutor(BaseExecutor):
         self, state_dict: Dict[str, Any], params: Optional[Dict[str, Any]] = None
     ):
         # In TorchMP with shared memory, weights are updated in-place on the shared model.
-        # However, we still need to propagate parameters and signal noise resets.
+        # But wait, we must update the uncompiled underlying model if it's compiled, relying on Pytorch references.
+        # Actually, if they share memory, we don't need to load_state_dict here!
+        # The main thread does step() on its model, which IS the shared model, since both are uncompiled originally.
+        # However, to be safe, we just signal parameter updates.
         if params is None:
             params = {}
 
@@ -173,10 +183,6 @@ class TorchMPExecutor(BaseExecutor):
         params["reset_noise"] = True
 
         # Send to all workers via the queue
-        # For simplicity, we send it once and each worker drains it.
-        # Wait, if we send it once, only ONE worker gets it if they all call get().
-        # We need to send it N times, or use a different mechanism.
-        # Using N times (num_workers) is easiest here.
         for _ in range(len(self.workers)):
             self.param_queue.put(params)
 

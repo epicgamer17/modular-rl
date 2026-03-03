@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 import time
 from typing import Optional, Any
-from executors.local_executor import LocalExecutor
-from executors.torch_mp_executor import TorchMPExecutor
+from agents.executors.local_executor import LocalExecutor
+from agents.executors.torch_mp_executor import TorchMPExecutor
 from replay_buffers.sequence import Sequence
 
 
@@ -24,26 +24,20 @@ class MockPolicy:
 
 
 class MockActor:
-    def __init__(self, reward_val=1.0):
-        self.reward_val = reward_val
+    def __init__(self, *args, worker_id=0):
+        self.reward_val = args[0] if args else 1.0
+        self.worker_id = worker_id
         self.policy = MockPolicy()
 
     def setup(self):
         pass
 
-    def run_episode(self, stats_tracker=None):
-        seq = Sequence(num_players=1)
-        seq.append(observation=np.zeros(1), terminated=False, truncated=False)
-        # Mock a sequence with 5 steps
-        for i in range(5):
-            seq.append(
-                observation=np.zeros(1),
-                terminated=(i == 4),
-                truncated=False,
-                action=0,
-                reward=self.reward_val,
-            )
-        return seq
+    def play_sequence(self, stats_tracker=None):
+        return {
+            "episode_length": 5,
+            "score": 5.0 * self.reward_val,
+            "duration_seconds": 0.1,
+        }
 
 
 def test_local_executor_collect_data():
@@ -55,9 +49,9 @@ def test_local_executor_collect_data():
     data, stats = executor.collect_data(min_samples=2)
 
     assert len(data) >= 2
-    assert "avg_episode_reward" in stats
-    assert stats["avg_episode_reward"] == 50.0  # 5 steps * 10.0
-    assert stats["avg_episode_length"] == 5
+    assert "score" in stats
+    assert stats["score"] == 10.0  # 5 steps * 2.0 (wait, worker_args is (10.0,) above?)
+    assert stats["episode_length"] == 5
     executor.stop()
 
 
@@ -70,9 +64,9 @@ def test_torch_mp_executor_collect_data():
     data, stats = executor.collect_data(min_samples=2)
 
     assert len(data) >= 2
-    assert "avg_episode_reward" in stats
-    assert stats["avg_episode_reward"] == 10.0  # 5 steps * 2.0
-    assert stats["avg_episode_length"] == 5
+    assert "score" in stats
+    assert stats["score"] == 10.0  # 5 steps * 2.0
+    assert stats["episode_length"] == 5
     executor.stop()
 
 

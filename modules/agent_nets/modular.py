@@ -197,7 +197,6 @@ class ModularAgentNetwork(BaseAgentNetwork):
             if hasattr(self.components["q_head"], "reset_noise"):
                 self.components["q_head"].reset_noise()
 
-    @torch.inference_mode()
     def obs_inference(self, obs: Tensor) -> InferenceOutput:
         """
         Universal Actor API: Translates raw observations based
@@ -395,7 +394,6 @@ class ModularAgentNetwork(BaseAgentNetwork):
     # ==========================================
     # SEARCH API (Only relevant for MuZero routing)
     # ==========================================
-    @torch.inference_mode()
     def hidden_state_inference(
         self, network_state: MuZeroNetworkState, action: Tensor
     ) -> InferenceOutput:
@@ -434,7 +432,6 @@ class ModularAgentNetwork(BaseAgentNetwork):
             extras={},
         )
 
-    @torch.inference_mode()
     def afterstate_inference(
         self, network_state: Any, action: Tensor
     ) -> InferenceOutput:

@@ -46,8 +46,11 @@ class RainbowTrainer(BaseTrainer):
             self.agent_network.initialize(config.kernel_initializer)
 
         self.agent_network.to(device)
-        self.target_agent_network.to(device)
-        self.target_agent_network.load_state_dict(self.agent_network.state_dict())
+        # Initialize target network
+        from modules.utils import get_clean_state_dict
+
+        clean_state = get_clean_state_dict(self.agent_network)
+        self.target_agent_network.load_state_dict(clean_state, strict=False)
         self.target_agent_network.eval()
 
         if config.multi_process:

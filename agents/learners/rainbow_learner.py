@@ -176,27 +176,25 @@ class RainbowLearner(BaseLearner):
         Updates the target network weights.
         Uses soft update (EMA) if config.soft_update is True, else hard copy.
         """
+        from modules.utils import get_clean_state_dict
+
         with torch.no_grad():
+            clean_state = get_clean_state_dict(self.agent_network)
             if self.config.soft_update:
-                # Soft update: target = beta * target + (1 - beta) * online
-                for target_param, online_param in zip(
-                    self.target_agent_network.parameters(),
-                    self.agent_network.parameters(),
-                ):
-                    target_param.data.mul_(self.config.ema_beta).add_(
-                        online_param.data, alpha=1.0 - self.config.ema_beta
-                    )
+                target_state = self.target_agent_network.state_dict()
+                for k, v in clean_state.items():
+                    if k in target_state:
+                        # Soft update: target = beta * target + (1 - beta) * online
+                        # Ensure we only update floating point tensors (like weights)
+                        if target_state[k].is_floating_point():
+                            target_state[k].data.mul_(self.config.ema_beta).add_(
+                                v.data, alpha=1.0 - self.config.ema_beta
+                            )
+                        else:
+                            target_state[k].data.copy_(v.data)
             else:
                 # Hard update
-                for target_param, online_param in zip(
-                    self.target_agent_network.parameters(),
-                    self.agent_network.parameters(),
-                ):
-                    target_param.data.copy_(online_param.data, non_blocking=True)
-                for target_buf, online_buf in zip(
-                    self.target_agent_network.buffers(), self.agent_network.buffers()
-                ):
-                    target_buf.data.copy_(online_buf.data, non_blocking=True)
+                self.target_agent_network.load_state_dict(clean_state, strict=False)
 
     def predict(self, states: torch.Tensor) -> torch.Tensor:
         """

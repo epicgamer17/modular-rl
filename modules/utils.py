@@ -622,3 +622,17 @@ class NetworkOutput:
     afterstate_value: torch.Tensor = None
     encoder_codes: torch.Tensor = None  # One-hot from Encoder
     encoder_probs: torch.Tensor = None  # Softmax from Encoder
+
+
+# Helper function to use across your framework
+def get_clean_state_dict(model: torch.nn.Module) -> dict:
+    """Strips the '_orig_mod.' prefix added by torch.compile."""
+    state_dict = model.state_dict()
+    return {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
+
+
+def get_uncompiled_model(model: torch.nn.Module) -> torch.nn.Module:
+    """Safely extracts the uncompiled base model."""
+    if hasattr(model, "_orig_mod"):
+        return model._orig_mod
+    return model

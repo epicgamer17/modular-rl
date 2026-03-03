@@ -114,34 +114,38 @@ class BaseAgentNetwork(nn.Module, ABC):
         #     print("Notice: torch.compile is often unstable on Mac CPU. Skipping.")
         #     return
 
-        print(f"Compiling {self.__class__.__name__} with mode={mode}...")
+        print(
+            f"Compiling {self.__class__.__name__} with mode={mode}, fullgraph={fullgraph}..."
+        )
 
         try:
-            # Inference passes
+            # 1. Observation Inference
+            print(f"  [1/4] Compiling obs_inference...")
             self.obs_inference = torch.compile(
                 self.obs_inference, mode=mode, fullgraph=fullgraph
             )
 
-            # Recurrent Search passes (if they don't already throw NotImplementedError)
-            try:
-                self.hidden_state_inference = torch.compile(
-                    self.hidden_state_inference, mode=mode, fullgraph=fullgraph
-                )
-            except (AttributeError, NotImplementedError):
-                pass
+            # 2. Hidden State Inference
+            print(f"  [2/4] Compiling hidden_state_inference...")
+            self.hidden_state_inference = torch.compile(
+                self.hidden_state_inference, mode=mode, fullgraph=fullgraph
+            )
 
-            try:
-                self.afterstate_inference = torch.compile(
-                    self.afterstate_inference, mode=mode, fullgraph=fullgraph
-                )
-            except (AttributeError, NotImplementedError):
-                pass
+            # 3. Afterstate Inference
+            print(f"  [3/4] Compiling afterstate_inference...")
+            self.afterstate_inference = torch.compile(
+                self.afterstate_inference, mode=mode, fullgraph=fullgraph
+            )
 
-            # Learner pass
+            # 4. Learner Inference
+            print(f"  [4/4] Compiling learner_inference...")
             self.learner_inference = torch.compile(
                 self.learner_inference, mode=mode, fullgraph=fullgraph
             )
+            print(f"Finished compiling {self.__class__.__name__}.")
         except Exception as e:
-            print(
-                f"Warning: torch.compile failed with error: {e}. Falling back to eager."
-            )
+            print(f"CRITICAL: torch.compile failed in {self.__class__.__name__}!")
+            print(f"Error: {e}")
+            import traceback
+
+            traceback.print_exc()
