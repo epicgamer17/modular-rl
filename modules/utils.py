@@ -632,7 +632,48 @@ def get_clean_state_dict(model: torch.nn.Module) -> dict:
 
 
 def get_uncompiled_model(model: torch.nn.Module) -> torch.nn.Module:
-    """Safely extracts the uncompiled base model."""
+    """
+    Safely extracts the uncompiled base model to allow pickling across processes.
+    Handles both module-level and method-level compilation without mutating the original.
+    """
+    import copy
+
+    # If the model was compiled at the module level (torch.compile(model))
     if hasattr(model, "_orig_mod"):
-        return model._orig_mod
+        model = model._orig_mod
+
+    # If the model used method-level compilation (e.g. self.obs_inference = torch.compile(...))
+    # This prevents PicklingError when passing the model to worker processes like Tester.
+    has_compiled_methods = any(
+        hasattr(model, m) and m in model.__dict__
+        for m in [
+            "obs_inference",
+            "hidden_state_inference",
+            "afterstate_inference",
+            "learner_inference",
+            "step",
+        ]
+    )
+
+    if has_compiled_methods:
+        # Create a shallow copy of the model itself
+        m_copy = copy.copy(model)
+        # Create a shallow copy of its __dict__ so we don't mutate the original instance's methods
+        m_copy.__dict__ = copy.copy(model.__dict__)
+
+        # Remove the compiled method instances from __dict__ so pickle falls back to class methods
+        compiled_methods = [
+            "obs_inference",
+            "hidden_state_inference",
+            "afterstate_inference",
+            "learner_inference",
+            "search_afterstate",
+            "step",
+        ]
+        for attr in compiled_methods:
+            if attr in m_copy.__dict__:
+                del m_copy.__dict__[attr]
+
+        return m_copy
+
     return model
