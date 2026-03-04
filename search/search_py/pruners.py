@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import math
 from typing import Any, List, Optional, Tuple, Dict
+import torch
 from search.min_max_stats import MinMaxStats
 
 
@@ -61,7 +62,10 @@ class SequentialHalvingPruning(PruningMethod):
     """
 
     def initialize(self, node: Any, config: Any) -> Any:
-        candidates = list(node.children.keys())
+        if getattr(node, "child_priors", None) is not None:
+            candidates = torch.nonzero(node.child_priors > 0).flatten().tolist()
+        else:
+            candidates = list(node.children.keys())
         m = len(candidates)
         # We need to track survivors, current phase budget, etc.
         # State: {survivors, m_initial, sims_left_in_round}
@@ -137,9 +141,11 @@ class SequentialHalvingPruning(PruningMethod):
     def _eliminate(self, node, survivors, config, min_max_stats):
         # Sort and pick top half
         def sort_by_score(action):
-            child = node.children[action]
+            child = node.get_child(action)
             max_visits = 0
-            if node.children:
+            if getattr(node, "child_visits", None) is not None:
+                max_visits = int(node.child_visits.max().item())
+            elif node.children:
                 max_visits = max(ch.visits for ch in node.children.values())
 
             q_value = min_max_stats.normalize(node.get_child_q_from_parent(child))

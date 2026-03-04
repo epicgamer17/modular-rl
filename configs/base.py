@@ -171,12 +171,16 @@ class SearchConfig:
             "search_backend", os.getenv("MCTS_BACKEND", "python")
         )
         self.backend: str = str(self.parse_field("backend", backend_default)).lower()
-        if self.backend not in {"python", "cpp"}:
+        if self.backend not in {"python", "cpp", "aos"}:
             raise ValueError(
-                f"Unsupported search backend {self.backend!r}. Expected 'python' or 'cpp'."
+                f"Unsupported search backend {self.backend!r}. Expected 'python', 'cpp', or 'aos'."
             )
         # Alias retained for compatibility with code that references `search_backend`.
         self.search_backend: str = self.backend
+
+        self.known_bounds = self.parse_field(
+            "known_bounds", default=None, required=False
+        )
 
         self.num_simulations: int = self.parse_field("num_simulations", 800)
         self.search_batch_size: int = self.parse_field("search_batch_size", 0)
@@ -193,10 +197,52 @@ class SearchConfig:
         )
         self.gumbel: bool = self.parse_field("gumbel", False)
         self.gumbel_m = self.parse_field("gumbel_m", 16)
-        self.gumbel_cvisit = self.parse_field("gumbel_cvisit", 50)
+        self.gumbel_cvisit = self.parse_field("gumbel_cvisit", 50.0)
+        # cscale dampens sigma = (cvisit + max_N) * cscale * norm_Q.
+        # mctx defaults: 1.0 for perfect-info games (Go/Chess),
+        #                0.1 for high-variance games (Atari, Catan).
         self.gumbel_cscale = self.parse_field("gumbel_cscale", 1.0)
         self.pb_c_base: int = self.parse_field("pb_c_base", 19652)
         self.pb_c_init: float = self.parse_field("pb_c_init", 1.25)
+
+        # AOS Search / Additional Search Configs
+        self.backprop_method: str = self.parse_field(
+            "backprop_method", "average", required=False
+        )
+        self.policy_extraction: str = self.parse_field(
+            "policy_extraction", "visit_count", required=False
+        )
+        self.max_search_depth: int = self.parse_field(
+            "max_search_depth", self.num_simulations + 1, required=False
+        )
+        self.max_nodes: int = self.parse_field(
+            "max_nodes", self.num_simulations + 1, required=False
+        )
+        self.num_codes: int = self.parse_field("num_codes", 1, required=False)
+        self.use_dirichlet: bool = self.parse_field(
+            "use_dirichlet", True, required=False
+        )
+        self.dirichlet_alpha: float = self.parse_field(
+            "dirichlet_alpha", 0.25, required=False
+        )
+        self.dirichlet_fraction: float = self.parse_field(
+            "dirichlet_fraction", 0.25, required=False
+        )
+        self.use_sequential_halving: bool = self.parse_field(
+            "use_sequential_halving", False, required=False
+        )
+        self.scoring_method: str = self.parse_field(
+            "scoring_method", "ucb", required=False
+        )
+        # We need use_value_prefix mapped from value_prefix in the legacy config
+        # (It is parsed by ValuePrefixConfig as self.value_prefix, but here we can define it)
+        try:
+            val_pref = self.value_prefix
+        except AttributeError:
+            val_pref = False
+        self.use_value_prefix: bool = self.parse_field(
+            "use_value_prefix", val_pref, required=False
+        )
 
 
 class NoisyConfig:

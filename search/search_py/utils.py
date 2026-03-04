@@ -3,14 +3,33 @@ import torch
 
 
 def get_completed_q_improved_policy(config, node, min_max_stats):
+    """Compute the improved policy π₀ using clean network logits (Paper Eq. 11).
+
+    The policy improvement target must be computed from the pure network policy
+    (π), not the Gumbel-injected child_priors. Using noisy priors as the logit
+    baseline would bias the target policy toward the injected noise.
+
+    Args:
+        config: Search configuration holding gumbel_cvisit and gumbel_cscale.
+        node: The root DecisionNode after search.
+        min_max_stats: Running min/max statistics for Q-value normalization.
+
+    Returns:
+        pi0 (Tensor): Softmax-normalised improved policy over all actions.
+    """
     completedQ = get_completed_q(node, min_max_stats)
     sigma = calculate_gumbel_sigma(
         config.gumbel_cvisit, config.gumbel_cscale, node, completedQ
     )
+    # Use clean network logits as the base — fall back to child_priors only if
+    # network_policy is unavailable (e.g., for internal nodes).
+    base_priors = (
+        node.network_policy if node.network_policy is not None else node.child_priors
+    )
     logits = torch.where(
-        node.child_priors > 0,
-        torch.log(node.child_priors),
-        torch.full_like(node.child_priors, -float("inf")),
+        base_priors > 0,
+        torch.log(base_priors),
+        torch.full_like(base_priors, -float("inf")),
     )
     pi0_logits = logits + sigma
     pi0 = torch.softmax(pi0_logits, dim=0)

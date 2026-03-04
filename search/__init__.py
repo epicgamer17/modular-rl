@@ -18,7 +18,7 @@ from typing import Any
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 _SEARCH_PY_DIR = _PACKAGE_DIR / "search_py"
-_VALID_BACKENDS = {"python", "cpp"}
+_VALID_BACKENDS = {"python", "cpp", "aos"}
 _DEFAULT_BACKEND = "python"
 _BACKEND_ENV_VAR = "MCTS_BACKEND"
 
@@ -77,7 +77,9 @@ def _resolve_backend_name(config: Any = None, backend: str | None = None) -> str
     resolved = str(candidate).strip().lower()
     if resolved not in _VALID_BACKENDS:
         valid = ", ".join(sorted(_VALID_BACKENDS))
-        raise ValueError(f"Unknown search backend {resolved!r}. Expected one of: {valid}.")
+        raise ValueError(
+            f"Unknown search backend {resolved!r}. Expected one of: {valid}."
+        )
     return resolved
 
 
@@ -125,6 +127,16 @@ def configure_backend(config: Any = None, backend: str | None = None) -> str:
                 stacklevel=2,
             )
 
+    if requested == "aos":
+        from .aos_search.search_algorithm import SearchAlgorithm as _AosSearchAlgorithm
+        from .aos_search.min_max_stats import VectorizedMinMaxStats as _AosMinMaxStats
+
+        SearchAlgorithm = _AosSearchAlgorithm
+        MinMaxStats = _AosMinMaxStats
+        _cpp_module = None
+        _active_backend = "aos"
+        return requested
+
     from .search_py.modular_search import SearchAlgorithm as _PySearchAlgorithm
     from .search_py.min_max_stats import MinMaxStats as _PyMinMaxStats
 
@@ -151,6 +163,7 @@ def __getattr__(name: str) -> Any:
             configure_backend()
         return globals()[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "SearchAlgorithm",

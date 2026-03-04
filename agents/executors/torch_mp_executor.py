@@ -117,7 +117,9 @@ class TorchMPExecutor(BaseExecutor):
                 data = worker.play_sequence()
                 result_queue.put((worker_cls.__name__, data))
         except Exception as e:
-            error_queue.put((e, traceback.format_exc()))
+            # We stringify the exception to prevent obscure pickling errors (like 'cell' objects)
+            # from masking the real underlying crash when this goes through the mp.Queue.
+            error_queue.put((f"{type(e).__name__}: {str(e)}", traceback.format_exc()))
             # We don't re-raise here to avoid polluting stdout,
             # the main process will catch it.
         finally:

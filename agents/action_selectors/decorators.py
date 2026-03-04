@@ -168,6 +168,9 @@ class MCTSDecorator(BaseActionSelector):
                 for lm, p in zip(info["legal_moves"], info["player"])
             ]
             start_search_time = time.time()
+
+            self.search.config.policy_temperature = curr_temp
+
             res = self.search.run_vectorized(obs, infos_list, to_play, agent_network)
             search_duration = time.time() - start_search_time
             (
@@ -182,9 +185,14 @@ class MCTSDecorator(BaseActionSelector):
             root_values_t = torch.as_tensor(
                 root_values, device=obs.device, dtype=torch.float32
             )
-            exploratory_policies_t = torch.stack(exploratory_policies).to(obs.device)
-
-            if curr_temp != 1.0 and curr_temp > 0:
+            if curr_temp == 0.0:
+                # Greedy Vectorized
+                heated_probs = torch.zeros_like(exploratory_policies_t)
+                batched_best_actions = torch.tensor(best_actions, device=obs.device)
+                heated_probs.scatter_(1, batched_best_actions.unsqueeze(1), 1.0)
+                mcts_policy_dist = Categorical(probs=heated_probs)
+            elif curr_temp != 1.0:
+                # Heated/Cooled Vectorized
                 log_probs = torch.log(exploratory_policies_t + 1e-8)
                 log_probs = log_probs / curr_temp
                 heated_probs = torch.softmax(log_probs, dim=-1)
@@ -223,20 +231,27 @@ class MCTSDecorator(BaseActionSelector):
 
         # 3. Single Action Search Path
         start_search_time = time.time()
+
+        self.search.config.policy_temperature = curr_temp
+
         root_value, exploratory_policy, target_policy, best_action, search_metadata = (
             self.search.run(obs, info, to_play, agent_network, exploration=exploration)
         )
         search_duration = time.time() - start_search_time
-        search_metadata["mcts_simulations"] = self.config.num_simulations
-        search_metadata["mcts_search_time"] = search_duration
-
         # Apply temperature to probabilities
-        if curr_temp != 1.0 and curr_temp > 0:
+        if curr_temp == 0.0:
+            # Greedy
+            heated_probs = torch.zeros_like(exploratory_policy)
+            heated_probs[best_action] = 1.0
+            mcts_policy_dist = Categorical(probs=heated_probs)
+        elif curr_temp != 1.0:
+            # Heated/Cooled
             log_probs = torch.log(exploratory_policy + 1e-8)
             log_probs = log_probs / curr_temp
             heated_probs = torch.softmax(log_probs, dim=-1)
             mcts_policy_dist = Categorical(probs=heated_probs)
         else:
+            # Standard
             mcts_policy_dist = Categorical(probs=exploratory_policy)
 
         mcts_output = InferenceOutput(

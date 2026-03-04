@@ -20,7 +20,7 @@ def make_env(
     representation="image",
     invalid_action_reward=-10,
     render_mode="rgb_array",
-    auto_play_single_action=True,
+    auto_play_single_action=False,
     bandit_mode=True,
     spatial_encoding: SpatialEncoding = "axial",
     include_validity_mask: bool = True,

@@ -22,14 +22,28 @@ class MinMaxStats(object):
         self.max = max(self.max, value)
         self.min = min(self.min, value)
 
-    def normalize(self, value: float) -> float:
-        if self.max > self.min:
-            # We normalize only when we have at a max and min value
-            denom = self.max - self.min
-            if self.soft_update:
-                denom = max(denom, self.min_max_epsilon)
-            return (value - self.min) / denom
-        return value
+    def normalize(self, value):
+        epsilon = self.min_max_epsilon if self.soft_update else 1e-8
+
+        # DeepMind mctx logic: If stats are uninitialized (max < min),
+        # pretend max = min = value. This ensures the numerator is 0.0
+        # and natural evaluation forces the uninitialized Q-value to 0.0
+        # rather than returning un-normalized values or crashing.
+        is_uninitialized = self.max < self.min
+        maximum = value if is_uninitialized else self.max
+        minimum = value if is_uninitialized else self.min
+
+        diff = maximum - minimum
+
+        # Denominator calculation (works for both Tensors and standard floats)
+        import torch
+
+        if isinstance(diff, torch.Tensor):
+            denom = torch.clamp(diff, min=epsilon)
+        else:
+            denom = max(diff, epsilon)
+
+        return (value - minimum) / denom
 
     def __repr__(self):
         return f"min: {self.min}, max: {self.max}"

@@ -34,9 +34,6 @@ class MuZeroConfig(
         super(MuZeroConfig, self).__init__(config_dict, game_config)
 
         # Initialize Architecture Config handled by AgentConfig
-        self.known_bounds = self.parse_field(
-            "known_bounds", default=None, required=False
-        )
 
         # Mixin: Distributional (Support Range) - Parse early for head validation
         self.parse_distributional_params()

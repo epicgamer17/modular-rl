@@ -136,7 +136,10 @@ class GumbelInjector(PriorInjector):
         logits[illegal_mask] = -float("inf")
 
         # Gumbel noise: g = -log(-log(uniform))
-        g = -torch.log(-torch.log(torch.rand(len(legal_moves), dtype=logits.dtype)))
+        uniform_noise = torch.rand(len(legal_moves), dtype=logits.dtype).clamp(
+            min=1e-8, max=1 - 1e-8
+        )
+        g = -torch.log(-torch.log(uniform_noise))
 
         # Update scores: Score = g + logits
         # We map these back to the full actions space in context.scores

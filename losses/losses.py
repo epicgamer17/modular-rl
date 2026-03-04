@@ -377,10 +377,21 @@ class PolicyLoss(LossModule):
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         policies_k = predictions["policies"]
         target_policies_k = targets["policies"]
-        # Policy Loss: (B,)
-        policy_loss = self.config.policy_loss_function(
-            policies_k, target_policies_k, reduction="none"
-        )
+
+        if self.config.policy_loss_function == F.kl_div:
+            # KL Div expects log-probabilities as input, but the network outputs logits
+            # Also, kl_div without 'batchmean' returns [B, A], so we sum over actions
+            log_probs = F.log_softmax(policies_k, dim=-1)
+            policy_loss = self.config.policy_loss_function(
+                log_probs, target_policies_k, reduction="none"
+            )
+            if policy_loss.ndim > 1:
+                policy_loss = policy_loss.sum(dim=-1)
+        else:
+            # Default cross_entropy handles logits internally and returns [B] natively
+            policy_loss = self.config.policy_loss_function(
+                policies_k, target_policies_k, reduction="none"
+            )
 
         return policy_loss
 

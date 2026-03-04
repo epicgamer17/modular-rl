@@ -232,12 +232,40 @@ class SearchAlgorithm:
             root, min_max_stats
         )
 
+        # --- Best Action Selection (Paper Alg. 2) ---
+        # For Gumbel MuZero the move played must maximise the Gumbel score
+        # A_{n+1} = g + σ(completedQ), where g is the injected Gumbel noise
+        # already baked into root.child_priors by the GumbelInjector.
+        # Non-Gumbel searches use argmax of the clean target policy.
+        if self.config.gumbel:
+            from search.search_py.utils import (
+                get_completed_q,
+                calculate_gumbel_sigma,
+            )
+
+            completedQ = get_completed_q(root, min_max_stats)
+            sigma = calculate_gumbel_sigma(
+                self.config.gumbel_cvisit,
+                self.config.gumbel_cscale,
+                root,
+                completedQ,
+            )
+            # Recover g from the Gumbel-injected child_priors in log-space.
+            # child_priors == 0 for masked actions → map to -inf to keep them excluded.
+            noisy_logits = torch.where(
+                root.child_priors > 0,
+                torch.log(root.child_priors),
+                torch.full_like(root.child_priors, -float("inf")),
+            )
+            best_action = torch.argmax(noisy_logits + sigma).item()
+        else:
+            best_action = torch.argmax(target_policy).item()
+
         return (
             root.value(),
             exploratory_policy,
             target_policy,
-            # TODO: BEST ACTION SELECTION, WHERE? WHAT, HOW?
-            torch.argmax(target_policy),
+            best_action,
             {
                 "network_policy": network_policy,
                 "network_value": v_pi_scalar,
@@ -394,7 +422,30 @@ class SearchAlgorithm:
             root_values.append(root.value())
             exploratory_policies.append(exploratory_policy)
             target_policies.append(target_policy)
-            best_actions.append(torch.argmax(target_policy))
+            # Gumbel MuZero: play argmax(g + σ) — Paper Alg. 2.
+            # Non-Gumbel: play argmax of the clean target policy.
+            if self.config.gumbel:
+                from search.search_py.utils import (
+                    get_completed_q,
+                    calculate_gumbel_sigma,
+                )
+
+                completedQ_b = get_completed_q(root, min_max_stats)
+                sigma_b = calculate_gumbel_sigma(
+                    self.config.gumbel_cvisit,
+                    self.config.gumbel_cscale,
+                    root,
+                    completedQ_b,
+                )
+                noisy_logits_b = torch.where(
+                    root.child_priors > 0,
+                    torch.log(root.child_priors),
+                    torch.full_like(root.child_priors, -float("inf")),
+                )
+                best_action_b = torch.argmax(noisy_logits_b + sigma_b)
+            else:
+                best_action_b = torch.argmax(target_policy)
+            best_actions.append(best_action_b)
             search_metadata_list.append(
                 {
                     "network_policy": network_policies[b],

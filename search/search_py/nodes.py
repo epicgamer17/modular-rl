@@ -155,12 +155,19 @@ class ChanceNode:
         assert q_from_parent is not None
         return q_from_parent
 
-    def get_v_mix(self):
+    def get_v_mix(self) -> float:
+        """Compute the mixed value estimate v_mix (Paper Eq. 33).
+
+        v_mix = (v̂_π + Σ_visited π(a)*Q(a) / π_vis) / (1 + N)
+
+        The first term must be the *raw network value estimate* (v̂_π),
+        not the empirical visit mean self.value().  Using self.value()
+        creates a recursive feedback loop where search returns contaminate
+        the value baseline, causing v_mix to drift.
+        """
         if self._v_mix is not None:
             return self._v_mix
 
-        # Vectorized v_mix
-        # sum_N = visits.sum()
         sum_N = self.child_visits.sum()
 
         if sum_N > 0:
@@ -168,7 +175,11 @@ class ChanceNode:
         else:
             term = 0.0
 
-        v_mix = (self.value() + term) / (1.0 + sum_N)
+        # Anchor to the raw network value (v̂_π). Fall back only when
+        # network_value has not been set (should not happen at the root).
+        v_net = self.network_value if self.network_value is not None else self.value()
+
+        v_mix = (v_net + term) / (1.0 + sum_N)
         self._v_mix = v_mix
         return v_mix
 
@@ -338,11 +349,19 @@ class DecisionNode:
         true_reward = child.reward
         return true_reward
 
-    def get_v_mix(self):
+    def get_v_mix(self) -> float:
+        """Compute the mixed value estimate v_mix (Paper Eq. 33).
+
+        v_mix = (v̂_π + Σ_visited π(a)*Q(a) / π_vis) / (1 + N)
+
+        The first term must be the *raw network value estimate* (v̂_π),
+        not the empirical visit mean self.value().  Using self.value()
+        creates a recursive feedback loop where search returns contaminate
+        the value baseline, causing v_mix to drift.
+        """
         if self._v_mix is not None:
             return self._v_mix
 
-        # sum_N = visits.sum()
         sum_N = self.child_visits.sum()
 
         if sum_N > 0:
@@ -350,15 +369,31 @@ class DecisionNode:
         else:
             term = 0.0
 
-        v_mix = (self.value() + term) / (1.0 + sum_N)
+        # Anchor to the raw network value (v̂_π). Fall back only when
+        # network_value has not been set (e.g. internal non-root nodes).
+        v_net = self.network_value if self.network_value is not None else self.value()
+
+        v_mix = (v_net + term) / (1.0 + sum_N)
         self._v_mix = v_mix
-        assert v_mix is not None
+        assert v_mix is not None, "v_mix must not be None"
         return v_mix
 
-    def _calculate_visited_policy_mass(self, sum_N):
-        """Calculates the weighted value term for v_mix based on visited actions."""
-        # Vectorized implementation
-        # Check if we have child stats populated
+    def _calculate_visited_policy_mass(self, sum_N: float) -> float:
+        """Compute the weighted Q-value term for v_mix (Paper Eq. 33).
+
+        v_mix = (V(s) + Σ_{a visited} π(a|s) * Q(s,a) / π_vis_sum) / (1 + N)
+
+        The weights π(a|s) must come from the *clean* network policy, not from
+        child_priors, which may have been distorted by Gumbel noise injection.
+        Using noisy priors would bias v_mix toward the explored action set and
+        corrupt the value target supplied to the learner.
+
+        Args:
+            sum_N: Total number of child visits (pre-computed by the caller).
+
+        Returns:
+            The Σ-term (float) that is added to V(s) before dividing by (1+N).
+        """
         if self.child_visits is None:
             return 0.0
 
@@ -367,7 +402,16 @@ class DecisionNode:
             return 0.0
 
         q_vis = self.child_values[visited_mask]
-        p_vis = self.child_priors[visited_mask]
+
+        # Use the pure network policy for weighting (Paper Eq. 33).
+        # Fall back to child_priors only when network_policy is unavailable
+        # (e.g. internal nodes expanded without a stored network_policy).
+        base_priors = (
+            self.network_policy
+            if self.network_policy is not None
+            else self.child_priors
+        )
+        p_vis = base_priors[visited_mask]
 
         p_vis_sum = p_vis.sum()
         expected_q_vis = (p_vis * q_vis).sum()
