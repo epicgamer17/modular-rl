@@ -66,7 +66,9 @@ class BaseTrainer:
             self.executor = create_executor(self.config)
 
         # 2. Prepare test types
-        test_types = TestFactory.create_default_test_types(self.config)
+        test_types = TestFactory.create_default_test_types(
+            self.config, num_trials=self.test_trials
+        )
         if self.test_agents:
             from agents.workers.tester import VsAgentTest
 
@@ -331,41 +333,48 @@ class BaseTrainer:
             for _ in range(num_trials):
                 if is_multiplayer:
                     test_env.reset()
-                    state, reward, terminated, truncated, info = test_env.last()
-                else:
-                    state, info = test_env.reset()
-
-                done = False
-                episode_reward = 0.0
-                episode_length = 0
-
-                while not done and episode_length < 1000:
-                    episode_length += 1
-                    action = self.select_test_action(state, info, test_env)
-                    try:
-                        action_val = action.item()
-                    except AttributeError:
-                        action_val = action
-
-                    if is_multiplayer:
-                        test_env.step(action_val)
+                    episode_length = 0
+                    for agent_id in test_env.agent_iter():
                         state, reward, terminated, truncated, info = test_env.last()
                         done = terminated or truncated
                         if done:
-                            # For evaluation, we often track the first player's reward or a sum
-                            # Here we use the PettingZoo rewards dict for the first agent
-                            first_agent = test_env.possible_agents[0]
-                            episode_reward = float(
-                                test_env.rewards.get(first_agent, 0.0)
-                            )
-                    else:
+                            action_val = None
+                        else:
+                            action = self.select_test_action(state, info, test_env)
+                            try:
+                                action_val = action.item()
+                            except AttributeError:
+                                action_val = action
+
+                        test_env.step(action_val)
+                        episode_length += 1
+                        if episode_length >= 1000 * self.config.game.num_players:
+                            break
+
+                    first_agent = test_env.possible_agents[0]
+                    episode_reward = float(test_env.rewards.get(first_agent, 0.0))
+                    scores.append(episode_reward)
+                else:
+                    state, info = test_env.reset()
+                    done = False
+                    episode_reward = 0.0
+                    episode_length = 0
+
+                    while not done and episode_length < 1000:
+                        episode_length += 1
+                        action = self.select_test_action(state, info, test_env)
+                        try:
+                            action_val = action.item()
+                        except AttributeError:
+                            action_val = action
+
                         state, reward, terminated, truncated, info = test_env.step(
                             action_val
                         )
                         episode_reward += float(reward)
                         done = terminated or truncated
 
-                scores.append(episode_reward)
+                    scores.append(episode_reward)
 
         test_env.close()
 
@@ -391,34 +400,40 @@ class BaseTrainer:
 
                 for trial in range(num_trials // num_players):
                     test_env.reset()
-                    state, reward, termination, truncation, info = test_env.last()
-                    done = termination or truncation
-
                     episode_length = 0
-                    while not done and episode_length < 1000:
-                        episode_length += 1
-                        agent_id = test_env.agent_selection
-                        current_player_idx = test_env.agents.index(agent_id)
 
-                        if current_player_idx == player:
-                            # Our agent's turn
-                            action = self.select_test_action(state, info, test_env)
-                        else:
-                            # Opponent's turn
-                            prediction = agent.predict(state, info, env=test_env)
-                            action = agent.select_actions(prediction, info=info)
-
-                        # Ensure action is a standard scalar for PettingZoo/Gymnasium
-                        try:
-                            action_val = action.item()
-                        except AttributeError:
-                            action_val = action
-                        test_env.step(action_val)
+                    for agent_id in test_env.agent_iter():
                         state, reward, termination, truncation, info = test_env.last()
                         done = termination or truncation
 
+                        if done:
+                            action_val = None
+                        else:
+                            current_player_idx = test_env.possible_agents.index(
+                                agent_id
+                            )
+
+                            if current_player_idx == player:
+                                # Our agent's turn
+                                action = self.select_test_action(state, info, test_env)
+                            else:
+                                # Opponent's turn
+                                prediction = agent.predict(state, info, env=test_env)
+                                action = agent.select_actions(prediction, info=info)
+
+                            # Ensure action is a standard scalar for PettingZoo/Gymnasium
+                            try:
+                                action_val = action.item()
+                            except AttributeError:
+                                action_val = action
+
+                        test_env.step(action_val)
+                        episode_length += 1
+                        if episode_length >= 1000 * num_players:
+                            break
+
                     final_rewards[player].append(
-                        test_env.rewards[test_env.agents[player]]
+                        test_env.rewards[test_env.possible_agents[player]]
                     )
 
                 avg_score = sum(final_rewards[player]) / len(final_rewards[player])

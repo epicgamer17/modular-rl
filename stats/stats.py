@@ -124,9 +124,17 @@ class StatTracker:
 
             # Ensure values are detached and moved to CPU if they are tensors
             if isinstance(value, torch.Tensor):
-                new_val = value.detach().cpu()
+                if value.numel() == 1:
+                    new_val = float(value.detach().cpu().item())
+                else:
+                    new_val = value.detach().cpu()
             else:
-                new_val = value
+                # Cast numpy scalars or basic numbers to standard python floats for cleaner memory
+                new_val = (
+                    float(value)
+                    if isinstance(value, (int, float, np.number))
+                    else value
+                )
 
             if isinstance(self.stats[key], Dict):
                 if subkey is None:
@@ -152,9 +160,16 @@ class StatTracker:
 
             # Ensure values are detached and moved to CPU if they are tensors
             if isinstance(value, torch.Tensor):
-                new_val = value.detach().cpu()
+                if value.numel() == 1:
+                    new_val = float(value.detach().cpu().item())
+                else:
+                    new_val = value.detach().cpu()
             else:
-                new_val = value
+                new_val = (
+                    float(value)
+                    if isinstance(value, (int, float, np.number))
+                    else value
+                )
 
             if isinstance(self.stats[key], Dict):
                 if subkey is None:

@@ -180,7 +180,6 @@ class MuZeroTrainer(BaseTrainer):
                 self.stats.drain_queue()
 
         self.stop_test()
-        self.executor.stop()
         # Final checkpoint and stats plot
         self._save_checkpoint()
         print("Training finished.")
@@ -241,7 +240,9 @@ class MuZeroTrainer(BaseTrainer):
                     )  # Removed min/max subkeys as they are no longer logged
                 elif "_score" in key:
                     # Player-specific subkeys for vs_agent tests
-                    self.stats._init_key(key, subkeys=["p0", "p1", "p2", "avg"])
+                    num_players = self.config.game.num_players
+                    subkeys = [f"p{i}" for i in range(num_players)] + ["avg"]
+                    self.stats._init_key(key, subkeys=subkeys)
                 else:
                     self.stats._init_key(key)
 

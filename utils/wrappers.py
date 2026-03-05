@@ -43,7 +43,7 @@ class ActionMaskInInfoWrapper(BaseWrapper):
 
     def reset(self, seed: int | None = None, options: dict | None = None):
         self.env.reset(seed=seed, options=options)
-        for agent in self.env.agents:
+        for agent in self.env.possible_agents:
             obs = self.env.observe(agent)
             self.env.infos[agent] = getattr(self.env, "infos", {}).get(agent, {})
             agent_index = self.env.possible_agents.index(agent)
@@ -57,7 +57,7 @@ class ActionMaskInInfoWrapper(BaseWrapper):
 
     def step(self, action: ActionType):
         self.env.step(action)
-        # Process observation and info for current agent
+        # Process observation and info for current agent if still active
         agent = self.env.agent_selection
         agent_index = self.env.possible_agents.index(agent)
         obs = self.env.observe(agent)

@@ -38,12 +38,12 @@ class MinMaxStats(object):
         # Denominator calculation (works for both Tensors and standard floats)
         import torch
 
-        if isinstance(diff, torch.Tensor):
-            denom = torch.clamp(diff, min=epsilon)
+        if isinstance(value, torch.Tensor):
+            denom = torch.clamp(torch.as_tensor(diff, device=value.device), min=epsilon)
+            return ((value - minimum) / denom).clamp(0.0, 1.0)
         else:
             denom = max(diff, epsilon)
-
-        return (value - minimum) / denom
+            return min(max((value - minimum) / denom, 0.0), 1.0)
 
     def __repr__(self):
         return f"min: {self.min}, max: {self.max}"

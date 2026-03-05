@@ -125,12 +125,14 @@ class SelfPlayTest(BaseTestType):
 
         for _ in range(self.num_trials):
             env.reset()
-            state, reward, terminated, truncated, info = env.last()
-            done = terminated or truncated
             episode_length = 0
 
-            while not done and episode_length < 1000:
-                episode_length += 1
+            for agent_id in env.agent_iter():
+                state, reward, terminated, truncated, info = env.last()
+
+                if terminated or truncated:
+                    break
+
                 action = tester.select_test_action(state, info, env)
 
                 try:
@@ -139,12 +141,13 @@ class SelfPlayTest(BaseTestType):
                     action_val = action
 
                 env.step(action_val)
-                state, reward, terminated, truncated, info = env.last()
-                done = terminated or truncated
+                episode_length += 1
+                if episode_length >= 1000 * num_players:
+                    break
 
             # Record final rewards for all players
-            for i, agent_id in enumerate(possible_agents):
-                r = float(env.rewards.get(agent_id, 0.0))
+            for i, p_id in enumerate(possible_agents):
+                r = float(env.rewards.get(p_id, 0.0))
                 player_results[f"p{i}"].append(r)
 
         # Flatten for global stats
@@ -175,16 +178,18 @@ class VsAgentTest(BaseTestType):
     def run(self, tester: "Tester", env: Any) -> Dict[str, Any]:
         results = []
         possible_agents = getattr(env, "possible_agents", [])
+        num_players = len(possible_agents)
 
         for _ in range(self.num_trials):
             env.reset()
-            state, reward, terminated, truncated, info = env.last()
-            done = terminated or truncated
             episode_length = 0
 
-            while not done and episode_length < 1000:
-                episode_length += 1
-                agent_id = env.agent_selection
+            for agent_id in env.agent_iter():
+                state, reward, terminated, truncated, info = env.last()
+
+                if terminated or truncated:
+                    break
+
                 current_player_idx = possible_agents.index(agent_id)
 
                 if current_player_idx == self.player_idx:
@@ -201,8 +206,9 @@ class VsAgentTest(BaseTestType):
                     action_val = action
 
                 env.step(action_val)
-                state, reward, terminated, truncated, info = env.last()
-                done = terminated or truncated
+                episode_length += 1
+                if episode_length >= 1000 * num_players:
+                    break
 
             agent_id = possible_agents[self.player_idx]
             results.append(float(env.rewards.get(agent_id, 0.0)))
@@ -338,13 +344,16 @@ class TestFactory:
     """Factory for creating test strategies and Tester instances."""
 
     @staticmethod
-    def create_default_test_types(config: Config) -> List[BaseTestType]:
+    def create_default_test_types(
+        config: Config, num_trials: Optional[int] = None
+    ) -> List[BaseTestType]:
         """Creates standard test types based on game configuration."""
         test_types = []
+        trials = num_trials if num_trials is not None else config.test_trials
         if config.game.multi_agent:
-            test_types.append(SelfPlayTest("self_play", config.test_trials))
+            test_types.append(SelfPlayTest("self_play", trials))
         else:
-            test_types.append(StandardGymTest("standard", config.test_trials))
+            test_types.append(StandardGymTest("standard", trials))
         return test_types
 
     @staticmethod

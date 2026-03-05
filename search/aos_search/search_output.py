@@ -188,8 +188,9 @@ def gumbel_max_q_policy(
     sum_priors_vis = priors_vis.sum(dim=-1).clamp(min=1e-8)  # [B]
     expected_q_vis = (priors_vis * q_vis).sum(dim=-1) / sum_priors_vis  # [B]
     sum_N = raw_visits.sum(dim=-1)  # [B]
-    root_v = tree.node_values[:, 0]  # [B]
+    root_v = tree.raw_network_values[:, 0]  # [B]
     v_mix = (root_v + sum_N * expected_q_vis) / (1.0 + sum_N)  # [B]
+    print(f"AOS v_mix: {v_mix[0].item()}")
 
     bootstrap = v_mix.unsqueeze(-1).expand(B, A)  # [B, A]
     completed_q = torch.where(visited, q_values, bootstrap)  # [B, A]
@@ -246,6 +247,7 @@ def gumbel_max_q_policy(
         target_policy=target_policy,
         exploratory_policy=exploratory_policy,
         best_actions=best_actions,
+        root_values=tree.node_values[:, 0],
     )
 
 
@@ -297,4 +299,5 @@ def minimax_policy(
         target_policy=target_policy,
         exploratory_policy=exploratory_policy,
         best_actions=best_actions,
+        root_values=tree.node_values[:, 0],
     )

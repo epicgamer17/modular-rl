@@ -125,6 +125,7 @@ def batched_mcts_step(
         interior_scoring_fn=interior_scoring_fn,
         interior_scoring_kwargs=interior_scoring_kwargs,
     )
+    print(f"AOS Sim Depths: {depths.tolist()}")
 
     # ------------------------------------------------------------------
     # Phase 2 — Expansion

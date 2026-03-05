@@ -173,6 +173,7 @@ class SearchAlgorithm:
         )
 
         root.visits += 1
+        root.value_sum += v_pi_scalar
 
         # 7. Expand Root
         root.expand(
@@ -365,6 +366,7 @@ class SearchAlgorithm:
 
             root = roots[b]
             root.visits += 1
+            root.value_sum += v_pi_scalar
             root.expand(
                 allowed_actions=selected_actions,
                 to_play=batched_to_play[b],
@@ -506,6 +508,14 @@ class SearchAlgorithm:
         while True:
             if not node.expanded():
                 break  # Reached a leaf state (DecisionNode)
+
+            # If we've reached the maximum search depth, stop descending.
+            # search_path already contains the root at index 0, so len(search_path) - 1 is the current depth.
+            if (
+                getattr(self.config, "max_search_depth", None) is not None
+                and (len(search_path) - 1) >= self.config.max_search_depth
+            ):
+                break
                 # Decision -> Select Action -> ChanceNode
 
             # Use root strategy if parent is None, otherwise use internal strategy
@@ -719,6 +729,12 @@ class SearchAlgorithm:
 
             while True:
                 if not node.expanded():
+                    break
+
+                if (
+                    getattr(self.config, "max_search_depth", None) is not None
+                    and (len(search_path) - 1) >= self.config.max_search_depth
+                ):
                     break
 
                 parent_node = node
