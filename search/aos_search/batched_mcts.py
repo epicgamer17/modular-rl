@@ -144,17 +144,17 @@ def batched_mcts_step(
     # ------------------------------------------------------------------
     # Phase 2 — Batched Inference
     # ------------------------------------------------------------------
-    all_safe_d = []
+    batch_idx = torch.arange(B, device=device)
     all_parents = []
     all_actions = []
 
     for path_nodes, path_actions, depths in paths:
         safe_d = (depths - 1).clamp(min=0).long()
-        flat_parents.append(path_nodes[batch_idx, safe_d])
-        flat_actions.append(path_actions[batch_idx, safe_d])
+        all_parents.append(path_nodes[batch_idx, safe_d])
+        all_actions.append(path_actions[batch_idx, safe_d])
 
-    flat_parents_t = torch.cat(flat_parents, dim=0)
-    flat_actions_t = torch.cat(flat_actions, dim=0)
+    flat_parents_t = torch.cat(all_parents, dim=0)
+    flat_actions_t = torch.cat(all_actions, dim=0)
 
     # Resolve flat_batch_idx for tree lookups
     flat_batch_idx = batch_idx.repeat(search_batch_size)
@@ -371,10 +371,10 @@ def _apply_virtual_penalty(
 
         # Write visits back
         tree.node_visits[batch_idx, nodes_at_d] = torch.where(
-            valid, new_node_v, old_node_v
+            valid, new_node_v.to(torch.int32), old_node_v.to(torch.int32)
         )
         tree.children_visits[batch_idx, nodes_at_d, actions_at_d] = torch.where(
-            valid, new_child_v, old_child_v
+            valid, new_child_v.to(torch.int32), old_child_v.to(torch.int32)
         )
 
 
@@ -556,94 +556,96 @@ def _expand_write(
     decision_modifier_fn=None,
     chance_modifier_fn=None,
 ) -> torch.Tensor:
-    """Expand leaf nodes via a single batched network call.
+    """Expand leaf nodes while preventing overwrites if the edge was already expanded.
 
-    Allocates new node slots in the FlatTree, writes network outputs
-    (value, reward, policy logits) into those slots, and links parents
-    to the new children.
-
-    Returns:
-        leaf_values: ``float32 [B]`` — value estimates for the expanded
-        leaves.
+    Allocates new node slots in the FlatTree ONLY if they don't already exist.
+    Updates visit counts and incremental value means for the surviving node.
     """
     batch_idx = torch.arange(B, device=device)
+    safe_depth = (depths - 1).clamp(min=0).long()
 
-    # --- Identify parent nodes and the actions that led to leaves ---
-    # depth d means action indices 0..d-1 were taken; the expanding
-    # action is at index d-1.
-    # For depth==0 (root already a leaf—unlikely but handled gracefully)
-    # we clamp to 0.
-    safe_depth = (depths - 1).clamp(min=0).long()  # [B]
+    parent_indices = path_nodes[batch_idx, safe_depth]
+    leaf_actions = path_actions[batch_idx, safe_depth]
 
-    parent_indices = path_nodes[batch_idx, safe_depth]  # [B] int32
-    leaf_actions = path_actions[batch_idx, safe_depth]  # [B] int32
+    # --- 1. Detect if edge was already expanded by an earlier simulation ---
+    existing_nodes = tree.children_index[
+        batch_idx, parent_indices.long(), leaf_actions.long()
+    ]
 
-    # --- Allocate new node indices ---
-    # [B] int32
-    new_node_indices = tree.next_alloc_index.clone()
-    tree.next_alloc_index += 1
+    # We only allocate if the edge is UNEXPANDED and the path is valid
+    needs_allocation = (existing_nodes == UNEXPANDED_SENTINEL) & (depths > 0)
 
-    # --- Write node-level stats for the new nodes ---
-    new_idx_long = new_node_indices.long()
-    tree.node_visits[batch_idx, new_idx_long] = 1
-    tree.node_values[batch_idx, new_idx_long] = leaf_values
-    # Permanently store the raw network value estimate (v̂_π).
-    # node_values is updated by backpropagation; raw_network_values never is.
-    tree.raw_network_values[batch_idx, new_idx_long] = leaf_values
-    tree.to_play[batch_idx, new_idx_long] = (
-        to_plays.squeeze(-1) if to_plays.dim() > 1 else to_plays
+    # --- 2. Conditionally allocate ---
+    # Using tree.next_alloc_index for new entries, or reusing existing_nodes
+    new_node_indices = torch.where(
+        needs_allocation, tree.next_alloc_index, existing_nodes
     )
-    # 0 = Decision node
-    tree.node_types[batch_idx, new_idx_long] = 0
+    # Increment global allocation counter only by the number of actually new nodes
+    tree.next_alloc_index += needs_allocation.to(torch.int32)
+    new_idx_long = new_node_indices.long()
 
-    # --- Apply functional modifiers to logits BEFORE writing to tree ---
-    # node_types currently written (line above): 0 = Decision for all.
-    # If you later set some to 1 (Chance), split by node type here.
-    node_type = tree.node_types[batch_idx, new_idx_long]  # [B] int8
-    is_decision = node_type == 0  # [B]
-    is_chance = node_type == 1  # [B]
+    # --- 3. Accumulate Visits and Values for the true surviving node ---
+    valid = depths > 0
+    tree.node_visits[batch_idx, new_idx_long] += valid.to(torch.int32)
 
-    if decision_modifier_fn is not None and is_decision.any():
-        # Apply modifier to all rows; rows that aren't Decision will be
-        # overwritten below by chance_modifier_fn if applicable.
+    # Maintain an incremental mean of network values for reused nodes
+    old_v = tree.node_values[batch_idx, new_idx_long]
+    # Use float for mean calculation; clamp visit count to avoid div-by-zero
+    new_v_count = tree.node_visits[batch_idx, new_idx_long].float().clamp(min=1.0)
+    new_v = old_v + valid.float() * (leaf_values - old_v) / new_v_count
+
+    tree.node_values[batch_idx, new_idx_long] = new_v
+    tree.raw_network_values[batch_idx, new_idx_long] = new_v
+
+    # --- 4. Apply functional modifiers ---
+    # Assuming standard Decision nodes for the new allocations
+    if decision_modifier_fn is not None:
         policy_logits = decision_modifier_fn(policy_logits)
 
-    if chance_modifier_fn is not None and is_chance.any():
-        modified_chance = chance_modifier_fn(policy_logits)
-        # Only overwrite rows that are actually Chance nodes
-        chance_expanded = is_chance.unsqueeze(-1).expand_as(policy_logits)
-        policy_logits = torch.where(chance_expanded, modified_chance, policy_logits)
+    # --- 5. Write structural data ONLY for newly allocated nodes ---
+    # We use boolean indexing to efficiently update only the newly created nodes
+    # without overwriting the priors of nodes that were already established.
+    alloc_mask = needs_allocation
+    if alloc_mask.any():
+        alloc_idx = batch_idx[alloc_mask]
+        alloc_nodes = new_idx_long[alloc_mask]
+        alloc_parents = parent_indices.long()[alloc_mask]
+        alloc_actions = leaf_actions.long()[alloc_mask]
 
-    # --- Write edge-level stats (policy logits) for new nodes ---
-    num_policy_actions = policy_logits.shape[-1]
-    # children_prior_logits: [B, N, max_edges]
-    tree.children_prior_logits[batch_idx, new_idx_long, :num_policy_actions] = (
-        policy_logits
-    )
+        # to_plays handling
+        if to_plays.dim() > 1:
+            tree.to_play[alloc_idx, alloc_nodes] = to_plays[alloc_mask].squeeze(-1)
+        else:
+            tree.to_play[alloc_idx, alloc_nodes] = to_plays[alloc_mask]
 
-    # --- Reset action mask row for safety to prevent stale True values from leaking ---
-    tree.children_action_mask[batch_idx, new_idx_long] = False
+        tree.node_types[alloc_idx, alloc_nodes] = 0
 
-    # --- Derive action mask from logits (-inf → masked out) ---
-    tree.children_action_mask[batch_idx, new_idx_long, :num_policy_actions] = (
-        policy_logits > -float("inf")
-    )
+        # Link parent -> child
+        tree.children_index[alloc_idx, alloc_parents, alloc_actions] = new_node_indices[
+            alloc_mask
+        ]
 
-    # --- Link parent → child via children_index ---
-    tree.children_index[batch_idx, parent_indices.long(), leaf_actions.long()] = (
-        new_node_indices
-    )
+        # Rewards
+        tree.children_rewards[alloc_idx, alloc_parents, alloc_actions] = rewards[
+            alloc_mask
+        ]
+        parent_cumulative = tree.node_rewards[alloc_idx, alloc_parents]
+        tree.node_rewards[alloc_idx, alloc_nodes] = (
+            parent_cumulative + rewards[alloc_mask]
+        )
 
-    # --- Store edge reward from parent to new child ---
-    tree.children_rewards[batch_idx, parent_indices.long(), leaf_actions.long()] = (
-        rewards
-    )
+        # Logits and Masks
+        num_act = policy_logits.shape[-1]
 
-    # --- Store cumulative reward in node_rewards ---
-    # node_rewards[child] = node_rewards[parent] + edge_reward
-    # This allows value-prefix differential: step_r = child_r - parent_r
-    parent_cumulative = tree.node_rewards[batch_idx, parent_indices.long()]  # [B]
-    tree.node_rewards[batch_idx, new_idx_long] = parent_cumulative + rewards
+        # Reset action mask row for safety
+        tree.children_action_mask[alloc_idx, alloc_nodes] = False
+
+        tree.children_prior_logits[alloc_idx, alloc_nodes, :num_act] = policy_logits[
+            alloc_mask
+        ]
+        tree.children_action_mask[alloc_idx, alloc_nodes, :num_act] = policy_logits[
+            alloc_mask
+        ] > -float("inf")
 
     return leaf_values
 

@@ -1162,7 +1162,7 @@ class SearchAlgorithm:
                     to_play=d["parent"].to_play,
                     network_state=res["network_state"],
                     network_value=value,
-                    code_probs=res["code_probs"][0],
+                    code_probs=res["code_probs"],
                 )
 
             self.backpropagator.backpropagate(

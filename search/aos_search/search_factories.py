@@ -297,8 +297,16 @@ def build_search_pipeline(
         else:
             root_scoring_fn = ucb_score_fn
             root_scoring_kwargs = ucb_kwargs
+            root_scoring_kwargs["bootstrap_method"] = bootstrap_method
             interior_scoring_fn = ucb_score_fn
             interior_scoring_kwargs = ucb_kwargs
+
+        # Use the gumbel noise if it was sampled
+        if (
+            gumbel_noise_sample is not None
+            and "gumbel_noise" not in root_scoring_kwargs
+        ):
+            root_scoring_kwargs["gumbel_noise"] = gumbel_noise_sample
 
         # ------------------------------------------------------------------
         # 4. Initialise global min-max stats
