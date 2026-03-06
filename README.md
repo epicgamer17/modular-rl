@@ -105,7 +105,7 @@ We maintain a rigorous test suite using `pytest`.
 pytest tests/
 
 # Run a specific algorithm smoke test
-pytest tests/test_muzero_smoke.py
+pytest tests/trainers/test_trainer_muzero_end_to_end_smoke.py
 ```
 
 ---

@@ -85,8 +85,6 @@ agent.stats.plot_training_curves()
 ## Testing
 
 ```bash
-pytest tests/test_stats.py
-pytest tests/test_latent_pca.py
-pytest tests/test_latent_tsne.py
-pytest tests/test_latent_umap.py
+pytest tests/stats/test_stats_tracker_append.py
+pytest tests/stats/test_stats_latent_visualizations.py
 ```

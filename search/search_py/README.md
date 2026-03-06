@@ -162,8 +162,8 @@ search = create_muzero_search(
 Run search algorithm tests:
 
 ```python
-pytest tests/test_muzero_mcts_core.py
-pytest tests/test_batched_search.py
+pytest tests/search/test_search_muzero_mcts_core.py
+pytest tests/search/test_search_batched_execution.py
 ```
 
 > **Note:** Older implementations are available in `search/deprecated/`. Use the main `search/` module for new development.

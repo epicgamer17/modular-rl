@@ -42,5 +42,5 @@ include = ["*", "custom_gym_envs_pkg*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-python_files = ["test_*.py", "*_test.py", "verify_*.py"]
-python_functions = ["test_*", "verify_*"]
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]

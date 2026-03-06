@@ -1,7 +1,6 @@
 import torch
 import torch.multiprocessing as mp
 import time
-import unittest
 from typing import Tuple, Any, Callable, Optional
 from agents.executors.torch_mp_executor import TorchMPExecutor
 
