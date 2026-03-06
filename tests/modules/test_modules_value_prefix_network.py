@@ -1,5 +1,6 @@
 import copy
 
+import numpy as np
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -64,6 +65,9 @@ def _build_value_prefix_config(
 def test_use_value_prefix_network(
     rainbow_cartpole_replay_config, make_cartpole_config
 ):
+    torch.manual_seed(42)
+    np.random.seed(42)
+
     print("Testing ValuePrefixRewardHead integration...")
 
     print("Initializing MuZero Config with use_value_prefix=True...")
@@ -112,14 +116,77 @@ def test_use_value_prefix_network(
     print(f"Reward shape: {reward.shape}")
     print(f"Reward Hidden h_1 shape: {h_1.shape}")
 
-    assert reward.shape[0] == batch_size, f"Shape mismatch: {reward.shape}"
+    expected_reward_step_1 = torch.tensor(
+        [
+            [-0.011193251237273216, 0.019075289368629456],
+            [-0.011193251237273216, 0.019075289368629456],
+        ]
+    )
+    expected_h1_prefix = torch.tensor(
+        [
+            0.09417809545993805,
+            0.003162681357935071,
+            -0.03786328434944153,
+            -0.018035821616649628,
+            -0.06740731000900269,
+            0.04291834682226181,
+            0.010197310708463192,
+            0.010774987749755383,
+        ]
+    )
+    assert torch.allclose(reward, expected_reward_step_1, atol=1e-6, rtol=1e-5)
+    assert torch.allclose(h_1[0, 0, :8], expected_h1_prefix, atol=1e-6, rtol=1e-5)
     assert not torch.allclose(h_1, h_0), "LSTM state should update"
 
     output_2 = net.hidden_state_inference(next_network_state, action)
 
+    reward_2 = output_2.reward
     h_2, _ = output_2.network_state.wm_memory["reward_hidden"]
 
     print("Step 2 done.")
+    expected_reward_step_2 = torch.tensor([0.012203490361571312, 0.027373969554901123])
+    expected_h2_prefix = torch.tensor(
+        [
+            0.16868829727172852,
+            0.04990871623158455,
+            -0.0451614186167717,
+            -0.017601564526557922,
+            -0.1609778255224228,
+            0.0750245600938797,
+            -0.0019532593432813883,
+            0.038320910185575485,
+        ]
+    )
+    assert torch.allclose(reward_2, expected_reward_step_2, atol=1e-6, rtol=1e-5)
+    assert torch.allclose(h_2[0, 0, :8], expected_h2_prefix, atol=1e-6, rtol=1e-5)
     assert not torch.allclose(h_2, h_1), "LSTM state should update again"
 
     print("Success! ValuePrefixRewardHead is integrated and functioning.")
+
+
+def test_use_value_prefix_network_invalid_action_shape_raises(
+    rainbow_cartpole_replay_config, make_cartpole_config
+):
+    torch.manual_seed(42)
+    np.random.seed(42)
+
+    config = _build_value_prefix_config(
+        rainbow_cartpole_replay_config, make_cartpole_config
+    )
+    net = ModularAgentNetwork(config, (4,), config.game.num_actions)
+
+    batch_size = 2
+    network_state = MuZeroNetworkState(
+        dynamics=torch.randn(batch_size, 4),
+        wm_memory={
+            "reward_hidden": (
+                torch.zeros(1, batch_size, config.lstm_hidden_size),
+                torch.zeros(1, batch_size, config.lstm_hidden_size),
+            )
+        },
+    )
+    # Stochastic dynamics expects one-hot vectors with width `config.num_chance`.
+    invalid_action = torch.randn(batch_size, config.num_chance - 1)
+
+    with pytest.raises(RuntimeError, match="shapes cannot be multiplied"):
+        net.hidden_state_inference(network_state, invalid_action)
