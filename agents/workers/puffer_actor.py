@@ -210,6 +210,10 @@ class BasePufferActor(BaseActor):
                     # Store MCTS metrics in sequence stats for executor aggregation
                     completed_seq.stats["mcts_simulations"] = mcts_sims_total
                     completed_seq.stats["mcts_search_time"] = mcts_search_total
+                    if mcts_search_total > 0:
+                        completed_seq.stats["mcts_sps"] = (
+                            mcts_sims_total / mcts_search_total
+                        )
 
                     # Use stashed terminal rewards for correct score tracking
                     terminal_info = {}
@@ -231,6 +235,7 @@ class BasePufferActor(BaseActor):
                         "duration_seconds": completed_seq.duration_seconds,
                         "mcts_simulations": mcts_sims_total,
                         "mcts_search_time": mcts_search_total,
+                        "mcts_sps": completed_seq.stats.get("mcts_sps", 0.0),
                     }
                     completed_stats.append(ep_stats)
 

@@ -89,24 +89,24 @@ class MCTSDecorator(BaseActionSelector):
         self._last_step = -1
 
     def _get_current_temperature(self, steps_in_episode: int) -> float:
-        """Determines exploration temperature based on episode step."""
-        if not self.temperature_schedule.config.with_training_steps:
-            # If we haven't reached this step yet, we can't step forward blindly
-            # but usually steps_in_episode increases monotonically.
-            if steps_in_episode > self._last_step:
-                for _ in range(steps_in_episode - self._last_step):
-                    self.temperature_schedule.step()
-                self._last_step = steps_in_episode
-            elif steps_in_episode < self._last_step:
-                # Fallback: recreate if we go backwards (e.g. new episode)
-                self.temperature_schedule = create_schedule(
-                    self.config.temperature_schedule
-                )
-                for _ in range(steps_in_episode):
-                    self.temperature_schedule.step()
-                self._last_step = steps_in_episode
-            return self.temperature_schedule.get_value()
+        """
+        Determines the current temperature for MCTS policy based on the episode step.
+        """
+        if steps_in_episode > self._last_step:
+            self.temperature_schedule.step(steps_in_episode - self._last_step)
+            self._last_step = steps_in_episode
+        elif steps_in_episode < self._last_step:
+            # Fallback: recreate if we go backwards (e.g. new episode)
+            self.temperature_schedule = create_schedule(
+                self.config.temperature_schedule
+            )
+            self.temperature_schedule.step(steps_in_episode)
+            self._last_step = steps_in_episode
         return self.temperature_schedule.get_value()
+
+    def _get_current_training_temperature(self) -> float:
+        """Determines exploration temperature based on training steps."""
+        return self.temperature_schedule.get_value(self.config.training_steps)
 
     def select_action(
         self,
@@ -146,6 +146,22 @@ class MCTSDecorator(BaseActionSelector):
             elif "to_play" in info:
                 to_play = info["to_play"]
 
+        # 1.5 Robust to_play handling for lists of strings (PettingZoo/Puffer)
+        if isinstance(to_play, list):
+            new_to_play = []
+            for p in to_play:
+                if isinstance(p, str):
+                    try:
+                        if "_" in p:
+                            new_to_play.append(int(p.split("_")[-1]))
+                        else:
+                            new_to_play.append(int(p))
+                    except ValueError:
+                        new_to_play.append(0)
+                else:
+                    new_to_play.append(p)
+            to_play = new_to_play
+
         # Get episode step for temperature
         episode_step = kwargs.get("episode_step", 0)
         curr_temp = (
@@ -180,6 +196,27 @@ class MCTSDecorator(BaseActionSelector):
                 best_actions,
                 sm_list,
             ) = res
+
+            exploratory_policies_t = torch.stack(
+                [
+                    (
+                        ep.to(obs.device)
+                        if isinstance(ep, torch.Tensor)
+                        else torch.as_tensor(ep, device=obs.device)
+                    )
+                    for ep in exploratory_policies
+                ]
+            )
+            target_policies_t = torch.stack(
+                [
+                    (
+                        tp.to(obs.device)
+                        if isinstance(tp, torch.Tensor)
+                        else torch.as_tensor(tp, device=obs.device)
+                    )
+                    for tp in target_policies
+                ]
+            )
 
             # Stack outputs for vectorized temperature and selection
             root_values_t = torch.as_tensor(

@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from agents.workers.puffer_actor import PufferActor
+from agents.workers.puffer_actor import GymPufferActor
 from replay_buffers.sequence import Sequence
 from dataclasses import dataclass
 
@@ -9,6 +9,7 @@ from dataclasses import dataclass
 class MockConfig:
     num_envs_per_worker: int = 2
     num_players: int = 1
+    num_puffer_workers: int = 2
 
 
 class MockNetwork:
@@ -71,7 +72,7 @@ def test_puffer_sequence_length():
     sel = MockSelector()
     buf = MockBuffer()
 
-    actor = PufferActor(
+    actor = GymPufferActor(
         env_factory=make_mock_env,
         agent_network=net,
         action_selector=sel,
