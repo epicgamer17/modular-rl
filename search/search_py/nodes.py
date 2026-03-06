@@ -104,23 +104,25 @@ class ChanceNode:
         return self.value_sum / self.visits
 
     def _get_bootstrap_value(self):
-        """Helper to determine value when visits are 0 based on bootstrap method."""
-        if self.parent is None:
-            return self.network_value if self.network_value is not None else 0.0
-
+        """Helper to determine value when visits are 0 based on estimation method."""
         if self.bootstrap_method == "v_mix":
             value = self.parent.get_v_mix()
         elif self.bootstrap_method == "parent_value":
             value = self.parent.value()
         elif self.bootstrap_method == "mu_fpu":
-            value = self.parent.value()
+            total_vis = self.parent.child_visits.sum()
+            if total_vis > 0:
+                value = (
+                    self.parent.child_values * self.parent.child_visits
+                ).sum() / total_vis
+            else:
+                value = self.parent.value()
         elif self.bootstrap_method == "network_value":
             value = self.parent.network_value
         else:
             value = 0.0
         return value
 
-    def _sample_code(self, codes, probs):
         """Helper to sample a single code index from probabilities."""
         # Normalize probs just in case
         probs = np.array([float(p) for p in probs])
@@ -329,18 +331,20 @@ class DecisionNode:
 
     def _get_bootstrap_value(self):
         """Helper to determine value when visits are 0."""
-        if self.parent is None:
-            return self.network_value if self.network_value is not None else 0.0
-
         if self.bootstrap_method == "v_mix":
             value = self.parent.get_v_mix()
         elif self.bootstrap_method == "parent_value":
             value = self.parent.value()
         elif self.bootstrap_method == "mu_fpu":
-            # For parity with aos_search (which uses parent_value for fpu if not set),
-            # we implement it as parent value here.
-            # TODO: PROPERLY IMPLEMENT mu_fpu
-            value = self.parent.get_v_mix()
+            total_vis = self.parent.child_visits.sum()
+            if total_vis > 0:
+                value = (
+                    self.parent.child_values * self.parent.child_visits
+                ).sum() / total_vis
+                if torch.is_tensor(value):
+                    value = value.item()
+            else:
+                value = self.parent.value()
         elif self.bootstrap_method == "network_value":
             value = self.parent.network_value
         else:
@@ -449,8 +453,14 @@ class DecisionNode:
         elif self.bootstrap_method == "parent_value":
             val = self.value()
         elif self.bootstrap_method == "mu_fpu":
-            # For unvisited children, mu_fpu uses the parent's v_mix or value
-            val = self.get_v_mix()
+            # For a node itself, mu_fpu is just the average of its children
+            total_vis = self.child_visits.sum()
+            if total_vis > 0:
+                val = (self.child_values * self.child_visits).sum() / total_vis
+                if torch.is_tensor(val):
+                    val = val.item()
+            else:
+                val = self.value()
         elif self.bootstrap_method == "network_value":
             val = self.network_value if self.network_value is not None else 0.0
         else:

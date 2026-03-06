@@ -186,26 +186,6 @@ def build_search_pipeline(
 
     # ---- Select scoring function -------------------------------------------
     scoring_key: str = config.scoring_method.lower()
-    ucb_kwargs: dict = {
-        "pb_c_init": pb_c_init,
-        "pb_c_base": pb_c_base,
-        "bootstrap_method": bootstrap_method,
-    }
-    if scoring_key == "gumbel":
-        # Gumbel at the root, UCB in the interior (standard Gumbel MuZero setup)
-        root_scoring_fn: ScoringFn = gumbel_score_fn
-        root_scoring_kwargs: dict = {
-            "gumbel_cvisit": gumbel_cvisit,
-            "gumbel_cscale": gumbel_cscale,
-        }
-        interior_scoring_fn: ScoringFn = ucb_score_fn
-        interior_scoring_kwargs: dict = ucb_kwargs
-    else:
-        # Default: UCB everywhere
-        root_scoring_fn = ucb_score_fn
-        root_scoring_kwargs = ucb_kwargs.copy()
-        interior_scoring_fn = ucb_score_fn
-        interior_scoring_kwargs = ucb_kwargs.copy()
 
     # Value prefix
     use_value_prefix: bool = config.use_value_prefix
@@ -248,11 +228,10 @@ def build_search_pipeline(
         # ------------------------------------------------------------------
         # 2. Functional modifiers (applied at the root)
         # ------------------------------------------------------------------
-        # 2a. Dirichlet exploration noise
-        # 2b. Root action mask
-        # ------------------------------------------------------------------
+        # 2a. Build the valid mask FIRST so noise isn't wasted on illegal moves
         valid_mask = _build_valid_mask(batched_info, B, num_actions, device)
 
+        # 2b. Dirichlet exploration noise (modifies the logits themselves)
         if use_dirichlet:
             # Apply valid mask to ensure Dirichlet noise doesn't leak to illegal actions
             root_logits = apply_dirichlet_noise(
@@ -298,6 +277,28 @@ def build_search_pipeline(
         else:
             gumbel_noise_sample = None
             root_scoring_kwargs["bootstrap_method"] = bootstrap_method
+
+        # ---- Build scoring kwargs dynamically per batch ----------------------
+        ucb_kwargs: dict = {
+            "pb_c_init": pb_c_init,
+            "pb_c_base": pb_c_base,
+            "bootstrap_method": bootstrap_method,
+        }
+        if scoring_key == "gumbel":
+            root_scoring_fn: ScoringFn = gumbel_score_fn
+            root_scoring_kwargs: dict = {
+                "gumbel_cvisit": gumbel_cvisit,
+                "gumbel_cscale": gumbel_cscale,
+                "bootstrap_method": bootstrap_method,
+                "gumbel_noise": gumbel_noise_sample,
+            }
+            interior_scoring_fn: ScoringFn = ucb_score_fn
+            interior_scoring_kwargs: dict = ucb_kwargs
+        else:
+            root_scoring_fn = ucb_score_fn
+            root_scoring_kwargs = ucb_kwargs
+            interior_scoring_fn = ucb_score_fn
+            interior_scoring_kwargs = ucb_kwargs
 
         # ------------------------------------------------------------------
         # 4. Initialise global min-max stats

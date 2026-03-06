@@ -81,8 +81,13 @@ class UCBScoring(ScoringMethod):
             elif self.bootstrap_method == "v_mix":
                 bootstrap_val = node.get_v_mix()
             elif self.bootstrap_method == "mu_fpu":
-                # TODO: PROPERLY IMPLEMENT mu_fpu
-                bootstrap_val = node.get_v_mix()
+                total_vis = node.child_visits.sum()
+                if total_vis > 0:
+                    bootstrap_val = (
+                        node.child_values * node.child_visits
+                    ).sum() / total_vis
+                else:
+                    bootstrap_val = node.value()
             else:
                 bootstrap_val = node.value()
 

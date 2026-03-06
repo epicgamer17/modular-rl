@@ -35,17 +35,12 @@ class DirichletInjector(PriorInjector):
         policy_dist: Optional[Any] = None,
         exploration: bool = True,
     ) -> torch.Tensor:
-        if not exploration:
+        if not exploration or not config.use_dirichlet:
             return policy
 
-        # Only apply noise to legal moves
-        if config.root_dirichlet_alpha_adaptive:
-            alpha = 1.0 / np.sqrt(len(legal_moves))
-        else:
-            alpha = config.root_dirichlet_alpha
-
+        alpha = config.dirichlet_alpha
         noise = np.random.dirichlet([alpha] * len(legal_moves))
-        frac = config.root_exploration_fraction
+        frac = config.dirichlet_fraction
 
         # Map noise back to the full policy tensor (or just relevant indices)
         # Note: We operate on the policy probabilities

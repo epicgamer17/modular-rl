@@ -228,9 +228,6 @@ class MuZeroConfig(
         self.mask_absorbing = self.parse_field("mask_absorbing", False)
 
         # Mixin: Value Prefix
-        # Moved up
-        self.bootstrap_method: str = self.parse_field("bootstrap_method", "v_mix")
-
         # Moved up (stochastic, num_chance, etc.)
 
         self.action_embedding_dim = self.parse_field("action_embedding_dim", 32)

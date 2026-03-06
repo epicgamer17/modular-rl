@@ -201,7 +201,7 @@ class SearchConfig:
 
         # AOS Search / Additional Search Configs
         self.bootstrap_method: str = self.parse_field(
-            "bootstrap_method", "parent_value", required=False
+            "bootstrap_method", "v_mix", required=False
         )
         self.policy_extraction: str = self.parse_field(
             "policy_extraction", "visit_count", required=False
@@ -228,10 +228,8 @@ class SearchConfig:
         self.scoring_method: str = self.parse_field(
             "scoring_method", "ucb", required=False
         )
-        # Map from legacy value_prefix if present
-        legacy_val_pref = getattr(self, "value_prefix", False)
         self.use_value_prefix: bool = self.parse_field(
-            "use_value_prefix", legacy_val_pref, required=False
+            "use_value_prefix", False, required=False
         )
 
 
@@ -335,8 +333,6 @@ class Config(
             wrapper=kernel_initializer_wrapper,
         )
         self.norm_type: str = self.parse_field("norm_type", "none")
-        self.soft_update: bool = self.parse_field("soft_update", False)
-        self.min_max_epsilon: float = self.parse_field("min_max_epsilon", 0.01)
         self.replay_interval: int = self.parse_field("replay_interval", 1, wrapper=int)
 
         compilation_dict = self.parse_field("compilation", default={}, required=False)

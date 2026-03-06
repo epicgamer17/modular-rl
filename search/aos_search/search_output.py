@@ -190,7 +190,6 @@ def gumbel_max_q_policy(
     sum_N = raw_visits.sum(dim=-1)  # [B]
     root_v = tree.raw_network_values[:, 0]  # [B]
     v_mix = (root_v + sum_N * expected_q_vis) / (1.0 + sum_N)  # [B]
-    print(f"AOS v_mix: {v_mix[0].item()}")
 
     bootstrap = v_mix.unsqueeze(-1).expand(B, A)  # [B, A]
     completed_q = torch.where(visited, q_values, bootstrap)  # [B, A]

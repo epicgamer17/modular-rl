@@ -156,7 +156,6 @@ def ucb_score_fn(
     child_visits = tree.children_visits[batch_idx, node_indices].float()  # [B, E]
     child_values = tree.children_values[batch_idx, node_indices]  # [B, E]
     child_logits = tree.children_prior_logits[batch_idx, node_indices]  # [B, E]
-    # Use the explicit action mask to identify real (permitted) edges
     real_edge_mask = tree.children_action_mask[batch_idx, node_indices]  # [B, E]
     masked_logits = torch.where(
         real_edge_mask, child_logits, torch.full_like(child_logits, -float("inf"))
