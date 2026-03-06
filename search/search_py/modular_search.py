@@ -189,6 +189,7 @@ class SearchAlgorithm:
 
         min_max_stats = MinMaxStats(
             self.config.known_bounds,
+            epsilon=self.config.min_max_epsilon,
         )
 
         # Initialize pruning state (e.g. Sequential Halving budget)
@@ -378,8 +379,7 @@ class SearchAlgorithm:
 
             min_max_stats = MinMaxStats(
                 self.config.known_bounds,
-                soft_update=self.config.soft_update,
-                min_max_epsilon=self.config.min_max_epsilon,
+                epsilon=self.config.min_max_epsilon,
             )
             min_max_stats_list.append(min_max_stats)
 

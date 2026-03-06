@@ -10,9 +10,11 @@ class MinMaxStats(object):
     def __init__(
         self,
         known_bounds: Optional[List[float]],
+        epsilon: float = 1e-8,
     ):
         self.max = known_bounds[1] if known_bounds else -MAXIMUM_FLOAT_VALUE
         self.min = known_bounds[0] if known_bounds else MAXIMUM_FLOAT_VALUE
+        self.epsilon = epsilon
 
     def update(self, value: float):
         self.max = max(self.max, value)
@@ -27,7 +29,7 @@ class MinMaxStats(object):
         minimum = value if is_uninitialized else self.min
 
         diff = maximum - minimum
-        epsilon = 1e-8
+        epsilon = self.epsilon
 
         # Denominator calculation (works for both Tensors and standard floats)
         import torch

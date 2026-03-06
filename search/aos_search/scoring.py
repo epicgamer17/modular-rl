@@ -117,6 +117,7 @@ def ucb_score_fn(
     pb_c_base: float,
     min_max_stats: Optional[VectorizedMinMaxStats] = None,
     bootstrap_method: str = "parent_value",
+    **kwargs,
 ) -> torch.Tensor:
     """Compute MuZero-style UCB scores for every edge of the selected nodes.
 
@@ -238,6 +239,7 @@ def gumbel_score_fn(
     min_max_stats: Optional[VectorizedMinMaxStats] = None,
     bootstrap_method: str = "v_mix",
     gumbel_noise: Optional[torch.Tensor] = None,
+    **kwargs,
 ) -> torch.Tensor:
     """Compute Gumbel MuZero scores for every edge of the selected nodes.
 

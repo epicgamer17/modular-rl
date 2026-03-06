@@ -34,6 +34,7 @@ class VectorizedMinMaxStats:
 
     min_values: torch.Tensor  # [B] float32
     max_values: torch.Tensor  # [B] float32
+    epsilon: float = 1e-8
 
     @classmethod
     def allocate(
@@ -41,6 +42,7 @@ class VectorizedMinMaxStats:
         batch_size: int,
         device: torch.device,
         known_bounds: list[float] | None = None,
+        epsilon: float = 1e-8,
     ) -> "VectorizedMinMaxStats":
         """Allocate fresh, uninitialised bounds (no values seen).
 
@@ -49,6 +51,7 @@ class VectorizedMinMaxStats:
             device: Torch device for the tensors.
             known_bounds: Optional `[min, max]` list of floats to initialize the
                 min and max values with. If a bound is None, it defaults to INF.
+            epsilon: Small constant for numerical stability (soft min-max).
 
         Returns:
             :class:`VectorizedMinMaxStats` with initialized fields.
@@ -69,6 +72,7 @@ class VectorizedMinMaxStats:
             max_values=torch.full(
                 (batch_size,), init_max, dtype=torch.float32, device=device
             ),
+            epsilon=epsilon,
         )
 
     def update(self, new_q_values: torch.Tensor, valid_mask: torch.Tensor) -> None:
@@ -141,7 +145,7 @@ class VectorizedMinMaxStats:
         # when min == max, q_values == lo, so numerator == 0 → 0 / eps = 0.0.
         # No conditional needed; clamping the denominator is sufficient.
         # The final clamp(0.0, 1.0) strictly bounds everything (e.g. v_mix bootstrap).
-        return ((q_values - lo) / delta.clamp(min=1e-8)).clamp(0.0, 1.0)
+        return ((q_values - lo) / delta.clamp(min=self.epsilon)).clamp(0.0, 1.0)
 
 
 # ---------------------------------------------------------------------------

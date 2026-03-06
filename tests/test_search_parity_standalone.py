@@ -117,6 +117,8 @@ def config():
         min_max_epsilon=1e-8,
         stochastic=False,
         search_batch_size=0,
+        virtual_loss=1.0,
+        use_virtual_mean=False,
     )
 
 

@@ -262,28 +262,32 @@ def build_search_pipeline(
         # 3b. Mask invalid actions via the boolean mask (logits stay pristine)
         if valid_mask is not None:
             tree.children_action_mask[:, 0, :num_actions] = valid_mask
+        else:
+            # Fallback: All actions whose network prior is not -inf are valid
+            tree.children_action_mask[:, 0, :num_actions] = root_logits > -float("inf")
 
         # Root player identity
         tree.to_play[:, 0] = batched_to_play.to(dtype=torch.int8, device=device)
 
-        # 3c. Sample Gumbel noise for this search (stored for policy extraction).
-        # Use PyTorch's native C++ sampler strictly to prevent -inf / NaN blowups.
+        # ------------------------------------------------------------------
+        # 3c. Setup Scoring Functions & Gumbel Noise
+        # ------------------------------------------------------------------
+
+        # 1. Sample noise if using Gumbel policy
         if policy_key == "gumbel":
             gumbel_dist = torch.distributions.Gumbel(0.0, 1.0)
             gumbel_noise_sample = gumbel_dist.sample((B, num_actions)).to(device)
-            # Inject dynamic parameters for the root scoring function
-            root_scoring_kwargs["gumbel_noise"] = gumbel_noise_sample
-            root_scoring_kwargs["bootstrap_method"] = bootstrap_method
         else:
             gumbel_noise_sample = None
-            root_scoring_kwargs["bootstrap_method"] = bootstrap_method
 
-        # ---- Build scoring kwargs dynamically per batch ----------------------
+        # 2. Build the base UCB kwargs
         ucb_kwargs: dict = {
             "pb_c_init": pb_c_init,
             "pb_c_base": pb_c_base,
             "bootstrap_method": bootstrap_method,
         }
+
+        # 3. Assign the actual functions and kwargs dictionaries
         if scoring_key == "gumbel":
             root_scoring_fn: ScoringFn = gumbel_score_fn
             root_scoring_kwargs: dict = {
@@ -296,24 +300,22 @@ def build_search_pipeline(
             interior_scoring_kwargs: dict = ucb_kwargs
         else:
             root_scoring_fn = ucb_score_fn
-            root_scoring_kwargs = ucb_kwargs
-            root_scoring_kwargs["bootstrap_method"] = bootstrap_method
-            interior_scoring_fn = ucb_score_fn
-            interior_scoring_kwargs = ucb_kwargs
-
-        # Use the gumbel noise if it was sampled
-        if (
-            gumbel_noise_sample is not None
-            and "gumbel_noise" not in root_scoring_kwargs
-        ):
+            root_scoring_kwargs = ucb_kwargs.copy()
+            # Even if UCB scoring, we might be tracking gumbel noise for policy extraction
             root_scoring_kwargs["gumbel_noise"] = gumbel_noise_sample
 
-        # ------------------------------------------------------------------
+            interior_scoring_fn = ucb_score_fn
+            interior_scoring_kwargs = (
+                ucb_kwargs.copy()
+            )  # ------------------------------------------------------------------
         # 4. Initialise global min-max stats
         # ------------------------------------------------------------------
         known_bounds = config.known_bounds
         min_max_stats = VectorizedMinMaxStats.allocate(
-            B, device, known_bounds=known_bounds
+            B,
+            device,
+            known_bounds=known_bounds,
+            epsilon=config.min_max_epsilon,
         )
 
         # ------------------------------------------------------------------
@@ -335,6 +337,17 @@ def build_search_pipeline(
                         num_actions=num_actions,
                     )
 
+                # Internal modifiers
+                internal_decision_modifier = None
+                if config.internal_decision_modifier != "none":
+                    # Logic here to resolve string to function if needed
+                    pass
+
+                internal_chance_modifier = None
+                if config.internal_chance_modifier != "none":
+                    # Logic here to resolve string to function if needed
+                    pass
+
                 batched_mcts_step(
                     tree=tree,
                     agent_network=agent_network,
@@ -353,6 +366,8 @@ def build_search_pipeline(
                     interior_scoring_fn=interior_scoring_fn,
                     interior_scoring_kwargs=interior_scoring_kwargs,
                     use_value_prefix=use_value_prefix,
+                    decision_modifier_fn=internal_decision_modifier,
+                    chance_modifier_fn=internal_chance_modifier,
                     trajectory_actions=trajectory_actions,
                     num_players=num_players,
                 )

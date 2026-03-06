@@ -127,6 +127,10 @@ def get_config():
         gumbel_m=2,
         bootstrap_method="parent_value",
         support_range=None,
+        internal_decision_modifier="none",
+        internal_chance_modifier="none",
+        min_max_epsilon=1e-8,
+        soft_update=False,
     )
 
 

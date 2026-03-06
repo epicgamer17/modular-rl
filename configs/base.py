@@ -180,6 +180,7 @@ class SearchConfig:
         self.known_bounds = self.parse_field(
             "known_bounds", default=None, required=False
         )
+        self.min_max_epsilon: float = self.parse_field("min_max_epsilon", 1e-8)
 
         self.num_simulations: int = self.parse_field("num_simulations", 800)
         self.search_batch_size: int = self.parse_field("search_batch_size", 0)
@@ -230,6 +231,12 @@ class SearchConfig:
         )
         self.use_value_prefix: bool = self.parse_field(
             "use_value_prefix", False, required=False
+        )
+        self.internal_decision_modifier: str = self.parse_field(
+            "internal_decision_modifier", "none", required=False
+        )
+        self.internal_chance_modifier: str = self.parse_field(
+            "internal_chance_modifier", "none", required=False
         )
 
 
