@@ -57,7 +57,7 @@ class MuZeroLearner(BaseLearner):
             use_batch_weights=config.per_use_batch_weights,
             use_initial_max_priority=config.per_use_initial_max_priority,
             lstm_horizon_len=config.lstm_horizon_len,
-            value_prefix=config.value_prefix,
+            value_prefix=config.use_value_prefix,
             tau=config.reanalyze_tau,
             multi_process=config.multi_process,
             observation_quantization=config.observation_quantization,

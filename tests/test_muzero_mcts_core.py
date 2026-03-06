@@ -7,21 +7,21 @@ from search.min_max_stats import MinMaxStats
 @pytest.fixture(autouse=True)
 def setup_node_class():
     # Set class attributes for testing
-    DecisionNode.estimation_method = "zero"
+    DecisionNode.bootstrap_method = "zero"
     DecisionNode.discount = 0.9
-    DecisionNode.value_prefix = False
+    DecisionNode.use_value_prefix = False
     DecisionNode.stochastic = False
     
-    ChanceNode.estimation_method = "zero"
+    ChanceNode.bootstrap_method = "zero"
     ChanceNode.discount = 0.9
-    ChanceNode.value_prefix = False
+    ChanceNode.use_value_prefix = False
     
     yield
     
     # Cleanup (optional)
-    DecisionNode.estimation_method = None
+    DecisionNode.bootstrap_method = None
     DecisionNode.discount = None
-    DecisionNode.value_prefix = None
+    DecisionNode.use_value_prefix = None
     DecisionNode.stochastic = None
 
 def test_v_mix_with_some_visited_children():

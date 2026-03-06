@@ -37,7 +37,8 @@ class SearchAlgorithm:
         if info and "legal_moves" in info:
             batched_info["legal_moves"] = [info["legal_moves"]]
 
-        so = self._run_mcts(batched_obs, batched_info, agent_network)
+        batched_to_play = torch.tensor([to_play], dtype=torch.int8, device=self.device)
+        so = self._run_mcts(batched_obs, batched_info, batched_to_play, agent_network)
 
         return (
             so.root_values[0].item(),
@@ -62,7 +63,18 @@ class SearchAlgorithm:
         trajectory_actions=None,
         exploration=True,
     ):
-        so = self._run_mcts(batched_obs, batched_info, agent_network)
+        batched_to_play_t = (
+            batched_to_play
+            if torch.is_tensor(batched_to_play)
+            else torch.tensor(batched_to_play, dtype=torch.int8, device=self.device)
+        )
+        so = self._run_mcts(
+            batched_obs,
+            batched_info,
+            batched_to_play_t.to(self.device),
+            agent_network,
+            trajectory_actions=trajectory_actions,
+        )
 
         B = (
             batched_obs.shape[0]

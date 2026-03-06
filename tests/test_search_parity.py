@@ -19,7 +19,7 @@ import search.aos_search.search_output
 import search.aos_search.search_factories
 
 # search_py imports
-from search.search_py.min_max_stats import MinMaxStats
+from search.search_py.min_max_stats import MinMaxStats, MAXIMUM_FLOAT_VALUE
 from search.search_py.scoring_methods import UCBScoring, GumbelScoring
 import search.search_py.backpropogation
 from search.search_py.backpropogation import (
@@ -35,8 +35,8 @@ from search.search_py.nodes import DecisionNode, ChanceNode
 # Patch DecisionNode to match configuration expectations
 import search.nodes
 
-search.nodes.DecisionNode.estimation_method = "mcts_value"
-search.search_py.nodes.DecisionNode.estimation_method = "mcts_value"
+search.nodes.DecisionNode.bootstrap_method = "parent_value"
+search.search_py.nodes.DecisionNode.bootstrap_method = "parent_value"
 
 # ---------------------------------------------------------------------------
 # Corrected Backpropagator for Py parity (Force discount/reward usage)
@@ -55,8 +55,6 @@ class CorrectedBackpropagator(AverageDiscountedReturnBackpropagator):
 
         for i in range(n - 1, -1, -1):
             node = search_path[i]
-            node.visits += 1
-            node.value_sum += acc[node.to_play]
 
             if i > 0:
                 parent = search_path[i - 1]
@@ -78,6 +76,10 @@ class CorrectedBackpropagator(AverageDiscountedReturnBackpropagator):
                 # Root update minmax
                 min_max_stats.update(node.value())
 
+            # Update node's value_sum with the discounted return calculated for it
+            node.visits += 1
+            node.value_sum += acc[node.to_play]
+
 
 # Inject corrected backpropagator
 search.search_py.backpropogation.AverageDiscountedReturnBackpropagator = (
@@ -97,7 +99,6 @@ def get_config():
         gumbel_cscale=1.0,
         game=SimpleNamespace(num_players=1),
         use_value_prefix=False,
-        value_prefix=False,
         num_simulations=10,
         num_codes=1,
         max_search_depth=5,
@@ -111,16 +112,10 @@ def get_config():
         injection_frac=0.1,
         policy_extraction="visit_count",
         backprop_method="average",
-        scoring_method="ucb",
-        known_bounds=None,
-        use_sequential_halving=False,
-        gumbel_m=1,
-        estimation_method="mcts_value",
-        q_estimation_method="mcts_value",
-        soft_update=False,
-        min_max_epsilon=1e-8,
         stochastic=False,
         search_batch_size=0,
+        virtual_loss=1.0,
+        use_virtual_mean=False,
     )
 
 
@@ -170,7 +165,7 @@ def test_ucb_scoring_parity(config):
     child_priors = torch.tensor([0.4, 0.3, 0.2, 0.1], dtype=torch.float32)
     child_logits = torch.log(child_priors)
     py_node = DecisionNode(prior=0.0)
-    py_node.estimation_method = "mcts_value"
+    py_node.bootstrap_method = "parent_value"
     py_node.visits = parent_visits
     py_node.value_sum = parent_value * parent_visits
     py_node.child_visits = child_visits.clone()
@@ -247,7 +242,7 @@ def test_gumbel_scoring_parity(config):
     py_node.child_values = child_values.clone()
     py_node.child_priors = child_priors.clone()
     py_node.network_policy = child_priors.clone()
-    py_node.estimation_method = "v_mix"
+    py_node.bootstrap_method = "v_mix"
     py_node.visits = int(child_visits.sum().item())
     py_node._v_mix = None
     tree = FlatTree.allocate(batch_size, 10, num_actions, 1, device)
@@ -384,9 +379,9 @@ def test_full_search_ucb_parity(config):
     config.gumbel = False
     config.scoring_method = "ucb"
     config.policy_extraction = "visit_count"
-    config.q_estimation_method = "mcts_value"
-    config.estimation_method = "mcts_value"
-    config.value_prefix = False
+    config.bootstrap_method = "parent_value"
+    config.bootstrap_method = "parent_value"
+    config.use_value_prefix = False
     net = MockNetwork(num_actions)
     obs = torch.ones((batch_size, 1, 4, 4))
     info = {"legal_moves": [list(range(num_actions))]}
@@ -415,9 +410,9 @@ def test_full_search_gumbel_parity(config):
     config.policy_extraction = "gumbel"
     config.use_sequential_halving = True
     config.gumbel_m = 2
-    config.q_estimation_method = "v_mix"
-    config.estimation_method = "v_mix"
-    config.value_prefix = False
+    config.bootstrap_method = "v_mix"
+    config.bootstrap_method = "v_mix"
+    config.use_value_prefix = False
     net = MockNetwork(num_actions)
     obs = torch.ones((batch_size, 1, 4, 4))
     info = {"legal_moves": [list(range(num_actions))]}
@@ -429,7 +424,8 @@ def test_full_search_gumbel_parity(config):
 
     mcts_py = create_mcts(config, device, num_actions)
     py_val, py_expl, py_target, py_best, py_meta = mcts_py.run(obs[0], py_info, 0, net)
-    aos_output = run_mcts(obs, info, net)
+    aos_to_play = torch.zeros(batch_size, dtype=torch.int8, device=device)
+    aos_output = run_mcts(obs, info, aos_to_play, net)
     # Check root value parity
     pass
 
@@ -447,9 +443,9 @@ def test_full_search_stochastic_parity(config):
     config.policy_extraction = "visit_count"
     config.stochastic = True
     config.num_codes = num_codes
-    config.q_estimation_method = "mcts_value"
-    config.estimation_method = "mcts_value"
-    config.value_prefix = False
+    config.bootstrap_method = "parent_value"
+    config.bootstrap_method = "parent_value"
+    config.use_value_prefix = False
     net = MockNetwork(num_actions)
 
     def afterstate_inference(state_state, action):

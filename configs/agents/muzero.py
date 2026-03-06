@@ -69,13 +69,13 @@ class MuZeroConfig(
         )
 
         reward_head_cls = (
-            ValuePrefixRewardHeadConfig if self.value_prefix else RewardHeadConfig
+            ValuePrefixRewardHeadConfig if self.use_value_prefix else RewardHeadConfig
         )
         # Inject LSTM params into reward head dict if using Value Prefix
         # Helper to process reward dict
         rh_dict = self.parse_field("reward_head", default={}, required=False) or {}
 
-        if self.value_prefix:
+        if self.use_value_prefix:
             if "lstm_hidden_size" not in rh_dict:
                 rh_dict["lstm_hidden_size"] = self.lstm_hidden_size
             if "lstm_horizon_len" not in rh_dict:
@@ -225,12 +225,11 @@ class MuZeroConfig(
         # Mixin: Consistency
         self.parse_consistency_params()
 
-        self.mask_absorbing = self.parse_field("mask_absorbing", True)
+        self.mask_absorbing = self.parse_field("mask_absorbing", False)
 
         # Mixin: Value Prefix
         # Moved up
-
-        self.q_estimation_method: str = self.parse_field("q_estimation_method", "v_mix")
+        self.bootstrap_method: str = self.parse_field("bootstrap_method", "v_mix")
 
         # Moved up (stochastic, num_chance, etc.)
 

@@ -81,9 +81,6 @@ class AgentConfig(
 
         # Legacy/Compatibility params (handled by mixins usually, but some were in Config)
         self.norm_type: str = self.parse_field("norm_type", "none")
-        self.soft_update: bool = self.parse_field("soft_update", False)
-        self.min_max_epsilon: float = self.parse_field("min_max_epsilon", 0.01)
-
         # Action Selector
         # NO DEFAULT SELECTORS ALL AGENTS SHOULD DEFINE THEIR OWN IN THEIR CONFIGS
         selector_dict = self.parse_field("action_selector", required=True)

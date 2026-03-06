@@ -14,6 +14,7 @@ Usage example::
 from __future__ import annotations
 
 import functools
+import math
 from typing import Callable, Dict, Optional, Any
 
 import torch
@@ -164,13 +165,32 @@ def build_search_pipeline(
     gumbel_cvisit: float = config.gumbel_cvisit
     gumbel_cscale: float = config.gumbel_cscale
 
+    # Batching and Virtual Loss
+    search_batch_size: int = config.search_batch_size
+    if search_batch_size == 0:
+        search_batch_size = 1
+
+    virtual_loss_visits: float = 1.0
+    virtual_loss_value: float = -config.virtual_loss
+    penalty_type: str = "virtual_mean" if config.use_virtual_mean else "virtual_loss"
+
+    # Bootstrap method
+    bootstrap_method: str = config.bootstrap_method
+
+    # Number of players
+    num_players: int = config.game.num_players
+
     # Sequential Halving
     use_sequential_halving: bool = config.use_sequential_halving
     gumbel_m: int = config.gumbel_m
 
     # ---- Select scoring function -------------------------------------------
     scoring_key: str = config.scoring_method.lower()
-    ucb_kwargs: dict = {"pb_c_init": pb_c_init, "pb_c_base": pb_c_base}
+    ucb_kwargs: dict = {
+        "pb_c_init": pb_c_init,
+        "pb_c_base": pb_c_base,
+        "bootstrap_method": bootstrap_method,
+    }
     if scoring_key == "gumbel":
         # Gumbel at the root, UCB in the interior (standard Gumbel MuZero setup)
         root_scoring_fn: ScoringFn = gumbel_score_fn
@@ -183,9 +203,9 @@ def build_search_pipeline(
     else:
         # Default: UCB everywhere
         root_scoring_fn = ucb_score_fn
-        root_scoring_kwargs = ucb_kwargs
+        root_scoring_kwargs = ucb_kwargs.copy()
         interior_scoring_fn = ucb_score_fn
-        interior_scoring_kwargs = ucb_kwargs
+        interior_scoring_kwargs = ucb_kwargs.copy()
 
     # Value prefix
     use_value_prefix: bool = config.use_value_prefix
@@ -194,7 +214,9 @@ def build_search_pipeline(
     def run_mcts(
         batched_obs: Any,
         batched_info: Dict[str, Any],
+        batched_to_play: torch.Tensor,
         agent_network,
+        trajectory_actions: Optional[torch.Tensor] = None,
     ) -> SearchOutput:
         """Execute a full vectorized MCTS search and return the root policy.
 
@@ -224,12 +246,17 @@ def build_search_pipeline(
         root_logits = outputs.policy.logits  # [B, num_actions]
 
         # ------------------------------------------------------------------
-        # 2. Apply functional modifiers to root logits
+        # 2. Functional modifiers (applied at the root)
         # ------------------------------------------------------------------
-        # 2a. Dirichlet exploration noise (modifies the logits themselves)
+        # 2a. Dirichlet exploration noise
+        # 2b. Root action mask
+        # ------------------------------------------------------------------
+        valid_mask = _build_valid_mask(batched_info, B, num_actions, device)
+
         if use_dirichlet:
+            # Apply valid mask to ensure Dirichlet noise doesn't leak to illegal actions
             root_logits = apply_dirichlet_noise(
-                root_logits, dirichlet_alpha, dirichlet_fraction
+                root_logits, dirichlet_alpha, dirichlet_fraction, valid_mask=valid_mask
             )
 
         # ------------------------------------------------------------------
@@ -254,17 +281,23 @@ def build_search_pipeline(
         tree.children_prior_logits[:, 0, :num_actions] = root_logits.float()
 
         # 3b. Mask invalid actions via the boolean mask (logits stay pristine)
-        valid_mask = _build_valid_mask(batched_info, B, num_actions, device)
         if valid_mask is not None:
             tree.children_action_mask[:, 0, :num_actions] = valid_mask
+
+        # Root player identity
+        tree.to_play[:, 0] = batched_to_play.to(dtype=torch.int8, device=device)
 
         # 3c. Sample Gumbel noise for this search (stored for policy extraction).
         # Use PyTorch's native C++ sampler strictly to prevent -inf / NaN blowups.
         if policy_key == "gumbel":
             gumbel_dist = torch.distributions.Gumbel(0.0, 1.0)
             gumbel_noise_sample = gumbel_dist.sample((B, num_actions)).to(device)
+            # Inject dynamic parameters for the root scoring function
+            root_scoring_kwargs["gumbel_noise"] = gumbel_noise_sample
+            root_scoring_kwargs["bootstrap_method"] = bootstrap_method
         else:
             gumbel_noise_sample = None
+            root_scoring_kwargs["bootstrap_method"] = bootstrap_method
 
         # ------------------------------------------------------------------
         # 4. Initialise global min-max stats
@@ -278,7 +311,7 @@ def build_search_pipeline(
         # 5. Main simulation loop
         # ------------------------------------------------------------------
         with torch.inference_mode():
-            for sim_idx in range(num_simulations):
+            for sim_idx in range(math.ceil(num_simulations / search_batch_size)):
                 # --- Dynamic pruning (Sequential Halving) ---
                 if use_sequential_halving:
                     apply_sequential_halving(
@@ -300,6 +333,10 @@ def build_search_pipeline(
                     pb_c_init=pb_c_init,
                     pb_c_base=pb_c_base,
                     discount=discount,
+                    search_batch_size=search_batch_size,
+                    virtual_loss_visits=virtual_loss_visits,
+                    virtual_loss_value=virtual_loss_value,
+                    penalty_type=penalty_type,
                     backprop_fn=backprop_fn,
                     min_max_stats=min_max_stats,
                     root_scoring_fn=root_scoring_fn,
@@ -307,6 +344,8 @@ def build_search_pipeline(
                     interior_scoring_fn=interior_scoring_fn,
                     interior_scoring_kwargs=interior_scoring_kwargs,
                     use_value_prefix=use_value_prefix,
+                    trajectory_actions=trajectory_actions,
+                    num_players=num_players,
                 )
                 # Update global bounds using the root's child Q-values
                 root_q = tree.children_values[:, 0, :num_actions].float()

@@ -4,7 +4,7 @@ from typing import Dict, Any
 class CompilationConfig:
     def __init__(self, config_dict: Dict[str, Any]):
         self.config_dict = config_dict
-        self.enabled: bool = self._parse_field("enabled", True)
+        self.enabled: bool = self._parse_field("enabled", False)
         self.mode: str = self._parse_field("mode", "reduce-overhead")
         self.fullgraph: bool = self._parse_field("fullgraph", True)
 

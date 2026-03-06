@@ -16,9 +16,9 @@ class ChanceNode:
       2. Prior distribution over codes P(c|as)
     """
 
-    estimation_method = None
+    bootstrap_method = None
     discount = None
-    value_prefix = None
+    use_value_prefix = None
 
     def __init__(self, prior, parent):
         self.parent = parent  # DecisionNode
@@ -104,12 +104,17 @@ class ChanceNode:
         return self.value_sum / self.visits
 
     def _get_bootstrap_value(self):
-        """Helper to determine value when visits are 0 based on estimation method."""
-        if self.estimation_method == "v_mix":
+        """Helper to determine value when visits are 0 based on bootstrap method."""
+        if self.parent is None:
+            return self.network_value if self.network_value is not None else 0.0
+
+        if self.bootstrap_method == "v_mix":
             value = self.parent.get_v_mix()
-        elif self.estimation_method == "mcts_value":
+        elif self.bootstrap_method == "parent_value":
             value = self.parent.value()
-        elif self.estimation_method == "network_value":
+        elif self.bootstrap_method == "mu_fpu":
+            value = self.parent.value()
+        elif self.bootstrap_method == "network_value":
             value = self.parent.network_value
         else:
             value = 0.0
@@ -131,7 +136,7 @@ class ChanceNode:
 
     def child_reward(self, child):
         # assert isinstance(child, DecisionNode)
-        if self.value_prefix:
+        if self.use_value_prefix:
             if child.is_reset:
                 return child.reward
             else:
@@ -213,9 +218,9 @@ class ChanceNode:
 
 
 class DecisionNode:
-    estimation_method = None
+    bootstrap_method = None
     discount = None
-    value_prefix = None
+    use_value_prefix = None
     pb_c_init = None
     pb_c_base = None
     gumbel = None
@@ -324,11 +329,19 @@ class DecisionNode:
 
     def _get_bootstrap_value(self):
         """Helper to determine value when visits are 0."""
-        if self.estimation_method == "v_mix":
+        if self.parent is None:
+            return self.network_value if self.network_value is not None else 0.0
+
+        if self.bootstrap_method == "v_mix":
             value = self.parent.get_v_mix()
-        elif self.estimation_method == "mcts_value":
+        elif self.bootstrap_method == "parent_value":
             value = self.parent.value()
-        elif self.estimation_method == "network_value":
+        elif self.bootstrap_method == "mu_fpu":
+            # For parity with aos_search (which uses parent_value for fpu if not set),
+            # we implement it as parent value here.
+            # TODO: PROPERLY IMPLEMENT mu_fpu
+            value = self.parent.get_v_mix()
+        elif self.bootstrap_method == "network_value":
             value = self.parent.network_value
         else:
             value = 0.0
@@ -431,11 +444,14 @@ class DecisionNode:
         # In MuZero, V(s) is the value of state s. Q(s,a) = r + gamma * V(s').
         # If we approximate Q(s,a) with V(s), we are assuming r + gamma*V(s') ~ V(s).
 
-        if self.estimation_method == "v_mix":
+        if self.bootstrap_method == "v_mix":
             val = self.get_v_mix()
-        elif self.estimation_method == "mcts_value":
+        elif self.bootstrap_method == "parent_value":
             val = self.value()
-        elif self.estimation_method == "network_value":
+        elif self.bootstrap_method == "mu_fpu":
+            # For unvisited children, mu_fpu uses the parent's v_mix or value
+            val = self.get_v_mix()
+        elif self.bootstrap_method == "network_value":
             val = self.network_value if self.network_value is not None else 0.0
         else:
             val = 0.0

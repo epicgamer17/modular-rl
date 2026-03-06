@@ -117,7 +117,7 @@ def test_nstep_value_multi_player():
     assert target_values[0, 0] == -10.0
 
 
-def test_value_prefix_logic():
+def test_use_value_prefix_logic():
     """
     Test value prefix (EfficientZero style accumulation).
     """
@@ -128,7 +128,7 @@ def test_value_prefix_logic():
         num_actions=2,
         num_players=1,
         max_size=10,
-        value_prefix=True,
+        use_value_prefix=True,
         lstm_horizon_len=2,
     )
 

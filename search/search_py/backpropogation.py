@@ -91,9 +91,6 @@ class AverageDiscountedReturnBackpropagator(Backpropagator):
                         # chance nodes can be thought to have 0 reward, and no discounting (as its like the roll after the action, or another way of thinking of it is that only on decision nodes do we discount expected reward, a chance node is not a decision point)
                         acc[p] = acc[p]
 
-                child_q = parent.get_child_q_from_parent(node)
-                min_max_stats.update(child_q)
-
                 # --- VECTORIZED UPDATE ---
                 # Update parent's tensor stats for the action taken
                 # We need the return relative to PARENT's player.
@@ -123,6 +120,7 @@ class AverageDiscountedReturnBackpropagator(Backpropagator):
                 # Q(s,a) = E[G]. So yes.
 
                 parent.child_values[action] += (target_q - current_val) / n_visits
+                min_max_stats.update(parent.child_values[action])
 
             else:
                 min_max_stats.update(search_path[i].value())

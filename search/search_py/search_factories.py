@@ -22,6 +22,7 @@ from search.scoring_methods import (
     PriorScoring,
     UCBScoring,
     QValueScoring,
+    DeterministicChanceScoring,
 )
 
 
@@ -33,7 +34,7 @@ def create_mcts(config, device, num_actions) -> SearchAlgorithm:
             num_actions,
             root_selection_strategy=TopScoreSelection(LeastVisitedScoring()),
             decision_selection_strategy=TopScoreSelection(GumbelScoring(config)),
-            chance_selection_strategy=SamplingSelection(PriorScoring()),
+            chance_selection_strategy=TopScoreSelection(DeterministicChanceScoring()),
             root_target_policy=CompletedQValuesRootPolicy(config, device, num_actions),
             root_exploratory_policy=VisitFrequencyPolicy(config, device, num_actions),
             prior_injectors=[ActionTargetInjector(), GumbelInjector()],
@@ -50,7 +51,7 @@ def create_mcts(config, device, num_actions) -> SearchAlgorithm:
             num_actions,
             root_selection_strategy=TopScoreSelection(UCBScoring()),
             decision_selection_strategy=TopScoreSelection(UCBScoring()),
-            chance_selection_strategy=SamplingSelection(PriorScoring()),
+            chance_selection_strategy=TopScoreSelection(DeterministicChanceScoring()),
             root_target_policy=VisitFrequencyPolicy(config, device, num_actions),
             root_exploratory_policy=VisitFrequencyPolicy(config, device, num_actions),
             prior_injectors=[ActionTargetInjector(), DirichletInjector()],

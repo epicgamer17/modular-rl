@@ -42,10 +42,20 @@ class TopScoreSelection(SelectionStrategy):
 
     def select_child(self, node, min_max_stats, pruned_searchset=None):
         # assert isinstance(node, DecisionNode)
-        assert node.is_decision
+        # Relaxed for parity: allow ChanceNodes as well
+        assert hasattr(
+            node, "is_decision"
+        ), f"Node must have is_decision, got {type(node)}"
         # assert node.expanded(), "node must be expanded to select a child"
 
         scores = self.scoring_method.get_scores(node, min_max_stats)
+
+        # Always mask strictly illegal actions (prior == 0)
+        # unless node is a ChanceNode where all priors might be small but > 0
+        if node.is_decision:
+            illegal_mask = node.child_priors <= 0
+            if illegal_mask.any():
+                scores[illegal_mask] = -1e18  # Use a very large negative value
 
         # Masking for pruned_searchset
         if pruned_searchset is not None:
@@ -136,6 +146,11 @@ class SamplingSelection(SelectionStrategy):
     def select_child(self, node, min_max_stats, pruned_searchset=None):
         if isinstance(node, DecisionNode):
             scores = self.scoring_method.get_scores(node, min_max_stats)
+
+            # Always mask strictly illegal actions (prior == 0)
+            illegal_mask = node.child_priors <= 0
+            if illegal_mask.any():
+                scores[illegal_mask] = -1e18  # Use a very large negative value
 
             if pruned_searchset is not None:
                 scores = self.mask_actions(scores, pruned_searchset)

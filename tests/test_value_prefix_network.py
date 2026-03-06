@@ -15,7 +15,7 @@ class MockEnv:
         pass
 
 
-def test_value_prefix_network():
+def test_use_value_prefix_network():
     print("Testing ValuePrefixRewardHead integration...")
     game = GameConfig(
         max_score=100,
@@ -37,7 +37,7 @@ def test_value_prefix_network():
         "support_range": 5,
         "action_selector": {"base": {"type": "categorical", "kwargs": {}}},
         "num_chance": 10,
-        "value_prefix": True,
+        "use_value_prefix": True,
         "lstm_hidden_size": 16,
         "lstm_horizon_len": 5,
         "prediction_backbone": {"type": "identity"},
@@ -49,7 +49,7 @@ def test_value_prefix_network():
         "reward_head": {"output_strategy": {"type": "scalar"}},
     }
 
-    print("Initializing MuZero Config with value_prefix=True...")
+    print("Initializing MuZero Config with use_value_prefix=True...")
     config = MuZeroConfig(config_dict, game)
 
     print("Initializing Network...")
@@ -124,4 +124,4 @@ def test_value_prefix_network():
 
 
 if __name__ == "__main__":
-    test_value_prefix_network()
+    test_use_value_prefix_network()

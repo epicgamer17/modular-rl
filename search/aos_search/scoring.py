@@ -73,7 +73,11 @@ def compute_v_mix(
 
     # Prior probabilities (softmax is safe against -inf → 0)
     # [B, max_edges]
-    child_priors = torch.softmax(child_logits, dim=-1)
+    real_edge_mask = tree.children_action_mask[batch_idx, node_indices]
+    masked_logits = torch.where(
+        real_edge_mask, child_logits, torch.full_like(child_logits, -float("inf"))
+    )
+    child_priors = torch.softmax(masked_logits, dim=-1)
 
     # Visited mask
     # [B, max_edges]
@@ -112,6 +116,7 @@ def ucb_score_fn(
     pb_c_init: float,
     pb_c_base: float,
     min_max_stats: Optional[VectorizedMinMaxStats] = None,
+    bootstrap_method: str = "parent_value",
 ) -> torch.Tensor:
     """Compute MuZero-style UCB scores for every edge of the selected nodes.
 
@@ -151,8 +156,12 @@ def ucb_score_fn(
     child_visits = tree.children_visits[batch_idx, node_indices].float()  # [B, E]
     child_values = tree.children_values[batch_idx, node_indices]  # [B, E]
     child_logits = tree.children_prior_logits[batch_idx, node_indices]  # [B, E]
-
-    child_priors = torch.softmax(child_logits, dim=-1)  # [B, E]
+    # Use the explicit action mask to identify real (permitted) edges
+    real_edge_mask = tree.children_action_mask[batch_idx, node_indices]  # [B, E]
+    masked_logits = torch.where(
+        real_edge_mask, child_logits, torch.full_like(child_logits, -float("inf"))
+    )
+    child_priors = torch.softmax(masked_logits, dim=-1)  # [B, E]
 
     # --- PUCT exploration bonus -----------------------------------------------
     pv = parent_visits.unsqueeze(-1)  # [B, 1]
@@ -162,7 +171,24 @@ def ucb_score_fn(
 
     # --- Q-value (bootstrap unvisited from parent V) --------------------------
     visited_mask = child_visits > 0  # [B, E]
-    bootstrap_q = parent_values.unsqueeze(-1).expand_as(child_values)  # [B, E]
+
+    if bootstrap_method == "parent_value":
+        bootstrap_q = parent_values.unsqueeze(-1).expand_as(child_values)  # [B, E]
+    elif bootstrap_method == "zero":
+        bootstrap_q = torch.zeros_like(child_values)
+    elif bootstrap_method == "v_mix":
+        from search.aos_search.scoring import compute_v_mix
+
+        v_mix = compute_v_mix(tree, node_indices)
+        bootstrap_q = v_mix.unsqueeze(-1).expand_as(child_values)
+    elif bootstrap_method == "mu_fpu":
+        sum_q_v = (child_values * child_visits).sum(dim=-1, keepdim=True)
+        sum_v = child_visits.sum(dim=-1, keepdim=True)
+        mu_fpu = torch.where(sum_v > 0, sum_q_v / sum_v, parent_values.unsqueeze(-1))
+        bootstrap_q = mu_fpu.expand_as(child_values)
+    else:
+        bootstrap_q = parent_values.unsqueeze(-1).expand_as(child_values)  # [B, E]
+
     q_values = torch.where(visited_mask, child_values, bootstrap_q)  # [B, E]
 
     # --- Q normalisation ------------------------------------------------------
@@ -211,6 +237,8 @@ def gumbel_score_fn(
     gumbel_cvisit: float,
     gumbel_cscale: float,
     min_max_stats: Optional[VectorizedMinMaxStats] = None,
+    bootstrap_method: str = "v_mix",
+    gumbel_noise: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Compute Gumbel MuZero scores for every edge of the selected nodes.
 
@@ -247,10 +275,29 @@ def gumbel_score_fn(
     real_edge_mask = tree.children_action_mask[batch_idx, node_indices]  # [B, E]
     visited_mask = child_visits > 0  # [B, E]
 
-    # --- completed Q: visited → stored Q, unvisited → v_mix bootstrap ---------
-    v_mix = compute_v_mix(tree, node_indices)  # [B]
-    bootstrap = v_mix.unsqueeze(-1).expand_as(child_values)  # [B, E]
-    completed_q = torch.where(visited_mask, child_values, bootstrap)  # [B, E]
+    # --- completed Q: visited → stored Q, unvisited → bootstrap ---------
+    if bootstrap_method == "parent_value":
+        bootstrap_q = (
+            tree.node_values[batch_idx, node_indices]
+            .unsqueeze(-1)
+            .expand_as(child_values)
+        )
+    elif bootstrap_method == "zero":
+        bootstrap_q = torch.zeros_like(child_values)
+    elif bootstrap_method == "v_mix":
+        v_mix = compute_v_mix(tree, node_indices)
+        bootstrap_q = v_mix.unsqueeze(-1).expand_as(child_values)
+    elif bootstrap_method == "mu_fpu":
+        sum_q_v = (child_values * child_visits).sum(dim=-1, keepdim=True)
+        sum_v = child_visits.sum(dim=-1, keepdim=True)
+        parent_v = tree.node_values[batch_idx, node_indices].unsqueeze(-1)
+        mu_fpu = torch.where(sum_v > 0, sum_q_v / sum_v, parent_v)
+        bootstrap_q = mu_fpu.expand_as(child_values)
+    else:
+        v_mix = compute_v_mix(tree, node_indices)
+        bootstrap_q = v_mix.unsqueeze(-1).expand_as(child_values)
+
+    completed_q = torch.where(visited_mask, child_values, bootstrap_q)  # [B, E]
 
     # --- normalise completed Q ------------------------------------------------
     if min_max_stats is not None:
@@ -270,6 +317,8 @@ def gumbel_score_fn(
 
     # --- improved policy: softmax(log π₀ + σ) ---------------------------------
     pi0_logits = child_logits + sigma  # [B, E]
+    if gumbel_noise is not None:
+        pi0_logits = pi0_logits + gumbel_noise
     # Mask padding before softmax
     pi0_logits = torch.where(
         real_edge_mask,

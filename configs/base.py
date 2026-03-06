@@ -170,14 +170,13 @@ class SearchConfig:
         backend_default = self.config_dict.get(
             "search_backend", os.getenv("MCTS_BACKEND", "python")
         )
-        self.backend: str = str(self.parse_field("backend", backend_default)).lower()
-        if self.backend not in {"python", "cpp", "aos"}:
+        self.search_backend: str = str(
+            self.parse_field("search_backend", backend_default)
+        ).lower()
+        if self.search_backend not in {"python", "cpp", "aos"}:
             raise ValueError(
-                f"Unsupported search backend {self.backend!r}. Expected 'python', 'cpp', or 'aos'."
+                f"Unsupported search backend {self.search_backend!r}. Expected 'python', 'cpp', or 'aos'."
             )
-        # Alias retained for compatibility with code that references `search_backend`.
-        self.search_backend: str = self.backend
-
         self.known_bounds = self.parse_field(
             "known_bounds", default=None, required=False
         )
@@ -186,14 +185,9 @@ class SearchConfig:
         self.search_batch_size: int = self.parse_field("search_batch_size", 0)
         self.use_virtual_mean: bool = self.parse_field("use_virtual_mean", False)
         self.virtual_loss: float = self.parse_field("virtual_loss", 3.0)
-        self.root_dirichlet_alpha: float = self.parse_field(
-            "root_dirichlet_alpha", 0.25
-        )
-        self.root_exploration_fraction: float = self.parse_field(
-            "root_exploration_fraction", 0.25
-        )
-        self.root_dirichlet_alpha_adaptive: bool = self.parse_field(
-            "root_dirichlet_alpha_adaptive", False
+
+        self.dirichlet_alpha_adaptive: bool = self.parse_field(
+            "dirichlet_alpha_adaptive", False
         )
         self.gumbel: bool = self.parse_field("gumbel", False)
         self.gumbel_m = self.parse_field("gumbel_m", 16)
@@ -206,8 +200,8 @@ class SearchConfig:
         self.pb_c_init: float = self.parse_field("pb_c_init", 1.25)
 
         # AOS Search / Additional Search Configs
-        self.backprop_method: str = self.parse_field(
-            "backprop_method", "average", required=False
+        self.bootstrap_method: str = self.parse_field(
+            "bootstrap_method", "parent_value", required=False
         )
         self.policy_extraction: str = self.parse_field(
             "policy_extraction", "visit_count", required=False
@@ -234,14 +228,10 @@ class SearchConfig:
         self.scoring_method: str = self.parse_field(
             "scoring_method", "ucb", required=False
         )
-        # We need use_value_prefix mapped from value_prefix in the legacy config
-        # (It is parsed by ValuePrefixConfig as self.value_prefix, but here we can define it)
-        try:
-            val_pref = self.value_prefix
-        except AttributeError:
-            val_pref = False
+        # Map from legacy value_prefix if present
+        legacy_val_pref = getattr(self, "value_prefix", False)
         self.use_value_prefix: bool = self.parse_field(
-            "use_value_prefix", val_pref, required=False
+            "use_value_prefix", legacy_val_pref, required=False
         )
 
 
@@ -260,7 +250,7 @@ class EpsilonGreedyConfig:
 
 class ValuePrefixConfig:
     def parse_value_prefix_params(self):
-        self.value_prefix: bool = self.parse_field("value_prefix", False)
+        self.use_value_prefix: bool = self.parse_field("use_value_prefix", False)
         self.lstm_horizon_len: int = self.parse_field("lstm_horizon_len", 5)
         self.lstm_hidden_size: int = self.parse_field("lstm_hidden_size", 64)
 

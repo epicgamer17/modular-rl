@@ -38,6 +38,9 @@ class ScoringMethod(ABC):
 
 
 class UCBScoring(ScoringMethod):
+    def __init__(self, bootstrap_method: str = "parent_value"):
+        self.bootstrap_method = bootstrap_method
+
     def score(self, node, child, min_max_stats) -> float:
         # Fallback to single score if needed
         raise NotImplementedError("Use get_scores for vectorized UCB")
@@ -71,8 +74,17 @@ class UCBScoring(ScoringMethod):
 
         # For unvisited, use bootstrap value.
         if not visited_mask.all():
-            # Calculate bootstrap value using helper
-            bootstrap_val = node.get_child_q_for_unvisited()
+            if self.bootstrap_method == "parent_value":
+                bootstrap_val = node.value()
+            elif self.bootstrap_method == "zero":
+                bootstrap_val = 0.0
+            elif self.bootstrap_method == "v_mix":
+                bootstrap_val = node.get_v_mix()
+            elif self.bootstrap_method == "mu_fpu":
+                # TODO: PROPERLY IMPLEMENT mu_fpu
+                bootstrap_val = node.get_v_mix()
+            else:
+                bootstrap_val = node.value()
 
             q_values[~visited_mask] = bootstrap_val
 
@@ -154,6 +166,22 @@ class QValueScoring(ScoringMethod):
         # If we use raw child_values, unvisited (0) might be selected if others are negative.
         # But generally Q-values are used when we have visited enough.
         return node.child_values
+
+    def score_initial(self, prior: float, action: int) -> float:
+        return prior
+
+
+class DeterministicChanceScoring(ScoringMethod):
+    """
+    Scores chance nodes deterministically based on prior / (visits + 1).
+    Used to select the most probable under-explored outcome.
+    """
+
+    def score(self, node, child, min_max_stats) -> float:
+        raise NotImplementedError("Use get_scores for vectorized")
+
+    def get_scores(self, node, min_max_stats) -> torch.Tensor:
+        return node.child_priors / (node.child_visits + 1.0)
 
     def score_initial(self, prior: float, action: int) -> float:
         return prior

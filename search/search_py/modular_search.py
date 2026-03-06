@@ -189,8 +189,6 @@ class SearchAlgorithm:
 
         min_max_stats = MinMaxStats(
             self.config.known_bounds,
-            soft_update=self.config.soft_update,
-            min_max_epsilon=self.config.min_max_epsilon,
         )
 
         # Initialize pruning state (e.g. Sequential Halving budget)
@@ -466,12 +464,12 @@ class SearchAlgorithm:
         )
 
     def _set_node_configs(self):
-        ChanceNode.estimation_method = self.config.q_estimation_method
+        ChanceNode.bootstrap_method = self.config.bootstrap_method
         ChanceNode.discount = self.config.discount_factor
-        ChanceNode.value_prefix = self.config.value_prefix
-        DecisionNode.estimation_method = self.config.q_estimation_method
+        ChanceNode.use_value_prefix = self.config.use_value_prefix
+        DecisionNode.bootstrap_method = self.config.bootstrap_method
         DecisionNode.discount = self.config.discount_factor
-        DecisionNode.value_prefix = self.config.value_prefix
+        DecisionNode.use_value_prefix = self.config.use_value_prefix
         DecisionNode.pb_c_init = self.config.pb_c_init
         DecisionNode.pb_c_base = self.config.pb_c_base
         DecisionNode.gumbel = self.config.gumbel

@@ -173,11 +173,10 @@ def minimax_backprop(
     """Minimax backpropagation for two-player zero-sum games.
 
     Uses the Q-values of **all siblings** (not just the path action) to set
-    the parent node's value to the correct minimax aggregate.  The direction
-    (max vs. min) is determined per batch item by ``tree.to_play``:
+    the parent node's value to the correct minimax aggregate.
 
-    * If ``to_play[b, parent] == 0`` → the current player maximises → ``V = max_a Q``.
-    * If ``to_play[b, parent] == 1`` → the opponent minimises → ``V = min_a Q``.
+    Note: Every player is a maximiser because Q-values are stored relative
+    to the acting player (acting player's perspective).
 
     Steps:
       1. Update ``children_visits`` and ``children_values`` (incremental mean)
@@ -187,8 +186,8 @@ def minimax_backprop(
          siblings are considered; unvisited but valid ones are excluded from
          aggregation (they have no reliable Q yet — masked via
          ``children_visits == 0``).
-      4. Max over siblings for player 0, min for player 1.
-      5. Return the discounted best_q to propagate upward.
+      4. Max over siblings.
+      5. Return the best_q to propagate upward.
 
     Args:
         tree: FlatTree mutated in-place.
@@ -196,11 +195,11 @@ def minimax_backprop(
         nodes_at_d: ``[B]`` int32 — parent node indices.
         actions_at_d: ``[B]`` int32 — actions taken from the parent.
         current_values: ``[B]`` float32 — discounted return from child layer.
-        discount: MDP discount factor γ (applied to best_q before returning).
+        discount: MDP discount factor γ (applied by the caller).
         valid_mask: ``[B]`` bool — only update where True.
 
     Returns:
-        ``discount * best_q`` per batch item — the value to propagate upward.
+        ``best_q`` per batch item — the value to propagate upward.
     """
     parent_long = nodes_at_d.long()
     action_long = actions_at_d.long()
@@ -219,21 +218,12 @@ def minimax_backprop(
     # Only aggregate over valid AND visited siblings (unvisited have no Q yet)
     consider = sibling_valid & sibling_visited  # [B, E] bool
 
-    # Step 3: Per-batch player identity → max or min
-    # to_play: [B, N] int8; player 0 = maximiser, 1 = minimiser
-    # [B] int8
-    player = tree.to_play[batch_idx, parent_long]
-    is_maximiser = player == 0  # [B] bool
-
-    # Fill sentinels: maximiser masks out with -inf, minimiser with +inf
+    # Step 3: Compute the best Q over siblings.
+    # Since Q-values are stored relative to the acting player,
+    # every player is a maximiser of their own Q.
     INF = float("inf")
     q_for_max = torch.where(consider, sibling_q, torch.full_like(sibling_q, -INF))
-    q_for_min = torch.where(consider, sibling_q, torch.full_like(sibling_q, +INF))
-
-    max_q = q_for_max.max(dim=-1).values  # [B]
-    min_q = q_for_min.min(dim=-1).values  # [B]
-
-    best_q = torch.where(is_maximiser, max_q, min_q)  # [B]
+    best_q = q_for_max.max(dim=-1).values  # [B]
 
     # Fall back to current node value when no sibling has been visited yet
     any_considered = consider.any(dim=-1)  # [B] bool
@@ -247,6 +237,6 @@ def minimax_backprop(
         valid_mask, effective_v, tree.node_values[batch_idx, parent_long]
     )
 
-    # Step 5: Propagate discounted best_q upward (sign is already correct —
+    # Step 5: Propagate best_q upward (sign is already correct —
     # the tree stores Q from the perspective of the node's own player)
-    return torch.where(valid_mask, discount * best_q, current_values)
+    return torch.where(valid_mask, best_q, current_values)

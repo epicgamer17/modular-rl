@@ -35,6 +35,10 @@ def batched_mcts_step(
     pb_c_init: float,
     pb_c_base: float,
     discount: float,
+    search_batch_size: int = 1,
+    virtual_loss_visits: float = 1.0,
+    virtual_loss_value: float = -1.0,
+    penalty_type: str = "virtual_mean",
     backprop_fn: BackpropFn = average_discounted_backprop,
     min_max_stats: VectorizedMinMaxStats | None = None,
     root_scoring_fn: ScoringFn | None = None,
@@ -44,6 +48,8 @@ def batched_mcts_step(
     use_value_prefix: bool = False,
     decision_modifier_fn=None,
     chance_modifier_fn=None,
+    trajectory_actions: torch.Tensor | None = None,
+    num_players: int = 2,
 ) -> None:
     """Execute one full MCTS simulation across every batch element.
 
@@ -59,40 +65,28 @@ def batched_mcts_step(
         pb_c_init: PUCT additive exploration constant.
         pb_c_base: PUCT log-base exploration constant.
         discount: MDP discount factor γ.
-        backprop_fn: Pluggable single-depth backpropagation function.  Must
-            conform to the :data:`~search.aos_search.backpropogation.BackpropFn`
-            signature.  Defaults to
-            :func:`~search.aos_search.backpropogation.average_discounted_backprop`.
-        min_max_stats: Optional :class:`VectorizedMinMaxStats` passed to
-            scoring functions so Q-values are normalised through the global
-            running bounds.  Pass ``None`` to use local normalisation.
+        search_batch_size: Number of simulations to run in a single step via
+            Virtual Loss.  Requires *agent_network* to support batched
+            inference of size ``[B * search_batch_size]``.
+        virtual_loss_visits: Visit penalty applied to nodes in the current path.
+        virtual_loss_value: Value penalty applied to nodes in the current path.
+        penalty_type: "virtual_mean" or "virtual_loss".
+        backprop_fn: Pluggable single-depth backpropagation function.
+        min_max_stats: Optional :class:`VectorizedMinMaxStats` global bounds.
         root_scoring_fn: Scoring function used at **depth 0** (the root).
-            When ``None``, defaults to ``ucb_score_fn``.  Use
-            ``gumbel_score_fn`` here for Gumbel MuZero.
-        root_scoring_kwargs: Extra kwargs forwarded to ``root_scoring_fn``
-            (e.g. ``gumbel_cvisit``, ``gumbel_cscale``).
+        root_scoring_kwargs: Extra kwargs forwarded to ``root_scoring_fn``.
         interior_scoring_fn: Scoring function used at **depth > 0**.
-            When ``None``, inherits ``root_scoring_fn``.
         interior_scoring_kwargs: Extra kwargs forwarded to
-            ``interior_scoring_fn``.  When ``None``, inherits
-            ``root_scoring_kwargs``.
-        use_value_prefix: If ``True``, the edge reward stored in
-            ``children_rewards`` is treated as a cumulative (absolute) reward
-            rather than an instantaneous one.  During backpropagation the
-            step reward is computed as ``child_reward - parent_reward``.
-        decision_modifier_fn: Optional callable ``(logits: [B, A]) -> [B, A]``
-            applied to new Decision-node logits during expansion (e.g.
-            Top-K masking, invalid-action masking).
-        chance_modifier_fn: Optional callable ``(logits: [B, C]) -> [B, C]``
-            applied to new Chance-node code logits during expansion.
+            ``interior_scoring_fn``.
+        use_value_prefix: If ``True``, rewards are cumulative.
+        decision_modifier_fn: Optional callable for Decision-node logits.
+        chance_modifier_fn: Optional callable for Chance-node logits.
+        trajectory_actions: Optional [B, H] forced actions for root.
     """
     B = tree.node_visits.shape[0]
     device = tree.node_visits.device
 
-    # ------------------------------------------------------------------
-    # Phase 1 — Selection
-    # ------------------------------------------------------------------
-    # Build default root scoring fn + kwargs
+    # --- Setup scoring functions and kwargs ---
     ucb_defaults = {
         "pb_c_init": pb_c_init,
         "pb_c_base": pb_c_base,
@@ -106,7 +100,6 @@ def batched_mcts_step(
         if "min_max_stats" not in root_scoring_kwargs:
             root_scoring_kwargs["min_max_stats"] = min_max_stats
 
-    # Interior scoring inherits root by default
     if interior_scoring_fn is None:
         interior_scoring_fn = root_scoring_fn
         interior_scoring_kwargs = root_scoring_kwargs
@@ -115,54 +108,274 @@ def batched_mcts_step(
         if "min_max_stats" not in interior_scoring_kwargs:
             interior_scoring_kwargs["min_max_stats"] = min_max_stats
 
-    path_nodes, path_actions, depths = _select(
-        tree,
-        B,
-        max_depth,
-        device,
-        root_scoring_fn=root_scoring_fn,
-        root_scoring_kwargs=root_scoring_kwargs,
-        interior_scoring_fn=interior_scoring_fn,
-        interior_scoring_kwargs=interior_scoring_kwargs,
-    )
-    print(f"AOS Sim Depths: {depths.tolist()}")
+    # ------------------------------------------------------------------
+    # Phase 1 — Selection
+    # ------------------------------------------------------------------
+    paths = []
+
+    for k in range(search_batch_size):
+        path_nodes, path_actions, depths = _select(
+            tree,
+            B,
+            max_depth,
+            device,
+            root_scoring_fn=root_scoring_fn,
+            root_scoring_kwargs=root_scoring_kwargs,
+            interior_scoring_fn=interior_scoring_fn,
+            interior_scoring_kwargs=interior_scoring_kwargs,
+            trajectory_actions=trajectory_actions if k == 0 else None,
+        )
+        paths.append((path_nodes, path_actions, depths))
+
+        if search_batch_size > 1:
+            _apply_virtual_penalty(
+                tree,
+                path_nodes,
+                path_actions,
+                depths,
+                virtual_loss_visits,
+                virtual_loss_value,
+                penalty_type,
+                B,
+                device,
+                sign=1.0,
+            )
 
     # ------------------------------------------------------------------
-    # Phase 2 — Expansion
+    # Phase 2 — Batched Inference
     # ------------------------------------------------------------------
-    leaf_values = _expand(
-        tree,
-        agent_network,
-        path_nodes,
-        path_actions,
-        depths,
-        B,
-        device,
-        decision_modifier_fn=decision_modifier_fn,
-        chance_modifier_fn=chance_modifier_fn,
+    all_safe_d = []
+    all_parents = []
+    all_actions = []
+
+    for path_nodes, path_actions, depths in paths:
+        safe_d = (depths - 1).clamp(min=0).long()
+        flat_parents.append(path_nodes[batch_idx, safe_d])
+        flat_actions.append(path_actions[batch_idx, safe_d])
+
+    flat_parents_t = torch.cat(flat_parents, dim=0)
+    flat_actions_t = torch.cat(flat_actions, dim=0)
+
+    # Resolve flat_batch_idx for tree lookups
+    flat_batch_idx = batch_idx.repeat(search_batch_size)
+
+    # Determine node types (0 = Decision, 1 = Chance)
+    parent_types = tree.node_types[flat_batch_idx, flat_parents_t.long()]
+    is_decision = parent_types == 0
+    is_chance = parent_types == 1
+
+    B_total = flat_parents_t.shape[0]
+
+    outputs_decision = None
+    if is_decision.any():
+        outputs_decision = agent_network.hidden_state_inference(
+            flat_parents_t[is_decision], flat_actions_t[is_decision].long()
+        )
+
+    outputs_chance = None
+    if is_chance.any():
+        outputs_chance = agent_network.afterstate_inference(
+            flat_parents_t[is_chance], flat_actions_t[is_chance].long()
+        )
+
+    if outputs_decision is not None:
+        val_shape = outputs_decision.value.shape[1:]
+        rew_shape = outputs_decision.reward.shape[1:]
+        play_shape = outputs_decision.to_play.shape[1:]
+        play_dtype = outputs_decision.to_play.dtype
+    else:
+        val_shape = outputs_chance.value.shape[1:]
+        rew_shape = val_shape
+        play_shape = val_shape
+        play_dtype = torch.long
+
+    # Determine max_edges from the tree structure to handle varying logit counts
+    max_edges = tree.children_prior_logits.shape[-1]
+
+    # Pre-allocate empty tensors
+    leaf_values_t = torch.zeros(
+        (B_total, *val_shape), dtype=torch.float32, device=device
     )
+    rewards_t = torch.zeros((B_total, *rew_shape), dtype=torch.float32, device=device)
+    to_plays_t = torch.zeros((B_total, *play_shape), dtype=play_dtype, device=device)
+
+    # Pre-allocate policy logits with -inf padding to handle Decision vs Chance sizing
+    policy_logits_t = torch.full(
+        (B_total, max_edges),
+        fill_value=-float("inf"),
+        dtype=torch.float32,
+        device=device,
+    )
+
+    # Scatter decision node results
+    if outputs_decision is not None:
+        leaf_values_t[is_decision] = outputs_decision.value
+        rewards_t[is_decision] = outputs_decision.reward
+        to_plays_t[is_decision] = outputs_decision.to_play
+
+        num_act = outputs_decision.policy.logits.shape[-1]
+        policy_logits_t[is_decision, :num_act] = outputs_decision.policy.logits
+
+    # Scatter chance node results
+    if outputs_chance is not None:
+        leaf_values_t[is_chance] = outputs_chance.value
+        # .reward is inherently 0 due to torch.zeros
+
+        num_codes = outputs_chance.policy.logits.shape[-1]
+        policy_logits_t[is_chance, :num_codes] = outputs_chance.policy.logits
+
+        # Inherit parent's to_play from the tree
+        inherited_to_play = tree.to_play[
+            flat_batch_idx[is_chance], flat_parents_t[is_chance].long()
+        ]
+
+        if len(play_shape) > 0 and inherited_to_play.dim() == 1:
+            inherited_to_play = inherited_to_play.unsqueeze(-1)
+
+        to_plays_t[is_chance] = inherited_to_play.to(play_dtype)
+
+    leaf_values_chunks = leaf_values_t.chunk(search_batch_size, dim=0)
+    rewards_chunks = rewards_t.chunk(search_batch_size, dim=0)
+    policy_logits_chunks = policy_logits_t.chunk(search_batch_size, dim=0)
+    to_plays_chunks = to_plays_t.chunk(search_batch_size, dim=0)
 
     # ------------------------------------------------------------------
     # Phase 3 — Backpropagation
     # ------------------------------------------------------------------
-    _backpropagate(
-        tree,
-        path_nodes,
-        path_actions,
-        depths,
-        leaf_values,
-        discount,
-        B,
-        device,
-        backprop_fn=backprop_fn,
-        use_value_prefix=use_value_prefix,
-        min_max_stats=min_max_stats,
-    )
+    # Phase 3A: Global Reversion — clean the tree of all virtual distortions
+    if search_batch_size > 1:
+        for k in range(search_batch_size):
+            path_nodes, path_actions, depths = paths[k]
+            _apply_virtual_penalty(
+                tree,
+                path_nodes,
+                path_actions,
+                depths,
+                virtual_loss_visits,
+                virtual_loss_value,
+                penalty_type,
+                B,
+                device,
+                sign=-1.0,
+            )
+
+    # Phase 3B: Expansion & Backpropagation — commit numeric updates to clean tree
+    for k in range(search_batch_size):
+        path_nodes, path_actions, depths = paths[k]
+
+        leaf_values = _expand_write(
+            tree,
+            path_nodes,
+            path_actions,
+            depths,
+            leaf_values_chunks[k].detach().float(),
+            rewards_chunks[k].detach().float(),
+            policy_logits_chunks[k].detach(),
+            to_plays_chunks[k].detach().to(torch.int8),
+            B,
+            device,
+            decision_modifier_fn=decision_modifier_fn,
+            chance_modifier_fn=chance_modifier_fn,
+        )
+
+        _backpropagate(
+            tree,
+            path_nodes,
+            path_actions,
+            depths,
+            leaf_values,
+            to_plays_chunks[k].detach().to(torch.long),
+            discount,
+            B,
+            device,
+            backprop_fn=backprop_fn,
+            use_value_prefix=use_value_prefix,
+            min_max_stats=min_max_stats,
+            num_players=num_players,
+        )
 
 
 # ---------------------------------------------------------------------------
 # Phase 1 — Selection
 # ---------------------------------------------------------------------------
+
+
+def _apply_virtual_penalty(
+    tree: FlatTree,
+    path_nodes: torch.Tensor,
+    path_actions: torch.Tensor,
+    depths: torch.Tensor,
+    virtual_loss_visits: float,
+    virtual_loss_value: float,
+    penalty_type: str,
+    B: int,
+    device: torch.device,
+    sign: float = 1.0,
+):
+    batch_idx = torch.arange(B, device=device)
+    max_depth = path_actions.shape[1]
+
+    vl_visits = torch.tensor(
+        virtual_loss_visits * sign, dtype=torch.float32, device=device
+    )
+    val_tensor = torch.tensor(virtual_loss_value, dtype=torch.float32, device=device)
+
+    for d in range(max_depth):
+        valid = depths > d
+        if not valid.any():
+            continue
+
+        nodes_at_d = path_nodes[batch_idx, d].long()
+        actions_at_d = path_actions[batch_idx, d].long()
+
+        # Read old visits
+        old_node_v = tree.node_visits[batch_idx, nodes_at_d].float()
+        old_child_v = tree.children_visits[batch_idx, nodes_at_d, actions_at_d].float()
+
+        # Calculate new visits
+        new_node_v = old_node_v + torch.where(valid, vl_visits, 0.0)
+        new_child_v = old_child_v + torch.where(valid, vl_visits, 0.0)
+
+        if penalty_type == "virtual_loss":
+            # Read old Q-values
+            old_node_q = tree.node_values[batch_idx, nodes_at_d]
+            old_child_q = tree.children_values[batch_idx, nodes_at_d, actions_at_d]
+
+            if sign > 0:
+                # Applying penalty
+                new_node_q = (
+                    old_node_q * old_node_v + val_tensor * vl_visits
+                ) / new_node_v.clamp(min=1e-8)
+                new_child_q = (
+                    old_child_q * old_child_v + val_tensor * vl_visits
+                ) / new_child_v.clamp(min=1e-8)
+            else:
+                # Reversing penalty
+                new_node_q = (
+                    old_node_q * old_node_v - val_tensor * (-vl_visits)
+                ) / new_node_v.clamp(min=1e-8)
+                new_child_q = (
+                    old_child_q * old_child_v - val_tensor * (-vl_visits)
+                ) / new_child_v.clamp(min=1e-8)
+
+                # Prevent drift
+                new_node_q = torch.where(new_node_v <= 0, 0.0, new_node_q)
+                new_child_q = torch.where(new_child_v <= 0, 0.0, new_child_q)
+
+            tree.node_values[batch_idx, nodes_at_d] = torch.where(
+                valid, new_node_q, old_node_q
+            )
+            tree.children_values[batch_idx, nodes_at_d, actions_at_d] = torch.where(
+                valid, new_child_q, old_child_q
+            )
+
+        # Write visits back
+        tree.node_visits[batch_idx, nodes_at_d] = torch.where(
+            valid, new_node_v, old_node_v
+        )
+        tree.children_visits[batch_idx, nodes_at_d, actions_at_d] = torch.where(
+            valid, new_child_v, old_child_v
+        )
 
 
 def _select(
@@ -174,6 +387,7 @@ def _select(
     root_scoring_kwargs: dict | None = None,
     interior_scoring_fn: ScoringFn | None = None,
     interior_scoring_kwargs: dict | None = None,
+    trajectory_actions: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Descend the tree using UCB scores until an unexpanded edge is hit.
 
@@ -249,11 +463,14 @@ def _select(
         # [B, max_edges]
         child_visits_f = tree.children_visits[batch_idx, current_nodes.long()].float()
         child_logits = tree.children_prior_logits[batch_idx, current_nodes.long()]
-        priors = torch.softmax(child_logits, dim=-1)  # [B, max_edges]
-        visit_fractions = child_visits_f / (
-            parent_visits.unsqueeze(-1) + 1e-8
-        )  # [B, max_edges]
-        chance_scores = priors - visit_fractions  # [B, max_edges]
+
+        chance_mask = tree.children_action_mask[batch_idx, current_nodes.long()]
+        masked_chance_logits = torch.where(
+            chance_mask, child_logits, torch.full_like(child_logits, -float("inf"))
+        )
+        priors = torch.softmax(masked_chance_logits, dim=-1)  # [B, max_edges]
+
+        chance_scores = priors / (child_visits_f + 1.0)  # [B, max_edges]
 
         # Mask out invalid edges for chance nodes (action mask)
         chance_mask = tree.children_action_mask[
@@ -271,6 +488,12 @@ def _select(
         # --- Merge: Decision uses argmax(UCB), Chance uses argmax(gap) ---
         # [B]
         actions = torch.where(is_decision, decision_actions, chance_actions)
+
+        if depth == 0 and trajectory_actions is not None:
+            traj_mask = trajectory_actions >= 0
+            actions = torch.where(
+                traj_mask, trajectory_actions.to(torch.int32), actions
+            )
 
         # --- Look up children ---
         # children_index: [B, N, max_edges]
@@ -319,12 +542,15 @@ def _select(
 # ---------------------------------------------------------------------------
 
 
-def _expand(
+def _expand_write(
     tree: FlatTree,
-    agent_network,
     path_nodes: torch.Tensor,
     path_actions: torch.Tensor,
     depths: torch.Tensor,
+    leaf_values: torch.Tensor,
+    rewards: torch.Tensor,
+    policy_logits: torch.Tensor,
+    to_plays: torch.Tensor,
     B: int,
     device: torch.device,
     decision_modifier_fn=None,
@@ -352,23 +578,6 @@ def _expand(
     parent_indices = path_nodes[batch_idx, safe_depth]  # [B] int32
     leaf_actions = path_actions[batch_idx, safe_depth]  # [B] int32
 
-    # --- Batched network call ---
-    # The caller stores hidden states in a [B, N, H] buffer alongside
-    # the tree. We pass parent_indices + leaf_actions and rely on
-    # agent_network to look up the correct hidden states.
-    outputs = agent_network.hidden_state_inference(
-        parent_indices,
-        leaf_actions.long(),
-    )
-
-    # Expected output fields:
-    #   .value  — [B] float32
-    #   .reward — [B] float32
-    #   .policy.logits — [B, num_actions] float32
-    leaf_values = outputs.value.detach().float()  # [B]
-    rewards = outputs.reward.detach().float()  # [B]
-    policy_logits = outputs.policy.logits.detach()  # [B, num_actions]
-
     # --- Allocate new node indices ---
     # [B] int32
     new_node_indices = tree.next_alloc_index.clone()
@@ -376,11 +585,14 @@ def _expand(
 
     # --- Write node-level stats for the new nodes ---
     new_idx_long = new_node_indices.long()
-    tree.node_visits[batch_idx, new_idx_long] = 0
+    tree.node_visits[batch_idx, new_idx_long] = 1
     tree.node_values[batch_idx, new_idx_long] = leaf_values
     # Permanently store the raw network value estimate (v̂_π).
     # node_values is updated by backpropagation; raw_network_values never is.
     tree.raw_network_values[batch_idx, new_idx_long] = leaf_values
+    tree.to_play[batch_idx, new_idx_long] = (
+        to_plays.squeeze(-1) if to_plays.dim() > 1 else to_plays
+    )
     # 0 = Decision node
     tree.node_types[batch_idx, new_idx_long] = 0
 
@@ -408,6 +620,9 @@ def _expand(
     tree.children_prior_logits[batch_idx, new_idx_long, :num_policy_actions] = (
         policy_logits
     )
+
+    # --- Reset action mask row for safety to prevent stale True values from leaking ---
+    tree.children_action_mask[batch_idx, new_idx_long] = False
 
     # --- Derive action mask from logits (-inf → masked out) ---
     tree.children_action_mask[batch_idx, new_idx_long, :num_policy_actions] = (
@@ -444,12 +659,14 @@ def _backpropagate(
     path_actions: torch.Tensor,
     depths: torch.Tensor,
     leaf_values: torch.Tensor,
+    leaf_to_play: torch.Tensor,
     discount: float,
     B: int,
     device: torch.device,
     backprop_fn: BackpropFn = average_discounted_backprop,
     use_value_prefix: bool = False,
     min_max_stats: VectorizedMinMaxStats | None = None,
+    num_players: int = 2,
 ) -> None:
     """Walk backwards along recorded paths, updating visit counts and values.
 
@@ -482,8 +699,11 @@ def _backpropagate(
     batch_idx = torch.arange(B, device=device)
 
     # Running value being propagated upward, starts at leaf value
-    # [B]
-    running_value = leaf_values.clone()
+    # [B, num_players]
+    running_values = torch.zeros((B, num_players), dtype=torch.float32, device=device)
+    for p in range(num_players):
+        is_p = leaf_to_play.squeeze() == p
+        running_values[:, p] = torch.where(is_p, leaf_values, -leaf_values)
 
     # Iterate from the deepest possible depth back to root
     for d in range(max_depth - 1, -1, -1):
@@ -501,13 +721,20 @@ def _backpropagate(
 
         # --- Incorporate edge reward into the discounted return ---
         parent_long = nodes_at_d.long()
+        is_decision = tree.node_types[batch_idx, parent_long] == 0  # [B] bool
+        effective_discount = torch.where(
+            is_decision,
+            torch.tensor(discount, device=device),
+            torch.tensor(1.0, device=device),
+        )
         action_long = actions_at_d.long()
+        child_long = path_nodes[batch_idx, d + 1].long()
+        acting_player = tree.to_play[batch_idx, parent_long].long()
 
         if use_value_prefix:
             # Value prefix: reward is cumulative → step_reward = child_r - parent_r
             # child is one depth deeper in path_nodes
-            child_node = path_nodes[batch_idx, d + 1]  # [B] int32
-            child_cumulative = tree.node_rewards[batch_idx, child_node.long()]  # [B]
+            child_cumulative = tree.node_rewards[batch_idx, child_long]  # [B]
             parent_cumulative = tree.node_rewards[batch_idx, parent_long]  # [B]
             step_reward = child_cumulative - parent_cumulative  # [B]
         else:
@@ -516,19 +743,34 @@ def _backpropagate(
                 batch_idx, parent_long, action_long
             ]  # [B]
 
-        discounted_return = step_reward + discount * running_value  # [B]
+        # [B, num_players]
+        is_acting = torch.arange(num_players, device=device).unsqueeze(
+            0
+        ) == acting_player.unsqueeze(1)
+        reward_sign = torch.where(is_acting, 1.0, -1.0)
+
+        new_running_values = (
+            reward_sign * step_reward.unsqueeze(1)
+            + effective_discount.unsqueeze(1) * running_values
+        )
+        running_values = torch.where(
+            valid.unsqueeze(1), new_running_values, running_values
+        )
+        target_q = running_values[batch_idx, acting_player]  # [B]
 
         # --- Delegate Q/V updates to the pluggable backprop function ---
         # The function returns the value to continue propagating upward.
-        running_value = backprop_fn(
+        # Although backprop_fn updates tree nodes, finding value propagates through running_values
+        updated_q = backprop_fn(
             tree,
             batch_idx,
             nodes_at_d,
             actions_at_d,
-            discounted_return,
+            target_q,
             discount,
             valid,
         )
+        running_values[batch_idx, acting_player] = updated_q
 
         # --- Update global min-max bounds with the newly written Q-values ---
         # Read back what backprop_fn just wrote for this depth's edges so the
