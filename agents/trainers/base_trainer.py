@@ -243,17 +243,11 @@ class BaseTrainer:
         step_dir = base_dir / f"step_{self.training_step}"
         os.makedirs(step_dir, exist_ok=True)
 
-        # Save weights
+        # Save learner state (weights, optimizer, step)
         weights_dir = step_dir / "model_weights"
         os.makedirs(weights_dir, exist_ok=True)
         weights_path = weights_dir / "weights.pt"
-
-        full_checkpoint = {
-            "training_step": self.training_step,
-            "name": self.name,
-            **checkpoint_data,
-        }
-        torch.save(full_checkpoint, weights_path)
+        self.learner.save_checkpoint(str(weights_path))
 
         # Save Config
         config_dir = base_dir / "configs"
@@ -299,17 +293,14 @@ class BaseTrainer:
         # 1. Load Config
         config = config_class.load(config_path)
 
-        # 2. Load Checkpoint Data (weights_only=False for complex objects if needed)
-        checkpoint = torch.load(weights_path, map_location=device, weights_only=False)
-
-        # 3. Instantiate Trainer
+        # 2. Instantiate Trainer
         trainer = cls(config=config, env=env, device=device, **extra_init_kwargs)
-        trainer.training_step = checkpoint.get("training_step", 0)
+        trainer.training_step = training_step
 
-        # 4. Load weights - this needs to be implemented by child classes
-        trainer.load_checkpoint_weights(checkpoint)
+        # 3. Load learner state from checkpoint
+        trainer.learner.load_checkpoint(str(weights_path))
 
-        # 5. Load Stats
+        # 4. Load Stats
         stats_path = step_dir / "graphs_stats/stats.pkl"
         if stats_path.exists():
             with open(stats_path, "rb") as f:

@@ -304,6 +304,32 @@ class PPOLearner(BaseLearner):
         """Returns current number of stored transitions."""
         return self.replay_buffer.size
 
+    def save_checkpoint(self, path: str):
+        """
+        Saves PPO learner state (network weights, policy/value optimizer states, training step).
+        """
+        checkpoint = {
+            "agent_network": self.agent_network.state_dict(),
+            "policy_optimizer": self.policy_optimizer.state_dict(),
+            "value_optimizer": self.value_optimizer.state_dict(),
+            "policy_scheduler": self.policy_scheduler.state_dict(),
+            "value_scheduler": self.value_scheduler.state_dict(),
+            "training_step": self.training_step,
+        }
+        torch.save(checkpoint, path)
+
+    def load_checkpoint(self, path: str):
+        """
+        Loads PPO learner state from path.
+        """
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+        self.agent_network.load_state_dict(checkpoint["agent_network"])
+        self.policy_optimizer.load_state_dict(checkpoint["policy_optimizer"])
+        self.value_optimizer.load_state_dict(checkpoint["value_optimizer"])
+        self.policy_scheduler.load_state_dict(checkpoint["policy_scheduler"])
+        self.value_scheduler.load_state_dict(checkpoint["value_scheduler"])
+        self.training_step = checkpoint.get("training_step", 0)
+
     # PPO keeps a custom optimization loop (dual optimizers, KL early stopping).
     def compute_step_result(self, batch: Dict[str, Any], stats=None) -> StepResult:
         raise NotImplementedError("PPOLearner uses a custom step implementation.")

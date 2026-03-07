@@ -111,6 +111,16 @@ class RainbowLearner(BaseLearner):
             device=device,
         )
 
+    def _init_schedules(self):
+        super()._init_schedules()
+        self.schedules["epsilon"] = create_schedule(self.config.epsilon_schedule)
+
+    @property
+    def current_epsilon(self) -> float:
+        if "epsilon" in self.schedules:
+            return self.schedules["epsilon"].get_value()
+        return 0.0
+
     def compute_step_result(self, batch, stats=None) -> StepResult:
         loss, elementwise_loss = self.compute_loss(batch)
         return StepResult(
@@ -249,6 +259,38 @@ class RainbowLearner(BaseLearner):
             obs = obs.unsqueeze(0)
 
         return obs
+
+    def save_checkpoint(self, path: str):
+        """
+        Saves Rainbow learner state (online/target weights, optimizer, step).
+        """
+        checkpoint = {
+            "agent_network": self.agent_network.state_dict(),
+            "target_agent_network": self.target_agent_network.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "lr_scheduler": (
+                self.lr_scheduler.state_dict() if self.lr_scheduler else None
+            ),
+            "training_step": self.training_step,
+            "schedules": {k: v.state_dict() for k, v in self.schedules.items()},
+        }
+        torch.save(checkpoint, path)
+
+    def load_checkpoint(self, path: str):
+        """
+        Loads Rainbow learner state from path.
+        """
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+        self.agent_network.load_state_dict(checkpoint["agent_network"])
+        self.target_agent_network.load_state_dict(checkpoint["target_agent_network"])
+        self.optimizer.load_state_dict(checkpoint["optimizer"])
+        if checkpoint.get("lr_scheduler") and self.lr_scheduler:
+            self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+        if "schedules" in checkpoint:
+            for k, v in checkpoint["schedules"].items():
+                if k in self.schedules:
+                    self.schedules[k].load_state_dict(v)
+        self.training_step = checkpoint.get("training_step", 0)
 
     def select_actions(
         self, q_values: torch.Tensor, info: Optional[list] = None

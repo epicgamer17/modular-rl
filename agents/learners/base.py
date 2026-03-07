@@ -196,6 +196,38 @@ class BaseLearner(ABC):
             if name == "per_beta":
                 self.replay_buffer.set_beta(schedule.get_value())
 
+    def save_checkpoint(self, path: str):
+        """
+        Saves learner state (network weights, optimizer state, training step).
+        """
+        checkpoint = {
+            "agent_network": self.agent_network.state_dict(),
+            "training_step": self.training_step,
+        }
+        if hasattr(self, "optimizer"):
+            checkpoint["optimizer"] = self.optimizer.state_dict()
+        if hasattr(self, "lr_scheduler") and self.lr_scheduler is not None:
+            checkpoint["lr_scheduler"] = self.lr_scheduler.state_dict()
+
+        torch.save(checkpoint, path)
+
+    def load_checkpoint(self, path: str):
+        """
+        Loads learner state from path.
+        """
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+        self.agent_network.load_state_dict(checkpoint["agent_network"])
+        self.training_step = checkpoint.get("training_step", 0)
+
+        if "optimizer" in checkpoint and hasattr(self, "optimizer"):
+            self.optimizer.load_state_dict(checkpoint["optimizer"])
+        if (
+            "lr_scheduler" in checkpoint
+            and hasattr(self, "lr_scheduler")
+            and self.lr_scheduler is not None
+        ):
+            self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+
     def _maybe_clear_mps_cache(self) -> None:
         if isinstance(self.device, torch.device):
             is_mps = self.device.type == "mps"

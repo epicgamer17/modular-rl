@@ -135,6 +135,10 @@ class ModularSearch:
         masked_logits = self.root_selection_strategy.mask_actions(
             policy_logits, legal_moves, device=self.device
         )
+
+        # No terminal state (no legal moves)
+        assert not (masked_logits == -float("inf")).all(dim=-1).any()
+
         masked_policy = torch.softmax(masked_logits, dim=-1)
 
         legal_moves = legal_moves[0]
@@ -335,6 +339,10 @@ class ModularSearch:
             masked_logits = self.root_selection_strategy.mask_actions(
                 policy_logits[b : b + 1], [legal_moves], device=self.device
             )
+
+            # No terminal state (no legal moves)
+            assert not (masked_logits[0] == -float("inf")).all()
+
             masked_policy = torch.softmax(masked_logits, dim=-1)
 
             policy = masked_policy[0].cpu()

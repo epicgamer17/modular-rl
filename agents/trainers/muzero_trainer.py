@@ -186,21 +186,7 @@ class MuZeroTrainer(BaseTrainer):
 
     def _save_checkpoint(self) -> None:
         """Saves MuZero checkpoint."""
-        checkpoint_data = {
-            "agent_network": self.agent_network.state_dict(),
-            "optimizer": self.learner.optimizer.state_dict(),
-            "scheduler": self.learner.lr_scheduler.state_dict(),
-        }
-        super()._save_checkpoint(checkpoint_data)
-
-    def load_checkpoint_weights(self, checkpoint: Dict[str, Any]):
-        """Loads MuZero weights."""
-        if "agent_network" in checkpoint:
-            self.agent_network.load_state_dict(checkpoint["agent_network"])
-        if "optimizer" in checkpoint:
-            self.learner.optimizer.load_state_dict(checkpoint["optimizer"])
-        if "scheduler" in checkpoint:
-            self.learner.lr_scheduler.load_state_dict(checkpoint["scheduler"])
+        super()._save_checkpoint({})
 
     def _setup_stats(self):
         """Initializes the stat tracker with all required keys and plot types."""

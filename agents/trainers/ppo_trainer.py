@@ -272,31 +272,7 @@ class PPOTrainer(BaseTrainer):
         """
         Saves model weights and stats using BaseTrainer implementation.
         """
-        checkpoint_data = {
-            "agent_network": self.agent_network.state_dict(),
-            "policy_optimizer": self.learner.policy_optimizer.state_dict(),
-            "value_optimizer": self.learner.value_optimizer.state_dict(),
-            "policy_scheduler": self.learner.policy_scheduler.state_dict(),
-            "value_scheduler": self.learner.value_scheduler.state_dict(),
-        }
-        super()._save_checkpoint(checkpoint_data)
-
-    def load_checkpoint_weights(self, checkpoint: Dict[str, Any]):
-        """Ported from BaseAgent.load_model_weights and load_optimizer_state."""
-        if "agent_network" in checkpoint:
-            self.agent_network.load_state_dict(checkpoint["agent_network"])
-        if "policy_optimizer" in checkpoint:
-            self.learner.policy_optimizer.load_state_dict(
-                checkpoint["policy_optimizer"]
-            )
-        if "value_optimizer" in checkpoint:
-            self.learner.value_optimizer.load_state_dict(checkpoint["value_optimizer"])
-        if "policy_scheduler" in checkpoint:
-            self.learner.policy_scheduler.load_state_dict(
-                checkpoint["policy_scheduler"]
-            )
-        if "value_scheduler" in checkpoint:
-            self.learner.value_scheduler.load_state_dict(checkpoint["value_scheduler"])
+        super()._save_checkpoint({})
 
     def _setup_stats(self):
         """Initializes the stat tracker with PPO-specific keys and plot types."""

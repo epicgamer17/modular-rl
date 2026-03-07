@@ -303,3 +303,56 @@ def test_stochastic_expansion(search_setup):
     assert decision_node.expanded()
     assert decision_node.is_decision
     assert abs(value_d - 0.5) < 1.0
+
+
+def test_batched_simulations_coverage(search_setup):
+    """Explicitly tests lines 735-865 of modular_search.py via search_batch_size > 0."""
+    torch.manual_seed(42)
+    np.random.seed(42)
+    search_engine, network, config, obs = search_setup()
+
+    # Force batched simulation loop
+    config.search_batch_size = 2
+    config.num_simulations = 4
+
+    obs_tensor = torch.from_numpy(obs).unsqueeze(0).float()
+    info = {"legal_moves": [list(range(search_engine.num_actions))]}
+
+    # This calls search.run -> _run_batched_simulations
+    val, exploratory, target, best_action, meta = search_engine.run(
+        obs_tensor[0], info, 0, network
+    )
+
+    assert target.shape == (search_engine.num_actions,)
+    assert target.sum() == pytest.approx(1.0)
+    assert best_action in range(search_engine.num_actions)
+
+
+def test_batched_vectorized_simulations_coverage(search_setup):
+    """Tests the vectorized batched simulation loop in modular_search.py."""
+    torch.manual_seed(42)
+    np.random.seed(42)
+    search_engine, network, config, obs = search_setup()
+
+    # Force batched simulation loop in vectorized mode
+    config.search_batch_size = 2
+    config.num_simulations = 4
+
+    B = 2
+    obs_batch = torch.from_numpy(obs).unsqueeze(0).repeat(B, 1, 1, 1).float()
+    info_batch = {"legal_moves": [list(range(search_engine.num_actions))] * B}
+    to_play_batch = [0] * B
+
+    # This calls search.run_vectorized -> _run_batched_vectorized_simulations
+    (
+        root_values,
+        exploratory_policies,
+        target_policies,
+        best_actions,
+        search_metadata,
+    ) = search_engine.run_vectorized(obs_batch, info_batch, to_play_batch, network)
+
+    assert len(target_policies) == B
+    for i in range(B):
+        assert target_policies[i].shape == (search_engine.num_actions,)
+        assert target_policies[i].sum() == pytest.approx(1.0)

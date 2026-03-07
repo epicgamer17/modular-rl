@@ -61,10 +61,6 @@ class RainbowTrainer(BaseTrainer):
             config.action_selector.config_dict
         )
 
-        # Initialize epsilon schedule
-        self.epsilon_schedule = create_schedule(config.epsilon_schedule)
-        self.current_epsilon = self.epsilon_schedule.get_value()
-
         # 3. Create support for distributional RL (C51)
         # Note: RainbowNetwork.initial_inference now handles calculating expected value from support
         # So we don't need to pass support explicitly to the selector in the old way
@@ -127,7 +123,7 @@ class RainbowTrainer(BaseTrainer):
             # 2. Broadcast weights and epsilon to workers
             self.executor.update_weights(
                 self.agent_network.state_dict(),
-                params={"epsilon": self.current_epsilon},
+                params={"epsilon": self.learner.current_epsilon},
             )
 
             # 3. Wait for data to be collected
@@ -185,32 +181,11 @@ class RainbowTrainer(BaseTrainer):
         """
         Updates epsilon according to the configured schedule.
         """
-        self.epsilon_schedule.step()
-        self.current_epsilon = self.epsilon_schedule.get_value()
-        self.action_selector.update_parameters({"epsilon": self.current_epsilon})
+        self.learner._step_schedules()
 
     def _save_checkpoint(self) -> None:
         """Saves Rainbow checkpoint."""
-        checkpoint_data = {
-            "agent_network": self.agent_network.state_dict(),
-            "target_agent_network": self.target_agent_network.state_dict(),
-            "optimizer": self.learner.optimizer.state_dict(),
-            "epsilon": self.current_epsilon,
-        }
-        super()._save_checkpoint(checkpoint_data)
-
-    def load_checkpoint_weights(self, checkpoint: Dict[str, Any]):
-        """Loads Rainbow weights and epsilon."""
-        if "agent_network" in checkpoint:
-            self.agent_network.load_state_dict(checkpoint["agent_network"])
-        if "target_agent_network" in checkpoint:
-            self.target_agent_network.load_state_dict(
-                checkpoint["target_agent_network"]
-            )
-        if "optimizer" in checkpoint:
-            self.learner.optimizer.load_state_dict(checkpoint["optimizer"])
-        if "epsilon" in checkpoint:
-            self.current_epsilon = checkpoint["epsilon"]
+        super()._save_checkpoint({})
 
     def _setup_stats(self) -> None:
         """
