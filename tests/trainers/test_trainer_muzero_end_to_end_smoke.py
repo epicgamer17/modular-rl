@@ -32,7 +32,7 @@ def action_as_plane(action, num_actions, height, width):
     return plane
 
 
-def test_muzero_cartpole_smoke():
+def test_muzero_cartpole_smoke(make_muzero_config_dict):
     """
     Smoke test for MuZero on CartPole.
     Ensures trainer can initialize and run a training step.
@@ -40,28 +40,28 @@ def test_muzero_cartpole_smoke():
     game_config = CartPoleConfig()
     env = game_config.make_env()
 
-    config_dict = {
-        "world_model_cls": MuzeroWorldModel,
-        "representation_backbone": {"type": "dense", "widths": [64]},
-        "dynamics_backbone": {"type": "dense", "widths": [64]},
-        "prediction_backbone": {"type": "dense", "widths": [64]},
-        "num_simulations": 2,
-        "minibatch_size": 2,
-        "min_replay_buffer_size": 2,
-        "replay_buffer_size": 100,
-        "unroll_steps": 2,
-        "n_step": 2,
-        "multi_process": False,
-        "training_steps": 2,
-        "games_per_generation": 1,
-        "learning_rate": 0.001,
-        "action_function": action_as_onehot,
-        "value_loss_function": F.cross_entropy,
-        "reward_loss_function": F.cross_entropy,
-        "policy_loss_function": F.cross_entropy,
-        "support_range": 31,
-        "action_selector": {"base": {"type": "categorical"}},
-    }
+    config_dict = make_muzero_config_dict(
+        world_model_cls=MuzeroWorldModel,
+        representation_backbone={"type": "dense", "widths": [64]},
+        dynamics_backbone={"type": "dense", "widths": [64]},
+        prediction_backbone={"type": "dense", "widths": [64]},
+        num_simulations=2,
+        minibatch_size=2,
+        min_replay_buffer_size=2,
+        replay_buffer_size=100,
+        unroll_steps=2,
+        n_step=2,
+        multi_process=False,
+        training_steps=2,
+        games_per_generation=1,
+        learning_rate=0.001,
+        action_function=action_as_onehot,
+        value_loss_function=F.cross_entropy,
+        reward_loss_function=F.cross_entropy,
+        policy_loss_function=F.cross_entropy,
+        support_range=31,
+        action_selector={"base": {"type": "categorical"}},
+    )
 
     config = MuZeroConfig(config_dict, game_config)
 
@@ -80,44 +80,44 @@ def test_muzero_cartpole_smoke():
     assert trainer.training_step >= 1
 
 
-def test_muzero_tictactoe_smoke():
+def test_muzero_tictactoe_smoke(make_muzero_config_dict):
     """
     Smoke test for MuZero on TicTacToe.
     """
     game_config = TicTacToeConfig()
     env = game_config.make_env()
 
-    config_dict = {
-        "world_model_cls": MuzeroWorldModel,
-        "representation_backbone": {
+    config_dict = make_muzero_config_dict(
+        world_model_cls=MuzeroWorldModel,
+        representation_backbone={
             "type": "resnet",
             "filters": [16, 16],
             "kernel_sizes": [3, 3],
             "strides": [1, 1],
         },
-        "dynamics_backbone": {
+        dynamics_backbone={
             "type": "resnet",
             "filters": [16, 16],
             "kernel_sizes": [3, 3],
             "strides": [1, 1],
         },
-        "prediction_backbone": {"type": "dense", "widths": [64]},
-        "num_simulations": 2,
-        "minibatch_size": 2,
-        "min_replay_buffer_size": 2,
-        "replay_buffer_size": 100,
-        "unroll_steps": 2,
-        "n_step": 3,
-        "multi_process": False,
-        "training_steps": 2,
-        "games_per_generation": 1,
-        "action_function": action_as_plane,
-        "value_loss_function": F.mse_loss,
-        "reward_loss_function": F.mse_loss,
-        "policy_loss_function": F.cross_entropy,
-        "support_range": None,
-        "action_selector": {"base": {"type": "categorical"}},
-    }
+        prediction_backbone={"type": "dense", "widths": [64]},
+        num_simulations=2,
+        minibatch_size=2,
+        min_replay_buffer_size=2,
+        replay_buffer_size=100,
+        unroll_steps=2,
+        n_step=3,
+        multi_process=False,
+        training_steps=2,
+        games_per_generation=1,
+        action_function=action_as_plane,
+        value_loss_function=F.mse_loss,
+        reward_loss_function=F.mse_loss,
+        policy_loss_function=F.cross_entropy,
+        support_range=None,
+        action_selector={"base": {"type": "categorical"}},
+    )
 
     config = MuZeroConfig(config_dict, game_config)
 

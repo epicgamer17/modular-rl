@@ -19,7 +19,7 @@ from replay_buffers.buffer_factories import create_dqn_buffer
 pytestmark = pytest.mark.integration
 
 
-def test_gym_actor_rollout(make_cartpole_config):
+def test_gym_actor_rollout(make_cartpole_config, make_rainbow_config_dict):
     """
     Test real GymActor rollout for a few steps.
     """
@@ -38,22 +38,22 @@ def test_gym_actor_rollout(make_cartpole_config):
     # For Rainbow CartPole, we need a RainbowConfig structure
     from configs.agents.rainbow_dqn import RainbowConfig
 
-    rainbow_config_dict = {
-        "action_selector": {
+    rainbow_config_dict = make_rainbow_config_dict(
+        action_selector={
             "base": {"type": "epsilon_greedy", "kwargs": {"epsilon": 0.05}}
         },
-        "executor_type": "local",
-        "n_step": 3,
-        "discount_factor": 0.9,
-        "per_alpha": 0.6,
-        "per_beta_schedule": {"type": "constant", "initial": 0.4},
-        "per_epsilon": 1e-6,
-        "per_use_batch_weights": True,
-        "per_use_initial_max_priority": True,
-        "minibatch_size": 32,
-        "replay_buffer_size": 100,
-        "min_replay_buffer_size": 1,
-    }
+        executor_type="local",
+        n_step=3,
+        discount_factor=0.9,
+        per_alpha=0.6,
+        per_beta_schedule={"type": "constant", "initial": 0.4},
+        per_epsilon=1e-6,
+        per_use_batch_weights=True,
+        per_use_initial_max_priority=True,
+        minibatch_size=32,
+        replay_buffer_size=100,
+        min_replay_buffer_size=1,
+    )
     rainbow_config = RainbowConfig(rainbow_config_dict, config)
 
     network = ModularAgentNetwork(
@@ -102,7 +102,7 @@ def test_gym_actor_rollout(make_cartpole_config):
         assert isinstance(transition["done"], bool)
 
 
-def test_tester_worker_rollout(make_cartpole_config):
+def test_tester_worker_rollout(make_cartpole_config, make_rainbow_config_dict):
     """
     Test real Tester worker with StandardGymTest.
     """
@@ -116,22 +116,22 @@ def test_tester_worker_rollout(make_cartpole_config):
 
     from configs.agents.rainbow_dqn import RainbowConfig
 
-    rainbow_config_dict = {
-        "action_selector": {
+    rainbow_config_dict = make_rainbow_config_dict(
+        action_selector={
             "base": {"type": "epsilon_greedy", "kwargs": {"epsilon": 0.0}}
         },  # Greedy for testing
-        "executor_type": "local",
-        "n_step": 3,
-        "discount_factor": 0.9,
-        "per_alpha": 0.6,
-        "per_beta_schedule": {"type": "constant", "initial": 0.4},
-        "per_epsilon": 1e-6,
-        "per_use_batch_weights": True,
-        "per_use_initial_max_priority": True,
-        "minibatch_size": 32,
-        "replay_buffer_size": 100,
-        "min_replay_buffer_size": 1,
-    }
+        executor_type="local",
+        n_step=3,
+        discount_factor=0.9,
+        per_alpha=0.6,
+        per_beta_schedule={"type": "constant", "initial": 0.4},
+        per_epsilon=1e-6,
+        per_use_batch_weights=True,
+        per_use_initial_max_priority=True,
+        minibatch_size=32,
+        replay_buffer_size=100,
+        min_replay_buffer_size=1,
+    )
     rainbow_config = RainbowConfig(rainbow_config_dict, config)
 
     network = ModularAgentNetwork(

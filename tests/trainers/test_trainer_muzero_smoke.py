@@ -24,37 +24,37 @@ from configs.games.cartpole import CartPoleConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 
 
-def build_minimal_config():
+def build_minimal_config(make_muzero_config_dict):
     """Build a minimal MuZeroConfig using CartPole game."""
     game_config = CartPoleConfig()
 
-    config_dict = {
-        "training_steps": 2,
-        "min_replay_buffer_size": 1,
-        "minibatch_size": 2,
-        "num_minibatches": 1,
-        "replay_buffer_size": 50,
-        "unroll_steps": 1,
-        "n_step": 1,
-        "discount_factor": 0.99,
-        "multi_process": False,
-        "num_workers": 1,
-        "world_model_cls": MuzeroWorldModel,
-        "action_selector": {
+    config_dict = make_muzero_config_dict(
+        training_steps=2,
+        min_replay_buffer_size=1,
+        minibatch_size=2,
+        num_minibatches=1,
+        replay_buffer_size=50,
+        unroll_steps=1,
+        n_step=1,
+        discount_factor=0.99,
+        multi_process=False,
+        num_workers=1,
+        world_model_cls=MuzeroWorldModel,
+        action_selector={
             "base": {"type": "categorical", "kwargs": {"exploration": True}}
         },
-        "backbone": {"type": "dense", "widths": [16]},
-        "reward_head": {
+        backbone={"type": "dense", "widths": [16]},
+        reward_head={
             "neck": {"type": "dense", "widths": [16]},
             "output_strategy": {"type": "scalar"},
         },
-        "value_head": {
+        value_head={
             "neck": {"type": "dense", "widths": [16]},
             "output_strategy": {"type": "scalar"},
         },
-        "policy_head": {"neck": {"type": "dense", "widths": [16]}},
-        "to_play_head": {"neck": {"type": "dense", "widths": [16]}},
-    }
+        policy_head={"neck": {"type": "dense", "widths": [16]}},
+        to_play_head={"neck": {"type": "dense", "widths": [16]}},
+    )
 
     return MuZeroConfig(config_dict, game_config)
 
@@ -94,9 +94,9 @@ class MockStats:
         pass
 
 
-def test_muzero_trainer_init():
+def test_muzero_trainer_init(make_muzero_config_dict):
     print("Building config...", flush=True)
-    config = build_minimal_config()
+    config = build_minimal_config(make_muzero_config_dict)
     print("Creating environment...", flush=True)
     env = config.game.make_env()
     print("Initializing MuZeroTrainer...", flush=True)

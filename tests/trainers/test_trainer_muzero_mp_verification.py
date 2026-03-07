@@ -30,42 +30,40 @@ except Exception:
     pass
 
 
-def test_trainer_muzero_mp_verification():
+def test_trainer_muzero_mp_verification(make_muzero_config_dict):
     print("Starting verification of MuZero multiprocessing using MuZeroTrainer...")
     game_config = CartPoleConfig()
     env = game_config.make_env()
 
-    config_dict = {
-        "world_model_cls": MuzeroWorldModel,
-        "residual_layers": [],
-        "representation_dense_layer_widths": [64],
-        "dynamics_dense_layer_widths": [64],
-        "actor_dense_layer_widths": [16],
-        "critic_dense_layer_widths": [16],
-        "reward_dense_layer_widths": [16],
-        "actor_conv_layers": [],
-        "critic_conv_layers": [],
-        "reward_conv_layers": [],
-        "to_play_conv_layers": [],
-        "num_simulations": 1,
-        "minibatch_size": 1,
-        "min_replay_buffer_size": 1,
-        "replay_buffer_size": 100,
-        "unroll_steps": 1,
-        "n_step": 1,
-        "multi_process": True,
-        "num_workers": 1,
-        "training_steps": 2,
-        "games_per_generation": 1,
-        "action_function": action_as_onehot,
-        "value_loss_function": F.cross_entropy,
-        "reward_loss_function": F.cross_entropy,
-        "policy_loss_function": F.cross_entropy,
-        "support_range": 31,
-        "policy_loss_function": F.cross_entropy,
-        "support_range": 31,
-        "action_selector": {"type": "argmax", "base": {"type": "argmax"}},
-    }
+    config_dict = make_muzero_config_dict(
+        world_model_cls=MuzeroWorldModel,
+        residual_layers=[],
+        representation_dense_layer_widths=[64],
+        dynamics_dense_layer_widths=[64],
+        actor_dense_layer_widths=[16],
+        critic_dense_layer_widths=[16],
+        reward_dense_layer_widths=[16],
+        actor_conv_layers=[],
+        critic_conv_layers=[],
+        reward_conv_layers=[],
+        to_play_conv_layers=[],
+        num_simulations=1,
+        minibatch_size=1,
+        min_replay_buffer_size=1,
+        replay_buffer_size=100,
+        unroll_steps=1,
+        n_step=1,
+        multi_process=True,
+        num_workers=1,
+        training_steps=2,
+        games_per_generation=1,
+        action_function=action_as_onehot,
+        value_loss_function=F.cross_entropy,
+        reward_loss_function=F.cross_entropy,
+        policy_loss_function=F.cross_entropy,
+        support_range=31,
+        action_selector={"type": "argmax", "base": {"type": "argmax"}},
+    )
 
     config = MuZeroConfig(config_dict, game_config)
 

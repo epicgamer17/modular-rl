@@ -16,42 +16,39 @@ from configs.agents.rainbow_dqn import RainbowConfig
 from configs.games.cartpole import CartPoleConfig
 
 
-def build_minimal_config(atom_size=1):
+def build_minimal_config(make_rainbow_config_dict, atom_size=1):
     """Build a minimal RainbowConfig using CartPole game."""
     game_config = CartPoleConfig()
 
-    config_dict = {
-        "training_steps": 2,
-        "min_replay_buffer_size": 1,
-        "minibatch_size": 2,
-        "num_minibatches": 1,
-        "training_iterations": 1,
-        "replay_buffer_size": 50,
-        "multi_process": False,
-        "num_workers": 1,
-        # Simplified network architecture
-        "residual_layers": [],
-        "conv_layers": [],
-        "dense_layer_widths": [16],
-        "value_hidden_layer_widths": [16],
-        "advantage_hidden_layer_widths": [16],
-        # DQN-specific
-        "atom_size": atom_size,
-        "v_min": -10,
-        "v_max": 10,
-        "transfer_interval": 1,
-        "replay_interval": 1,
-        # Epsilon greedy schedule
-        "epsilon_schedule": {
+    config_dict = make_rainbow_config_dict(
+        training_steps=2,
+        min_replay_buffer_size=1,
+        minibatch_size=2,
+        num_minibatches=1,
+        training_iterations=1,
+        replay_buffer_size=50,
+        multi_process=False,
+        num_workers=1,
+        residual_layers=[],
+        conv_layers=[],
+        dense_layer_widths=[16],
+        value_hidden_layer_widths=[16],
+        advantage_hidden_layer_widths=[16],
+        atom_size=atom_size,
+        v_min=-10,
+        v_max=10,
+        transfer_interval=1,
+        replay_interval=1,
+        epsilon_schedule={
             "type": "linear",
             "initial": 1.0,
             "final": 0.05,
             "decay_steps": 1000,
         },
-        "action_selector": {
+        action_selector={
             "base": {"type": "epsilon_greedy", "kwargs": {"epsilon": 0.05}}
         },
-    }
+    )
 
     return RainbowConfig(config_dict, game_config)
 
@@ -97,10 +94,10 @@ class MockStats:
         pass
 
 
-def test_rainbow_trainer_init():
+def test_rainbow_trainer_init(make_rainbow_config_dict):
     """Test that RainbowTrainer initializes correctly."""
     print("Building config...", flush=True)
-    config = build_minimal_config()
+    config = build_minimal_config(make_rainbow_config_dict)
 
     print("Creating environment...", flush=True)
     env = config.game.make_env()
@@ -118,10 +115,10 @@ def test_rainbow_trainer_init():
     print("RainbowTrainer init test passed!", flush=True)
 
 
-def test_rainbow_trainer_epsilon_update():
+def test_rainbow_trainer_epsilon_update(make_rainbow_config_dict):
     """Test that epsilon is correctly updated during training."""
     print("Testing epsilon schedule...", flush=True)
-    config = build_minimal_config()
+    config = build_minimal_config(make_rainbow_config_dict)
     env = config.game.make_env()
     trainer = RainbowTrainer(config, env, torch.device("cpu"), name="test_rainbow_trainer", stats=MockStats())
 
@@ -142,10 +139,10 @@ def test_rainbow_trainer_epsilon_update():
     print("Epsilon schedule test passed!", flush=True)
 
 
-def test_rainbow_c51_training():
+def test_rainbow_c51_training(make_rainbow_config_dict):
     """Test that RainbowTrainer can run training steps with C51."""
     print("Testing C51 training loop...", flush=True)
-    config = build_minimal_config(atom_size=51)
+    config = build_minimal_config(make_rainbow_config_dict, atom_size=51)
     env = config.game.make_env()
     trainer = RainbowTrainer(config, env, torch.device("cpu"), name="test_rainbow_trainer", stats=MockStats())
 
@@ -186,10 +183,10 @@ def test_rainbow_c51_training():
     print("C51 training test passed!", flush=True)
 
 
-def test_rainbow_trainer_test_loop():
+def test_rainbow_trainer_test_loop(make_rainbow_config_dict):
     """Test that RainbowTrainer.test() runs without error."""
     print("Testing evaluation loop (test())...", flush=True)
-    config = build_minimal_config()
+    config = build_minimal_config(make_rainbow_config_dict)
     env = config.game.make_env()
     trainer = RainbowTrainer(config, env, torch.device("cpu"), name="test_rainbow_trainer", stats=MockStats())
 

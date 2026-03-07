@@ -13,7 +13,7 @@ from stats.stats import StatTracker
 pytestmark = pytest.mark.unit
 
 
-def test_learner_save_load_checkpoint(cartpole_game_config, tmp_path):
+def test_learner_save_load_checkpoint(cartpole_game_config, make_ppo_config_dict, tmp_path):
     """
     Test that the learner can save and load checkpoints correctly,
     restoring weights and training steps.
@@ -25,24 +25,22 @@ def test_learner_save_load_checkpoint(cartpole_game_config, tmp_path):
     save_dir = tmp_path / "checkpoints"
     save_dir.mkdir()
 
-    config_dict = {
-        "steps_per_epoch": 16,
-        "num_minibatches": 2,
-        "train_policy_iterations": 1,
-        "train_value_iterations": 1,
-        "learning_rate": 1e-3,
-        "clip_param": 0.2,
-        "discount_factor": 0.99,
-        "gae_lambda": 0.95,
-        "entropy_coefficient": 0.01,
-        "critic_coefficient": 0.5,
-        "action_selector": {"base": {"type": "categorical"}},
-        "clipnorm": 0.5,
-        "training_steps": 100,
-        "results_path": "results",
-        "actor_config": {"clipnorm": 0.5},
-        "critic_config": {"clipnorm": 0.5},
-    }
+    config_dict = make_ppo_config_dict(
+        steps_per_epoch=16,
+        num_minibatches=2,
+        train_policy_iterations=1,
+        train_value_iterations=1,
+        learning_rate=1e-3,
+        clip_param=0.2,
+        discount_factor=0.99,
+        gae_lambda=0.95,
+        entropy_coefficient=0.01,
+        critic_coefficient=0.5,
+        training_steps=100,
+        results_path="results",
+        actor_config={"clipnorm": 0.5},
+        critic_config={"clipnorm": 0.5},
+    )
     config = PPOConfig(config_dict, cartpole_game_config)
 
     device = torch.device("cpu")

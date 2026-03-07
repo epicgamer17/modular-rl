@@ -9,30 +9,30 @@ from agents.trainers.rainbow_trainer import RainbowTrainer
 from stats.stats import StatTracker
 
 
-def test_trainer_rainbow_training_smoke():
+def test_trainer_rainbow_training_smoke(make_rainbow_config_dict):
     # 1. Setup Config
     game_cfg = CartPoleConfig()
-    config_dict = {
-        "training_steps": 1000,
-        "min_replay_buffer_size": 100,
-        "minibatch_size": 32,
-        "num_minibatches": 2,
-        "executor_type": "local",
-        "noisy_sigma": 0.5,
-        "atom_size": 51,
-        "checkpoint_interval": 10000,
-        "save_intermediate_weights": False,
-        "epsilon_schedule": {
+    config_dict = make_rainbow_config_dict(
+        training_steps=1000,
+        min_replay_buffer_size=100,
+        minibatch_size=32,
+        num_minibatches=2,
+        executor_type="local",
+        noisy_sigma=0.5,
+        atom_size=51,
+        checkpoint_interval=10000,
+        save_intermediate_weights=False,
+        epsilon_schedule={
             "type": "linear",
             "initial": 1.0,
             "final": 0.05,
             "decay_steps": 500,
         },
-        "action_selector": {
+        action_selector={
             "type": "argmax",
             "base": {"type": "argmax"},
         },
-    }
+    )
 
     config = RainbowConfig(config_dict, game_cfg)
     device = torch.device("cpu")
