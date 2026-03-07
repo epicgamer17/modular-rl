@@ -117,49 +117,7 @@ class RainbowTrainer(BaseTrainer):
         start_time = time.time()
 
         while self.training_step < self.config.training_steps:
-            # 1. Update epsilon schedule
-            self._update_epsilon()
-
-            # 2. Broadcast weights and epsilon to workers
-            self.executor.update_weights(
-                self.agent_network.state_dict(),
-                params={"epsilon": self.learner.current_epsilon},
-            )
-
-            # 3. Wait for data to be collected
-            # The actors push directly to the buffer.
-            # We use collect_data just to retrieve their stats and sync.
-            _, collect_stats = self.executor.collect_data(
-                min_samples=None, worker_type=self.actor_cls
-            )
-
-            # 4. Log collection stats
-            for key, val in collect_stats.items():
-                self.stats.append(key, val)
-
-            # 5. Learning step
-            if self.buffer.size >= self.config.min_replay_buffer_size:
-                for _ in range(self.config.num_minibatches):
-                    loss_stats = self.learner.step(self.stats)
-                    if loss_stats:
-                        for key, val in loss_stats.items():
-                            self.stats.append(key, val)
-
-                self.training_step += 1
-
-                # 6. Update target network
-                if self.training_step % self.config.transfer_interval == 0:
-                    self.learner.update_target_network()
-
-                # 8. Periodic checkpointing
-                if self.training_step % self.checkpoint_interval == 0:
-                    self._save_checkpoint()
-
-                # 9. Periodic testing
-                if self.training_step % self.test_interval == 0:
-                    self.trigger_test(
-                        self.agent_network.state_dict(), self.training_step
-                    )
+            self.train_step()
 
             # Poll for test results
             self.poll_test()
@@ -168,7 +126,7 @@ class RainbowTrainer(BaseTrainer):
             if self.training_step % 100 == 0 and self.training_step > 0:
                 print(
                     f"Step {self.training_step}, "
-                    f"Epsilon: {self.current_epsilon:.4f}, "
+                    f"Epsilon: {self.learner.current_epsilon:.4f}, "
                     f"Buffer: {self.buffer.size}"
                 )
 
@@ -176,6 +134,49 @@ class RainbowTrainer(BaseTrainer):
         self.executor.stop()
         self._save_checkpoint()
         print("Training finished.")
+
+    def train_step(self) -> None:
+        """Single training step for Rainbow: update epsilon, collect, and optimize."""
+        # 1. Update epsilon schedule
+        self._update_epsilon()
+
+        # 2. Broadcast weights and epsilon to workers
+        self.executor.update_weights(
+            self.agent_network.state_dict(),
+            params={"epsilon": self.learner.current_epsilon},
+        )
+
+        # 3. Wait for data to be collected
+        # The actors push directly to the buffer.
+        _, collect_stats = self.executor.collect_data(
+            min_samples=None, worker_type=self.actor_cls
+        )
+
+        # 4. Log collection stats
+        for key, val in collect_stats.items():
+            self.stats.append(key, val)
+
+        # 5. Learning step
+        if self.buffer.size >= self.config.min_replay_buffer_size:
+            for _ in range(self.config.num_minibatches):
+                loss_stats = self.learner.step(self.stats)
+                if loss_stats:
+                    for key, val in loss_stats.items():
+                        self.stats.append(key, val)
+
+            self.training_step += 1
+
+            # 6. Update target network
+            if self.training_step % self.config.transfer_interval == 0:
+                self.learner.update_target_network()
+
+            # 8. Periodic checkpointing
+            if self.training_step % self.checkpoint_interval == 0:
+                self._save_checkpoint()
+
+            # 9. Periodic testing
+            if self.training_step % self.test_interval == 0:
+                self.trigger_test(self.agent_network.state_dict(), self.training_step)
 
     def _update_epsilon(self) -> None:
         """

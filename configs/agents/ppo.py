@@ -89,6 +89,7 @@ class PPOConfig(AgentConfig, DistributionalConfig, NoisyConfig):
         self.replay_buffer_size = self.parse_field(
             "replay_buffer_size", self.steps_per_epoch
         )
+        self.minibatch_size = self.parse_field("minibatch_size", self.steps_per_epoch)
 
         self.train_policy_iterations = self.parse_field("train_policy_iterations", 5)
         self.train_value_iterations = self.parse_field("train_value_iterations", 5)

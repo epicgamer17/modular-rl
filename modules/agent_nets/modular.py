@@ -197,19 +197,21 @@ class ModularAgentNetwork(BaseAgentNetwork):
         # but we can construct one or just use a simple linear layer.
         # For consistency with other modular nets, we'll try to use a PolicyHead if possible.
         from configs.modules.heads.policy import PolicyHeadConfig
-        from configs.modules.heads.neck import NeckConfig
+        from configs.modules.backbones.factory import BackboneConfigFactory
 
         # Create a default PolicyHeadConfig if not in SupervisedConfig
-        neck_config = NeckConfig({"type": "none"})
+        neck_config = BackboneConfigFactory.create({"type": "identity"})
         pol_head_config = PolicyHeadConfig(
-            {"neck": {"type": "none"}, "output_strategy": {"type": "categorical"}}
+            {"neck": {"type": "identity"}, "output_strategy": {"type": "categorical"}}
         )
 
         self.components["policy_head"] = PolicyHead(
             arch_config=config.arch,
             input_shape=current_shape,
             neck_config=neck_config,
-            strategy=OutputStrategyFactory.create({"type": "categorical"}),
+            strategy=OutputStrategyFactory.create(
+                {"type": "categorical", "num_classes": num_actions}
+            ),
         )
 
     @property

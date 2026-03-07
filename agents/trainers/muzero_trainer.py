@@ -130,43 +130,7 @@ class MuZeroTrainer(BaseTrainer):
         start_time = time.time()
 
         while self.training_step < self.config.training_steps:
-            # 1. Wait for data to be collected
-            # The actors push directly to the buffer.
-            # We use collect_data just to retrieve their stats and sync.
-            _, collect_stats = self.executor.collect_data(
-                min_samples=None, worker_type=self.actor_cls
-            )
-
-            # 2. Log collection stats
-            for key, val in collect_stats.items():
-                self.stats.append(key, val)
-
-            # 3. Learning step
-            # Learner.step samples from buffer and performs optimization
-            if self.buffer.size >= self.config.min_replay_buffer_size:
-                for _ in range(self.config.num_minibatches):
-                    loss_stats = self.learner.step(self.stats)
-                    if loss_stats:
-                        for key, val in loss_stats.items():
-                            self.stats.append(key, val)
-
-                self.training_step += 1
-
-                # 5. Update workers (if needed)
-                # In TorchMP with shared memory, this might be a no-op if using the same model instance.
-                # But we follow the pattern for consistency.
-                if self.training_step % self.config.transfer_interval == 0:
-                    self.executor.update_weights(self.agent_network.state_dict())
-
-                # 6. Periodic checkpointing
-                if self.training_step % self.checkpoint_interval == 0:
-                    self._save_checkpoint()
-
-                # 7. Periodic testing
-                if self.training_step % self.test_interval == 0:
-                    self.trigger_test(
-                        self.agent_network.state_dict(), self.training_step
-                    )
+            self.train_step()
 
             # Poll for background test results
             self.poll_test()
@@ -183,6 +147,40 @@ class MuZeroTrainer(BaseTrainer):
         # Final checkpoint and stats plot
         self._save_checkpoint()
         print("Training finished.")
+
+    def train_step(self):
+        """Single training step for MuZero: collect data and perform optimization."""
+        # 1. Wait for data to be collected
+        # The actors push directly to the buffer.
+        _, collect_stats = self.executor.collect_data(
+            min_samples=None, worker_type=self.actor_cls
+        )
+
+        # 2. Log collection stats
+        for key, val in collect_stats.items():
+            self.stats.append(key, val)
+
+        # 3. Learning step
+        if self.buffer.size >= self.config.min_replay_buffer_size:
+            for _ in range(self.config.num_minibatches):
+                loss_stats = self.learner.step(self.stats)
+                if loss_stats:
+                    for key, val in loss_stats.items():
+                        self.stats.append(key, val)
+
+            self.training_step += 1
+
+            # 5. Update workers (if needed)
+            if self.training_step % self.config.transfer_interval == 0:
+                self.executor.update_weights(self.agent_network.state_dict())
+
+            # 6. Periodic checkpointing
+            if self.training_step % self.checkpoint_interval == 0:
+                self._save_checkpoint()
+
+            # 7. Periodic testing
+            if self.training_step % self.test_interval == 0:
+                self.trigger_test(self.agent_network.state_dict(), self.training_step)
 
     def _save_checkpoint(self) -> None:
         """Saves MuZero checkpoint."""

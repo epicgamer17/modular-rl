@@ -8,10 +8,11 @@ trigger: "When writing, modifying, debugging, running, or analyzing tests, or wh
 
 # Testing Standards & Practices
 
-### 1. The "No Mocks" Rule (Real Code Paths Only)
-* **STRICTLY AVOID dummy/mock configurations.** Never use `MagicMock`, fake dictionaries, or ad-hoc mock objects for game configs or network parameters.
-* **Use Real Configs:** Centralize configuration setups in `tests/conftest.py` using fixtures that return real objects (e.g., `CartPoleConfig`, `RainbowConfig`).
-* **Factory Fixtures:** For tests needing slightly altered settings, inject the factory fixture (e.g., `make_cartpole_config(**overrides)`) which safely returns a deep copy of a base config with your overrides, ensuring no global state mutation.
+### 1. Strict Configuration Injection (No Inline Dicts)
+* **STRICTLY AVOID inline dummy/mock configurations.** Never manually define configuration dictionaries (e.g., `config = {"batch_size": 2}`) or ad-hoc mock objects directly inside a test function. This leads to missing required fields and `KeyError`s.
+* **Use Real Configs:** If a test requires a full configuration object, centralize the setup in `tests/conftest.py` using fixtures that return real objects (e.g., `CartPoleConfig`, `RainbowConfig`).
+* **Use Factory Fixtures for Dicts:** If a component explicitly requires a configuration dictionary, you MUST inject the appropriate factory fixture (e.g., `make_ppo_config_dict`, `make_muzero_config_dict`, `make_rainbow_config_dict`) from `conftest.py`. 
+* **Safe Overrides:** Call the factory fixture to get your dictionary, passing only the parameters you explicitly need to test as kwargs (e.g., `config = make_muzero_config_dict(batch_size=1024, num_simulations=5)`). This guarantees all other required fields are safely populated with valid defaults.
 
 ### 2. Strict Pytest Markers (MANDATORY)
 * Every single test file MUST declare a module-level pytest marker at the very top of the file, just below the imports. 
@@ -31,7 +32,6 @@ trigger: "When writing, modifying, debugging, running, or analyzing tests, or wh
 ### 4. Pure Pytest & State Isolation
 * **No `unittest`:** Do not use `unittest.TestCase` classes. Write standalone, flat test functions using standard Python `assert a == b`.
 * **No Global Mutations:** Do not mutate class attributes globally to set up a test. If specific attributes need changing, use Pytest's built-in `monkeypatch` fixture to safely and temporarily override them.
-* **No `if __name__ == "__main__":`:** STRICTLY FORBIDDEN to include main blocks in test files. Tests should only be run via the `pytest` CLI.
 * **Determinism:** For tests with stochastic elements (e.g., policy distributions, MCTS), enforce strict determinism by explicitly setting `torch.manual_seed(42)` and `np.random.seed(42)`. Assert exact tensor values using `torch.allclose()`.
 
 ### 5. Search First & Preserve vs. Create
@@ -51,4 +51,3 @@ trigger: "When writing, modifying, debugging, running, or analyzing tests, or wh
 - [ ] Did I add the module-level marker (e.g., `pytestmark = pytest.mark.unit`) at the very top of the file?
 - [ ] Did I set `torch.manual_seed(42)` and `np.random.seed(42)` if the test involves sampling or neural networks?
 - [ ] Is the test using pure `pytest` functions (no `unittest.TestCase`) and standard `assert` statements?
-- [ ] Did I ensure NO `if __name__ == "__main__":` block exists in the test file?

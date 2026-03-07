@@ -109,136 +109,7 @@ class PPOTrainer(BaseTrainer):
         completed_lengths = []
 
         while self.training_step < self.config.training_steps:
-            # 1. Broadcast weights to workers
-            self.executor.update_weights(self.agent_network.state_dict())
-
-            # 2. Collect trajectory data (steps_per_epoch transitions)
-            steps_collected = 0
-            trajectory_start_index = 0
-
-            while steps_collected < self.config.steps_per_epoch:
-                with torch.no_grad():
-                    # Get state from environment
-                    state, info = self._env.reset()
-                    done = False
-                    current_episode_score = 0.0
-                    current_episode_length = 0
-
-                    while not done and steps_collected < self.config.steps_per_epoch:
-                        # Compute action and value
-                        # action, log_prob, value = self.policy.compute_action_with_info(state, info)
-                        obs_tensor = torch.tensor(
-                            state, dtype=torch.float32, device=self.device
-                        )
-                        action, metadata = self.action_selector.select_action(
-                            agent_network=self.agent_network,
-                            obs=obs_tensor,
-                            info=info,
-                            exploration=True,
-                        )
-
-                        log_prob = metadata.get("log_prob")
-                        value = metadata.get("value")
-
-                        assert (
-                            log_prob is not None
-                        ), f"log_prob is None. Metadata: {metadata}"
-                        assert value is not None, f"value is None. Metadata: {metadata}"
-
-                        action_val = action.item()
-
-                        # Environment step
-                        next_state, reward, terminated, truncated, next_info = (
-                            self._env.step(action_val)
-                        )
-                        done = terminated or truncated
-
-                        # Store transition
-                        self.learner.replay_buffer.store(
-                            observations=state,
-                            actions=action_val,
-                            values=float(
-                                value.item() if torch.is_tensor(value) else value
-                            ),
-                            log_probabilities=float(
-                                log_prob.item()
-                                if torch.is_tensor(log_prob)
-                                else log_prob
-                            ),
-                            rewards=reward,
-                            info=info,
-                        )
-
-                        state = next_state
-                        info = next_info
-                        current_episode_score += reward
-                        current_episode_length += 1
-                        steps_collected += 1
-
-                        if done:
-                            completed_scores.append(current_episode_score)
-                            completed_lengths.append(current_episode_length)
-                            # reset for next episode in same epoch
-                            current_episode_score = 0.0
-                            current_episode_length = 0
-
-                    # Finish trajectory with bootstrap value
-                    if done:
-                        last_value = 0.0
-                    else:
-                        with torch.inference_mode():
-                            obs = self.learner.preprocess(state)
-                            out = self.agent_network.obs_inference(obs)
-                            last_value = out.value.item()
-
-                    trajectory_end_index = self.learner.replay_buffer.size
-                    trajectory_slice = slice(
-                        trajectory_start_index, trajectory_end_index
-                    )
-
-                    if trajectory_end_index > trajectory_start_index:
-                        input_processor = self.learner.replay_buffer.input_processor
-                        result = input_processor.finish_trajectory(
-                            self.learner.replay_buffer.buffers,
-                            trajectory_slice,
-                            last_value=last_value,
-                        )
-                        if result:
-                            for key, value in result.items():
-                                self.learner.replay_buffer.buffers[key][
-                                    trajectory_slice
-                                ] = value
-
-                    trajectory_start_index = trajectory_end_index
-
-            # Log collection stats
-            if completed_scores:
-                for s, l in zip(completed_scores, completed_lengths):
-                    self.stats.append("score", float(s))
-                    self.stats.append("episode_length", float(l))
-
-                # Print diagnostics
-                if self.training_step % 10 == 0:
-                    avg_score = float(np.mean(completed_scores))
-                    print(
-                        f"Step {self.training_step}, "
-                        f"Avg Score: {avg_score:.2f}, "
-                        f"Episodes Finished: {len(completed_scores)}"
-                    )
-
-                # Clear for next stats reporting window
-                completed_scores = []
-                completed_lengths = []
-            else:
-                avg_score = 0.0
-
-            # 3. Learning step
-            loss_stats = self.learner.step(self.stats, self.training_step)
-            if loss_stats:
-                for key, val in loss_stats.items():
-                    self.stats.append(key, val)
-
-            self.training_step += 1
+            self.train_step()
 
             # 4. Periodic checkpointing
             if self.training_step % self.checkpoint_interval == 0:
@@ -253,11 +124,9 @@ class PPOTrainer(BaseTrainer):
 
             # Periodic logging
             if self.training_step % 10 == 0:
-                print(
-                    f"Step {self.training_step}, "
-                    f"Avg Score: {avg_score:.2f}, "
-                    f"Episodes Finished: {len(completed_scores)}"
-                )
+                # We'll need a way to get avg_score if we want to keep this print here.
+                # For now, just print the step.
+                print(f"Step {self.training_step}")
 
             # Drain stats queue to avoid deadlock if workers are logging
             if hasattr(self.stats, "drain_queue"):
@@ -267,6 +136,120 @@ class PPOTrainer(BaseTrainer):
         # stop_test() already calls executor.stop() and sets it to None
         self._save_checkpoint()
         print("Training finished.")
+
+    def train_step(self) -> None:
+        """
+        Single training step for PPO: collects a full epoch of data and optimizes.
+        """
+        # 1. Broadcast weights to workers
+        self.executor.update_weights(self.agent_network.state_dict())
+
+        # 2. Collect trajectory data (steps_per_epoch transitions)
+        steps_collected = 0
+        trajectory_start_index = 0
+        completed_scores = []
+        completed_lengths = []
+
+        while steps_collected < self.config.steps_per_epoch:
+            with torch.no_grad():
+                # Get state from environment
+                state, info = self._env.reset()
+                done = False
+                current_episode_score = 0.0
+                current_episode_length = 0
+
+                while not done and steps_collected < self.config.steps_per_epoch:
+                    obs_tensor = torch.tensor(
+                        state, dtype=torch.float32, device=self.device
+                    )
+                    action, metadata = self.action_selector.select_action(
+                        agent_network=self.agent_network,
+                        obs=obs_tensor,
+                        info=info,
+                        exploration=True,
+                    )
+
+                    log_prob = metadata.get("log_prob")
+                    value = metadata.get("value")
+
+                    assert (
+                        log_prob is not None
+                    ), f"log_prob is None. Metadata: {metadata}"
+                    assert value is not None, f"value is None. Metadata: {metadata}"
+
+                    action_val = action.item()
+
+                    # Environment step
+                    next_state, reward, terminated, truncated, next_info = (
+                        self._env.step(action_val)
+                    )
+                    done = terminated or truncated
+
+                    # Store transition
+                    self.learner.replay_buffer.store(
+                        observations=state,
+                        actions=action_val,
+                        values=float(value.item() if torch.is_tensor(value) else value),
+                        log_probabilities=float(
+                            log_prob.item() if torch.is_tensor(log_prob) else log_prob
+                        ),
+                        rewards=reward,
+                        info=info,
+                    )
+
+                    state = next_state
+                    info = next_info
+                    current_episode_score += reward
+                    current_episode_length += 1
+                    steps_collected += 1
+
+                    if done:
+                        completed_scores.append(current_episode_score)
+                        completed_lengths.append(current_episode_length)
+                        # reset for next episode in same epoch
+                        current_episode_score = 0.0
+                        current_episode_length = 0
+
+                # Finish trajectory with bootstrap value
+                if done:
+                    last_value = 0.0
+                else:
+                    with torch.inference_mode():
+                        obs = self.learner.preprocess(state)
+                        out = self.agent_network.obs_inference(obs)
+                        last_value = out.value.item()
+
+                trajectory_end_index = self.learner.replay_buffer.size
+                trajectory_slice = slice(trajectory_start_index, trajectory_end_index)
+
+                if trajectory_end_index > trajectory_start_index:
+                    input_processor = self.learner.replay_buffer.input_processor
+                    result = input_processor.finish_trajectory(
+                        self.learner.replay_buffer.buffers,
+                        trajectory_slice,
+                        last_value=last_value,
+                    )
+                    if result:
+                        for key, value in result.items():
+                            self.learner.replay_buffer.buffers[key][
+                                trajectory_slice
+                            ] = value
+
+                trajectory_start_index = trajectory_end_index
+
+        # Log collection stats
+        if completed_scores:
+            for s, l in zip(completed_scores, completed_lengths):
+                self.stats.append("score", float(s))
+                self.stats.append("episode_length", float(l))
+
+        # 3. Learning step
+        loss_stats = self.learner.step(self.stats, self.training_step)
+        if loss_stats:
+            for key, val in loss_stats.items():
+                self.stats.append(key, val)
+
+        self.training_step += 1
 
     def _save_checkpoint(self) -> None:
         """
