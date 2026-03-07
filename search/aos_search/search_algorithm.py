@@ -2,7 +2,7 @@ import torch
 from search.aos_search.search_factories import build_search_pipeline
 
 
-class SearchAlgorithm:
+class ModularSearch:
     def __init__(self, config, device, num_actions):
         self.config = config
         self.device = device

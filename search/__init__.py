@@ -103,7 +103,7 @@ def _load_cpp_backend_module():
 def configure_backend(config: Any = None, backend: str | None = None) -> str:
     """Configure the active search backend."""
 
-    global SearchAlgorithm
+    global ModularSearch
     global MinMaxStats
     global _active_backend
     global _cpp_module
@@ -115,7 +115,7 @@ def configure_backend(config: Any = None, backend: str | None = None) -> str:
     if requested == "cpp":
         try:
             module = _load_cpp_backend_module()
-            SearchAlgorithm = module.SearchAlgorithm
+            ModularSearch = module.ModularSearch
             MinMaxStats = module.MinMaxStats
             _cpp_module = module
             _active_backend = "cpp"
@@ -128,19 +128,19 @@ def configure_backend(config: Any = None, backend: str | None = None) -> str:
             )
 
     if requested == "aos":
-        from .aos_search.search_algorithm import SearchAlgorithm as _AosSearchAlgorithm
+        from .aos_search.search_algorithm import ModularSearch as _AosModularSearch
         from .aos_search.min_max_stats import VectorizedMinMaxStats as _AosMinMaxStats
 
-        SearchAlgorithm = _AosSearchAlgorithm
+        ModularSearch = _AosModularSearch
         MinMaxStats = _AosMinMaxStats
         _cpp_module = None
         _active_backend = "aos"
         return requested
 
-    from .search_py.modular_search import SearchAlgorithm as _PySearchAlgorithm
+    from .search_py.modular_search import ModularSearch as _PyModularSearch
     from .search_py.min_max_stats import MinMaxStats as _PyMinMaxStats
 
-    SearchAlgorithm = _PySearchAlgorithm
+    ModularSearch = _PyModularSearch
     MinMaxStats = _PyMinMaxStats
     _cpp_module = None
     _active_backend = "python"
@@ -158,7 +158,7 @@ def get_backend_name() -> str:
 
 
 def __getattr__(name: str) -> Any:
-    if name in {"SearchAlgorithm", "MinMaxStats"}:
+    if name in {"ModularSearch", "MinMaxStats"}:
         if _active_backend is None:
             configure_backend()
         return globals()[name]
@@ -166,7 +166,7 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
-    "SearchAlgorithm",
+    "ModularSearch",
     "MinMaxStats",
     "configure_backend",
     "set_backend",

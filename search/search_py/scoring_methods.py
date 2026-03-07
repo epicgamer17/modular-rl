@@ -1,6 +1,5 @@
 import torch
 import torch.nn.functional as F
-import numpy as np
 from math import sqrt, log
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any, List, Callable

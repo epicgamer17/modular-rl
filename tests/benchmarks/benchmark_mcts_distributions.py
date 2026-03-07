@@ -7,7 +7,7 @@ import time
 import torch
 import torch.nn as nn
 from types import SimpleNamespace
-from search.modular_search import SearchAlgorithm
+from search.modular_search import ModularSearch
 from modules.agent_nets.modular import ModularAgentNetwork
 from configs.agents.muzero import MuZeroConfig
 from search.search_selectors import SelectionStrategy
@@ -101,7 +101,7 @@ class MockDist:
 
 
 # Distribution Bypass Components
-class NoDistSearchAlgorithm(SearchAlgorithm):
+class NoDistModularSearch(ModularSearch):
     def _dist_for_batch_index(self, policy_dist, index: int):
         logits = policy_dist.logits
         if logits is None:
@@ -116,7 +116,7 @@ class NoDistSearchAlgorithm(SearchAlgorithm):
         return SimpleNamespace(logits=batch_logits.detach().cpu())
 
 
-original_run = SearchAlgorithm.run
+original_run = ModularSearch.run
 
 
 def run_no_dist(
@@ -155,7 +155,7 @@ def run_test_case(agent_network, batch_size, use_dist, num_steps=50):
     if use_dist:
         search_algo = std_algo
     else:
-        search_algo = NoDistSearchAlgorithm(
+        search_algo = NoDistModularSearch(
             config,
             device,
             num_actions,
@@ -172,7 +172,7 @@ def run_test_case(agent_network, batch_size, use_dist, num_steps=50):
             std_algo.backpropagator,
         )
         # Use our patched run
-        search_algo.run = run_no_dist.__get__(search_algo, NoDistSearchAlgorithm)
+        search_algo.run = run_no_dist.__get__(search_algo, NoDistModularSearch)
 
     # Monkey-patch PolicyHead if using bypass
     from modules.heads.policy import PolicyHead

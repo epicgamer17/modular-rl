@@ -1,10 +1,12 @@
 import pytest
+
 pytestmark = pytest.mark.unit
 
 import math
 import torch
-from search.nodes import DecisionNode
-from search.min_max_stats import MinMaxStats
+from search.nodes import DecisionNode, ChanceNode
+import numpy as np
+
 
 def make_search_path(path_config):
     """
@@ -38,7 +40,10 @@ def make_search_path(path_config):
 
     return search_path, leaf_to_play, leaf_value
 
-def backpropagate_method_canonical(search_path, to_play, value, num_players, min_max_stats, discount=1.0):
+
+def backpropagate_method_canonical(
+    search_path, to_play, value, num_players, min_max_stats, discount=1.0
+):
     """
     O(n) discounted backpropagation with correct sign handling for repeated same-player turns.
     Migrated from method 3 in the notebook.
@@ -62,7 +67,7 @@ def backpropagate_method_canonical(search_path, to_play, value, num_players, min
         node.visits += 1
 
         if i > 0:
-            r_i = node.reward # Search path stores node reward which is incoming
+            r_i = node.reward  # Search path stores node reward which is incoming
             acting_player = search_path[i - 1].to_play
             for p in range(num_players):
                 sign = 1.0 if acting_player == p else -1.0
@@ -79,6 +84,7 @@ def backpropagate_method_canonical(search_path, to_play, value, num_players, min
         min_max_stats.update(parent_value_contrib)
 
     return [node.value() for node in search_path], min_max_stats
+
 
 test_cases = [
     (
@@ -228,17 +234,34 @@ test_cases = [
     ),
 ]
 
+
 @pytest.mark.parametrize("path_config, expected, num_players, description", test_cases)
 def test_muzero_backprop(path_config, expected, num_players, description):
+    # Reset class attributes to ensure isolation from other tests
+    DecisionNode.stochastic = False
+    DecisionNode.discount = 1.0
+    DecisionNode.bootstrap_method = "network_value"
+    DecisionNode.use_value_prefix = False
+    ChanceNode.discount = 1.0
+    ChanceNode.bootstrap_method = "network_value"
+    ChanceNode.use_value_prefix = False
+
+    torch.manual_seed(42)
+    np.random.seed(42)
     search_path, leaf_to_play, leaf_value = make_search_path(path_config)
+    from search.min_max_stats import MinMaxStats
+
     min_max_stats = MinMaxStats(known_bounds=[-1, 1])
-    
+
     results, _ = backpropagate_method_canonical(
         search_path, leaf_to_play, leaf_value, num_players, min_max_stats
     )
-    
+
     for r, e in zip(results, expected):
-        assert math.isclose(r, e, abs_tol=1e-5), f"Failed {description}: expected {expected}, got {results}"
+        assert math.isclose(
+            r, e, abs_tol=1e-5
+        ), f"Failed {description}: expected {expected}, got {results}"
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

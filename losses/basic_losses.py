@@ -177,7 +177,7 @@ class StandardDQNLossModule:
             * max_q_next
         )
 
-        elementwise = self.config.loss_function(selected_q, targets)
+        elementwise = self.config.loss_function(selected_q, targets, reduction="none")
         weights = _resolve_weights(batch, self.device, batch_size)
         loss = (elementwise * weights).mean()
         return loss, elementwise

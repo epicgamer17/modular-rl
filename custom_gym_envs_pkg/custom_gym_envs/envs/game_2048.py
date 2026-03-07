@@ -11,7 +11,6 @@ from typing import Any, List
 import imageio
 import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
-import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import torch
 from easydict import EasyDict

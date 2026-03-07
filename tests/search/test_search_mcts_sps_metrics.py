@@ -1,35 +1,47 @@
 import pytest
+
 pytestmark = pytest.mark.integration
 
 import time
 import torch
+from types import SimpleNamespace
 from typing import Any, Dict, List, Tuple, Type, Optional
 from agents.action_selectors.decorators import MCTSDecorator
 from agents.action_selectors.selectors import CategoricalSelector
 from agents.workers.actors import BaseActor
 from replay_buffers.sequence import Sequence
 from utils.schedule import ScheduleConfig
+import numpy as np
 
 
-class MockSearch:
+class MockModularSearch:
     def __init__(self, num_sims):
         self.num_sims = num_sims
+        self.config = SimpleNamespace(num_simulations=num_sims)
 
     def run(self, obs, info, to_play, agent_network, exploration=True):
         # Simulate some search time
         time.sleep(0.01)
         # Return dummy values - uniform policy
         policy = torch.ones(9) / 9
-        return 0.0, policy, policy, 0, {"sims": self.num_sims}
+        return (
+            0.0,
+            policy,
+            policy,
+            0,
+            {"mcts_simulations": self.num_sims, "mcts_search_time": 0.01},
+        )
 
     def run_vectorized(self, obs, info, to_play, agent_network):
         # Simulate some search time
         time.sleep(0.01)
         B = obs.shape[0]
         policy = torch.ones(B, 9) / 9
-        # In the real system, sm['sims'] is per-tree, but MCTSDecorator
-        # overwrites it with total_sims.
-        sm_list = [{"sims": self.num_sims} for _ in range(B)]
+        # In the real system, sm['mcts_simulations'] is per-tree
+        sm_list = [
+            {"mcts_simulations": self.num_sims, "mcts_search_time": 0.01}
+            for _ in range(B)
+        ]
         return (
             [0.0] * B,
             [torch.ones(9) / 9] * B,
@@ -45,6 +57,7 @@ class MockConfig:
         self.temperature_schedule = ScheduleConfig.stepwise(
             steps=[5], values=[1.0, 0.0]
         )
+        self.compilation = SimpleNamespace(enabled=False, fullgraph=False)
 
 
 class MockActor(BaseActor):
@@ -68,10 +81,12 @@ class MockActor(BaseActor):
 
 
 def test_sps_metrics_propagation():
+    torch.manual_seed(42)
+    np.random.seed(42)
     """Verifies that MCTSDecorator provides simulations and search time."""
     num_sims = 100
     config = MockConfig(num_sims)
-    search = MockSearch(num_sims)
+    search = MockModularSearch(num_sims)
     inner = CategoricalSelector()
     decorator = MCTSDecorator(inner, search, config)
 

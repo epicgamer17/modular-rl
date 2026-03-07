@@ -19,6 +19,7 @@ from modules.projectors.sim_siam import Projector
 from configs.agents.muzero import MuZeroConfig
 from configs.agents.ppo import PPOConfig
 from configs.agents.rainbow_dqn import RainbowConfig
+from configs.agents.supervised import SupervisedConfig
 
 
 class ModularAgentNetwork(BaseAgentNetwork):
@@ -53,6 +54,8 @@ class ModularAgentNetwork(BaseAgentNetwork):
             self._init_ppo(config, input_shape, num_actions, **kwargs)
         elif isinstance(config, RainbowConfig):
             self._init_rainbow(config, input_shape, num_actions, **kwargs)
+        elif isinstance(config, SupervisedConfig):
+            self._init_sl(config, input_shape, num_actions, **kwargs)
         else:
             raise ValueError(
                 f"Unsupported config type for ModularAgentNetwork: {type(config)}"
@@ -176,6 +179,39 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 neck_config=config.head.neck,
             )
 
+    def _init_sl(
+        self,
+        config: SupervisedConfig,
+        input_shape: Tuple[int, ...],
+        num_actions: int,
+        **kwargs,
+    ):
+        """Initializes components for supervised learning/imitation."""
+        # Simple policy head based on backbone
+        self.components["feature_block"] = BackboneFactory.create(
+            config.backbone, input_shape
+        )
+        current_shape = self.components["feature_block"].output_shape
+
+        # We use a basic policy head. SupervisedConfig might not have a full PolicyHeadConfig,
+        # but we can construct one or just use a simple linear layer.
+        # For consistency with other modular nets, we'll try to use a PolicyHead if possible.
+        from configs.modules.heads.policy import PolicyHeadConfig
+        from configs.modules.heads.neck import NeckConfig
+
+        # Create a default PolicyHeadConfig if not in SupervisedConfig
+        neck_config = NeckConfig({"type": "none"})
+        pol_head_config = PolicyHeadConfig(
+            {"neck": {"type": "none"}, "output_strategy": {"type": "categorical"}}
+        )
+
+        self.components["policy_head"] = PolicyHead(
+            arch_config=config.arch,
+            input_shape=current_shape,
+            neck_config=neck_config,
+            strategy=OutputStrategyFactory.create({"type": "categorical"}),
+        )
+
     @property
     def device(self) -> torch.device:
         return (
@@ -263,6 +299,18 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 q_values=q_vals,
                 policy=self.components["q_head"].strategy.get_distribution(Q),
             )
+
+        # ----------------------------------------
+        # Supervised/Imitation Logic
+        # ----------------------------------------
+        elif "policy_head" in self.components:
+            # If we only have a policy head (and maybe a feature block)
+            x = obs
+            if "feature_block" in self.components:
+                x = self.components["feature_block"](obs)
+
+            logits, _, dist = self.components["policy_head"](x)
+            return InferenceOutput(policy=dist)
 
         else:
             raise NotImplementedError(
@@ -385,6 +433,17 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 q_values=q_vals,
                 q_logits=Q,
             )
+
+        # ----------------------------------------
+        # Supervised/Imitation Logic
+        # ----------------------------------------
+        elif "policy_head" in self.components and "value_head" not in self.components:
+            # SL path
+            x = initial_observation
+            if "feature_block" in self.components:
+                x = self.components["feature_block"](initial_observation)
+            logits, _, _ = self.components["policy_head"](x)
+            return LearningOutput(policies=logits)
 
         else:
             raise NotImplementedError(

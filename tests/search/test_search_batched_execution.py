@@ -1,4 +1,5 @@
 import pytest
+
 pytestmark = pytest.mark.integration
 
 import torch
@@ -6,7 +7,7 @@ import torch.nn as nn
 from modules.agent_nets.modular import ModularAgentNetwork
 from configs.agents.muzero import MuZeroConfig
 from configs.games.tictactoe import TicTacToeConfig
-from search.modular_search import SearchAlgorithm
+from search import ModularSearch
 from search.search_selectors import TopScoreSelection, SamplingSelection
 from search.scoring_methods import UCBScoring, PriorScoring
 from search.backpropogation import AverageDiscountedReturnBackpropagator
@@ -16,6 +17,10 @@ from search.pruners import NoPruning
 
 
 def test_batched_search():
+    import numpy as np
+
+    torch.manual_seed(42)
+    np.random.seed(42)
     # 1. Setup minimal MuZero components
     game_config = TicTacToeConfig()
     config_dict = {
@@ -41,7 +46,7 @@ def test_batched_search():
     model = ModularAgentNetwork(config, input_shape, num_actions)
 
     # 2. Setup Search Algorithm
-    search = SearchAlgorithm(
+    search = ModularSearch(
         config=config,
         device=device,
         num_actions=num_actions,

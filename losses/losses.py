@@ -2,7 +2,6 @@ import torch
 import torch.nn.functional as F
 from abc import ABC, abstractmethod
 from typing import Dict, Optional, Tuple, Union
-import numpy as np
 from modules.world_models.inference_output import InferenceOutput
 
 

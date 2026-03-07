@@ -1,8 +1,8 @@
 import pytest
+
 pytestmark = pytest.mark.integration
 
 import torch
-import numpy as np
 import os
 import matplotlib.pyplot as plt
 from stats.stats import StatTracker

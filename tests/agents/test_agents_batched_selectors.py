@@ -1,8 +1,8 @@
 import pytest
+
 pytestmark = pytest.mark.unit
 
 import torch
-import numpy as np
 from agents.action_selectors.selectors import (
     CategoricalSelector,
     EpsilonGreedySelector,
@@ -58,7 +58,9 @@ def test_epsilon_greedy_batched_exploration():
     # Re-create output for large batch
     large_output = InferenceOutput(q_values=large_q)
 
-    actions, _ = selector.select_action(network, None, info=info, network_output=large_output)
+    actions, _ = selector.select_action(
+        network, None, info=info, network_output=large_output
+    )
 
     # If it was not independent, all actions would be the same (either all greedy or all same random)
     # Since it uses torch.rand(batch_size), they should vary.

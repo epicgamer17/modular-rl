@@ -1,6 +1,6 @@
 """Functional search pipeline factory for the vectorized FlatTree MCTS.
 
-Replaces the OOP ``create_mcts`` factory (which wired up ``SearchAlgorithm``
+Replaces the OOP ``create_mcts`` factory (which wired up ``ModularSearch``
 full of strategy-class instances) with ``build_search_pipeline``, which
 selects pure functions at construction time and returns a single
 ``run_mcts`` callable that owns the complete search lifecycle.

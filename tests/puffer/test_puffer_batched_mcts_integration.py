@@ -1,4 +1,5 @@
 import pytest
+
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 import torch
@@ -54,7 +55,7 @@ class MockSearchConfig:
     min_max_epsilon: float = 1e-6
 
 
-class MockSearchAlgorithm:
+class MockModularSearch:
     def __init__(self, config):
         self.config = config
 
@@ -123,7 +124,7 @@ def make_mock_env():
 def test_batched_mcts_puffer():
     config = MockSearchConfig()
     net = MockNetwork()
-    search = MockSearchAlgorithm(config)
+    search = MockModularSearch(config)
     inner_sel = ArgmaxSelector()
     mcts_sel = MCTSDecorator(inner_sel, search, config)
     buf = MockBuffer()

@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 import torch
-import numpy as np
 
 from search.utils import (
     calculate_gumbel_sigma,

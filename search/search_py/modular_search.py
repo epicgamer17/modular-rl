@@ -19,7 +19,7 @@ from search.pruners import PruningMethod
 from modules.agent_nets.base import BaseAgentNetwork
 
 
-class SearchAlgorithm:
+class ModularSearch:
     def __init__(
         self,
         config,
@@ -503,16 +503,38 @@ class SearchAlgorithm:
         # 1. SELECTION PHASE
         # ---------------------------------------------------------------------
         # We descend until we hit a leaf DecisionNode OR a ChanceNode that needs a new code.
+        node, search_path, action_path, action_or_code = self._select_child(
+            node,
+            search_path,
+            action_path,
+            min_max_stats,
+            current_sim_idx,
+            pruning_context,
+        )
+        if node is None:
+            return
+
+        parent = search_path[-2]
+        value, to_play = self._expand_node(node, parent, action_or_code, agent_network)
+
+        self._backpropagate(search_path, action_path, value, to_play, min_max_stats)
+
+    def _select_child(
+        self,
+        node,
+        search_path,
+        action_path,
+        min_max_stats,
+        current_sim_idx,
+        pruning_context,
+    ):
         while True:
             if not node.expanded():
-                break  # Reached a leaf state (DecisionNode)
+                break
 
             # If we've reached the maximum search depth, stop descending.
             # search_path already contains the root at index 0, so len(search_path) - 1 is the current depth.
-            if (
-                getattr(self.config, "max_search_depth", None) is not None
-                and (len(search_path) - 1) >= self.config.max_search_depth
-            ):
+            if (len(search_path) - 1) >= self.config.max_search_depth:
                 break
                 # Decision -> Select Action -> ChanceNode
 
@@ -528,7 +550,7 @@ class SearchAlgorithm:
                 pruning_context["root"] = next_state
                 # TODO: EARLY STOPPING CLASSES
                 if pruned_searchset is not None and len(pruned_searchset) == 0:
-                    return  # Stop this simulation
+                    return None, search_path, action_path, None
 
                 action_or_code, node = self.root_selection_strategy.select_child(
                     node,
@@ -552,7 +574,7 @@ class SearchAlgorithm:
 
                     # TODO: EARLY STOPPING CLASSES
                     if pruned_searchset is not None and len(pruned_searchset) == 0:
-                        return  # Stop this simulation
+                        return None, search_path, action_path, None
 
                     pruning_context["internal"][node] = next_state
                     action_or_code, node = (
@@ -572,9 +594,9 @@ class SearchAlgorithm:
             search_path.append(node)
             action_path.append(action_or_code)
 
-        parent = search_path[-2]
-        # if to_play != old_to_play and self.training_step > 1000:
-        #     print("WRONG TO PLAY", onehot_to_play)
+        return node, search_path, action_path, action_or_code
+
+    def _expand_node(self, node, parent, action_or_code, agent_network):
         if node.is_decision:
             if parent.is_decision:
                 outputs: InferenceOutput = agent_network.hidden_state_inference(
@@ -692,7 +714,11 @@ class SearchAlgorithm:
                 network_value=value,
                 code_probs=code_probs[0],
             )
+            to_play = parent.to_play
 
+        return value, to_play
+
+    def _backpropagate(self, search_path, action_path, value, to_play, min_max_stats):
         self.backpropagator.backpropagate(
             search_path, action_path, value, to_play, min_max_stats, self.config
         )

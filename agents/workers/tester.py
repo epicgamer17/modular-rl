@@ -226,6 +226,8 @@ class Tester:
     Fulfills the 'Actor' contract used by Executors (implemented play_sequence).
     """
 
+    __test__ = False
+
     def __init__(
         self,
         env_factory,

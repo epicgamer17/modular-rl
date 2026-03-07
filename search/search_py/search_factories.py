@@ -4,7 +4,7 @@ from search.backpropogation import (
     MinimaxBackpropagator,
 )
 from search.initial_searchsets import SelectAll, SelectTopK
-from search.modular_search import SearchAlgorithm
+from search.search_py.modular_search import ModularSearch
 from search.pruners import SequentialHalvingPruning, NoPruning, AlphaBetaPruning
 from search.prior_injectors import (
     ActionTargetInjector,
@@ -26,9 +26,9 @@ from search.scoring_methods import (
 )
 
 
-def create_mcts(config, device, num_actions) -> SearchAlgorithm:
+def create_mcts(config, device, num_actions) -> ModularSearch:
     if config.gumbel:
-        return SearchAlgorithm(
+        return ModularSearch(
             config,
             device,
             num_actions,
@@ -45,7 +45,7 @@ def create_mcts(config, device, num_actions) -> SearchAlgorithm:
             backpropagator=AverageDiscountedReturnBackpropagator(),
         )
     else:
-        return SearchAlgorithm(
+        return ModularSearch(
             config,
             device,
             num_actions,
@@ -61,7 +61,7 @@ def create_mcts(config, device, num_actions) -> SearchAlgorithm:
             internal_pruning_method=NoPruning(),
             backpropagator=AverageDiscountedReturnBackpropagator(),
         )
-        # return SearchAlgorithm(
+        # return ModularSearch(
         #     config=config,
         #     device=device,
         #     num_actions=num_actions,

@@ -115,7 +115,7 @@ class ImitationLearner(BaseLearner):
         observations = batch["observations"].to(self.device)
         targets = batch["target_policies"].to(self.device)
 
-        inf_out = self.agent_network.initial_inference(observations)
+        inf_out = self.agent_network.obs_inference(observations)
         predictions = inf_out.policy.logits
 
         with torch.inference_mode():

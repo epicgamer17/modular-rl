@@ -1,4 +1,5 @@
 import pytest
+
 pytestmark = pytest.mark.unit
 
 import torch
@@ -7,6 +8,7 @@ from search.aos_search.min_max_stats import VectorizedMinMaxStats as AOSMinMaxSt
 
 
 def test_py_search_soft_min_max():
+    torch.manual_seed(42)
     # Hard min-max (default epsilon)
     stats_hard = PyMinMaxStats(known_bounds=[0.0, 0.1], epsilon=1e-8)
     # Soft min-max (EfficientZero epsilon)
@@ -37,6 +39,7 @@ def test_py_search_soft_min_max():
 
 
 def test_aos_search_soft_min_max():
+    torch.manual_seed(42)
     device = torch.device("cpu")
     # Hard min-max
     stats_hard = AOSMinMaxStats.allocate(

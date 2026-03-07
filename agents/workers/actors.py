@@ -1,6 +1,5 @@
 import time
 import torch
-import numpy as np
 from typing import Any, Callable, Dict, Optional, Tuple
 from abc import ABC, abstractmethod
 

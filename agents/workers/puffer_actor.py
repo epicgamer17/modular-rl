@@ -6,7 +6,6 @@ and pivot the data from horizontal batches back into vertical, chronological Seq
 """
 
 import torch
-import numpy as np
 import time
 from typing import Callable, Any, Optional, Tuple, Dict, List
 from abc import abstractmethod

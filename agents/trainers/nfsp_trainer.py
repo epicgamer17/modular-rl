@@ -4,15 +4,18 @@ from typing import Optional, List, Dict, Any, Tuple
 
 from agents.trainers.base_trainer import BaseTrainer
 from agents.learners.nfsp_learner import NFSPLearner
-from agents.policies.nfsp_policy import NFSPPolicy
-from agents.action_selectors.selectors import EpsilonGreedySelector, CategoricalSelector
+from agents.action_selectors.selectors import (
+    EpsilonGreedySelector,
+    CategoricalSelector,
+    NFSPSelector,
+)
 from agents.workers.actors import get_actor_class
 from agents.executors.local_executor import LocalExecutor
 from agents.executors.torch_mp_executor import TorchMPExecutor
 from replay_buffers.transition import TransitionBatch, Transition
 from modules.agent_nets.modular import ModularAgentNetwork
-from modules.agent_nets.policy_imitation import SupervisedNetwork
 from stats.stats import StatTracker, PlotType
+import numpy as np
 
 
 class NFSPTrainer(BaseTrainer):
@@ -63,9 +66,9 @@ class NFSPTrainer(BaseTrainer):
         self.br_target_agent_network.load_state_dict(clean_state, strict=False)
 
         # SL Network (Average Strategy)
-        self.avg_agent_network = SupervisedNetwork(
+        self.avg_agent_network = ModularAgentNetwork(
             config=sl_config,
-            output_size=num_actions,
+            num_actions=num_actions,
             input_shape=obs_dim,  # Exclude batch dim
         ).to(self.device)
 
@@ -75,18 +78,22 @@ class NFSPTrainer(BaseTrainer):
             self.avg_agent_network.share_memory()
 
         # Action Selectors
-        self.br_selector = EpsilonGreedy(epsilon=rl_config.eg_epsilon)
-        self.avg_selector = CategoricalSelector(from_logits=False)
+        self.br_selector = EpsilonGreedySelector(epsilon=rl_config.eg_epsilon)
+        self.avg_selector = CategoricalSelector(exploration=True)
 
-        # Policy (shared networks mode)
-        self.policy = NFSPPolicy(
-            best_response_agent_network=self.br_agent_network,
-            average_agent_network=self.avg_agent_network,
-            best_response_selector=self.br_selector,
-            average_selector=self.avg_selector,
-            device=self.device,
+        # Networks dict for the selector
+        self.networks = torch.nn.ModuleDict(
+            {
+                "best_response": self.br_agent_network,
+                "average_strategy": self.avg_agent_network,
+            }
+        )
+
+        # NFSP Selector (shared networks mode)
+        self.selector = NFSPSelector(
+            br_selector=self.br_selector,
+            avg_selector=self.avg_selector,
             eta=self.config.anticipatory_param,
-            player_ids=self.player_ids,
         )
 
         # Single learner for all players
@@ -110,7 +117,9 @@ class NFSPTrainer(BaseTrainer):
 
         worker_args = (
             self.config.game.make_env,
-            self.policy,
+            self.networks,
+            self.selector,
+            None,  # Replay Buffer (handled by executor)
             self.num_players,
             self.config,
             self.device,
@@ -128,7 +137,7 @@ class NFSPTrainer(BaseTrainer):
         # Per-player networks
         self.br_agent_networks: Dict[str, ModularAgentNetwork] = {}
         self.br_target_agent_networks: Dict[str, ModularAgentNetwork] = {}
-        self.avg_agent_networks: Dict[str, SupervisedNetwork] = {}
+        self.avg_agent_networks: Dict[str, ModularAgentNetwork] = {}
         self.learners: Dict[str, NFSPLearner] = {}
 
         for player_id in self.player_ids:
@@ -150,9 +159,9 @@ class NFSPTrainer(BaseTrainer):
             br_target_agent_network.load_state_dict(clean_state, strict=False)
 
             # AVG Network
-            avg_agent_network = SupervisedNetwork(
+            avg_agent_network = ModularAgentNetwork(
                 config=sl_config,
-                output_size=num_actions,
+                num_actions=num_actions,
                 input_shape=obs_dim,  # Exclude batch dim
             ).to(self.device)
 
@@ -177,17 +186,22 @@ class NFSPTrainer(BaseTrainer):
                 observation_dtype=self.obs_dtype,
             )
 
-        # Action Selectors (shared)
-        self.br_selector = EpsilonGreedy(epsilon=rl_config.eg_epsilon)
-        self.avg_selector = CategoricalSelector(from_logits=False)
+        # Action Selectors
+        self.br_selector = EpsilonGreedySelector(epsilon=rl_config.eg_epsilon)
+        self.avg_selector = CategoricalSelector(exploration=True)
 
-        # Policy (separate networks mode)
-        self.policy = NFSPPolicy(
-            best_response_agent_networks=self.br_agent_networks,
-            average_agent_networks=self.avg_agent_networks,
-            best_response_selector=self.br_selector,
-            average_selector=self.avg_selector,
-            device=self.device,
+        # Networks dict for selector
+        self.networks = torch.nn.ModuleDict(
+            {
+                "best_response": torch.nn.ModuleDict(self.br_agent_networks),
+                "average_strategy": torch.nn.ModuleDict(self.avg_agent_networks),
+            }
+        )
+
+        # NFSP Selector (separate networks mode)
+        self.selector = NFSPSelector(
+            br_selector=self.br_selector,
+            avg_selector=self.avg_selector,
             eta=self.config.anticipatory_param,
         )
 
@@ -199,7 +213,9 @@ class NFSPTrainer(BaseTrainer):
 
         worker_args = (
             self.config.game.make_env,
-            self.policy,
+            self.networks,
+            self.selector,
+            None,  # Replay Buffer (handled by executor)
             self.num_players,
             self.config,
             self.device,
@@ -211,7 +227,7 @@ class NFSPTrainer(BaseTrainer):
 
     def train(self) -> None:
         """Main training loop."""
-        self._setup_stats()
+        self.setup()
 
         print(f"Starting NFSP training for {self.config.training_steps} steps...")
         print(
@@ -221,28 +237,7 @@ class NFSPTrainer(BaseTrainer):
         last_log_time = time.time()
 
         while self.training_step < self.config.training_steps:
-            # 1. Update worker weights and parameters
-            self._update_worker_weights()
-
-            # 2. Collect data from workers
-            sequences, collection_stats = self.executor.collect_data(
-                min_samples=self.config.replay_interval,
-                worker_type=self.actor_cls,
-            )
-
-            # Log collection stats
-            for key, val in collection_stats.items():
-                self.stats.append(key, val)
-
-            # 3. Store transitions
-            for sequence in sequences:
-                self._store_sequence_transitions(sequence)
-
-            # 4. Learning step
-            for _ in range(self.config.num_minibatches):
-                self._learning_step()
-
-            self.training_step += 1
+            self.train_step()
 
             # Periodic logging
             if self.training_step % 10 == 0:
@@ -274,6 +269,31 @@ class NFSPTrainer(BaseTrainer):
         self.executor.stop()
         self._save_checkpoint()
         print("Training finished.")
+
+    def train_step(self):
+        """Single training step: collect data and perform optimization."""
+        # 1. Update worker weights and parameters
+        self._update_worker_weights()
+
+        # 2. Collect data from workers
+        sequences, collection_stats = self.executor.collect_data(
+            min_samples=self.config.replay_interval,
+            worker_type=self.actor_cls,
+        )
+
+        # Log collection stats
+        for key, val in collection_stats.items():
+            self.stats.append(key, val)
+
+        # 3. Store transitions
+        for sequence in sequences:
+            self._store_sequence_transitions(sequence)
+
+        # 4. Learning step
+        for _ in range(self.config.num_minibatches):
+            self._learning_step()
+
+        self.training_step += 1
 
     def _update_worker_weights(self):
         """Update worker weights based on mode."""

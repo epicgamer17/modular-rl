@@ -53,6 +53,10 @@ class BaseTrainer:
         self._tester_launched = False
         self._tester_step = 0
 
+    def setup(self):
+        """Initializes stats and any other setup required before training."""
+        self._setup_stats()
+
     def setup_tester(self):
         """Initializes the Tester using the TestFactory and launched via an Executor."""
         from agents.workers.tester import TestFactory, Tester

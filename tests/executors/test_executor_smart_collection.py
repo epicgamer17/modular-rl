@@ -1,9 +1,9 @@
 import pytest
+
 pytestmark = pytest.mark.integration
 
 import torch
 import torch.nn as nn
-import numpy as np
 import time
 from typing import Optional, Any
 from agents.executors.local_executor import LocalExecutor

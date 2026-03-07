@@ -1,8 +1,8 @@
 import pytest
+
 pytestmark = pytest.mark.unit
 
 import torch
-import numpy as np
 from modules.world_models.inference_output import LearningOutput
 from replay_buffers.processors import NStepUnrollProcessor
 

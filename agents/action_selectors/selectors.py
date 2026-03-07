@@ -275,3 +275,72 @@ class ArgmaxSelector(BaseActionSelector):
 
         action = values.argmax(dim=-1)
         return action, {}
+
+
+class NFSPSelector(BaseActionSelector):
+    """
+    NFSPSelector manages the selection between Best Response (RL)
+    and Average Strategy (SL) policies based on the anticipatory parameter (eta).
+    """
+
+    def __init__(
+        self,
+        br_selector: BaseActionSelector,
+        avg_selector: BaseActionSelector,
+        eta: float = 0.1,
+    ):
+        self.br_selector = br_selector
+        self.avg_selector = avg_selector
+        self.eta = eta
+
+    def select_action(
+        self,
+        agent_network: Union[torch.nn.Module, Dict[str, torch.nn.Module]],
+        obs: Any,
+        info: Optional[Dict[str, Any]] = None,
+        network_output: Optional[Any] = None,
+        exploration: Optional[bool] = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+
+        # Decide which policy to use
+        # eta = P(Best Response)
+        import random
+
+        should_use_br = random.random() < self.eta
+
+        # Handle agent_network as a dict or ModuleDict
+        if isinstance(agent_network, (dict, torch.nn.ModuleDict)):
+            br_net = agent_network["best_response"]
+            avg_net = agent_network["average_strategy"]
+
+            # If nested (separate networks per player)
+            player_id = kwargs.get("player_id")
+            if player_id is not None:
+                if isinstance(br_net, (dict, torch.nn.ModuleDict)):
+                    br_net = br_net[player_id]
+                if isinstance(avg_net, (dict, torch.nn.ModuleDict)):
+                    avg_net = avg_net[player_id]
+        else:
+            # Fallback for single network (not typical for NFSP but good for robust testing)
+            br_net = agent_network
+            avg_net = agent_network
+
+        if should_use_br:
+            action, metadata = self.br_selector.select_action(
+                br_net, obs, info, exploration=exploration, **kwargs
+            )
+            metadata["policy_used"] = "best_response"
+        else:
+            action, metadata = self.avg_selector.select_action(
+                avg_net, obs, info, exploration=exploration, **kwargs
+            )
+            metadata["policy_used"] = "average_strategy"
+
+        return action, metadata
+
+    def update_parameters(self, params: Dict[str, Any]) -> None:
+        if "eta" in params:
+            self.eta = float(params["eta"])
+        self.br_selector.update_parameters(params)
+        self.avg_selector.update_parameters(params)

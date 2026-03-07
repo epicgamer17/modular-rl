@@ -1,7 +1,6 @@
 import argparse
 import os
 import torch
-import numpy as np
 import yaml
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, Type

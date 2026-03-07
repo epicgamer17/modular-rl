@@ -1,4 +1,5 @@
 import pytest
+
 pytestmark = pytest.mark.unit
 
 import torch
@@ -26,6 +27,7 @@ class MockNetwork:
 
 
 def test_node_visit_invariant_collision():
+    torch.manual_seed(42)
     """Test that node_visits correctly reflects edge visits even with collisions."""
     B = 1
     num_actions = 4

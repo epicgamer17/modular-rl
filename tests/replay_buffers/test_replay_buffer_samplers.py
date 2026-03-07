@@ -1,8 +1,11 @@
 import pytest
+
 pytestmark = pytest.mark.unit
 
 import torch
-import numpy as np
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from replay_buffers.samplers import PrioritizedSampler
 from replay_buffers.concurrency import LocalBackend
 
@@ -54,3 +57,38 @@ def test_prioritized_sampler_clear():
     sampler.clear()
     assert sampler.sum_tree.sum(0, 3) == 0
     assert sampler.max_priority == 1.0
+
+
+@settings(max_examples=50, deadline=None)
+@given(capacity_exp=st.integers(min_value=1, max_value=7), data=st.data())
+def test_prioritized_sampler_tree_invariants_property(capacity_exp, data):
+    max_size = 2**capacity_exp
+    buffer_size = data.draw(st.integers(min_value=1, max_value=max_size))
+    priorities = data.draw(
+        st.lists(
+            st.floats(
+                min_value=1e-4,
+                max_value=100.0,
+                allow_nan=False,
+                allow_infinity=False,
+                allow_subnormal=False,
+            ),
+            min_size=buffer_size,
+            max_size=buffer_size,
+        )
+    )
+
+    sampler = PrioritizedSampler(max_size, backend=LocalBackend())
+    for idx, priority in enumerate(priorities):
+        sampler.on_store(idx, priority=priority)
+
+    transformed = torch.tensor(
+        [float(priority) ** sampler.alpha for priority in priorities],
+        dtype=torch.float32,
+    )
+
+    total_priority = sampler.sum_tree.sum(0, max_size - 1)
+    minimum_priority = sampler.min_tree.min(0, max_size - 1)
+
+    assert torch.allclose(total_priority, transformed.sum(), atol=1e-4, rtol=1e-5)
+    assert torch.allclose(minimum_priority, transformed.min(), atol=1e-4, rtol=1e-5)

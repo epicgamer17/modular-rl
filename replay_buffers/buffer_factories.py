@@ -293,8 +293,6 @@ def create_muzero_buffer(
     obs_shape = observation_dimensions
 
     if observation_compression:
-        import numpy as np
-
         obs_size = int(np.prod(observation_dimensions))
         if observation_quantization == "float16":
             obs_bytes = obs_size * 2

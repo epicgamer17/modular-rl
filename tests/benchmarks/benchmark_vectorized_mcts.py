@@ -6,11 +6,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import time
 import torch
 import torch.nn as nn
-from search.modular_search import SearchAlgorithm
+from search.modular_search import ModularSearch
 from modules.agent_nets.modular import ModularAgentNetwork
 from configs.agents.muzero import MuZeroConfig
 from configs.games.game import GameConfig
 from search.search_factories import create_mcts
+
 
 class TicTacToeGameConfig(GameConfig):
     def __init__(self):
@@ -27,6 +28,7 @@ class TicTacToeGameConfig(GameConfig):
             num_actions=9,
             make_env=lambda: None,
         )
+
 
 def get_muzero_config(search_batch_size=0):
     game_config = TicTacToeGameConfig()
@@ -57,49 +59,58 @@ def get_muzero_config(search_batch_size=0):
     }
     return MuZeroConfig(config_dict, game_config)
 
+
 def run_benchmark_vectorized(agent_network, search_algo, env_batch_size, num_steps=50):
     batched_obs = torch.zeros(env_batch_size, 3, 3, 3)
     batched_info = {"legal_moves": [[list(range(9))] for _ in range(env_batch_size)]}
     batched_to_play = [0] * env_batch_size
-    
+
     # Warmup
     for _ in range(2):
-        search_algo.run_vectorized(batched_obs, batched_info, batched_to_play, agent_network)
-        
+        search_algo.run_vectorized(
+            batched_obs, batched_info, batched_to_play, agent_network
+        )
+
     start_time = time.time()
     for _ in range(num_steps):
-        search_algo.run_vectorized(batched_obs, batched_info, batched_to_play, agent_network)
+        search_algo.run_vectorized(
+            batched_obs, batched_info, batched_to_play, agent_network
+        )
     end_time = time.time()
-    
+
     duration = end_time - start_time
     # Total simulations = num_steps * env_batch_size * num_simulations
     fps = (num_steps * env_batch_size * 25) / duration
     return fps, duration
+
 
 def main():
     device = torch.device("cpu")
     base_config = get_muzero_config()
     input_shape = (3, 3, 3)
     num_actions = 9
-    
+
     agent_network = ModularAgentNetwork(base_config, input_shape, num_actions)
     agent_network.eval()
-    
+
     test_cases = [
         {"env_batch_size": 1, "search_batch_size": 0, "label": "Env_1_Search_0"},
         {"env_batch_size": 1, "search_batch_size": 5, "label": "Env_1_Search_5"},
         {"env_batch_size": 16, "search_batch_size": 0, "label": "Env_16_Search_0"},
         {"env_batch_size": 16, "search_batch_size": 5, "label": "Env_16_Search_5"},
     ]
-    
+
     print(f"{'Configuration':<25} | {'Sims/sec':<10} | {'Duration':<10}")
     print("-" * 50)
-    
+
     for case in test_cases:
         config = get_muzero_config(search_batch_size=case["search_batch_size"])
         search_algo = create_mcts(config, device, num_actions)
-        sps, duration = run_benchmark_vectorized(agent_network, search_algo, case["env_batch_size"])
+        sps, duration = run_benchmark_vectorized(
+            agent_network, search_algo, case["env_batch_size"]
+        )
         print(f"{case['label']:<25} | {sps:<10.2f} | {duration:<10.4f}s")
+
 
 if __name__ == "__main__":
     main()

@@ -3,7 +3,6 @@ import argparse
 from pathlib import Path
 import matplotlib.cm as cm
 import matplotlib.colors as colors
-import numpy as np
 
 from search.nodes import DecisionNode, ChanceNode
 except ImportError as e:

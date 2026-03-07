@@ -1,4 +1,5 @@
 import pytest
+
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 import torch
@@ -112,7 +113,7 @@ def config():
         backprop_method="average",
         scoring_method="ucb",
         known_bounds=None,
-        use_sequential_halving=True,
+        use_sequential_halving=False,
         gumbel_m=2,
         bootstrap_method="parent_value",
         soft_update=False,
@@ -121,6 +122,53 @@ def config():
         search_batch_size=0,
         virtual_loss=1.0,
         use_virtual_mean=False,
+        compilation=SimpleNamespace(enabled=False, fullgraph=False),
+        internal_decision_modifier="none",
+        internal_chance_modifier="none",
+        stochastic_exploration=False,
+        sampling_temp=1.0,
+    )
+
+
+def get_config():
+    return SimpleNamespace(
+        pb_c_init=1.25,
+        pb_c_base=19652,
+        discount_factor=0.99,
+        gumbel=False,
+        gumbel_cvisit=50.0,
+        gumbel_cscale=1.0,
+        game=SimpleNamespace(num_players=1),
+        use_value_prefix=False,
+        num_simulations=10,
+        num_codes=1,
+        max_search_depth=50,
+        max_nodes=100,
+        use_dirichlet=False,
+        dirichlet_alpha=0.3,
+        dirichlet_fraction=0.25,
+        root_dirichlet_alpha_adaptive=True,
+        root_dirichlet_alpha=0.3,
+        root_exploration_fraction=0.25,
+        injection_frac=0.1,
+        policy_extraction="visit_count",
+        backprop_method="average",
+        scoring_method="ucb",
+        known_bounds=None,
+        use_sequential_halving=False,
+        gumbel_m=2,
+        bootstrap_method="parent_value",
+        soft_update=False,
+        min_max_epsilon=1e-8,
+        stochastic=False,
+        search_batch_size=0,
+        virtual_loss=1.0,
+        use_virtual_mean=False,
+        compilation=SimpleNamespace(enabled=False, fullgraph=False),
+        internal_decision_modifier="none",
+        internal_chance_modifier="none",
+        stochastic_exploration=False,
+        sampling_temp=1.0,
     )
 
 
@@ -400,7 +448,6 @@ def test_full_search_ucb_parity(config):
     config.scoring_method = "ucb"
     config.policy_extraction = "visit_count"
     config.bootstrap_method = "network_value"
-    config.bootstrap_method = "network_value"
     config.use_value_prefix = False
     config.known_bounds = [0.0, 2.0]
 
@@ -418,7 +465,7 @@ def test_full_search_ucb_parity(config):
 
     torch.manual_seed(42)
     np.random.seed(42)
-    aos_output = run_mcts(obs, info, net)
+    aos_output = run_mcts(obs, info, torch.tensor([0], dtype=torch.int8), net)
 
     torch.manual_seed(42)
     np.random.seed(42)
@@ -439,7 +486,6 @@ def test_full_search_gumbel_parity(config):
     config.use_sequential_halving = True
     config.gumbel_m = 2
     config.bootstrap_method = "v_mix"
-    config.bootstrap_method = "v_mix"
     config.use_value_prefix = False
     config.known_bounds = [0.0, 2.0]
 
@@ -457,7 +503,7 @@ def test_full_search_gumbel_parity(config):
 
     torch.manual_seed(42)
     np.random.seed(42)
-    aos_output = run_mcts(obs, info, net)
+    aos_output = run_mcts(obs, info, torch.tensor([0], dtype=torch.int8), net)
 
     torch.manual_seed(42)
     np.random.seed(42)
@@ -512,7 +558,7 @@ def test_full_search_stochastic_parity(config):
 
     torch.manual_seed(42)
     np.random.seed(42)
-    aos_output = run_mcts(obs, info, net)
+    aos_output = run_mcts(obs, info, torch.tensor([0], dtype=torch.int8), net)
 
     torch.manual_seed(42)
     np.random.seed(42)
@@ -548,7 +594,7 @@ def test_extreme_value_clipping_parity(config):
 
     torch.manual_seed(77)
     np.random.seed(77)
-    aos_output = run_mcts(obs, info, net)
+    aos_output = run_mcts(obs, info, torch.tensor([0], dtype=torch.int8), net)
 
     torch.manual_seed(77)
     np.random.seed(77)
@@ -579,7 +625,7 @@ def test_variable_batch_sizes(config):
 
     torch.manual_seed(123)
     np.random.seed(123)
-    aos_output = run_mcts(obs, info, net)
+    aos_output = run_mcts(obs, info, torch.tensor([0], dtype=torch.int8), net)
 
     # Mock Python search specifically against index 0 properties
     torch.manual_seed(123)
@@ -610,9 +656,11 @@ def test_zero_valid_actions_parity(config):
     mcts_py = create_mcts(config, device, num_actions)
 
     torch.manual_seed(42)
-    aos_output = run_mcts(obs, info, net)
+    np.random.seed(42)
+    aos_output = run_mcts(obs, info, torch.tensor([0], dtype=torch.int8), net)
 
     torch.manual_seed(42)
+    np.random.seed(42)
     py_val, py_expl, py_target, py_best, py_meta = mcts_py.run(obs[0], py_info, 0, net)
 
     assert torch.allclose(aos_output.target_policy[0], py_target, atol=1e-5)
@@ -660,7 +708,7 @@ def test_deep_horizon_discounting(config):
 
     torch.manual_seed(55)
     np.random.seed(55)
-    aos_output = run_mcts(obs, info, net)
+    aos_output = run_mcts(obs, info, torch.tensor([0], dtype=torch.int8), net)
 
     torch.manual_seed(55)
     np.random.seed(55)

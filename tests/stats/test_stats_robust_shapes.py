@@ -1,8 +1,8 @@
 import pytest
+
 pytestmark = pytest.mark.unit
 
 import torch
-import numpy as np
 import os
 from stats.stats import StatTracker, PlotType
 
