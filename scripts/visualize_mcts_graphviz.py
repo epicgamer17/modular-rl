@@ -5,15 +5,6 @@ import matplotlib.cm as cm
 import matplotlib.colors as colors
 
 from search.nodes import DecisionNode, ChanceNode
-except ImportError as e:
-    print(f"Error: Could not import repository modules. {e}")
-
-    # We will define dummy classes for the mock example if imports fail
-    class DecisionNode:
-        pass
-
-    class ChanceNode:
-        pass
 
 
 def visualize_mcts(root, output_path="stats/mcts_tree", max_depth=5):

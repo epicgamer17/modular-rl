@@ -48,9 +48,8 @@ class TransformerBackbone(nn.Module):
         return x[:, -1, :]  # Return last token's representation
 
     def initialize(self, initializer: torch.Tensor) -> None:
-        # Standard transformer init using xavier_uniform
-        for p in self.parameters():
+        for name, p in self.named_parameters():
             if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
-            elif "bias" in p:
-                nn.init.constant_(p, 0)
+                initializer(p)
+            elif "bias" in name:
+                nn.init.zeros_(p)

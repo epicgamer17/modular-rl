@@ -29,6 +29,10 @@ class DenseResidualBlock(nn.Module):
         else:
             initializer(self.linear.layer.weight)
 
+    def reset_noise(self) -> None:
+        if hasattr(self.linear, "reset_noise"):
+            self.linear.reset_noise()
+
 
 class DenseResNetBackbone(nn.Module):
     """DenseResNet backbone implementation (MLP with residual connections)."""
@@ -94,3 +98,7 @@ class DenseResNetBackbone(nn.Module):
         for layer in self.layers:
             if hasattr(layer, "reset_noise"):
                 layer.reset_noise()
+            elif isinstance(layer, nn.Sequential):
+                for sublayer in layer:
+                    if hasattr(sublayer, "reset_noise"):
+                        sublayer.reset_noise()

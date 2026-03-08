@@ -158,32 +158,19 @@ class SamplingSelection(SelectionStrategy):
             if self.temperature == 0:
                 action = torch.argmax(scores).item()
             else:
-                # If scores are PROBABILITIES (PriorScoring), we normalize.
-                # If scores are LOGITS (Gumbel?), we softmax.
-                # PriorScoring returns priors (probs).
-                # GumbelScoring returns 'scores' which are shifted logits?
-                # The original code assumed:
-                # probs = scores / scores.sum()
+                probs = scores.clone()
+                # FIX: Clamp to 0.0 to prevent masked actions (-1e18) from causing negative probabilities
+                probs = probs.clamp(min=0.0)
 
-                # We assume scores are strictly positive probabilities or quasi-probabilities here
-                # unless logic dictates otherwise.
-                # For Gumbel, we usually pick Top 1. Sampling with Gumbel is specific.
-
-                # Safe handling:
-                # values can be negative?
-                # If PriorScoring, values are probs [0,1].
-
-                probs = scores
                 if self.temperature != 1.0:
-                    # apply temp to probs? probs^(1/T)
-                    # safeguard against negative or zero
+                    # Apply temperature scaling
                     probs = torch.pow(probs.clamp(min=1e-8), 1.0 / self.temperature)
 
-                # Normalize
-                probs = probs / probs.sum()
+                # Safe Normalization
+                sum_probs = probs.sum()
+                probs = probs / sum_probs
 
                 action = torch.multinomial(probs, 1).item()
-
             return action, node.get_child(action)
 
         elif isinstance(node, ChanceNode):
