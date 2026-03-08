@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Union, Tuple
 from modules.agent_nets.modular import ModularAgentNetwork
 from agents.action_selectors.selectors import BaseActionSelector
 from configs.base import Config
+from replay_buffers.modular_buffer import ModularReplayBuffer
 
 
 class NetworkAgent:
@@ -233,7 +234,7 @@ class Tester:
         env_factory,
         agent_network: ModularAgentNetwork,
         action_selector: BaseActionSelector,
-        replay_buffer: Any,
+        replay_buffer: ModularReplayBuffer,
         num_players: int,  # For compatibility with standard actor launch args
         config: Config,
         device: torch.device,

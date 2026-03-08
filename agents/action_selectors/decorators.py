@@ -4,6 +4,8 @@ import torch
 from agents.action_selectors.selectors import BaseActionSelector
 from torch.distributions import Categorical
 from utils.schedule import create_schedule, Schedule
+from modules.world_models.inference_output import InferenceOutput
+from search import ModularSearch
 
 
 class PPODecorator(BaseActionSelector):
@@ -20,7 +22,7 @@ class PPODecorator(BaseActionSelector):
         agent_network: torch.nn.Module,
         obs: Any,
         info: Optional[Dict[str, Any]] = None,
-        network_output: Optional[Any] = None,
+        network_output: Optional[InferenceOutput] = None,
         exploration: Optional[bool] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
@@ -72,7 +74,10 @@ class MCTSDecorator(BaseActionSelector):
     """
 
     def __init__(
-        self, inner_selector: BaseActionSelector, search_algorithm: Any, config: Any
+        self,
+        inner_selector: BaseActionSelector,
+        search_algorithm: ModularSearch,
+        config: Any,
     ):
         self.inner_selector = inner_selector
         self.search = search_algorithm
@@ -113,9 +118,7 @@ class MCTSDecorator(BaseActionSelector):
         agent_network: torch.nn.Module,
         obs: Any,
         info: Optional[Dict[str, Any]] = None,
-        network_output: Optional[
-            Any
-        ] = None,  # Not used for MCTS usually, as MCTS does its own inference calls
+        network_output: Optional[InferenceOutput] = None,
         exploration: Optional[bool] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:

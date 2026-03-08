@@ -5,6 +5,8 @@ from abc import ABC, abstractmethod
 
 from replay_buffers.sequence import Sequence
 from agents.action_selectors.selectors import BaseActionSelector
+from replay_buffers.modular_buffer import ModularReplayBuffer
+from modules.agent_nets.modular import ModularAgentNetwork
 from utils.wrappers import wrap_recording
 
 
@@ -17,9 +19,9 @@ class BaseActor(ABC):
     def __init__(
         self,
         env_factory: Callable[[], Any],
-        agent_network: Any,
+        agent_network: ModularAgentNetwork,
         action_selector: BaseActionSelector,
-        replay_buffer: Any,
+        replay_buffer: ModularReplayBuffer,
         num_players: Optional[int] = None,
         config: Optional[Any] = None,
         device: Optional[torch.device] = None,

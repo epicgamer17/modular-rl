@@ -14,6 +14,9 @@ import pufferlib.vector
 from replay_buffers.sequence import Sequence
 from agents.workers.actors import BaseActor
 from utils.wrappers import AECSequentialWrapper
+from replay_buffers.modular_buffer import ModularReplayBuffer
+from modules.agent_nets.modular import ModularAgentNetwork
+from agents.action_selectors.selectors import BaseActionSelector
 
 
 def _make_puffer_env(env_factory, buf=None, seed=None):
@@ -43,9 +46,9 @@ class BasePufferActor(BaseActor):
     def __init__(
         self,
         env_factory: Callable[[], Any],
-        agent_network: Any,
-        action_selector: Any,
-        replay_buffer: Any,
+        agent_network: ModularAgentNetwork,
+        action_selector: BaseActionSelector,
+        replay_buffer: ModularReplayBuffer,
         num_players: int,
         config: Any,
         device: Optional[torch.device] = None,

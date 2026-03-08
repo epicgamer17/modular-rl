@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Tuple, Union
 import torch
 import numpy as np
+from modules.world_models.inference_output import InferenceOutput
 
 # Constant for default epsilon
 DEFAULT_EPSILON = 0.05
@@ -15,7 +16,7 @@ class BaseActionSelector(ABC):
         agent_network: torch.nn.Module,
         obs: Any,
         info: Optional[Dict[str, Any]] = None,
-        network_output: Optional[Any] = None,
+        network_output: Optional[InferenceOutput] = None,
         exploration: Optional[bool] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
@@ -94,7 +95,7 @@ class CategoricalSelector(BaseActionSelector):
         agent_network,
         obs,
         info: Optional[Dict[str, Any]] = None,
-        network_output: Optional[Any] = None,
+        network_output: Optional[InferenceOutput] = None,
         exploration: Optional[bool] = None,
         **kwargs,
     ):
@@ -156,7 +157,7 @@ class EpsilonGreedySelector(BaseActionSelector):
         agent_network,
         obs,
         info: Optional[Dict[str, Any]] = None,
-        network_output: Optional[Any] = None,
+        network_output: Optional[InferenceOutput] = None,
         exploration: Optional[bool] = None,
         **kwargs,
     ):
@@ -298,7 +299,7 @@ class NFSPSelector(BaseActionSelector):
         agent_network: Union[torch.nn.Module, Dict[str, torch.nn.Module]],
         obs: Any,
         info: Optional[Dict[str, Any]] = None,
-        network_output: Optional[Any] = None,
+        network_output: Optional[InferenceOutput] = None,
         exploration: Optional[bool] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
