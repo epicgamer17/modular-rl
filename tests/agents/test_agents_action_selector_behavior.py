@@ -26,7 +26,7 @@ class MockPolicyDist:
         return torch.log(self.probs.gather(-1, action.unsqueeze(-1)).squeeze(-1))
 
 
-class MockNetworkOutput:
+class MockInferenceOutput:
     def __init__(self, value=None, policy=None, logits=None):
         self.value = value
         self.policy = policy

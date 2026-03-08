@@ -31,12 +31,6 @@ class MuZeroNetworkState(NamedTuple):
             wm_memory = None
         elif isinstance(wm_mem_list[0], tuple):
             # E.g. LSTM states: (h_n, c_n), each shape [num_layers, batch, hidden]
-            # Since we expand MCTS states, we usually stack along the batch dim (dim=1)
-            # However, batch dimension is 0 for inference inputs, wait, LSTM hidden states
-            # usually expect batch dim as dim 1. Let's stack along dim 1.
-            # Wait, MuZero recurrent state inputs usually keep batch dim at 0 or 1 depending on backbone.
-            # `utils.recursive_batch` stacked them along dim=1. Let's check exactly.
-            # If shape[1] == 1, cat dim 1.
             batched_lstm = []
             for i in range(len(wm_mem_list[0])):
                 tensors = [mem[i] for mem in wm_mem_list]
@@ -118,7 +112,6 @@ class MuZeroNetworkState(NamedTuple):
                                 else:
                                     unbatched_memory[j][k] = v[j : j + 1]
                 else:
-                    # Generic broadcasting for non-tensors
                     for j in range(batch_size):
                         unbatched_memory[j][k] = v
         else:
@@ -153,7 +146,7 @@ class WorldModelOutput(NamedTuple):
     instant_reward: Optional[torch.Tensor] = None
 
     # Stochastic MuZero specific
-    afterstate_features: Optional[torch.Tensor] = None  # Raw dynamics output
+    afterstate_features: Optional[torch.Tensor] = None
     chance: Optional[torch.Tensor] = None  # Chance logits
 
 
@@ -203,10 +196,16 @@ class LearningOutput(NamedTuple):
     Contains raw logits for mathematically stable loss computation.
     """
 
-    values: torch.Tensor  # [B, T+1, ...] Logits or Values
+    values: Optional[torch.Tensor] = None  # [B, T+1, ...] Logits or Values
     policies: Optional[torch.Tensor] = None  # [B, T+1, ...] Logits (PPO/MuZero)
     q_values: Optional[torch.Tensor] = None  # [B, T+1, num_actions]  (Rainbow)
     q_logits: Optional[torch.Tensor] = None  # [B, T+1, num_actions, num_atoms]
+    q_values: Optional[torch.Tensor] = (
+        None  # [B, T+1, num_actions] (Rainbow/DQN Online)
+    )
+    q_logits: Optional[torch.Tensor] = (
+        None  # [B, T+1, num_actions, num_atoms] (Rainbow Online)
+    )
     rewards: Optional[torch.Tensor] = None  # [B, T+1, ...] Logits
     to_plays: Optional[torch.Tensor] = None  # [B, T+1, ...] Logits
 

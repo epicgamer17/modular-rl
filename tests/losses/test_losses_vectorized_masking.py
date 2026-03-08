@@ -11,6 +11,7 @@ from losses.losses import (
     RewardLoss,
     ConsistencyLoss,
 )
+from modules.world_models.inference_output import LearningOutput
 from types import SimpleNamespace
 
 
@@ -41,21 +42,21 @@ def test_vectorized_loss_masking():
     # Values/Policies: (B, T+1, ...)
     # Rewards/Actions: (B, T, ...)
 
-    predictions = {
-        "values": torch.ones((batch_size, t_plus_1, 1), device=device) * 2.0,
-        "policies": torch.randn((batch_size, t_plus_1, num_actions), device=device),
-        "rewards": torch.ones((batch_size, unroll_steps, 1), device=device) * 0.5,
-        "latent_states": torch.randn((batch_size, t_plus_1, 64), device=device),
-    }
+    predictions = LearningOutput(
+        values=torch.ones((batch_size, t_plus_1, 1), device=device) * 2.0,
+        policies=torch.randn((batch_size, t_plus_1, num_actions), device=device),
+        rewards=torch.ones((batch_size, unroll_steps, 1), device=device) * 0.5,
+        latents=torch.randn((batch_size, t_plus_1, 64), device=device),
+    )
 
-    targets = {
-        "values": torch.ones((batch_size, t_plus_1), device=device) * 1.0,
-        "policies": F.softmax(
+    targets = LearningOutput(
+        values=torch.ones((batch_size, t_plus_1), device=device) * 1.0,
+        policies=F.softmax(
             torch.randn((batch_size, t_plus_1, num_actions), device=device), dim=-1
         ),
-        "rewards": torch.ones((batch_size, unroll_steps), device=device) * 1.0,
-        "consistency_targets": torch.randn((batch_size, t_plus_1, 64), device=device),
-    }
+        rewards=torch.ones((batch_size, unroll_steps), device=device) * 1.0,
+        latents=torch.randn((batch_size, t_plus_1, 64), device=device),
+    )
 
     # 2. Setup Masks
     # Batch 0: Full sequence valid

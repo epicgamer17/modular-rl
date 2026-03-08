@@ -9,6 +9,7 @@ from losses.basic_losses import (
     C51LossModule,
     ImitationLoss,
 )
+from modules.world_models.inference_output import LearningOutput
 
 pytestmark = pytest.mark.unit
 
@@ -79,11 +80,11 @@ def test_standard_dqn_loss_module(base_config):
     loss_module = StandardDQNLossModule(base_config, device, action_selector)
 
     predictions = {
-        "online_q_values": torch.randn((4, 10), device=device),
-        "next_online_q_values": torch.randn((4, 10), device=device),
+        "q_values": torch.randn((4, 10), device=device),
+        "next_q_values": torch.randn((4, 10), device=device),
     }
     targets = {
-        "target_next_q_values": torch.randn((4, 10), device=device),
+        "q_values": torch.randn((4,), device=device),
         "actions": torch.randint(0, 10, (4,), device=device),
         "rewards": torch.randn((4,), device=device),
         "dones": torch.zeros((4,), device=device).bool(),
@@ -106,11 +107,11 @@ def test_c51_loss_module(base_config):
     loss_module = C51LossModule(base_config, device, action_selector)
 
     predictions = {
-        "online_q_logits": torch.randn((4, 10, 21), device=device),
-        "next_online_q_logits": torch.randn((4, 10, 21), device=device),
+        "q_logits": torch.randn((4, 10, 21), device=device),
+        "next_q_logits": torch.randn((4, 10, 21), device=device),
     }
     targets = {
-        "target_next_q_logits": torch.randn((4, 10, 21), device=device).softmax(dim=-1),
+        "target_dist": torch.randn((4, 21), device=device).softmax(dim=-1),
         "actions": torch.randint(0, 10, (4,), device=device),
         "rewards": torch.randn((4,), device=device),
         "dones": torch.zeros((4,), device=device).bool(),

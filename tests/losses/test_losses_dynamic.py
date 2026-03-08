@@ -2,6 +2,7 @@ import pytest
 import torch
 from unittest.mock import MagicMock
 from losses.losses import LossModule, LossPipeline
+from modules.world_models.inference_output import LearningOutput
 
 pytestmark = pytest.mark.unit
 
@@ -60,8 +61,8 @@ def test_loss_pipeline_execution():
     config.mask_absorbing = False
     config.support_range = None
 
-    # Setup modules
-    module1 = MockLoss(config, device, "Loss1", {"p1"}, {"t1"})
+    # Setup modules - use valid LearningOutput fields
+    module1 = MockLoss(config, device, "Loss1", {"values"}, {"returns"})
     # Mocking compute_loss to return a constant for easy testing
     module1.compute_loss = MagicMock(
         return_value=torch.tensor([1.0, 1.0], device=device)
@@ -69,11 +70,13 @@ def test_loss_pipeline_execution():
 
     pipeline = LossPipeline([module1])
 
-    # Setup data
-    predictions = {
-        "p1": torch.tensor([[0.1, 0.2], [0.1, 0.2]], device=device)
-    }  # (B, K+1)
-    targets = {"t1": torch.tensor([[0.3, 0.4], [0.3, 0.4]], device=device)}  # (B, K+1)
+    # Setup data using valid LearningOutput fields
+    predictions = LearningOutput(
+        values=torch.tensor([[0.1, 0.2], [0.1, 0.2]], device=device)
+    )
+    targets = LearningOutput(
+        returns=torch.tensor([[0.3, 0.4], [0.3, 0.4]], device=device)
+    )
     weights = torch.tensor([1.0, 1.0], device=device)
     gradient_scales = torch.tensor([[1.0, 0.5]], device=device)  # K=1 (2 steps)
     context = {}
@@ -106,8 +109,8 @@ def test_priority_calculation():
     pipeline = LossPipeline([MagicMock(config=config, device=device)])
 
     # Case 1: Scalar values
-    preds_k = {"online_q_values": torch.tensor([1.0, 3.0], device=device)}
-    targets_k = {"target_q_values": torch.tensor([2.0, 2.0], device=device)}
+    preds_k = {"q_values": torch.tensor([1.0, 3.0], device=device)}
+    targets_k = {"q_values": torch.tensor([2.0, 2.0], device=device)}
 
     priorities = pipeline._calculate_priorities(preds_k, targets_k, config, device)
     # abs(2-1) = 1, abs(2-3) = 1
@@ -142,18 +145,18 @@ def test_step_extraction():
     pipeline = LossPipeline([MagicMock()])
 
     # K=1 (expected_steps=2)
-    predictions = {
-        "seq": torch.tensor([[1, 2], [3, 4]]),  # (B, K+1)
-        "val": torch.tensor([[10], [20]]),  # (B, 1)
-    }
+    # Use valid LearningOutput fields - values has shape (B, K+1)
+    predictions = LearningOutput(
+        values=torch.tensor([[1, 2], [3, 4]]),  # (B, K+1)
+    )
 
     # k=0
-    data_0 = pipeline._extract_step_data(predictions, 0, 2)
-    assert torch.equal(data_0["seq"], torch.tensor([1, 3]))
+    data_0 = pipeline._extract_step_data(predictions._asdict(), 0, 2)
+    assert torch.equal(data_0["values"], torch.tensor([1, 3]))
 
     # k=1
-    data_1 = pipeline._extract_step_data(predictions, 1, 2)
-    assert torch.equal(data_1["seq"], torch.tensor([2, 4]))
+    data_1 = pipeline._extract_step_data(predictions._asdict(), 1, 2)
+    assert torch.equal(data_1["values"], torch.tensor([2, 4]))
 
 
 def test_masking_execution():
@@ -163,7 +166,8 @@ def test_masking_execution():
     config.mask_absorbing = True
     config.support_range = None
 
-    module1 = MockLoss(config, device, "Loss1", {"p1"}, {"t1"})
+    # Use valid LearningOutput fields
+    module1 = MockLoss(config, device, "Loss1", {"values"}, {"returns"})
     module1.get_mask = MagicMock(return_value=torch.tensor([1.0, 0.0], device=device))
     module1.compute_loss = MagicMock(
         return_value=torch.tensor([10.0, 10.0], device=device)
@@ -171,8 +175,8 @@ def test_masking_execution():
 
     pipeline = LossPipeline([module1])
 
-    predictions = {"p1": torch.tensor([[0.1], [0.1]], device=device)}
-    targets = {"t1": torch.tensor([[0.3], [0.3]], device=device)}
+    predictions = LearningOutput(values=torch.tensor([[0.1], [0.1]], device=device))
+    targets = LearningOutput(returns=torch.tensor([[0.3], [0.3]], device=device))
     weights = torch.tensor([1.0, 1.0], device=device)
     gradient_scales = torch.tensor([[1.0]], device=device)
     context = {}

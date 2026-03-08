@@ -177,11 +177,11 @@ def test_standard_dqn_double_dqn_path(base_config):
     selector.select_action.return_value = (torch.tensor(1), {})
     loss = StandardDQNLossModule(base_config, device, action_selector=selector)
     predictions = {
-        "online_q_values": torch.randn((1, 4)),
-        "next_online_q_values": torch.randn((1, 4)),
+        "q_values": torch.randn((1, 4)),
+        "next_q_values": torch.randn((1, 4)),
     }
     targets = {
-        "target_next_q_values": torch.randn((1, 4)),
+        "q_values": torch.randn((1,)),  # Scalar target values per sample
         "actions": torch.tensor([0]),
         "rewards": torch.tensor([1.0]),
         "dones": torch.tensor([False]),
@@ -199,11 +199,11 @@ def test_c51_dqn_double_dqn_path(base_config):
     selector.select_action.return_value = (torch.tensor(1), {})
     loss = C51LossModule(base_config, device, action_selector=selector)
     predictions = {
-        "online_q_logits": torch.randn((1, 4, 21)),
-        "next_online_q_logits": torch.randn((1, 4, 21)),
+        "q_logits": torch.randn((1, 4, 21)),
+        "next_q_logits": torch.randn((1, 4, 21)),
     }
     targets = {
-        "target_next_q_logits": torch.randn((1, 4, 21)),
+        "target_dist": torch.randn((1, 21)),  # Target distribution per sample
         "actions": torch.tensor([0]),
         "rewards": torch.tensor([1.0]),
         "dones": torch.tensor([False]),

@@ -601,29 +601,6 @@ def get_optimal_device() -> torch.device:
     return torch.device("cpu")
 
 
-@dataclass
-class NetworkOutput:
-    """
-    Represents the Agent's Hypothesis (Predictions).
-    Shape: (B, Unroll+1, ...)
-    """
-
-    # Core MuZero
-    value: torch.Tensor
-    reward: torch.Tensor
-    policy_logits: torch.Tensor
-
-    # Latents (Needed for Consistency)
-    latent_state: torch.Tensor  # s_k
-    projected_state: torch.Tensor = None  # For EfficientZero consistency
-
-    # Stochastic MuZero
-    chance_logits: torch.Tensor = None
-    afterstate_value: torch.Tensor = None
-    encoder_codes: torch.Tensor = None  # One-hot from Encoder
-    encoder_probs: torch.Tensor = None  # Softmax from Encoder
-
-
 # Helper function to use across your framework
 def get_clean_state_dict(model: torch.nn.Module) -> dict:
     """Strips the '_orig_mod.' prefix added by torch.compile."""

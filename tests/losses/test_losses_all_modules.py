@@ -198,7 +198,7 @@ def test_standard_dqn_loss(base_config):
     device = torch.device("cpu")
     loss_module = StandardDQNLoss(base_config, device)
 
-    predictions = {"online_q_values": torch.randn((4,), device=device)}
+    predictions = {"q_values": torch.randn((4,), device=device)}
     targets = {"target_q_values": torch.randn((4,), device=device)}
     context = {}
 
@@ -210,7 +210,7 @@ def test_c51_loss(base_config):
     device = torch.device("cpu")
     loss_module = C51Loss(base_config, device)
 
-    predictions = {"online_dist": torch.randn((4, 21), device=device)}
+    predictions = {"q_logits": torch.randn((4, 21), device=device)}
     targets = {"target_dist": torch.randn((4, 21), device=device).softmax(dim=-1)}
     context = {}
 

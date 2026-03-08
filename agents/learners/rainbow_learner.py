@@ -13,10 +13,12 @@ from replay_buffers.buffer_factories import create_dqn_buffer
 from losses.basic_losses import C51LossModule, StandardDQNLossModule
 from modules.utils import get_lr_scheduler
 from utils.schedule import create_schedule
-from agents.learners.base import BaseLearner, StepResult
+from agents.learners.base import UniversalLearner, StepResult
+from agents.learners.target_builder import DQNTargetBuilder
+from modules.world_models.inference_output import LearningOutput
 
 
-class RainbowLearner(BaseLearner):
+class RainbowLearner(UniversalLearner):
     """
     RainbowLearner handles the training logic for Rainbow DQN, including
     buffer management, optimizer stepping, and loss computation.
@@ -107,7 +109,8 @@ class RainbowLearner(BaseLearner):
             )
         self.loss_pipeline = LossPipeline([self.td_loss_module])
 
-        # Validate dependencies
+        # 6. Initialize Target Builder
+        self.target_builder = DQNTargetBuilder(config, device)
         if config.atom_size > 1:
             self.loss_pipeline.validate_dependencies(
                 network_output_keys={"online_q_logits", "next_online_q_logits"},

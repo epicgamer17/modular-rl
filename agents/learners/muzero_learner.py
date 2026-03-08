@@ -10,8 +10,9 @@ import torch.nn.functional as F
 from torch.optim.adam import Adam
 from torch.optim.sgd import SGD
 
-from agents.learners.base import BaseLearner, StepResult
+from agents.learners.base import UniversalLearner, StepResult
 from agents.learners.callbacks import MetricsCallback
+from agents.learners.target_builder import MuZeroTargetBuilder
 from losses.losses import (
     ChanceQLoss,
     ConsistencyLoss,
@@ -27,8 +28,8 @@ from modules.utils import get_lr_scheduler
 from replay_buffers.buffer_factories import create_muzero_buffer
 
 
-class MuZeroLearner(BaseLearner):
-    """MuZero learner with shared optimization loop from BaseLearner."""
+class MuZeroLearner(UniversalLearner):
+    """MuZero learner with shared optimization loop from UniversalLearner."""
 
     def __init__(
         self,
@@ -49,6 +50,7 @@ class MuZeroLearner(BaseLearner):
             observation_dtype=observation_dtype,
             callbacks=[MetricsCallback()],
         )
+        self.target_builder = MuZeroTargetBuilder(config, device)
 
         self.replay_buffer = create_muzero_buffer(
             observation_dimensions=observation_dimensions,

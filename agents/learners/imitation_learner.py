@@ -12,10 +12,10 @@ from torch.optim.sgd import SGD
 
 from replay_buffers.buffer_factories import create_nfsp_buffer
 from modules.utils import get_lr_scheduler
-from agents.learners.base import BaseLearner, StepResult
+from agents.learners.base import UniversalLearner, StepResult
 
 
-class ImitationLearner(BaseLearner):
+class ImitationLearner(UniversalLearner):
     """
     ImitationLearner trains a policy network via supervised learning.
     It uses CrossEntropy loss to match expert or collected target policies.

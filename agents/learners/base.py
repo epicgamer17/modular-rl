@@ -2,14 +2,21 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 import time
 
 import numpy as np
 import torch
+from torch import nn
 from torch.nn.utils import clip_grad_norm_
 
 from utils.schedule import create_schedule, Schedule
+from replay_buffers.modular_buffer import ModularReplayBuffer
+from modules.agent_nets.modular import ModularAgentNetwork
+
+if TYPE_CHECKING:
+    from agents.learners.target_builder import BaseTargetBuilder
+    from losses.losses import LossPipeline
 
 
 @dataclass
@@ -29,7 +36,7 @@ class Callback(ABC):
 
     def on_step_end(
         self,
-        learner: "BaseLearner",
+        learner: UniversalLearner,
         predictions: Dict[str, torch.Tensor],
         targets: Dict[str, torch.Tensor],
         loss_dict: Dict[str, float],
@@ -47,7 +54,7 @@ class CallbackList:
 
     def on_step_end(
         self,
-        learner: "BaseLearner",
+        learner: UniversalLearner,
         predictions: Dict[str, torch.Tensor],
         targets: Dict[str, torch.Tensor],
         loss_dict: Dict[str, float],
@@ -65,20 +72,25 @@ class CallbackList:
             )
 
 
-class BaseLearner(ABC):
+class UniversalLearner:
     """
-    Generic learner optimization loop:
-    Sample -> Forward/Loss -> Backward -> Update Priorities -> Callbacks
+    Concrete learner that orchestrates the optimization loop.
+    Decouples algorithm logic via TargetBuilder and LossPipeline components.
     """
 
     def __init__(
         self,
         config,
-        agent_network,
-        device,
-        num_actions,
-        observation_dimensions,
-        observation_dtype,
+        agent_network: ModularAgentNetwork,
+        device: torch.device,
+        num_actions: int,
+        observation_dimensions: Tuple[int, ...],
+        observation_dtype: torch.dtype,
+        target_builder: Optional[BaseTargetBuilder] = None,
+        loss_pipeline: Optional[LossPipeline] = None,
+        optimizer: Optional[torch.optim.Optimizer] = None,
+        replay_buffer: Optional[ModularReplayBuffer] = None,
+        lr_scheduler: Optional[Any] = None,
         callbacks: Optional[List[Callback]] = None,
     ):
         self.config = config
@@ -87,13 +99,23 @@ class BaseLearner(ABC):
         self.num_actions = num_actions
         self.observation_dimensions = observation_dimensions
         self.observation_dtype = observation_dtype
+
+        self.target_builder = target_builder
+        self.loss_pipeline = loss_pipeline
+        self.optimizer = optimizer
+        self.replay_buffer = replay_buffer
+        self.lr_scheduler = lr_scheduler
+
         self.training_step = 0
         self.callbacks = CallbackList(callbacks)
         self.schedules: Dict[str, Schedule] = {}
         self._init_schedules()
 
     def _init_schedules(self):
-        if hasattr(self.config, "per_beta_schedule"):
+        if (
+            hasattr(self.config, "per_beta_schedule")
+            and self.config.per_beta_schedule is not None
+        ):
             self.schedules["per_beta"] = create_schedule(self.config.per_beta_schedule)
 
     def _preprocess_observation(self, states: Any) -> torch.Tensor:
@@ -112,7 +134,7 @@ class BaseLearner(ABC):
                 np_states, dtype=torch.float32, device=self.device
             )
 
-        if prepared_state.ndim == 0:
+        if prepared_state.ndim == len(self.observation_dimensions):
             prepared_state = prepared_state.unsqueeze(0)
 
         return prepared_state
@@ -127,20 +149,30 @@ class BaseLearner(ABC):
 
         for _ in range(self.training_iterations):
             batch = self.replay_buffer.sample()
+
+            # 1. Gradient Clearing
+            self.optimizer.zero_grad(set_to_none=True)
+
+            # 2. Compute Step Result (orchestrates forward, targets, and loss)
             result = self.compute_step_result(batch=batch, stats=stats)
 
-            self.optimizer.zero_grad(set_to_none=True)
+            # 3. Backward
             result.loss.backward()
 
+            # 4. Gradient Clipping
             if self.clipnorm > 0:
                 clip_grad_norm_(self.agent_network.parameters(), self.clipnorm)
 
+            # 5. Weight Update
             self.optimizer.step()
+
+            # 6. LR Scheduler Step
             if self.lr_scheduler is not None:
                 self.lr_scheduler.step()
 
             self.after_optimizer_step(batch=batch, step_result=result, stats=stats)
 
+            # 7. Priority Updates for PER
             if result.priorities is not None:
                 priorities = result.priorities
                 if isinstance(priorities, torch.Tensor):
@@ -176,6 +208,59 @@ class BaseLearner(ABC):
         )
         return self._prepare_stats(
             last_result.loss_dict, float(last_result.loss.item())
+        )
+
+    def compute_step_result(self, batch: Dict[str, Any], stats=None) -> StepResult:
+        """
+        Generic optimization step:
+        1. Forward Pass (Predictions)
+        2. Build Targets
+        3. Run Loss Pipeline
+        """
+        # 1. Predictions
+        # The agent_network is expected to handle internal preprocessing if needed.
+        predictions = self.agent_network.learner_inference(batch)
+
+        # 2. Targets
+        # The target_builder computes what the predictions should have ideally been.
+        targets = self.target_builder.build_targets(
+            batch, predictions, self.agent_network
+        )
+
+        # 3. Contextual and PER data
+        # We pass the raw batch as context to the loss pipeline for masks, etc.
+        context = batch
+        weights = batch.get("weights")
+        if weights is not None and torch.is_tensor(weights):
+            weights = weights.to(self.device).float()
+
+        # 4. Loss calculation
+        loss, loss_dict, priorities = self.loss_pipeline.run(
+            predictions=predictions,
+            targets=targets,
+            context=context,
+            weights=weights,
+            # gradient_scales defaults to None, let pipeline detect unroll depth
+            gradient_scales=None,
+        )
+
+        # Prepare for StepResult
+        preds_dict = predictions._asdict()
+        targs_dict = targets._asdict()
+
+        return StepResult(
+            loss=loss,
+            loss_dict=loss_dict,
+            priorities=priorities,
+            # Detach for callbacks/logging safety
+            predictions={
+                k: v.detach().cpu() if torch.is_tensor(v) else v
+                for k, v in preds_dict.items()
+            },
+            targets={
+                k: v.detach().cpu() if torch.is_tensor(v) else v
+                for k, v in targs_dict.items()
+            },
         )
 
     @property
@@ -246,10 +331,5 @@ class BaseLearner(ABC):
     def after_optimizer_step(
         self, batch: Dict[str, Any], step_result: StepResult, stats=None
     ) -> None:
-        """Optional hook for subclasses."""
+        """Optional hook for subclasses or logging."""
         return None  # pragma: no cover
-
-    @abstractmethod
-    def compute_step_result(self, batch: Dict[str, Any], stats=None) -> StepResult:
-        """Compute forward pass and loss for one sampled batch."""
-        raise NotImplementedError  # pragma: no cover
