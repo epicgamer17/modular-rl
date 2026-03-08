@@ -17,6 +17,7 @@ from search.root_policies import RootPolicyStrategy
 from utils.utils import get_legal_moves
 from search.pruners import PruningMethod
 from modules.agent_nets.base import BaseAgentNetwork
+from .utils import _safe_log_probs
 
 
 class ModularSearch:
@@ -54,12 +55,6 @@ class ModularSearch:
         self.pruning_method: PruningMethod = pruning_method
         self.internal_pruning_method: PruningMethod = internal_pruning_method
         self.backpropagator: Backpropagator = backpropagator
-
-    @staticmethod
-    def _safe_log_probs(probs: torch.Tensor) -> torch.Tensor:
-        return torch.where(
-            probs > 0, probs.log(), torch.full_like(probs, -float("inf"))
-        )
 
     def _dist_for_batch_index(self, policy_dist, index: int):
         # Optimization: If the distribution is already a single-batch distribution, return it.
@@ -474,10 +469,9 @@ class ModularSearch:
     def _set_node_configs(self):
         ChanceNode.bootstrap_method = self.config.bootstrap_method
         ChanceNode.discount = self.config.discount_factor
-        ChanceNode.use_value_prefix = self.config.use_value_prefix
+        ChanceNode.discount = self.config.discount_factor
         DecisionNode.bootstrap_method = self.config.bootstrap_method
         DecisionNode.discount = self.config.discount_factor
-        DecisionNode.use_value_prefix = self.config.use_value_prefix
         DecisionNode.pb_c_init = self.config.pb_c_init
         DecisionNode.pb_c_base = self.config.pb_c_base
         DecisionNode.gumbel = self.config.gumbel

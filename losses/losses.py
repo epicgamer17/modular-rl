@@ -311,6 +311,10 @@ class ValueLoss(LossModule):
     def should_compute(self, k: int, context: dict) -> bool:
         return True  # Compute at all steps
 
+    def get_mask(self, k: int, context: dict) -> torch.Tensor:
+        # Value loss is computed for all steps in the same game, even after terminal
+        return context["is_same_game"][:, k]
+
     def compute_loss(
         self,
         agent=None,
@@ -405,6 +409,10 @@ class RewardLoss(LossModule):
     def should_compute(self, k: int, context: dict) -> bool:
         return k > 0  # Only for k > 0
 
+    def get_mask(self, k: int, context: dict) -> torch.Tensor:
+        # Reward loss is computed for all steps in the same game, even after terminal
+        return context["is_same_game"][:, k]
+
     def compute_loss(
         self,
         agent=None,
@@ -454,6 +462,10 @@ class ToPlayLoss(LossModule):
     def should_compute(self, k: int, context: dict) -> bool:
         # Only compute for multi-player games and k > 0
         return k > 0 and self.config.game.num_players != 1
+
+    def get_mask(self, k: int, context: dict) -> torch.Tensor:
+        # To-play exists for the terminal state too
+        return context["has_valid_obs_mask"][:, k]
 
     def compute_loss(
         self,
@@ -576,7 +588,8 @@ class ChanceQLoss(LossModule):
         return q_loss
 
     def get_mask(self, k: int, context: dict) -> torch.Tensor:
-        return context["has_valid_obs_mask"][:, k]
+        # Chance Q target is value from next step. Compute if both are in same game.
+        return context["is_same_game"][:, k]
 
 
 class SigmaLoss(LossModule):

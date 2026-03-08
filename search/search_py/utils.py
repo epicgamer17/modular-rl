@@ -2,6 +2,11 @@
 import torch
 
 
+def _safe_log_probs(probs: torch.Tensor) -> torch.Tensor:
+    """Converts probabilities to logits while keeping exact zeros as -inf."""
+    return torch.where(probs > 0, probs.log(), torch.full_like(probs, -float("inf")))
+
+
 def get_completed_q_improved_policy(config, node, min_max_stats):
     """Compute the improved policy π₀ using clean network logits (Paper Eq. 11).
 

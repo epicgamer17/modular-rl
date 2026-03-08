@@ -45,7 +45,6 @@ def batched_mcts_step(
     root_scoring_kwargs: dict | None = None,
     interior_scoring_fn: ScoringFn | None = None,
     interior_scoring_kwargs: dict | None = None,
-    use_value_prefix: bool = False,
     decision_modifier_fn=None,
     chance_modifier_fn=None,
     trajectory_actions: torch.Tensor | None = None,
@@ -78,7 +77,6 @@ def batched_mcts_step(
         interior_scoring_fn: Scoring function used at **depth > 0**.
         interior_scoring_kwargs: Extra kwargs forwarded to
             ``interior_scoring_fn``.
-        use_value_prefix: If ``True``, rewards are cumulative.
         decision_modifier_fn: Optional callable for Decision-node logits.
         chance_modifier_fn: Optional callable for Chance-node logits.
         trajectory_actions: Optional [B, H] forced actions for root.
@@ -289,7 +287,6 @@ def batched_mcts_step(
             B,
             device,
             backprop_fn=backprop_fn,
-            use_value_prefix=use_value_prefix,
             min_max_stats=min_max_stats,
             num_players=num_players,
         )
@@ -666,7 +663,6 @@ def _backpropagate(
     B: int,
     device: torch.device,
     backprop_fn: BackpropFn = average_discounted_backprop,
-    use_value_prefix: bool = False,
     min_max_stats: VectorizedMinMaxStats | None = None,
     num_players: int = 2,
 ) -> None:
@@ -688,10 +684,6 @@ def _backpropagate(
         device: Torch device.
         backprop_fn: Pluggable single-depth update function conforming to
             :data:`~search.aos_search.backpropogation.BackpropFn`.
-        use_value_prefix: If ``True``, ``children_rewards`` holds cumulative
-            (absolute) rewards.  The step reward is computed as
-            ``child_reward - parent_reward`` where parent_reward comes from
-            ``node_rewards``.
         min_max_stats: Optional :class:`VectorizedMinMaxStats`.  When provided,
             bounds are expanded after every depth step using the freshly
             updated edge Q-values, ensuring the scoring functions always see
@@ -733,17 +725,8 @@ def _backpropagate(
         child_long = path_nodes[batch_idx, d + 1].long()
         acting_player = tree.to_play[batch_idx, parent_long].long()
 
-        if use_value_prefix:
-            # Value prefix: reward is cumulative → step_reward = child_r - parent_r
-            # child is one depth deeper in path_nodes
-            child_cumulative = tree.node_rewards[batch_idx, child_long]  # [B]
-            parent_cumulative = tree.node_rewards[batch_idx, parent_long]  # [B]
-            step_reward = child_cumulative - parent_cumulative  # [B]
-        else:
-            # Standard: children_rewards holds instantaneous edge rewards
-            step_reward = tree.children_rewards[
-                batch_idx, parent_long, action_long
-            ]  # [B]
+        # Standard: children_rewards holds instantaneous edge rewards
+        step_reward = tree.children_rewards[batch_idx, parent_long, action_long]  # [B]
 
         # [B, num_players]
         is_acting = torch.arange(num_players, device=device).unsqueeze(

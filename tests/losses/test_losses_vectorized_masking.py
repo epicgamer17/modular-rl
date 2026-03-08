@@ -1,4 +1,5 @@
 import pytest
+
 pytestmark = pytest.mark.unit
 
 import torch
@@ -68,9 +69,11 @@ def test_vectorized_loss_masking():
         [[True, True, True, True], [True, False, False, False]], device=device
     )
 
+    same_game = torch.ones((batch_size, t_plus_1), dtype=torch.bool, device=device)
     context = {
         "has_valid_obs_mask": obs_mask,
         "has_valid_action_mask": action_mask,
+        "is_same_game": same_game,
     }
 
     weights = torch.ones(batch_size, device=device)
@@ -104,29 +107,22 @@ def test_vectorized_loss_masking():
     )
 
     # 5. Assertions
-    # Value Loss check for Batch 1: should only count k=0, 1.
+    # Value Loss check for Batch 1: Now counts all 4 steps because it uses is_same_game.
     # (2.0 - 1.0)^2 = 1.0 per step.
     # Batch 0: 4 steps * 1.0 = 4.0
-    # Batch 1: 2 steps * 1.0 = 2.0
-    # Total = 6.0 / (batch_size=2) = 3.0
-    # wait, loss_dict is summed across batch then divided by batch_size.
-    assert pytest.approx(loss_dict["ValueLoss"]) == 3.0
+    # Batch 1: 4 steps * 1.0 = 4.0
+    # Total = 8.0 / (batch_size=2) = 4.0
+    assert pytest.approx(loss_dict["ValueLoss"]) == 4.0
 
-    # Reward Loss check for Batch 1: k=1 is transition s0->s1. k=2 is s1->s2.
-    # But s1 is terminal, so reward mask for k=2 should be False.
-    # reward_mask = obs_mask[:, 1:] = [[T, T, T], [T, F, F]]
+    # Reward Loss check for Batch 1: Now counts all 3 steps because it uses is_same_game.
     # (0.5 - 1.0)^2 = 0.25 per step.
     # Batch 0: 3 steps * 0.25 = 0.75
-    # Batch 1: 1 step * 0.25 = 0.25
-    # Total = 1.0 / 2 = 0.5
-    assert pytest.approx(loss_dict["RewardLoss"]) == 0.5
+    # Batch 1: 3 steps * 0.25 = 0.75
+    # Total = 1.5 / 2 = 0.75
+    assert pytest.approx(loss_dict["RewardLoss"]) == 0.75
 
     # Policy Loss check for Batch 1: action_mask = [T, F, F, F].
     # Only k=0 is valid for batch 1.
     # Batch 0: 4 steps. Batch 1: 1 step.
     # Total 5 steps of categorical cross entropy.
     assert loss_dict["PolicyLoss"] > 0
-
-
-if __name__ == "__main__":
-    pytest.main([__file__])

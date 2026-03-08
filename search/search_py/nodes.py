@@ -18,7 +18,6 @@ class ChanceNode:
 
     bootstrap_method = None
     discount = None
-    use_value_prefix = None
 
     def __init__(self, prior, parent):
         self.parent = parent  # DecisionNode
@@ -138,13 +137,7 @@ class ChanceNode:
 
     def child_reward(self, child):
         # assert isinstance(child, DecisionNode)
-        if self.use_value_prefix:
-            if child.is_reset:
-                return child.reward
-            else:
-                return child.reward - self.parent.reward
-        else:
-            true_reward = child.reward
+        true_reward = child.reward
 
         assert true_reward is not None
         return true_reward
@@ -222,7 +215,6 @@ class ChanceNode:
 class DecisionNode:
     bootstrap_method = None
     discount = None
-    use_value_prefix = None
     pb_c_init = None
     pb_c_base = None
     gumbel = None

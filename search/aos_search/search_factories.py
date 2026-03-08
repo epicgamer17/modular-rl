@@ -187,9 +187,6 @@ def build_search_pipeline(
     # ---- Select scoring function -------------------------------------------
     scoring_key: str = config.scoring_method.lower()
 
-    # Value prefix
-    use_value_prefix: bool = config.use_value_prefix
-
     # ---- Build the closure -------------------------------------------------
     def run_mcts(
         batched_obs: Any,
@@ -365,7 +362,6 @@ def build_search_pipeline(
                     root_scoring_kwargs=root_scoring_kwargs,
                     interior_scoring_fn=interior_scoring_fn,
                     interior_scoring_kwargs=interior_scoring_kwargs,
-                    use_value_prefix=use_value_prefix,
                     decision_modifier_fn=internal_decision_modifier,
                     chance_modifier_fn=internal_chance_modifier,
                     trajectory_actions=trajectory_actions,

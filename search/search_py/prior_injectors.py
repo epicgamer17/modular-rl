@@ -5,9 +5,7 @@ import numpy as np
 import torch
 
 
-def _safe_log_probs(probs: torch.Tensor) -> torch.Tensor:
-    """Converts probabilities to logits while keeping exact zeros as -inf."""
-    return torch.where(probs > 0, probs.log(), torch.full_like(probs, -float("inf")))
+from .utils import _safe_log_probs
 
 
 class PriorInjector(ABC):

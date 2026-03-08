@@ -96,6 +96,7 @@ class MuZeroLearner(BaseLearner):
         return {
             "has_valid_obs_mask": batch["obs_mask"].to(self.device).bool(),
             "has_valid_action_mask": batch["action_mask"].to(self.device).bool(),
+            "is_same_game": batch["is_same_game"].to(self.device).bool(),
         }
 
     def _prepare_consistency_targets(

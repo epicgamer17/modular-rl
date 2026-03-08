@@ -11,7 +11,6 @@ class TestChanceNodeExpandAndUpdate:
     def test_chance_node_expand_initializes_vectorized_stats(self, monkeypatch):
         monkeypatch.setattr(ChanceNode, "discount", 0.9)
         monkeypatch.setattr(ChanceNode, "bootstrap_method", "zero")
-        monkeypatch.setattr(ChanceNode, "use_value_prefix", False)
 
         parent = DecisionNode(prior=0.5)
         parent.to_play = 0
@@ -40,7 +39,6 @@ class TestChanceNodeExpandAndUpdate:
     def test_chance_node_value_returns_network_when_unvisited(self, monkeypatch):
         monkeypatch.setattr(ChanceNode, "discount", 0.9)
         monkeypatch.setattr(ChanceNode, "bootstrap_method", "network_value")
-        monkeypatch.setattr(ChanceNode, "use_value_prefix", False)
 
         parent = DecisionNode(prior=0.5)
         parent.to_play = 0
@@ -66,7 +64,6 @@ class TestChanceNodeExpandAndUpdate:
     def test_chance_node_q_value_updates_correctly_with_bellman(self, monkeypatch):
         monkeypatch.setattr(ChanceNode, "discount", 0.9)
         monkeypatch.setattr(ChanceNode, "bootstrap_method", "zero")
-        monkeypatch.setattr(ChanceNode, "use_value_prefix", False)
 
         parent = DecisionNode(prior=0.5)
         parent.to_play = 0
@@ -99,7 +96,6 @@ class TestChanceNodeExpandAndUpdate:
     def test_chance_node_multiple_updates_accumulate_correctly(self, monkeypatch):
         monkeypatch.setattr(ChanceNode, "discount", 0.9)
         monkeypatch.setattr(ChanceNode, "bootstrap_method", "zero")
-        monkeypatch.setattr(ChanceNode, "use_value_prefix", False)
 
         parent = DecisionNode(prior=0.5)
         parent.to_play = 0
@@ -132,14 +128,15 @@ class TestChanceNodeExpandAndUpdate:
         assert node.visits == 3
         expected_avg = total_q / 3
         actual_avg = node.value()
-        assert torch.allclose(torch.tensor(actual_avg), torch.tensor(expected_avg), atol=1e-6)
+        assert torch.allclose(
+            torch.tensor(actual_avg), torch.tensor(expected_avg), atol=1e-6
+        )
 
 
 class TestDecisionNodeExpandAndUpdate:
     def test_decision_node_expand_initializes_vectorized_stats(self, monkeypatch):
         monkeypatch.setattr(DecisionNode, "discount", 0.9)
         monkeypatch.setattr(DecisionNode, "bootstrap_method", "zero")
-        monkeypatch.setattr(DecisionNode, "use_value_prefix", False)
         monkeypatch.setattr(DecisionNode, "stochastic", False)
         monkeypatch.setattr(DecisionNode, "pb_c_init", 1.25)
         monkeypatch.setattr(DecisionNode, "pb_c_base", 19652)
@@ -169,7 +166,6 @@ class TestDecisionNodeExpandAndUpdate:
     def test_decision_node_legal_action_mask_one_hot(self, monkeypatch):
         monkeypatch.setattr(DecisionNode, "discount", 0.9)
         monkeypatch.setattr(DecisionNode, "bootstrap_method", "zero")
-        monkeypatch.setattr(DecisionNode, "use_value_prefix", False)
         monkeypatch.setattr(DecisionNode, "stochastic", False)
         monkeypatch.setattr(DecisionNode, "pb_c_init", 1.25)
         monkeypatch.setattr(DecisionNode, "pb_c_base", 19652)
@@ -201,7 +197,6 @@ class TestDecisionNodeExpandAndUpdate:
     def test_decision_node_legal_action_mask_discrete_one_hot_input(self, monkeypatch):
         monkeypatch.setattr(DecisionNode, "discount", 0.9)
         monkeypatch.setattr(DecisionNode, "bootstrap_method", "zero")
-        monkeypatch.setattr(DecisionNode, "use_value_prefix", False)
         monkeypatch.setattr(DecisionNode, "stochastic", False)
         monkeypatch.setattr(DecisionNode, "pb_c_init", 1.25)
         monkeypatch.setattr(DecisionNode, "pb_c_base", 19652)
@@ -232,7 +227,6 @@ class TestDecisionNodeExpandAndUpdate:
     def test_decision_node_q_value_updates_correctly_with_bellman(self, monkeypatch):
         monkeypatch.setattr(DecisionNode, "discount", 0.9)
         monkeypatch.setattr(DecisionNode, "bootstrap_method", "zero")
-        monkeypatch.setattr(DecisionNode, "use_value_prefix", False)
         monkeypatch.setattr(DecisionNode, "stochastic", False)
         monkeypatch.setattr(DecisionNode, "pb_c_init", 1.25)
         monkeypatch.setattr(DecisionNode, "pb_c_base", 19652)
@@ -274,7 +268,6 @@ class TestDecisionNodeExpandAndUpdate:
     def test_decision_node_multiple_updates_accumulate_correctly(self, monkeypatch):
         monkeypatch.setattr(DecisionNode, "discount", 0.9)
         monkeypatch.setattr(DecisionNode, "bootstrap_method", "zero")
-        monkeypatch.setattr(DecisionNode, "use_value_prefix", False)
         monkeypatch.setattr(DecisionNode, "stochastic", False)
         monkeypatch.setattr(DecisionNode, "pb_c_init", 1.25)
         monkeypatch.setattr(DecisionNode, "pb_c_base", 19652)
@@ -316,14 +309,15 @@ class TestDecisionNodeExpandAndUpdate:
         assert node.visits == 3
         expected_avg = total_q / 3
         actual_avg = node.value()
-        assert torch.allclose(torch.tensor(actual_avg), torch.tensor(expected_avg), atol=1e-6)
+        assert torch.allclose(
+            torch.tensor(actual_avg), torch.tensor(expected_avg), atol=1e-6
+        )
 
 
 class TestDecisionNodeValueBootstrap:
     def test_decision_node_value_returns_network_when_unvisited(self, monkeypatch):
         monkeypatch.setattr(DecisionNode, "discount", 0.9)
         monkeypatch.setattr(DecisionNode, "bootstrap_method", "network_value")
-        monkeypatch.setattr(DecisionNode, "use_value_prefix", False)
         monkeypatch.setattr(DecisionNode, "stochastic", False)
 
         parent = DecisionNode(prior=0.5)
@@ -348,10 +342,11 @@ class TestDecisionNodeValueBootstrap:
 
 
 class TestChanceNodeValueBootstrap:
-    def test_chance_node_value_returns_network_when_unvisited_with_v_mix(self, monkeypatch):
+    def test_chance_node_value_returns_network_when_unvisited_with_v_mix(
+        self, monkeypatch
+    ):
         monkeypatch.setattr(ChanceNode, "discount", 0.9)
         monkeypatch.setattr(ChanceNode, "bootstrap_method", "v_mix")
-        monkeypatch.setattr(ChanceNode, "use_value_prefix", False)
 
         parent = DecisionNode(prior=0.5)
         parent.to_play = 0

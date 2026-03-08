@@ -1056,6 +1056,7 @@ class NStepUnrollProcessor(OutputProcessor):
             to_plays=target_to_plays,
             chance_codes=target_chances,
             dones=target_dones,
+            is_same_game=same_game[:, : self.unroll_steps + 1],
             ids=buffers["ids"][indices_tensor].clone(),
             legal_moves_masks=buffers["legal_masks"][indices_tensor],
             indices=indices,
