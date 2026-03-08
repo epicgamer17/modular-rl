@@ -1,10 +1,7 @@
-from __future__ import annotations
-
-from dataclasses import dataclass
 from typing import Optional, Tuple
-
 import torch
 import torch.nn.functional as F
+from losses.losses import LossModule
 from modules.world_models.inference_output import InferenceOutput
 
 
@@ -20,7 +17,7 @@ def _select_next_actions(
     # Match legacy behavior: if no legal moves are provided, do not mask that row.
     any_legal = mask.any(dim=-1, keepdim=True)
     mask = torch.where(any_legal, mask, torch.ones_like(mask))
-    masked_q = q_values.masked_fill(~mask, -float("inf"))
+    masked_q = q_values.masked_fill(~mask.bool(), -float("inf"))
     return masked_q.argmax(dim=-1)
 
 
@@ -33,19 +30,36 @@ def _resolve_weights(
     return weights.to(device=device, dtype=torch.float32)
 
 
-@dataclass
-class PPOPolicyLoss:
-    clip_param: float
-    entropy_coefficient: float
-    policy_strategy: Optional[object] = None
-
-    def compute(
+class PPOPolicyLoss(LossModule):
+    def __init__(
         self,
-        policy_logits: torch.Tensor,
-        actions: torch.Tensor,
-        old_log_probs: torch.Tensor,
-        advantages: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        config,
+        device,
+        clip_param: float,
+        entropy_coefficient: float,
+        policy_strategy: Optional[object] = None,
+    ):
+        super().__init__(config, device)
+        self.clip_param = clip_param
+        self.entropy_coefficient = entropy_coefficient
+        self.policy_strategy = policy_strategy
+
+    @property
+    def required_predictions(self) -> set[str]:
+        return {"policies"}
+
+    @property
+    def required_targets(self) -> set[str]:
+        return {"actions", "old_log_probs", "advantages"}
+
+    def compute_loss(
+        self, predictions: dict, targets: dict, context: dict, k: int = 0
+    ) -> torch.Tensor:
+        policy_logits = predictions["policies"]
+        actions = targets["actions"]
+        old_log_probs = targets["old_log_probs"]
+        advantages = targets["advantages"]
+
         if self.policy_strategy is not None:
             dist = self.policy_strategy.get_distribution(policy_logits)
         else:
@@ -59,21 +73,44 @@ class PPOPolicyLoss:
             * advantages
         )
 
-        entropy = dist.entropy().mean()
-        loss = -torch.min(surr1, surr2).mean() - self.entropy_coefficient * entropy
+        entropy = dist.entropy()
+        # Return elementwise loss (B,)
+        loss = -torch.min(surr1, surr2) - self.entropy_coefficient * entropy
 
         with torch.no_grad():
             approx_kl = (old_log_probs - log_probs).mean()
-        return loss, approx_kl
+            if "approx_kl" not in context:
+                context["approx_kl"] = []
+            context["approx_kl"].append(approx_kl.item())
+
+        return loss
 
 
-@dataclass
-class PPOValueLoss:
-    critic_coefficient: float
-    atom_size: int = 1
-    v_min: Optional[float] = None
-    v_max: Optional[float] = None
-    value_strategy: Optional[object] = None
+class PPOValueLoss(LossModule):
+    def __init__(
+        self,
+        config,
+        device,
+        critic_coefficient: float,
+        atom_size: int = 1,
+        v_min: Optional[float] = None,
+        v_max: Optional[float] = None,
+        value_strategy: Optional[object] = None,
+    ):
+        super().__init__(config, device)
+        self.critic_coefficient = critic_coefficient
+        self.atom_size = atom_size
+        self.v_min = v_min
+        self.v_max = v_max
+        self.value_strategy = value_strategy
+
+    @property
+    def required_predictions(self) -> set[str]:
+        return {"values"}
+
+    @property
+    def required_targets(self) -> set[str]:
+        return {"returns"}
 
     def _to_scalar_values(self, value_logits: torch.Tensor) -> torch.Tensor:
         if self.value_strategy is not None:
@@ -101,33 +138,42 @@ class PPOValueLoss:
             "(v_min/v_max)."
         )
 
-    def compute(
-        self, value_logits: torch.Tensor, returns: torch.Tensor
+    def compute_loss(
+        self, predictions: dict, targets: dict, context: dict, k: int = 0
     ) -> torch.Tensor:
+        value_logits = predictions["values"]
+        returns = targets["returns"]
         values = self._to_scalar_values(value_logits)
-        return self.critic_coefficient * ((returns - values) ** 2).mean()
+        # Return elementwise loss (B,)
+        return self.critic_coefficient * ((returns - values) ** 2)
 
 
-@dataclass
-class StandardDQNLossModule:
-    config: object
-    device: torch.device
-    action_selector: Optional[object] = None
+class StandardDQNLossModule(LossModule):
+    def __init__(self, config, device, action_selector: Optional[object] = None):
+        super().__init__(config, device)
+        self.action_selector = action_selector
 
-    def compute(
-        self,
-        online_q_values: torch.Tensor,
-        next_online_q_values: torch.Tensor,
-        target_next_q_values: torch.Tensor,
-        batch: dict,
-        agent_network: Optional[torch.nn.Module] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        actions = batch["actions"].to(self.device).long()
-        rewards = batch["rewards"].to(self.device)
-        dones = batch["dones"].to(self.device)
-        terminated = batch.get("terminated", dones).to(self.device)
-        next_masks = batch.get("next_legal_moves_masks")
-        next_observations = batch.get("next_observations")
+    @property
+    def required_predictions(self) -> set[str]:
+        return {"online_q_values", "next_online_q_values"}
+
+    @property
+    def required_targets(self) -> set[str]:
+        return {"target_next_q_values", "actions", "rewards", "dones"}
+
+    def compute_loss(
+        self, predictions: dict, targets: dict, context: dict, k: int = 0
+    ) -> torch.Tensor:
+        online_q_values = predictions["online_q_values"]
+        next_online_q_values = predictions["next_online_q_values"]
+        target_next_q_values = targets["target_next_q_values"]
+
+        actions = targets["actions"].to(self.device).long()
+        rewards = targets["rewards"].to(self.device)
+        dones = targets["dones"].to(self.device)
+        terminated = targets.get("terminated", dones).to(self.device)
+        next_masks = targets.get("next_legal_moves_masks")
+        next_observations = targets.get("next_observations")
         if next_observations is not None:
             next_observations = next_observations.to(self.device)
 
@@ -139,6 +185,7 @@ class StandardDQNLossModule:
             torch.arange(batch_size, device=self.device), actions
         ]
 
+        agent_network = context.get("agent_network")
         next_actions = None
         if (
             self.action_selector is not None
@@ -170,32 +217,35 @@ class StandardDQNLossModule:
             torch.arange(batch_size, device=self.device), next_actions
         ]
 
-        targets = (
+        targets_val = (
             rewards
             + (self.config.discount_factor**self.config.n_step)
-            * (~terminal_mask)
+            * (~terminal_mask.bool())
             * max_q_next
         )
 
-        elementwise = self.config.loss_function(selected_q, targets, reduction="none")
-        weights = _resolve_weights(batch, self.device, batch_size)
-        loss = (elementwise * weights).mean()
-        return loss, elementwise
+        # Return elementwise loss (B,)
+        return self.config.loss_function(selected_q, targets_val, reduction="none")
 
 
-@dataclass
-class C51LossModule:
-    config: object
-    device: torch.device
-    action_selector: Optional[object] = None
-
-    def __post_init__(self) -> None:
+class C51LossModule(LossModule):
+    def __init__(self, config, device, action_selector: Optional[object] = None):
+        super().__init__(config, device)
+        self.action_selector = action_selector
         self.support = torch.linspace(
             self.config.v_min,
             self.config.v_max,
             self.config.atom_size,
             device=self.device,
         )
+
+    @property
+    def required_predictions(self) -> set[str]:
+        return {"online_q_logits", "next_online_q_logits"}
+
+    @property
+    def required_targets(self) -> set[str]:
+        return {"target_next_q_logits", "actions", "rewards", "dones"}
 
     def _project_target_distribution(
         self,
@@ -210,7 +260,7 @@ class C51LossModule:
         # Compute the projected support: Tz = r + gamma * z
         tz = (
             rewards.view(-1, 1)
-            + discount * (~terminal_mask).view(-1, 1) * self.support.view(1, -1)
+            + discount * (~terminal_mask.bool()).view(-1, 1) * self.support.view(1, -1)
         ).clamp(self.config.v_min, self.config.v_max)
 
         # Map back to index space: b = (Tz - v_min) / delta_z
@@ -218,36 +268,13 @@ class C51LossModule:
         l = b.floor().long()
         u = b.ceil().long()
 
-        # Fix for points that are exactly on the boundary or exactly integers
-        # If l == u, the probability should all go to index l.
-        # But we can simplify by just using the standard projection form:
-        # projected[l] += probs * (u - b)
-        # projected[u] += probs * (b - l)
-        # If l == u, then (u - b) = 0 and (b - l) = 0 if b is integer, which is wrong.
-        # So we handle l == u by making u = l + 1 and clamping, OR just using a small epsilon.
-        # Standard approach from "A Distributional Perspective on Reinforcement Learning":
-
         projected = torch.zeros((batch_size, self.config.atom_size), device=self.device)
-
-        # Interpolate probabilities into the nearest atoms
-        # For each atom j:
-        # bj = (Tz_j - v_min) / delta_z
-        # l = floor(bj), u = ceil(bj)
-        # projected[l] += next_probs_j * (u - bj)
-        # projected[u] += next_probs_j * (bj - l)
-
-        # We need to iterate over the atoms of the next state distribution (self.support)
-        # But wait, next_probs is already [batch, atom_size].
-        # So we are projecting next_probs[i, j] (prob of atom j) onto the new support atoms.
 
         for j in range(self.config.atom_size):
             bj = b[:, j]
             lj = l[:, j]
             uj = u[:, j]
 
-            # If l == u, bj is an integer. Weight should be 1 for l.
-            # We can use (uj - bj) and (bj - lj). If lj == uj, these are 0.
-            # Fix:
             mask_equal = lj == uj
 
             # Non-equal case
@@ -256,9 +283,6 @@ class C51LossModule:
 
             # Equal case (bj is integer)
             dist_l = torch.where(mask_equal, torch.ones_like(dist_l), dist_l)
-            # dist_u remains 0 for equal case if we want to add nothing to uj (which is lj)
-            # but we scatter_add twice to the same index if lj == uj?
-            # No, scatter_add is additive, so it would be fine if we ensure they sum to 1.
 
             prob_j = next_probs[:, j]
 
@@ -267,20 +291,19 @@ class C51LossModule:
 
         return projected
 
-    def compute(
-        self,
-        online_q_logits: torch.Tensor,
-        next_online_q_logits: torch.Tensor,
-        target_next_q_logits: torch.Tensor,
-        batch: dict,
-        agent_network: Optional[torch.nn.Module] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        actions = batch["actions"].to(self.device).long()
-        rewards = batch["rewards"].to(self.device)
-        dones = batch["dones"].to(self.device)
-        terminated = batch.get("terminated", dones).to(self.device)
-        next_masks = batch.get("next_legal_moves_masks")
-        next_observations = batch.get("next_observations")
+    def compute_loss(
+        self, predictions: dict, targets: dict, context: dict, k: int = 0
+    ) -> torch.Tensor:
+        online_q_logits = predictions["online_q_logits"]
+        next_online_q_logits = predictions["next_online_q_logits"]
+        target_next_q_logits = targets["target_next_q_logits"]
+
+        actions = targets["actions"].to(self.device).long()
+        rewards = targets["rewards"].to(self.device)
+        dones = targets["dones"].to(self.device)
+        terminated = targets.get("terminated", dones).to(self.device)
+        next_masks = targets.get("next_legal_moves_masks")
+        next_observations = targets.get("next_observations")
         if next_observations is not None:
             next_observations = next_observations.to(self.device)
 
@@ -290,6 +313,8 @@ class C51LossModule:
 
         online_next_probs = torch.softmax(next_online_q_logits, dim=-1)
         online_next_q = (online_next_probs * self.support).sum(dim=-1)
+
+        agent_network = context.get("agent_network")
         next_actions = None
         if (
             self.action_selector is not None
@@ -329,8 +354,42 @@ class C51LossModule:
             torch.arange(batch_size, device=self.device), actions
         ]
         log_probs = F.log_softmax(chosen_logits, dim=-1)
-        elementwise = -(target_dist * log_probs).sum(dim=-1)
+        # Return elementwise loss (B,)
+        return -(target_dist * log_probs).sum(dim=-1)
 
-        weights = _resolve_weights(batch, self.device, batch_size)
-        loss = (elementwise * weights).mean()
-        return loss, elementwise
+
+class ImitationLoss(LossModule):
+    def __init__(self, config, device, num_actions: int):
+        super().__init__(config, device)
+        self.num_actions = num_actions
+        self.loss_function = getattr(
+            config, "loss_function", torch.nn.CrossEntropyLoss(reduction="none")
+        )
+
+    @property
+    def required_predictions(self) -> set[str]:
+        return {"policies"}
+
+    @property
+    def required_targets(self) -> set[str]:
+        return {"target_policies"}
+
+    def compute_loss(
+        self, predictions: dict, targets: dict, context: dict, k: int = 0
+    ) -> torch.Tensor:
+        policy_logits = predictions["policies"]
+        target_policies = targets["target_policies"]
+
+        if target_policies.dim() == 1:
+            # Handle class indices
+            targets_onehot = torch.zeros(
+                target_policies.shape[0], self.num_actions, device=self.device
+            )
+            targets_onehot.scatter_(1, target_policies.unsqueeze(1).long(), 1.0)
+            target_policies = targets_onehot
+
+        # Return elementwise loss (B,)
+        loss = self.loss_function(policy_logits, target_policies)
+        if loss.dim() > 1:
+            loss = loss.sum(dim=-1)
+        return loss

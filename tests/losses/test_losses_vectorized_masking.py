@@ -54,7 +54,7 @@ def test_vectorized_loss_masking():
             torch.randn((batch_size, t_plus_1, num_actions), device=device), dim=-1
         ),
         "rewards": torch.ones((batch_size, unroll_steps), device=device) * 1.0,
-        "latent_states": torch.randn((batch_size, t_plus_1, 64), device=device),
+        "consistency_targets": torch.randn((batch_size, t_plus_1, 64), device=device),
     }
 
     # 2. Setup Masks
@@ -102,8 +102,6 @@ def test_vectorized_loss_masking():
         context=context,
         weights=weights,
         gradient_scales=gradient_scales,
-        config=config,
-        device=device,
     )
 
     # 5. Assertions

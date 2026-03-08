@@ -1,0 +1,242 @@
+import pytest
+import torch
+import torch.nn as nn
+from unittest.mock import MagicMock
+from agents.learners.ppo_learner import PPOLearner
+from agents.learners.rainbow_learner import RainbowLearner
+from agents.learners.muzero_learner import MuZeroLearner
+from agents.learners.imitation_learner import ImitationLearner
+from configs.agents.ppo import PPOConfig
+from configs.agents.rainbow_dqn import RainbowConfig
+from configs.agents.muzero import MuZeroConfig
+from configs.agents.supervised import SupervisedConfig
+from configs.games.cartpole import CartPoleConfig
+
+pytestmark = pytest.mark.integration
+
+
+class SimpleNet(nn.Module):
+    def __init__(self, obs_dim, action_dim):
+        super().__init__()
+        self.backbone = nn.Linear(obs_dim, 16)
+        self.policy_head = nn.Linear(16, action_dim)
+        self.value_head = nn.Linear(16, 21)  # 21 atoms
+        self.reward_head = nn.Linear(16, 21)
+        self.to_play_head = nn.Linear(16, 2)
+        self.dynamics = nn.Linear(16 + action_dim, 16)
+
+        self.components = {
+            "policy_head": MagicMock(strategy=None),
+            "value_head": MagicMock(strategy=None),
+            "reward_head": MagicMock(strategy=None),
+            "to_play_head": MagicMock(strategy=None),
+        }
+        self.training_action_selector = MagicMock()
+        self.target_action_selector = MagicMock()
+        self.project = nn.Linear(16, 16)
+
+    def learner_inference(self, batch):
+        out = MagicMock()
+        out.policies = torch.randn((2, 10), requires_grad=True)
+        out.values = torch.randn((2, 1), requires_grad=True)
+        out.q_values = torch.randn((2, 10), requires_grad=True)
+        out.q_logits = torch.randn((2, 10, 21), requires_grad=True)
+        out.rewards = torch.randn((2, 3, 1), requires_grad=True)
+        out.to_plays = torch.randn((2, 4, 2), requires_grad=True)
+        out.latent_states = torch.randn((2, 4, 16), requires_grad=True)
+        out.latents_afterstates = None
+        out.chance_logits = None
+        out.chance_values = None
+        out.chance_encoder_embeddings = None
+        return out
+
+    def obs_inference(self, obs):
+        out = MagicMock()
+        out.policy.logits = torch.randn((obs.shape[0], 10), requires_grad=True)
+        out.value.logits = torch.randn((obs.shape[0], 21), requires_grad=True)
+        return out
+
+    def reset_noise(self):
+        pass
+
+
+@pytest.fixture
+def device():
+    return torch.device("cpu")
+
+
+@pytest.fixture
+def ppo_setup(make_ppo_config_dict, cartpole_game_config, device):
+    config_dict = make_ppo_config_dict()
+    config_dict["support_range"] = None
+    config_dict["v_min"] = -10
+    config_dict["v_max"] = 10
+    config_dict["atom_size"] = 1
+    config = PPOConfig(config_dict, cartpole_game_config)
+    agent_network = SimpleNet(4, 10)
+
+    learner = PPOLearner(
+        config=config,
+        agent_network=agent_network,
+        device=device,
+        num_actions=10,
+        observation_dimensions=(4,),
+        observation_dtype=torch.float32,
+    )
+    return learner
+
+
+def test_ppo_learner_loss_integration(ppo_setup):
+    learner = ppo_setup
+
+    batch = {"observations": torch.randn((2, 4))}
+    actions = torch.randint(0, 10, (2,))
+    old_log_probs = torch.randn((2,))
+    advantages = torch.randn((2,))
+    returns = torch.randn((2,))
+
+    losses = learner.compute_loss(
+        batch=batch,
+        actions=actions,
+        old_log_probs=old_log_probs,
+        advantages=advantages,
+        returns=returns,
+    )
+
+    assert "policy_loss" in losses
+    assert "value_loss" in losses
+    assert isinstance(losses["policy_loss"], torch.Tensor)
+    assert isinstance(losses["value_loss"], torch.Tensor)
+
+
+@pytest.fixture
+def rainbow_setup(make_rainbow_config_dict, cartpole_game_config, device):
+    config_dict = make_rainbow_config_dict(atom_size=1)
+    config_dict["batch_size"] = 2
+    config_dict["loss_function"] = torch.nn.MSELoss(reduction="none")
+    config_dict["discount_factor"] = 0.99
+    config_dict["n_step"] = 1
+    config_dict["bootstrap_on_truncated"] = False
+
+    config = RainbowConfig(config_dict, cartpole_game_config)
+    agent_network = SimpleNet(4, 10)
+    target_network = SimpleNet(4, 10)
+
+    learner = RainbowLearner(
+        config=config,
+        agent_network=agent_network,
+        target_agent_network=target_network,
+        device=device,
+        num_actions=10,
+        observation_dimensions=(4,),
+        observation_dtype=torch.float32,
+    )
+    return learner
+
+
+def test_rainbow_learner_loss_integration(rainbow_setup):
+    learner = rainbow_setup
+
+    batch = {
+        "observations": torch.randn((2, 4)),
+        "next_observations": torch.randn((2, 4)),
+        "actions": torch.randint(0, 10, (2,)),
+        "rewards": torch.randn((2,)),
+        "dones": torch.zeros((2,)).bool(),
+        "weights": torch.ones((2,)),
+    }
+
+    loss, priorities = learner.compute_loss(batch)
+
+    assert isinstance(loss, torch.Tensor)
+    assert priorities.shape == (2,)
+
+
+@pytest.fixture
+def muzero_setup(make_muzero_config_dict, cartpole_game_config, device):
+    config_dict = make_muzero_config_dict()
+    config_dict["support_range"] = 10
+    config_dict["v_min"] = -10
+    config_dict["v_max"] = 10
+    config_dict["atom_size"] = 21
+    config_dict["consistency_loss_factor"] = 1.0
+    config_dict["stochastic"] = False
+    config_dict["bootstrap_on_truncated"] = False
+    config_dict["discount_factor"] = 0.99
+
+    config = MuZeroConfig(config_dict, cartpole_game_config)
+    agent_network = SimpleNet(4, 10)
+
+    learner = MuZeroLearner(
+        config=config,
+        agent_network=agent_network,
+        device=device,
+        num_actions=10,
+        observation_dimensions=(4,),
+        observation_dtype=torch.float32,
+        player_id_mapping={0: 0, 1: 1},
+    )
+    return learner
+
+
+def test_muzero_learner_loss_integration(muzero_setup):
+    learner = muzero_setup
+
+    batch = {
+        "observations": torch.randn((2, 4)),
+        "unroll_observations": torch.randn((2, 3, 4)),
+        "actions": torch.randint(0, 10, (2, 3)),
+        "rewards": torch.randn((2, 3)),
+        "values": torch.randn((2, 4)),
+        "policies": torch.randn((2, 4, 10)).softmax(dim=-1),
+        "weights": torch.ones((2,)),
+        "is_same_game": torch.ones((2, 4)).bool(),
+        "has_valid_obs_mask": torch.ones((2, 4)).bool(),
+        "has_valid_action_mask": torch.ones((2, 4)).bool(),
+        "to_plays": torch.randint(0, 2, (2, 4)),
+    }
+
+    step_result = learner.compute_step_result(batch)
+
+    assert isinstance(step_result.loss, torch.Tensor)
+    assert step_result.priorities.shape == (2,)
+
+
+@pytest.fixture
+def imitation_setup(make_supervised_config_dict, device):
+    config_dict = make_supervised_config_dict()
+    config_dict["replay_buffer_size"] = 100
+    config_dict["minibatch_size"] = 2
+    config_dict["optimizer"] = torch.optim.Adam
+    config_dict["learning_rate"] = 1e-3
+    config_dict["adam_epsilon"] = 1e-8
+    config_dict["weight_decay"] = 0.0
+    config_dict["lr_schedule"] = "constant"
+    config_dict["loss_function"] = torch.nn.CrossEntropyLoss(reduction="none")
+
+    config = SupervisedConfig(config_dict)
+    agent_network = SimpleNet(4, 10)
+
+    learner = ImitationLearner(
+        config=config,
+        agent_network=agent_network,
+        device=device,
+        num_actions=10,
+        observation_dimensions=(4,),
+        observation_dtype=torch.float32,
+    )
+    return learner
+
+
+def test_imitation_learner_loss_integration(imitation_setup):
+    learner = imitation_setup
+
+    batch = {
+        "observations": torch.randn((2, 4)),
+        "target_policies": torch.randint(0, 10, (2,)),
+    }
+
+    step_result = learner.compute_step_result(batch)
+
+    assert isinstance(step_result.loss, torch.Tensor)
+    assert "imitation_loss" in step_result.loss_dict

@@ -48,7 +48,7 @@ python_files = ["test_*.py", "*_test.py"]
 python_functions = ["test_*"]
 
 [tool.coverage.run]
-source = ["agents", "modules", "search", "replay_buffers"]
+source = ["agents", "modules", "search", "replay_buffers", "losses"]
 omit = [
     "**/deprecated/**",
     "tests/**",

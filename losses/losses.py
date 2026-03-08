@@ -14,50 +14,45 @@ class LossModule(ABC):
     def __init__(self, config, device):
         self.config = config
         self.device = device
-        self.sequence_loss = False  # Override to True for MuZero-style losses
         self.name = self.__class__.__name__
 
-    # === Old DQN-style Interface ===
-    def ensure_predictions(self, agent, context: dict):
-        """Check context for predictions; if missing, compute and add them."""
-        pass
+    @property
+    @abstractmethod
+    def required_predictions(self) -> set[str]:
+        """Set of keys required in the predictions dict."""
+        pass  # pragma: no cover
 
-    def ensure_targets(self, agent, context: dict):
-        """Check context for targets; if missing, compute and add them."""
-        pass
+    @property
+    @abstractmethod
+    def required_targets(self) -> set[str]:
+        """Set of keys required in the targets dict."""
+        pass  # pragma: no cover
 
-    # === New MuZero-style Interface ===
     def should_compute(self, k: int, context: dict) -> bool:
-        """Determine if this loss should be computed at step k. For sequence losses only."""
+        """Determine if this loss should be computed at step k."""
         return True
 
     def get_mask(self, k: int, context: dict) -> torch.Tensor:
-        """Get the mask to apply for this loss at step k. For sequence losses only."""
+        """Get the mask to apply for this loss at step k."""
         if "has_valid_obs_mask" in context:
             return context["has_valid_obs_mask"][:, k]
         return torch.ones(self.config.minibatch_size, device=self.device)
 
-    # === Unified Compute Interface ===
     @abstractmethod
     def compute_loss(
         self,
-        agent=None,
-        context: dict = None,
-        k: int = None,
-        predictions: dict = None,
-        targets: dict = None,
-    ) -> Union[Tuple[torch.Tensor, torch.Tensor], torch.Tensor]:
+        predictions: dict,
+        targets: dict,
+        context: dict,
+        k: int = 0,
+    ) -> torch.Tensor:
         """
-        Compute loss. Supports both interfaces:
-
-        Old DQN-style: compute_loss(agent, context) -> (loss, elementwise)
-        New MuZero-style: compute_loss(predictions=..., targets=..., k=..., context=...) -> elementwise
+        Compute elementwise loss for a single step k.
 
         Returns:
-            For non-sequence (DQN): (scalar_loss, elementwise_tensor)
-            For sequence (MuZero): elementwise_tensor of shape (B,)
+            elementwise_tensor of shape (B,) or (B, atoms)
         """
-        pass
+        pass  # pragma: no cover
 
 
 # ============================================================================
@@ -66,234 +61,61 @@ class LossModule(ABC):
 
 
 class StandardDQNLoss(LossModule):
-    def __init__(self, config, device, action_selector=None):
+    def __init__(self, config, device):
         super().__init__(config, device)
-        self.sequence_loss = False
-        self.action_selector = action_selector
 
-    def ensure_predictions(self, agent, context: dict):
-        # IF EXISTS: Skip
-        if "online_q_values" in context:
-            return
+    @property
+    def required_predictions(self) -> set[str]:
+        return {"online_q_values"}
 
-        # PREPARE
-        observations = context["observations"]
-        actions = context["actions"].to(self.device).long()
-
-        # COMPUTE
-        # (B, num_actions)
-        all_q_values = agent.predict(observations)
-        # (B) - Select Q-value for specific action taken
-        selected_q_values = all_q_values[range(self.config.minibatch_size), actions]
-
-        # POPULATE
-        context["online_q_values"] = selected_q_values
-
-    def ensure_targets(self, agent, context: dict):
-        # IF EXISTS: Skip
-        if "target_q_values" in context:
-            return
-
-        # PREPARE
-        with torch.no_grad():
-            next_obs = context["next_observations"]
-            rewards = context["rewards"].to(self.device)
-            dones = context["dones"].to(self.device)
-            terminated = context.get("terminated", dones).to(self.device)
-            bootstrap_on_truncated = bool(self.config.bootstrap_on_truncated)
-            terminal_mask = terminated if bootstrap_on_truncated else dones
-
-            # Action Masking Logic
-            next_masks = context["next_legal_moves_masks"].to(self.device)
-            next_infos = [
-                {"legal_moves": torch.nonzero(m).view(-1).tolist()} for m in next_masks
-            ]
-
-            # COMPUTE (Double DQN)
-            # 1. Select best action using Online Network
-            curr_next_q = agent.predict(next_obs)
-
-            # Use action selector if provided, otherwise use argmax
-            if self.action_selector is not None:
-                # Select actions batch-wise
-                next_actions = []
-                for i in range(self.config.minibatch_size):
-                    action, _ = self.action_selector.select_action(
-                        agent_network=agent.agent_network,
-                        obs=next_obs[i : i + 1],
-                        network_output=InferenceOutput(q_values=curr_next_q[i : i + 1]),
-                        exploration=False,
-                        info=next_infos[i],
-                    )
-                    next_actions.append(action)
-                next_actions = torch.stack(next_actions).squeeze()
-            else:
-                # Fallback: simple greedy with masking
-                from agents.action_selectors.selectors import ArgmaxSelector
-
-                selector = ArgmaxSelector()
-
-                masked_q = torch.stack(
-                    [
-                        selector.mask_actions(
-                            curr_next_q[i],
-                            next_infos[i].get(
-                                "legal_moves", list(range(curr_next_q.shape[-1]))
-                            ),
-                            mask_value=-float("inf"),
-                            device=self.device,
-                        )
-                        for i in range(self.config.minibatch_size)
-                    ]
-                )
-                next_actions = masked_q.argmax(dim=-1)
-
-            # 2. Evaluate that action using Target Network
-            target_next_q = agent.predict_target(next_obs)
-            max_q_next = target_next_q[range(self.config.minibatch_size), next_actions]
-
-            # 3. Bellman Calculation
-            targets = (
-                rewards + self.config.discount_factor * (~terminal_mask) * max_q_next
-            )
-
-        # POPULATE
-        context["target_q_values"] = targets
+    @property
+    def required_targets(self) -> set[str]:
+        return {"target_q_values"}
 
     def compute_loss(
         self,
-        agent=None,
-        context: dict = None,
-        k: int = None,
-        predictions: dict = None,
-        targets: dict = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """DQN-style: Returns (scalar_loss, elementwise_loss)"""
-        preds = context["online_q_values"]
-        targets_vals = context["target_q_values"]
-        weights = context["weights"].to(torch.float32).to(self.device)
+        predictions: dict,
+        targets: dict,
+        context: dict,
+        k: int = 0,
+    ) -> torch.Tensor:
+        """Returns elementwise_loss of shape (B,)"""
+        preds = predictions["online_q_values"]
+        target_vals = targets["target_q_values"]
 
         # Calculate Elementwise (MSE or Huber)
-        elementwise = self.config.loss_function(preds, targets_vals, reduction="none")
-
-        # Apply PER weights
-        loss = (elementwise * weights).mean()
-
-        return loss, elementwise
+        elementwise = self.config.loss_function(preds, target_vals, reduction="none")
+        return elementwise
 
 
 class C51Loss(LossModule):
-    def __init__(self, config, device, action_selector=None):
+    def __init__(self, config, device):
         super().__init__(config, device)
-        self.support = torch.linspace(config.v_min, config.v_max, config.atom_size).to(
-            device
-        )
-        self.sequence_loss = False
-        self.action_selector = action_selector
 
-    def ensure_predictions(self, agent, context: dict):
-        if "online_dist" in context:
-            return
+    @property
+    def required_predictions(self) -> set[str]:
+        return {"online_dist"}
 
-        observations = context["observations"]
-        actions = context["actions"].to(self.device).long()
-
-        # (B, outputs, atom_size) -> Index by Action -> (B, atom_size)
-        all_dists = agent.predict(observations)
-        selected_dist = all_dists[range(self.config.minibatch_size), actions]
-
-        context["online_dist"] = selected_dist
-
-    def ensure_targets(self, agent, context: dict):
-        if "target_dist" in context:
-            return
-
-        with torch.no_grad():
-            # Setup
-            next_obs = context["next_observations"]
-            rewards = context["rewards"].to(self.device).view(-1, 1)
-            dones = context["dones"].to(self.device).view(-1, 1)
-            terminated = context.get("terminated", dones).to(self.device).view(-1, 1)
-            bootstrap_on_truncated = bool(self.config.bootstrap_on_truncated)
-            terminal_mask = terminated if bootstrap_on_truncated else dones
-
-            # Masking
-            next_masks = context["next_legal_moves_masks"].to(self.device)
-            next_infos = [
-                {"legal_moves": torch.nonzero(m).view(-1).tolist()} for m in next_masks
-            ]
-
-            # 1. Select Actions (Online Net) - Double DQN: online net picks action
-            online_next_logits = agent.predict(next_obs)
-            online_next_probs = torch.softmax(online_next_logits, dim=-1)
-
-            # Convert distributions to Q-values for action selection
-            online_q_values = (online_next_probs * self.support).sum(dim=-1)
-
-            # Use action selector if provided, otherwise use argmax
-            next_actions = []
-            for i in range(self.config.minibatch_size):
-                action, _ = self.action_selector.select_action(
-                    agent_network=agent.agent_network,
-                    obs=next_obs[i : i + 1],
-                    network_output=InferenceOutput(q_values=online_q_values[i : i + 1]),
-                    exploration=False,
-                    info=next_infos[i],
-                )
-                next_actions.append(action)
-            next_actions = torch.stack(next_actions).squeeze()
-
-            # 2. Get Target Distributions (Target Net) - Target net evaluates the action
-            target_next_logits = agent.predict_target(next_obs)
-            target_next_probs = torch.softmax(target_next_logits, dim=-1)
-            probabilities = target_next_probs[
-                range(self.config.minibatch_size), next_actions
-            ]
-
-            # 3. Project Distribution (C51 Logic)
-            discount = self.config.discount_factor**self.config.n_step
-            delta_z = (self.config.v_max - self.config.v_min) / (
-                self.config.atom_size - 1
-            )
-
-            Tz = (rewards + discount * (~terminal_mask) * self.support).clamp(
-                self.config.v_min, self.config.v_max
-            )
-            b = (Tz - self.config.v_min) / delta_z
-            l = b.floor().long().clamp(0, self.config.atom_size - 1)
-            u = b.ceil().long().clamp(0, self.config.atom_size - 1)
-
-            # Distribute probability mass
-            l[(u > 0) * (l == u)] -= 1
-            u[(l < (self.config.atom_size - 1)) * (l == u)] += 1
-
-            m = torch.zeros_like(probabilities)
-            m.scatter_add_(dim=1, index=l, src=probabilities * (u.float() - b))
-            m.scatter_add_(dim=1, index=u, src=probabilities * (b - l.float()))
-
-        context["target_dist"] = m
+    @property
+    def required_targets(self) -> set[str]:
+        return {"target_dist"}
 
     def compute_loss(
         self,
-        agent=None,
-        context: dict = None,
-        k: int = None,
-        predictions: dict = None,
-        targets: dict = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """C51-style: Returns (scalar_loss, elementwise_loss)"""
-        logit_preds = context["online_dist"]  # Now contains Logits
-        targets_vals = context["target_dist"]  # Contains Probs (m)
-        weights = context["weights"].to(torch.float32).to(self.device)
+        predictions: dict,
+        targets: dict,
+        context: dict,
+        k: int = 0,
+    ) -> torch.Tensor:
+        """C51-style: Returns elementwise_loss of shape (B,)"""
+        logit_preds = predictions["online_dist"]  # Contains Logits
+        target_vals = targets["target_dist"]  # Contains Probs (m)
 
         # Cross Entropy: -Sum(target * log_softmax(pred))
-        # This is numerically stable
         log_probs = F.log_softmax(logit_preds, dim=1)
-        elementwise = -torch.sum(targets_vals * log_probs, dim=1)
+        elementwise = -torch.sum(target_vals * log_probs, dim=1)
 
-        loss = (elementwise * weights).mean()
-
-        return loss, elementwise
+        return elementwise
 
 
 # ============================================================================
@@ -306,7 +128,14 @@ class ValueLoss(LossModule):
 
     def __init__(self, config, device):
         super().__init__(config, device)
-        self.sequence_loss = True
+
+    @property
+    def required_predictions(self) -> set[str]:
+        return {"values"}
+
+    @property
+    def required_targets(self) -> set[str]:
+        return {"values"}
 
     def should_compute(self, k: int, context: dict) -> bool:
         return True  # Compute at all steps
@@ -317,11 +146,10 @@ class ValueLoss(LossModule):
 
     def compute_loss(
         self,
-        agent=None,
-        context: dict = None,
-        k: int = None,
-        predictions: dict = None,
-        targets: dict = None,
+        predictions: dict,
+        targets: dict,
+        context: dict,
+        k: int = 0,
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         values_k = predictions["values"]
@@ -360,7 +188,14 @@ class PolicyLoss(LossModule):
 
     def __init__(self, config, device):
         super().__init__(config, device)
-        self.sequence_loss = True
+
+    @property
+    def required_predictions(self) -> set[str]:
+        return {"policies"}
+
+    @property
+    def required_targets(self) -> set[str]:
+        return {"policies"}
 
     def should_compute(self, k: int, context: dict) -> bool:
         return True  # Compute at all steps
@@ -371,11 +206,10 @@ class PolicyLoss(LossModule):
 
     def compute_loss(
         self,
-        agent=None,
-        context: dict = None,
-        k: int = None,
-        predictions: dict = None,
-        targets: dict = None,
+        predictions: dict,
+        targets: dict,
+        context: dict,
+        k: int = 0,
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         policies_k = predictions["policies"]
@@ -404,7 +238,14 @@ class RewardLoss(LossModule):
 
     def __init__(self, config, device):
         super().__init__(config, device)
-        self.sequence_loss = True
+
+    @property
+    def required_predictions(self) -> set[str]:
+        return {"rewards"}
+
+    @property
+    def required_targets(self) -> set[str]:
+        return {"rewards"}
 
     def should_compute(self, k: int, context: dict) -> bool:
         return k > 0  # Only for k > 0
@@ -415,11 +256,10 @@ class RewardLoss(LossModule):
 
     def compute_loss(
         self,
-        agent=None,
-        context: dict = None,
-        k: int = None,
-        predictions: dict = None,
-        targets: dict = None,
+        predictions: dict,
+        targets: dict,
+        context: dict,
+        k: int = 0,
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         rewards_k = predictions["rewards"]
@@ -457,7 +297,14 @@ class ToPlayLoss(LossModule):
 
     def __init__(self, config, device):
         super().__init__(config, device)
-        self.sequence_loss = True
+
+    @property
+    def required_predictions(self) -> set[str]:
+        return {"to_plays"}
+
+    @property
+    def required_targets(self) -> set[str]:
+        return {"to_plays"}
 
     def should_compute(self, k: int, context: dict) -> bool:
         # Only compute for multi-player games and k > 0
@@ -469,18 +316,16 @@ class ToPlayLoss(LossModule):
 
     def compute_loss(
         self,
-        agent=None,
-        context: dict = None,
-        k: int = None,
-        predictions: dict = None,
-        targets: dict = None,
+        predictions: dict,
+        targets: dict,
+        context: dict,
+        k: int = 0,
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         to_plays_k = predictions["to_plays"]
         target_to_plays_k = targets["to_plays"]
 
         # To-Play Loss: (B,)
-        # important to correctly predict whos turn it is on a terminal state, but unimportant afterwards
         to_play_loss = (
             self.config.to_play_loss_factor
             * self.config.to_play_loss_function(
@@ -500,7 +345,15 @@ class RelativeToPlayLoss(LossModule):
 
     def __init__(self, config, device):
         super().__init__(config, device)
-        self.sequence_loss = True
+
+    @property
+    def required_predictions(self) -> set[str]:
+        return {"to_plays"}
+
+    @property
+    def required_targets(self) -> set[str]:
+        # Needs to_plays to calculate delta
+        return {"to_plays"}
 
     def should_compute(self, k: int, context: dict) -> bool:
         # Only compute for multi-player games and k > 0 (needs k-1)
@@ -516,11 +369,10 @@ class RelativeToPlayLoss(LossModule):
 
     def compute_loss(
         self,
-        agent=None,
-        context: dict = None,
-        k: int = None,
-        predictions: dict = None,
-        targets: dict = None,
+        predictions: dict,
+        targets: dict,
+        context: dict,
+        k: int = 0,
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         # predictions["to_plays"] contains ΔP logits for step k (shape (B, num_players))
@@ -547,8 +399,15 @@ class ConsistencyLoss(LossModule):
 
     def __init__(self, config, device, agent_network):
         super().__init__(config, device)
-        self.sequence_loss = True
         self.agent_network = agent_network
+
+    @property
+    def required_predictions(self) -> set[str]:
+        return {"latent_states"}
+
+    @property
+    def required_targets(self) -> set[str]:
+        return {"consistency_targets"}
 
     def should_compute(self, k: int, context: dict) -> bool:
         return k > 0  # Only for k > 0
@@ -559,11 +418,10 @@ class ConsistencyLoss(LossModule):
 
     def compute_loss(
         self,
-        agent=None,
-        context: dict = None,
-        k: int = None,
-        predictions: dict = None,
-        targets: dict = None,
+        predictions: dict,
+        targets: dict,
+        context: dict,
+        k: int = 0,
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         latent_states_k = predictions["latent_states"]
@@ -588,26 +446,31 @@ class ChanceQLoss(LossModule):
 
     def __init__(self, config, device):
         super().__init__(config, device)
-        self.sequence_loss = True
+
+    @property
+    def required_predictions(self) -> set[str]:
+        return {"chance_values"}
+
+    @property
+    def required_targets(self) -> set[str]:
+        # Uses target_values_next which is targets["values"][:, k]
+        return {"values"}
 
     def should_compute(self, k: int, context: dict) -> bool:
         return self.config.stochastic and k > 0
 
     def compute_loss(
         self,
-        agent=None,
-        context: dict = None,
-        k: int = None,
-        predictions: dict = None,
-        targets: dict = None,
+        predictions: dict,
+        targets: dict,
+        context: dict,
+        k: int = 0,
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         # Note: chance values are indexed at k-1 in the stochastic arrays
         chance_values_k = predictions["chance_values"]
         # Target is derived from replay values at k+1, not a separate learner target head.
-        target_chance_values_k = context["target_values_next"]
-
-        # TODO: HAVE WE ALREADY RECOMPUTED TARGET Q IN THE CASE OF REANALYZE? I THINK WE HAVE
+        target_chance_values_k = context.get("target_values_next")
 
         # Convert to support if needed
         if self.config.support_range is not None:
@@ -648,7 +511,14 @@ class SigmaLoss(LossModule):
 
     def __init__(self, config, device):
         super().__init__(config, device)
-        self.sequence_loss = True
+
+    @property
+    def required_predictions(self) -> set[str]:
+        return {"chance_codes"}
+
+    @property
+    def required_targets(self) -> set[str]:
+        return {"chance_codes"}
 
     def should_compute(self, k: int, context: dict) -> bool:
         return self.config.stochastic and k > 0
@@ -659,11 +529,10 @@ class SigmaLoss(LossModule):
 
     def compute_loss(
         self,
-        agent=None,
-        context: dict = None,
-        k: int = None,
-        predictions: dict = None,
-        targets: dict = None,
+        predictions: dict,
+        targets: dict,
+        context: dict,
+        k: int = 0,
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         # Note: indexed at k-1 in the stochastic arrays
@@ -693,7 +562,14 @@ class VQVAECommitmentLoss(LossModule):
 
     def __init__(self, config, device):
         super().__init__(config, device)
-        self.sequence_loss = True
+
+    @property
+    def required_predictions(self) -> set[str]:
+        return {"chance_encoder_embeddings"}
+
+    @property
+    def required_targets(self) -> set[str]:
+        return {"chance_codes"}
 
     def should_compute(self, k: int, context: dict) -> bool:
         return (
@@ -706,11 +582,10 @@ class VQVAECommitmentLoss(LossModule):
 
     def compute_loss(
         self,
-        agent=None,
-        context: dict = None,
-        k: int = None,
-        predictions: dict = None,
-        targets: dict = None,
+        predictions: dict,
+        targets: dict,
+        context: dict,
+        k: int = 0,
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         # Note: indexed at k-1 in the stochastic arrays
@@ -721,7 +596,6 @@ class VQVAECommitmentLoss(LossModule):
         ).float()
 
         # VQ-VAE commitment cost between c_t+k+1 and (c^e)_t+k+1 ||c_t+k+1 - (c^e)_t+k+1||^2
-        # If using true chance codes, we can use them directly
         diff = (
             chance_encoder_embedding_k_plus_1 - chance_encoder_onehot_k_plus_1.detach()
         )  # TODO: lightzero does not detach here, try both
@@ -740,80 +614,49 @@ class VQVAECommitmentLoss(LossModule):
 class LossPipeline:
     """
     Unified pipeline that handles both single-step (DQN) and sequence (MuZero) losses.
+    Validated at initialization to ensure all required keys are present.
     """
 
     def __init__(self, modules: list[LossModule]):
         self.modules = modules
-        self.has_sequence_losses = any(m.sequence_loss for m in modules)
-        self.has_nonsequence_losses = any(not m.sequence_loss for m in modules)
 
-    def run(self, agent=None, context: dict = None, **kwargs):
+    def validate_dependencies(
+        self, network_output_keys: set[str], target_keys: set[str]
+    ) -> None:
         """
-        Dispatch to appropriate pipeline based on loss types.
-
-        For non-sequence losses (DQN, C51):
-            run(agent, context) -> (total_loss, primary_elementwise)
-
-        For sequence losses (MuZero):
-            run(predictions_tensor, targets_tensor, context, weights, gradient_scales)
-            -> (total_loss, loss_dict, priorities)
+        Verify that the provided keys satisfy all module requirements.
+        Raises ValueError with detailed error message on failure.
         """
-        if self.has_sequence_losses and not self.has_nonsequence_losses:
-            # Pure sequence losses (MuZero)
-            return self._run_sequence_pipeline(**kwargs, context=context)
-        elif self.has_nonsequence_losses and not self.has_sequence_losses:
-            # Pure non-sequence losses (DQN)
-            return self._run_nonsequence_pipeline(agent, context)
-        else:
-            raise ValueError(
-                "Cannot mix sequence and non-sequence losses in the same pipeline"
-            )
-
-    def _run_nonsequence_pipeline(self, agent, context: dict):
-        """
-        For non-sequence losses (DQN, C51, etc.)
-        Runs the full pipeline: Preparation -> Target Calc -> Loss Calc
-        Returns combined loss and the elementwise loss of the *primary* (first) module.
-        """
-        # 1. Prepare all Predictions (Iterative check & populate)
         for module in self.modules:
-            module.ensure_predictions(agent, context)
+            missing_preds = module.required_predictions - network_output_keys
+            missing_targets = module.required_targets - target_keys
 
-        # 2. Prepare all Targets (Iterative check & populate)
-        for module in self.modules:
-            module.ensure_targets(agent, context)
+            if missing_preds:
+                raise ValueError(
+                    f"Module {module.name} missing required predictions: {missing_preds}. "
+                    f"Available: {network_output_keys}"
+                )
+            if missing_targets:
+                raise ValueError(
+                    f"Module {module.name} missing required targets: {missing_targets}. "
+                    f"Available: {target_keys}"
+                )
 
-        # 3. Compute Losses
-        total_loss = 0
-        primary_elementwise = None
-
-        for idx, module in enumerate(self.modules):
-            loss, elementwise = module.compute_loss(agent=agent, context=context)
-            total_loss += loss
-
-            # We use the first module's elementwise loss for PER priorities
-            if idx == 0:
-                primary_elementwise = elementwise
-
-        return total_loss, primary_elementwise
-
-    def _run_sequence_pipeline(
+    def run(
         self,
         predictions: dict,
         targets: dict,
-        context: dict,
-        weights: torch.Tensor,
-        gradient_scales: torch.Tensor,
-        config=None,
-        device=None,
+        context: dict = {},
+        weights: Optional[torch.Tensor] = None,
+        gradient_scales: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Dict[str, float], torch.Tensor]:
         """
-        Run the loss pipeline across all unroll steps for sequence losses.
+        Run the loss pipeline across all unroll steps.
 
         Args:
-            predictions: Dict of tensors with shape (B, K+1, ...)
-            targets: Dict of tensors with shape (B, K+1, ...)
-            context: Additional context (masks, observations, etc.)
+            predictions: Dict of tensors with shape (B, K+1, ...) or (B, ...)
+            targets: Dict of tensors with shape (B, K+1, ...) or (B, ...)
+            context: Additional context (masks, etc.)
             weights: PER weights of shape (B,)
             gradient_scales: Gradient scales of shape (1, K+1)
 
@@ -824,59 +667,70 @@ class LossPipeline:
         """
         from modules.utils import support_to_scalar, scale_gradient
 
-        # Get config from first module
-        if config is None:
-            config = self.modules[0].config
-        if device is None:
-            device = self.modules[0].device
+        # Parameters from first module
+        config = self.modules[0].config
+        device = self.modules[0].device
+
+        # Determine batch_size and unroll steps
+        first_tensor = next(iter(predictions.values()))
+        batch_size = first_tensor.shape[0]
+
+        if weights is None:
+            weights = torch.ones(batch_size, device=device)
+
+        if gradient_scales is None:
+            # Detect unroll steps from sequence tensors
+            # Default to 1 step if no sequence found
+            expected_steps = 1
+            for val in predictions.values():
+                if (
+                    torch.is_tensor(val) and val.ndim > 2
+                ):  # Very basic heuristic: (B, K+1, ...)
+                    # This heuristic is weak. Better: use a dedicated field or unroll_steps from config
+                    pass
+            # Non-sequence fallthrough: (1, 1)
+            gradient_scales = torch.ones((1, 1), device=device)
 
         total_loss = torch.tensor(0.0, device=device)
         loss_dict = {module.name: 0.0 for module in self.modules}
-        priorities = torch.zeros(config.minibatch_size, device=device)
+        priorities = torch.zeros(batch_size, device=device)
 
+        # Determine unroll steps from gradient_scales (1, K+1)
+        # For non-sequence (DQN), gradient_scales is usually (1, 1)
         unroll_steps = gradient_scales.shape[1] - 1
-
         expected_steps = unroll_steps + 1
+
         context["full_targets"] = targets
 
-        for k in range(unroll_steps + 1):
+        for k in range(expected_steps):
             # Extract predictions and targets for step k
             preds_k = self._extract_step_data(predictions, k, expected_steps)
             targets_k = self._extract_step_data(targets, k, expected_steps)
 
             # --- 1. Priority Update (Only for k=0) ---
             if k == 0:
-                values_k = preds_k["values"]
-                target_values_k = targets_k["values"]
-
-                if config.support_range is not None:
-                    # Convert predicted value support to scalar for priority calculation
-                    pred_scalar = support_to_scalar(values_k, config.support_range)
-                    assert pred_scalar.shape == target_values_k.shape
-                    priority = torch.abs(target_values_k - pred_scalar)
-                else:
-                    priority = torch.abs(target_values_k - values_k.squeeze(-1))
-                priorities = priority.detach()  # Keep the B-length tensor
+                priorities = self._calculate_priorities(
+                    preds_k, targets_k, config, device
+                )
 
             # --- 2. Compute losses for this step ---
-            step_loss = torch.zeros(config.minibatch_size, device=device)
-            if "values" in targets and k > 0 and targets["values"].shape[1] > k:
-                context["target_values_next"] = targets["values"][:, k]
+            step_loss = torch.zeros(batch_size, device=device)
+
+            # Special case for ChanceQLoss which needs the next value
+            if "values" in targets and k + 1 < targets["values"].shape[1]:
+                context["target_values_next"] = targets["values"][:, k + 1]
 
             for module in self.modules:
                 if not module.should_compute(k, context):
                     continue
 
-                if not self._can_compute_module(module, preds_k, targets_k):
-                    continue
-
                 # Compute elementwise loss: (B,)
                 loss_k = module.compute_loss(
-                    predictions=preds_k, targets=targets_k, k=k, context=context
+                    predictions=preds_k, targets=targets_k, context=context, k=k
                 )
 
-                # Apply mask if using absorbing states
-                if config.mask_absorbing:
+                # Apply mask if any
+                if getattr(config, "mask_absorbing", True):
                     mask_k = module.get_mask(k, context)
                     loss_k = loss_k * mask_k
 
@@ -887,130 +741,79 @@ class LossPipeline:
                 loss_dict[module.name] += loss_k.sum().item()
 
             # --- 3. Apply gradient scaling and PER weights ---
-            scales_k = gradient_scales[:, k]  # (1,)
-            scaled_loss_k = scale_gradient(step_loss, scales_k.item())
+            scale_k = gradient_scales[:, k].item()
+            scaled_loss_k = scale_gradient(step_loss, scale_k)
             weighted_scaled_loss_k = scaled_loss_k * weights
 
             # Accumulate total loss (scalar)
             total_loss += weighted_scaled_loss_k.sum()
 
         # Average the total loss by batch size
-        loss_mean = total_loss / config.minibatch_size
+        loss_mean = total_loss / batch_size
 
         # Average accumulated losses for logging
         for key in loss_dict:
-            loss_dict[key] /= config.minibatch_size
+            loss_dict[key] /= batch_size
 
         return loss_mean, loss_dict, priorities
+
+    def _calculate_priorities(
+        self, preds_k: dict, targets_k: dict, config, device
+    ) -> torch.Tensor:
+        """Calculate PER priorities for the current batch (k=0)."""
+        from modules.utils import support_to_scalar
+
+        # Standard MuZero/DQN approach: Value/Q error
+        values_k = preds_k.get("values")
+        if values_k is None:
+            values_k = preds_k.get("online_q_values")
+
+        target_values_k = targets_k.get("values")
+        if target_values_k is None:
+            target_values_k = targets_k.get("target_q_values")
+
+        if values_k is None or target_values_k is None:
+            # Fallback for other loss types if values aren't present
+            return torch.zeros(
+                config.minibatch_size, device=device, dtype=torch.float32
+            )
+
+        if config.support_range is not None and values_k.ndim > 1:
+            # Support-based values (C51 or MuZero)
+            pred_scalar = support_to_scalar(values_k, config.support_range)
+            # If target is already scalar, keep it. If support, convert.
+            if target_values_k.ndim > 1:
+                target_scalar = support_to_scalar(target_values_k, config.support_range)
+            else:
+                target_scalar = target_values_k
+            priority = torch.abs(target_scalar - pred_scalar)
+        else:
+            # Scalar values (Standard DQN)
+            priority = torch.abs(target_values_k - values_k.squeeze(-1))
+
+        return priority.detach()
 
     def _extract_step_data(
         self, tensor_dict: dict, k: int, expected_steps: int
     ) -> dict:
         """
         Extract data for unroll step `k`.
-
-        Supports:
-        - state-aligned tensors with shape (B, K+1, ...)
-        - transition-aligned tensors with shape (B, K, ...), mapped by k -> k-1
+        Supports (B, K+1, ...) and (B, ...) shapes.
         """
         step_data = {}
         for key, tensor in tensor_dict.items():
-            if tensor is None or not torch.is_tensor(tensor) or tensor.ndim <= 1:
+            if tensor is None or not torch.is_tensor(tensor):
                 continue
 
-            steps = tensor.shape[1]
-            if steps == expected_steps:
+            if tensor.ndim > 1 and tensor.shape[1] == expected_steps:
+                # Sequence data: (B, K+1, ...)
                 step_data[key] = tensor[:, k]
-            elif steps == expected_steps - 1:
-                # Transition-aligned tensors (e.g., rewards/chance) correspond to k in [1..K].
+            elif tensor.ndim > 1 and tensor.shape[1] == expected_steps - 1:
+                # Transition-aligned data (e.g., rewards in some cases)
                 if k > 0:
                     step_data[key] = tensor[:, k - 1]
+            else:
+                # Non-sequence data: (B, ...)
+                step_data[key] = tensor
+
         return step_data
-
-    def _can_compute_module(
-        self, module: LossModule, predictions: dict, targets: dict
-    ) -> bool:
-        required_predictions = {
-            "ValueLoss": {"values"},
-            "PolicyLoss": {"policies"},
-            "RewardLoss": {"rewards"},
-            "ToPlayLoss": {"to_plays"},
-            "ConsistencyLoss": {"latent_states"},
-            "ChanceQLoss": {"chance_values"},
-            "SigmaLoss": {"chance_codes"},
-            "VQVAECommitmentLoss": {"chance_encoder_embeddings"},
-        }
-        required_targets = {
-            "ValueLoss": {"values"},
-            "PolicyLoss": {"policies"},
-            "RewardLoss": {"rewards"},
-            "ToPlayLoss": {"to_plays"},
-            "RelativeToPlayLoss": {"to_plays"},
-            "ConsistencyLoss": {"consistency_targets"},
-            "ChanceQLoss": {"values"},
-            "SigmaLoss": {"chance_codes"},
-            "VQVAECommitmentLoss": {"chance_codes"},
-        }
-        module_name = module.__class__.__name__
-        pred_required = required_predictions.get(module_name, set())
-        target_required = required_targets.get(module_name, set())
-        return pred_required.issubset(predictions.keys()) and target_required.issubset(
-            targets.keys()
-        )
-
-
-# ============================================================================
-# FACTORY FUNCTIONS
-# ============================================================================
-
-
-def create_dqn_loss_pipeline(config, device):
-    """Create a standard DQN loss pipeline."""
-    modules = [
-        StandardDQNLoss(config, device),
-    ]
-    return LossPipeline(modules)
-
-
-def create_c51_loss_pipeline(config, device):
-    """Create a C51 distributional RL loss pipeline."""
-    modules = [
-        C51Loss(config, device),
-    ]
-    return LossPipeline(modules)
-
-
-def create_muzero_loss_pipeline(config, device, agent_network):
-    """
-    Factory function to create the standard MuZero loss pipeline.
-
-    Args:
-        config: Configuration object
-        device: Device to run on
-        agent_network: AgentNetwork instance (needed for consistency)
-
-    Returns:
-        LossPipeline instance configured for MuZero
-    """
-    modules = [
-        ValueLoss(config, device),
-        PolicyLoss(config, device),
-        RewardLoss(config, device),
-    ]
-
-    # Optional modules
-    if config.game.num_players != 1:
-        modules.append(ToPlayLoss(config, device))
-
-    modules.append(ConsistencyLoss(config, device, agent_network))
-
-    if config.stochastic:
-        modules.extend(
-            [
-                ChanceQLoss(config, device),
-                SigmaLoss(config, device),
-                VQVAECommitmentLoss(config, device),
-            ]
-        )
-
-    return LossPipeline(modules)

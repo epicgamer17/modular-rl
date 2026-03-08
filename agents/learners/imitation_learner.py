@@ -80,8 +80,22 @@ class ImitationLearner(BaseLearner):
         # 3. Initialize LR Scheduler
         self.lr_scheduler = get_lr_scheduler(self.optimizer, config)
 
-        # 4. Loss function (CrossEntropy or configurable)
-        self.loss_function = getattr(config, "loss_function", nn.CrossEntropyLoss())
+        # 4. Loss function (ImitationLoss)
+        from losses.basic_losses import ImitationLoss
+        from losses.losses import LossPipeline
+
+        self.loss_module = ImitationLoss(
+            config=config,
+            device=device,
+            num_actions=num_actions,
+        )
+        self.loss_pipeline = LossPipeline([self.loss_module])
+
+        # Validate dependencies
+        self.loss_pipeline.validate_dependencies(
+            network_output_keys={"policies"},
+            target_keys={"target_policies"},
+        )
 
     def store(
         self,
@@ -116,24 +130,23 @@ class ImitationLearner(BaseLearner):
         targets = batch["target_policies"].to(self.device)
 
         inf_out = self.agent_network.obs_inference(observations)
-        predictions = inf_out.policy.logits
+        predictions_logits = inf_out.policy.logits
 
         with torch.inference_mode():
-            batch_policy_mean = predictions.detach().mean(dim=0)
+            batch_policy_mean = predictions_logits.detach().mean(dim=0)
 
-        if targets.dim() == 1:
-            targets_onehot = torch.zeros(
-                targets.shape[0], self.num_actions, device=self.device
-            )
-            targets_onehot.scatter_(1, targets.unsqueeze(1), 1.0)
-            loss = self.loss_function(predictions, targets_onehot).mean()
-        else:
-            loss = self.loss_function(predictions, targets).mean()
+        predictions = {"policies": predictions_logits}
+        target_dict = {"target_policies": targets}
+
+        loss_mean, loss_dict, priorities = self.loss_pipeline.run(
+            predictions=predictions,
+            targets=target_dict,
+        )
 
         return StepResult(
-            loss=loss,
-            loss_dict={"imitation_loss": float(loss.detach().item())},
-            priorities=None,
+            loss=loss_mean,
+            loss_dict={"imitation_loss": float(loss_mean.detach().item())},
+            priorities=priorities,
             meta={"policy_mean": batch_policy_mean},
         )
 

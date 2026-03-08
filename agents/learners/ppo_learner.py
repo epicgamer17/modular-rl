@@ -79,14 +79,23 @@ class PPOLearner(BaseLearner):
         # 3. Initialize LR Schedulers
         self.policy_scheduler = get_lr_scheduler(self.policy_optimizer, config)
         self.value_scheduler = get_lr_scheduler(self.value_optimizer, config)
+
+        from losses.losses import LossPipeline
+
         self.policy_loss_module = PPOPolicyLoss(
+            config=config,
+            device=device,
             clip_param=self.config.clip_param,
             entropy_coefficient=self.config.entropy_coefficient,
             policy_strategy=getattr(
                 self.agent_network.components["policy_head"], "strategy", None
             ),
         )
+        self.policy_pipeline = LossPipeline([self.policy_loss_module])
+
         self.value_loss_module = PPOValueLoss(
+            config=config,
+            device=device,
             critic_coefficient=self.config.critic_coefficient,
             atom_size=self.config.atom_size,
             v_min=self.config.v_min,
@@ -94,6 +103,17 @@ class PPOLearner(BaseLearner):
             value_strategy=getattr(
                 self.agent_network.components["value_head"], "strategy", None
             ),
+        )
+        self.value_pipeline = LossPipeline([self.value_loss_module])
+
+        # Validate dependencies
+        self.policy_pipeline.validate_dependencies(
+            network_output_keys={"policies"},
+            target_keys={"actions", "old_log_probs", "advantages"},
+        )
+        self.value_pipeline.validate_dependencies(
+            network_output_keys={"values"},
+            target_keys={"returns"},
         )
 
     def _create_optimizer(self, params, sub_config) -> torch.optim.Optimizer:
@@ -264,26 +284,41 @@ class PPOLearner(BaseLearner):
         unroll_out = self.agent_network.learner_inference(batch)
         losses: Dict[str, torch.Tensor] = {}
 
+        predictions = {
+            "policies": unroll_out.policies,
+            "values": unroll_out.values,
+        }
+
         if (
             actions is not None
             and old_log_probs is not None
             and advantages is not None
             and unroll_out.policies is not None
         ):
-            policy_loss, approx_kl = self.policy_loss_module.compute(
-                policy_logits=unroll_out.policies,
-                actions=actions,
-                old_log_probs=old_log_probs,
-                advantages=advantages,
+            targets = {
+                "actions": actions,
+                "old_log_probs": old_log_probs,
+                "advantages": advantages,
+            }
+            context = {}
+            loss_mean, loss_dict, priorities = self.policy_pipeline.run(
+                predictions=predictions,
+                targets=targets,
+                context=context,
             )
-            losses["policy_loss"] = policy_loss
-            losses["approx_kl"] = approx_kl
+            losses["policy_loss"] = loss_mean
+            if "approx_kl" in context:
+                losses["approx_kl"] = torch.tensor(
+                    np.mean(context["approx_kl"]), device=self.device
+                )
 
         if returns is not None and unroll_out.values is not None:
-            losses["value_loss"] = self.value_loss_module.compute(
-                value_logits=unroll_out.values,
-                returns=returns,
+            targets = {"returns": returns}
+            loss_mean, loss_dict, priorities = self.value_pipeline.run(
+                predictions=predictions,
+                targets=targets,
             )
+            losses["value_loss"] = loss_mean
 
         return losses
 

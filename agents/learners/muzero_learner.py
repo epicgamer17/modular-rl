@@ -12,7 +12,17 @@ from torch.optim.sgd import SGD
 
 from agents.learners.base import BaseLearner, StepResult
 from agents.learners.callbacks import MetricsCallback
-from losses.losses import create_muzero_loss_pipeline
+from losses.losses import (
+    ChanceQLoss,
+    ConsistencyLoss,
+    LossPipeline,
+    PolicyLoss,
+    RewardLoss,
+    SigmaLoss,
+    ToPlayLoss,
+    ValueLoss,
+    VQVAECommitmentLoss,
+)
 from modules.utils import get_lr_scheduler
 from replay_buffers.buffer_factories import create_muzero_buffer
 
@@ -82,11 +92,56 @@ class MuZeroLearner(BaseLearner):
             raise ValueError(f"Unsupported optimizer: {config.optimizer}")
 
         self.lr_scheduler = get_lr_scheduler(self.optimizer, config)
-        self.loss_pipeline = create_muzero_loss_pipeline(
-            config=config,
-            device=device,
-            agent_network=agent_network,
-        )
+
+        # 4. Initialize Loss Pipeline
+        modules = [
+            ValueLoss(config, device),
+            PolicyLoss(config, device),
+            RewardLoss(config, device),
+        ]
+
+        # Optional modules
+        if config.game.num_players != 1:
+            modules.append(ToPlayLoss(config, device))
+
+        modules.append(ConsistencyLoss(config, device, agent_network))
+
+        if config.stochastic:
+            modules.extend(
+                [
+                    ChanceQLoss(config, device),
+                    SigmaLoss(config, device),
+                    VQVAECommitmentLoss(config, device),
+                ]
+            )
+
+        self.loss_pipeline = LossPipeline(modules)
+
+        # 5. Validate Dependencies
+        # Verify that our _prepare_targets and _predictions_to_dict provide all required keys
+        if len(self.replay_buffer) > 0:
+            sample_batch = self.replay_buffer.sample()
+            dummy_targets = self._prepare_targets(sample_batch)
+            if self.config.consistency_loss_factor > 0:
+                dummy_targets["consistency_targets"] = torch.zeros((1, 1, 1))
+
+            # We assume learner_inference provides these keys based on _predictions_to_dict
+            dummy_pred_keys = {
+                "values",
+                "policies",
+                "rewards",
+                "to_plays",
+                "latent_states",
+            }
+            if config.stochastic:
+                dummy_pred_keys.update(
+                    {"chance_codes", "chance_values", "chance_encoder_embeddings"}
+                )
+
+            self.loss_pipeline.validate_dependencies(
+                network_output_keys=dummy_pred_keys,
+                target_keys=set(dummy_targets.keys()),
+            )
 
     @property
     def training_iterations(self) -> int:
@@ -206,8 +261,6 @@ class MuZeroLearner(BaseLearner):
             context=context,
             weights=weights,
             gradient_scales=gradient_scales,
-            config=self.config,
-            device=self.device,
         )
 
         detached_predictions = {

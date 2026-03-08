@@ -91,6 +91,8 @@ class RainbowLearner(BaseLearner):
         self.training_selector = ArgmaxSelector()
 
         # 5. Initialize architecture-agnostic TD loss module
+        from losses.losses import LossPipeline
+
         if config.atom_size > 1:
             self.td_loss_module = C51LossModule(
                 config=config,
@@ -102,6 +104,19 @@ class RainbowLearner(BaseLearner):
                 config=config,
                 device=device,
                 action_selector=self.training_selector,
+            )
+        self.loss_pipeline = LossPipeline([self.td_loss_module])
+
+        # Validate dependencies
+        if config.atom_size > 1:
+            self.loss_pipeline.validate_dependencies(
+                network_output_keys={"online_q_logits", "next_online_q_logits"},
+                target_keys={"target_next_q_logits", "actions", "rewards", "dones"},
+            )
+        else:
+            self.loss_pipeline.validate_dependencies(
+                network_output_keys={"online_q_values", "next_online_q_values"},
+                target_keys={"target_next_q_values", "actions", "rewards", "dones"},
             )
 
         # 5. Create support for distributional RL
@@ -146,37 +161,31 @@ class RainbowLearner(BaseLearner):
                 {"observations": next_observations}
             )
 
-        if self.config.atom_size > 1:
-            if (
-                online_out.q_logits is None
-                or next_online_out.q_logits is None
-                or target_next_out.q_logits is None
-            ):
-                raise ValueError(
-                    "Distributional Rainbow requires q_logits from learner_inference."
-                )
-            return self.td_loss_module.compute(
-                online_q_logits=online_out.q_logits,
-                next_online_q_logits=next_online_out.q_logits,
-                target_next_q_logits=target_next_out.q_logits,
-                batch=batch,
-                agent_network=self.agent_network,
-            )
+        predictions = {
+            "online_q_values": online_out.q_values,
+            "next_online_q_values": next_online_out.q_values,
+            "online_q_logits": online_out.q_logits,
+            "next_online_q_logits": next_online_out.q_logits,
+        }
 
-        if (
-            online_out.q_values is None
-            or next_online_out.q_values is None
-            or target_next_out.q_values is None
-        ):
-            raise ValueError("Rainbow requires q_values from learner_inference.")
+        targets = {
+            # Base keys for modules to extract
+            "target_next_q_values": target_next_out.q_values,
+            "target_next_q_logits": target_next_out.q_logits,
+            **batch,
+        }
 
-        return self.td_loss_module.compute(
-            online_q_values=online_out.q_values,
-            next_online_q_values=next_online_out.q_values,
-            target_next_q_values=target_next_out.q_values,
-            batch=batch,
-            agent_network=self.agent_network,
+        context = {"agent_network": self.agent_network}
+
+        # LossPipeline.run returns (loss_mean, loss_dict, priorities)
+        # elementwise loss is returned as weights if provided, but here priorities is the raw per-sampled-item loss
+        loss_mean, loss_dict, priorities = self.loss_pipeline.run(
+            predictions=predictions,
+            targets=targets,
+            context=context,
         )
+
+        return loss_mean, priorities
 
     def after_optimizer_step(self, batch, step_result: StepResult, stats=None) -> None:
         self.agent_network.reset_noise()

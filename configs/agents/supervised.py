@@ -6,7 +6,11 @@ from configs.base import (
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.backbones.factory import BackboneConfigFactory
 from configs.modules.architecture_config import ArchitectureConfig
-from modules.utils import prepare_activations, prepare_kernel_initializers, kernel_initializer_wrapper
+from modules.utils import (
+    prepare_activations,
+    prepare_kernel_initializers,
+    kernel_initializer_wrapper,
+)
 from torch.optim import Optimizer, Adam
 
 
@@ -48,6 +52,10 @@ class SupervisedConfig(ConfigBase, OptimizationConfig, ReplayConfig):
         self.clip_low_prob = self.parse_field("sl_clip_low_prob", 0.00)
 
         self.noisy_sigma = self.parse_field("sl_noisy_sigma", 0)
+        self.lr_schedule = self.parse_schedule_config(
+            "sl_lr_schedule",
+            defaults={"type": "constant", "initial": self.learning_rate},
+        )
 
         # Backbone Configuration
         self.backbone: BackboneConfig = self.parse_backbone_config("sl_backbone")
