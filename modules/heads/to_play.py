@@ -63,3 +63,53 @@ class ToPlayHead(BaseHead):
         logits, new_state = super().forward(x, state)
         player_idx = torch.argmax(logits, dim=-1)  # (B,)
         return logits, new_state, player_idx
+
+
+class RelativeToPlayHead(ToPlayHead):
+    """
+    Predicts the relative turn shift (ΔP) instead of absolute player index.
+    The logits represent probabilities for ΔP ∈ {0, 1, ..., num_players-1}.
+    """
+
+    def forward(
+        self,
+        x: Tensor,
+        state: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
+        """
+        Run the relative to-play head.
+
+        Args:
+            x:     Input feature tensor of shape ``(B, *input_shape)``.
+            state: Opaque head state containing 'current_player_idx'.
+
+        Returns:
+            logits:     Raw logits of shape ``(B, num_players)`` representing ΔP.
+            new_state:  Updated head state with the new 'current_player_idx'.
+            player_idx: Actual next player index of shape ``(B,)``.
+        """
+        # 1. Get logits from BaseHead (via super.forward which calls process_input and output_layer)
+        # Note: ToPlayHead.forward also calls argmax, but we re-calculate it here for ΔP.
+        logits, _ = super(ToPlayHead, self).forward(x, state)
+
+        # 2. Extract current player index from state (Opaque Token)
+        if state is None:
+            state = {}
+        current_player_idx = state.get(
+            "current_player_idx",
+            torch.zeros(x.shape[0], device=x.device, dtype=torch.long),
+        )
+
+        # 3. Calculate the shift (ΔP)
+        delta_p = torch.argmax(logits, dim=-1)
+
+        # 4. Calculate actual next player index: (current + shift) % num_players
+        # self.strategy.num_bins is defined in Categorical strategy (initialized in ToPlayHead)
+        num_players = self.strategy.num_bins
+        player_idx = (current_player_idx + delta_p) % num_players
+
+        # 5. Update the opaque state
+        new_state = state.copy()
+        new_state["current_player_idx"] = player_idx
+
+        return logits, new_state, player_idx

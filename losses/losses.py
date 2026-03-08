@@ -491,6 +491,57 @@ class ToPlayLoss(LossModule):
         return to_play_loss
 
 
+class RelativeToPlayLoss(LossModule):
+    """
+    To-play loss for relative turn shifts (ΔP).
+    Calculates ΔP targets from the sequence of absolute player indices:
+    ΔP_k = (P_k - P_{k-1}) mod num_players.
+    """
+
+    def __init__(self, config, device):
+        super().__init__(config, device)
+        self.sequence_loss = True
+
+    def should_compute(self, k: int, context: dict) -> bool:
+        # Only compute for multi-player games and k > 0 (needs k-1)
+        return (
+            k > 0
+            and self.config.game.num_players > 1
+            and "full_targets" in context
+            and "to_plays" in context["full_targets"]
+        )
+
+    def get_mask(self, k: int, context: dict) -> torch.Tensor:
+        return context["has_valid_obs_mask"][:, k]
+
+    def compute_loss(
+        self,
+        agent=None,
+        context: dict = None,
+        k: int = None,
+        predictions: dict = None,
+        targets: dict = None,
+    ) -> torch.Tensor:
+        """MuZero-style: Returns elementwise_loss of shape (B,)"""
+        # predictions["to_plays"] contains ΔP logits for step k (shape (B, num_players))
+        delta_p_logits_k = predictions["to_plays"]
+
+        # Calculate target ΔP_k = (P_k - P_{k-1}) mod N
+        full_targets = context["full_targets"]
+        p_k = full_targets["to_plays"][:, k]
+        p_prev = full_targets["to_plays"][:, k - 1]
+        num_players = self.config.game.num_players
+
+        target_delta_p_k = (p_k - p_prev) % num_players
+
+        # Loss calculation
+        loss = self.config.to_play_loss_factor * self.config.to_play_loss_function(
+            delta_p_logits_k, target_delta_p_k, reduction="none"
+        )
+
+        return loss
+
+
 class ConsistencyLoss(LossModule):
     """Consistency loss module (EfficientZero style)."""
 
@@ -786,6 +837,7 @@ class LossPipeline:
         unroll_steps = gradient_scales.shape[1] - 1
 
         expected_steps = unroll_steps + 1
+        context["full_targets"] = targets
 
         for k in range(unroll_steps + 1):
             # Extract predictions and targets for step k
@@ -893,6 +945,7 @@ class LossPipeline:
             "PolicyLoss": {"policies"},
             "RewardLoss": {"rewards"},
             "ToPlayLoss": {"to_plays"},
+            "RelativeToPlayLoss": {"to_plays"},
             "ConsistencyLoss": {"consistency_targets"},
             "ChanceQLoss": {"values"},
             "SigmaLoss": {"chance_codes"},
