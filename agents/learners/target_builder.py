@@ -74,6 +74,7 @@ class DQNTargetBuilder(BaseTargetBuilder):
         rewards = batch["rewards"].to(self.device).float()
         dones = batch["dones"].to(self.device).bool()
         terminated = batch.get("terminated", dones).to(self.device).bool()
+        next_masks = batch.get("next_legal_moves_masks")
 
         bootstrap_on_truncated = getattr(self.config, "bootstrap_on_truncated", False)
         terminal_mask = terminated if bootstrap_on_truncated else dones
@@ -83,17 +84,18 @@ class DQNTargetBuilder(BaseTargetBuilder):
         next_q_values = preds_dict.get("next_q_values")
         target_q_values = preds_dict.get("target_q_values")
 
-        # If target_next_q_values is not provided in predictions,
-        # it might need to be computed here if target_network is accessible.
-        # However, following the refactor pattern, predictions should already contain it.
-
         batch_size = rewards.shape[0]
         discount = self.gamma**self.n_step
 
         if not self.use_c51:
             # Standard DQN Bellman
-            # next_online_q_values: [B, num_actions]
-            # target_next_q_values: [B, num_actions]
+            # next_q_values: [B, num_actions] (online)
+            # target_q_values: [B, num_actions] (target)
+
+            if next_masks is not None:
+                mask = next_masks.to(self.device).bool()
+                # Apply mask to online Q-values for action selection
+                next_q_values = next_q_values.masked_fill(~mask, -float("inf"))
 
             next_actions = next_q_values.argmax(dim=-1)
             max_next_q = target_q_values[
@@ -101,7 +103,10 @@ class DQNTargetBuilder(BaseTargetBuilder):
             ]
 
             target_q = rewards + discount * (~terminal_mask) * max_next_q
-            return {"q_values": target_q}
+            return {
+                "q_values": target_q,
+                "values": target_q,  # For PER priority calculation
+            }
         else:
             # C51 Distributional Bellman
             # predictions: {"next_q_logits": ..., "target_q_logits": ...}
@@ -111,6 +116,11 @@ class DQNTargetBuilder(BaseTargetBuilder):
             # 1. Select actions using online distribution
             online_next_probs = torch.softmax(next_q_logits, dim=-1)
             online_next_q = (online_next_probs * self.support).sum(dim=-1)
+
+            if next_masks is not None:
+                mask = next_masks.to(self.device).bool()
+                online_next_q = online_next_q.masked_fill(~mask, -float("inf"))
+
             next_actions = online_next_q.argmax(dim=-1)
 
             # 2. Get target distribution for those actions
@@ -123,7 +133,14 @@ class DQNTargetBuilder(BaseTargetBuilder):
             target_dist = self._project_target_distribution(
                 rewards, terminal_mask, chosen_target_next_probs
             )
-            return {"target_dist": target_dist}
+
+            # 4. Calculate scalar target value for priority calculation
+            target_scalar = (target_dist * self.support).sum(dim=-1)
+
+            return {
+                "target_dist": target_dist,
+                "values": target_scalar,  # For PER priority calculation
+            }
 
     def _project_target_distribution(
         self,

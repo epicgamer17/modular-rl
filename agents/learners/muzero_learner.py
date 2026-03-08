@@ -134,7 +134,7 @@ class MuZeroLearner(UniversalLearner):
                 "policies",
                 "rewards",
                 "to_plays",
-                "latent_states",
+                "latents",
             }
             if config.stochastic:
                 dummy_pred_keys.update(

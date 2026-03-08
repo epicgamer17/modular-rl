@@ -11,6 +11,7 @@ from configs.agents.rainbow_dqn import RainbowConfig
 from configs.agents.muzero import MuZeroConfig
 from configs.agents.supervised import SupervisedConfig
 from configs.games.cartpole import CartPoleConfig
+from modules.world_models.inference_output import LearningOutput
 
 pytestmark = pytest.mark.integration
 
@@ -25,30 +26,40 @@ class SimpleNet(nn.Module):
         self.to_play_head = nn.Linear(16, 2)
         self.dynamics = nn.Linear(16 + action_dim, 16)
 
-        self.components = {
-            "policy_head": MagicMock(strategy=None),
-            "value_head": MagicMock(strategy=None),
-            "reward_head": MagicMock(strategy=None),
-            "to_play_head": MagicMock(strategy=None),
-        }
+        self.components = nn.ModuleDict(
+            {
+                "policy_head": self.policy_head,
+                "value_head": self.value_head,
+                "reward_head": self.reward_head,
+                "to_play_head": self.to_play_head,
+                "feature_block": self.backbone,
+            }
+        )
         self.training_action_selector = MagicMock()
         self.target_action_selector = MagicMock()
-        self.project = nn.Linear(16, 16)
+        self._project = nn.Linear(16, 16)
+
+    def project(self, x, grad=True):
+        return self._project(x)
 
     def learner_inference(self, batch):
-        out = MagicMock()
-        out.policies = torch.randn((2, 10), requires_grad=True)
-        out.values = torch.randn((2, 1), requires_grad=True)
-        out.q_values = torch.randn((2, 10), requires_grad=True)
-        out.q_logits = torch.randn((2, 10, 21), requires_grad=True)
-        out.rewards = torch.randn((2, 3, 1), requires_grad=True)
-        out.to_plays = torch.randn((2, 4, 2), requires_grad=True)
-        out.latent_states = torch.randn((2, 4, 16), requires_grad=True)
-        out.latents_afterstates = None
-        out.chance_logits = None
-        out.chance_values = None
-        out.chance_encoder_embeddings = None
-        return out
+        B = batch["observations"].shape[0]
+        # Detect if we are unrolling (MuZero) or single-step (DQN/PPO)
+        K_plus_1 = (
+            4 if "unroll_observations" in batch or "unroll_actions" in batch else 1
+        )
+
+        return LearningOutput(
+            policies=torch.randn((B, K_plus_1, 10), requires_grad=True),
+            values=torch.randn((B, K_plus_1, 1), requires_grad=True),
+            q_values=torch.randn((B, K_plus_1, 10), requires_grad=True),
+            q_logits=torch.randn((B, K_plus_1, 10, 21), requires_grad=True),
+            rewards=torch.randn((B, K_plus_1, 1), requires_grad=True),
+            to_plays=torch.randn((B, K_plus_1, 2), requires_grad=True),
+            latents=torch.randn((B, K_plus_1, 16), requires_grad=True),
+            next_q_values=torch.randn((B, K_plus_1, 10), requires_grad=True),
+            target_q_values=torch.randn((B, K_plus_1, 10), requires_grad=True),
+        )
 
     def obs_inference(self, obs):
         out = MagicMock()
@@ -146,7 +157,9 @@ def test_rainbow_learner_loss_integration(rainbow_setup):
         "weights": torch.ones((2,)),
     }
 
-    loss, priorities = learner.compute_loss(batch)
+    step_result = learner.compute_step_result(batch)
+    loss = step_result.loss
+    priorities = step_result.priorities
 
     assert isinstance(loss, torch.Tensor)
     assert priorities.shape == (2,)

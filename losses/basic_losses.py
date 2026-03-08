@@ -146,7 +146,7 @@ class StandardDQNLossModule(LossModule):
 
     @property
     def required_predictions(self) -> set[str]:
-        return {"online_q_values", "next_online_q_values"}
+        return {"q_values", "next_q_values"}
 
     @property
     def required_targets(self) -> set[str]:
@@ -155,65 +155,74 @@ class StandardDQNLossModule(LossModule):
     def compute_loss(
         self, predictions: dict, targets: dict, context: dict, k: int = 0
     ) -> torch.Tensor:
-        online_q_values = predictions["online_q_values"]
-        next_online_q_values = predictions["next_online_q_values"]
-        target_next_q_values = targets["target_next_q_values"]
+        if "values" in predictions and predictions["values"] is not None:
+            # Blind Network: Network already selected Q for taken actions
+            selected_q = predictions["values"].squeeze(-1)
+        else:
+            # Legacy/Fallback: Extract from full Q-values
+            actions = context["actions"].to(self.device).long()
+            batch_size = actions.shape[0]
+            selected_q = online_q_values[
+                torch.arange(batch_size, device=self.device), actions
+            ]
 
-        actions = targets["actions"].to(self.device).long()
-        rewards = targets["rewards"].to(self.device)
-        dones = targets["dones"].to(self.device)
-        terminated = targets.get("terminated", dones).to(self.device)
-        next_masks = targets.get("next_legal_moves_masks")
-        next_observations = targets.get("next_observations")
-        if next_observations is not None:
-            next_observations = next_observations.to(self.device)
-
+        rewards = context["rewards"].to(self.device)
+        dones = context["dones"].to(self.device)
+        terminated = context.get("terminated", dones).to(self.device)
         bootstrap_on_truncated = bool(self.config.bootstrap_on_truncated)
         terminal_mask = terminated if bootstrap_on_truncated else dones
-        batch_size = actions.shape[0]
 
-        selected_q = online_q_values[
-            torch.arange(batch_size, device=self.device), actions
-        ]
+        if "q_values" in targets:
+            # Blind Learner: Builder already computed Bellman targets
+            targets_val = targets["q_values"]
+        else:
+            # Fallback legacy logic
+            next_online_q_values = predictions["next_q_values"]
+            target_next_q_values = targets.get("target_next_q_values")
+            next_masks = context.get("next_legal_moves_masks")
+            next_observations = context.get("next_observations")
+            if next_observations is not None:
+                next_observations = next_observations.to(self.device)
 
-        agent_network = context.get("agent_network")
-        next_actions = None
-        if (
-            self.action_selector is not None
-            and agent_network is not None
-            and next_observations is not None
-            and next_masks is not None
-        ):
-            next_infos = [
-                {"legal_moves": torch.nonzero(m).view(-1).tolist()}
-                for m in next_masks.to(self.device)
+            agent_network = context.get("agent_network")
+            next_actions = None
+            if (
+                self.action_selector is not None
+                and agent_network is not None
+                and next_observations is not None
+                and next_masks is not None
+            ):
+                next_infos = [
+                    {"legal_moves": torch.nonzero(m).view(-1).tolist()}
+                    for m in next_masks.to(self.device)
+                ]
+                selected_actions = []
+                for i in range(next_online_q_values.shape[0]):
+                    action, _ = self.action_selector.select_action(
+                        agent_network=agent_network,
+                        obs=next_observations[i : i + 1],
+                        network_output=InferenceOutput(
+                            q_values=next_online_q_values[i : i + 1]
+                        ),
+                        exploration=False,
+                        info=next_infos[i],
+                    )
+                    selected_actions.append(action)
+                next_actions = torch.stack(selected_actions).squeeze()
+            if next_actions is None:
+                next_actions = _select_next_actions(next_online_q_values, next_masks)
+
+            max_q_next = target_next_q_values[
+                torch.arange(next_online_q_values.shape[0], device=self.device),
+                next_actions,
             ]
-            selected_actions = []
-            for i in range(batch_size):
-                action, _ = self.action_selector.select_action(
-                    agent_network=agent_network,
-                    obs=next_observations[i : i + 1],
-                    network_output=InferenceOutput(
-                        q_values=next_online_q_values[i : i + 1]
-                    ),
-                    exploration=False,
-                    info=next_infos[i],
-                )
-                selected_actions.append(action)
-            next_actions = torch.stack(selected_actions).squeeze()
-        if next_actions is None:
-            next_actions = _select_next_actions(next_online_q_values, next_masks)
 
-        max_q_next = target_next_q_values[
-            torch.arange(batch_size, device=self.device), next_actions
-        ]
-
-        targets_val = (
-            rewards
-            + (self.config.discount_factor**self.config.n_step)
-            * (~terminal_mask.bool())
-            * max_q_next
-        )
+            targets_val = (
+                rewards
+                + (self.config.discount_factor**self.config.n_step)
+                * (~terminal_mask.bool())
+                * max_q_next
+            )
 
         # Return elementwise loss (B,)
         return self.config.loss_function(selected_q, targets_val, reduction="none")
@@ -232,7 +241,7 @@ class C51LossModule(LossModule):
 
     @property
     def required_predictions(self) -> set[str]:
-        return {"online_q_logits", "next_online_q_logits"}
+        return {"q_logits", "next_q_logits"}
 
     @property
     def required_targets(self) -> set[str]:
@@ -285,61 +294,75 @@ class C51LossModule(LossModule):
     def compute_loss(
         self, predictions: dict, targets: dict, context: dict, k: int = 0
     ) -> torch.Tensor:
-        online_q_logits = predictions["online_q_logits"]
-        next_online_q_logits = predictions["next_online_q_logits"]
-        target_next_q_logits = targets["target_next_q_logits"]
+        online_q_logits = predictions["q_logits"]
 
-        actions = targets["actions"].to(self.device).long()
-        rewards = targets["rewards"].to(self.device)
-        dones = targets["dones"].to(self.device)
-        terminated = targets.get("terminated", dones).to(self.device)
-        next_masks = targets.get("next_legal_moves_masks")
-        next_observations = targets.get("next_observations")
-        if next_observations is not None:
-            next_observations = next_observations.to(self.device)
+        if "values" in predictions and predictions["values"] is not None:
+            # Blind Network: Network already selected Q for taken actions
+            # Note: For C51, values would be the expected value or we could use the distribution.
+            # But compute_loss needs the chosen logits. So we still need actions.
+            pass
 
-        bootstrap_on_truncated = bool(self.config.bootstrap_on_truncated)
-        terminal_mask = terminated if bootstrap_on_truncated else dones
+        actions = context["actions"].to(self.device).long()
         batch_size = actions.shape[0]
 
-        online_next_probs = torch.softmax(next_online_q_logits, dim=-1)
+        rewards = context["rewards"].to(self.device)
+        dones = context["dones"].to(self.device)
+        terminated = context.get("terminated", dones).to(self.device)
+        bootstrap_on_truncated = bool(self.config.bootstrap_on_truncated)
+        terminal_mask = terminated if bootstrap_on_truncated else dones
+
+        online_next_q_logits = predictions["next_q_logits"]
+        online_next_probs = torch.softmax(online_next_q_logits, dim=-1)
         online_next_q = (online_next_probs * self.support).sum(dim=-1)
 
-        agent_network = context.get("agent_network")
-        next_actions = None
-        if (
-            self.action_selector is not None
-            and agent_network is not None
-            and next_observations is not None
-            and next_masks is not None
-        ):
-            next_infos = [
-                {"legal_moves": torch.nonzero(m).view(-1).tolist()}
-                for m in next_masks.to(self.device)
-            ]
-            selected_actions = []
-            for i in range(batch_size):
-                action, _ = self.action_selector.select_action(
-                    agent_network=agent_network,
-                    obs=next_observations[i : i + 1],
-                    network_output=InferenceOutput(q_values=online_next_q[i : i + 1]),
-                    exploration=False,
-                    info=next_infos[i],
-                )
-                selected_actions.append(action)
-            next_actions = torch.stack(selected_actions).squeeze()
-        if next_actions is None:
-            next_actions = _select_next_actions(online_next_q, next_masks)
+        if "target_dist" in targets:
+            # Blind Learner: Builder already computed C51 targets
+            target_dist = targets["target_dist"]
+        else:
+            # Fallback legacy logic
+            target_next_q_logits = targets.get("target_next_q_logits")
+            next_masks = context.get("next_legal_moves_masks")
+            next_observations = context.get("next_observations")
+            if next_observations is not None:
+                next_observations = next_observations.to(self.device)
 
-        target_next_probs = torch.softmax(target_next_q_logits, dim=-1)
-        chosen_next_probs = target_next_probs[
-            torch.arange(batch_size, device=self.device), next_actions
-        ]
-        target_dist = self._project_target_distribution(
-            rewards=rewards,
-            terminal_mask=terminal_mask,
-            next_probs=chosen_next_probs,
-        )
+            agent_network = context.get("agent_network")
+            next_actions = None
+            if (
+                self.action_selector is not None
+                and agent_network is not None
+                and next_observations is not None
+                and next_masks is not None
+            ):
+                next_infos = [
+                    {"legal_moves": torch.nonzero(m).view(-1).tolist()}
+                    for m in next_masks.to(self.device)
+                ]
+                selected_actions = []
+                for i in range(batch_size):
+                    action, _ = self.action_selector.select_action(
+                        agent_network=agent_network,
+                        obs=next_observations[i : i + 1],
+                        network_output=InferenceOutput(
+                            q_values=online_next_q[i : i + 1]
+                        ),
+                        exploration=False,
+                        info=next_infos[i],
+                    )
+                    selected_actions.append(action)
+                next_actions = torch.stack(selected_actions).squeeze()
+            if next_actions is None:
+                next_actions = _select_next_actions(online_next_q, next_masks)
+
+            target_next_probs = torch.softmax(target_next_q_logits, dim=-1)
+            chosen_next_probs = target_next_probs[
+                torch.arange(batch_size, device=self.device), next_actions
+            ]
+            target_dist = self._project_target_distribution(
+                rewards=rewards,
+                terminal_mask=terminal_mask,
+                next_probs=chosen_next_probs,
+            )
 
         chosen_logits = online_q_logits[
             torch.arange(batch_size, device=self.device), actions

@@ -55,6 +55,8 @@ class RainbowLearner(UniversalLearner):
             observation_dtype=observation_dtype,
         )
         self.target_agent_network = target_agent_network
+        # Link target network to online network for unrolled evaluations in learner_inference
+        self.agent_network.target_network = target_agent_network
 
         # 1. Initialize Replay Buffer
         self.replay_buffer = create_dqn_buffer(
@@ -113,12 +115,12 @@ class RainbowLearner(UniversalLearner):
         self.target_builder = DQNTargetBuilder(config, device)
         if config.atom_size > 1:
             self.loss_pipeline.validate_dependencies(
-                network_output_keys={"online_q_logits", "next_online_q_logits"},
+                network_output_keys={"q_logits", "next_q_logits"},
                 target_keys={"target_next_q_logits", "actions", "rewards", "dones"},
             )
         else:
             self.loss_pipeline.validate_dependencies(
-                network_output_keys={"online_q_values", "next_online_q_values"},
+                network_output_keys={"q_values", "next_q_values"},
                 target_keys={"target_next_q_values", "actions", "rewards", "dones"},
             )
 
@@ -139,56 +141,6 @@ class RainbowLearner(UniversalLearner):
         if "epsilon" in self.schedules:
             return self.schedules["epsilon"].get_value()
         return 0.0
-
-    def compute_step_result(self, batch, stats=None) -> StepResult:
-        loss, elementwise_loss = self.compute_loss(batch)
-        return StepResult(
-            loss=loss,
-            loss_dict={"td_loss": float(loss.detach().item())},
-            priorities=elementwise_loss.detach(),
-        )
-
-    def compute_loss(self, batch: Dict[str, Any]) -> Tuple[torch.Tensor, torch.Tensor]:
-        observations = batch["observations"].to(self.device)
-        next_observations = batch["next_observations"].to(self.device)
-
-        online_out = self.agent_network.learner_inference(
-            {"observations": observations}
-        )
-
-        with torch.no_grad():
-            next_online_out = self.agent_network.learner_inference(
-                {"observations": next_observations}
-            )
-            target_next_out = self.target_agent_network.learner_inference(
-                {"observations": next_observations}
-            )
-
-        predictions = {
-            "online_q_values": online_out.q_values,
-            "next_online_q_values": next_online_out.q_values,
-            "online_q_logits": online_out.q_logits,
-            "next_online_q_logits": next_online_out.q_logits,
-        }
-
-        targets = {
-            # Base keys for modules to extract
-            "target_next_q_values": target_next_out.q_values,
-            "target_next_q_logits": target_next_out.q_logits,
-            **batch,
-        }
-
-        context = {"agent_network": self.agent_network}
-
-        # LossPipeline.run returns (loss_mean, loss_dict, priorities)
-        # elementwise loss is returned as weights if provided, but here priorities is the raw per-sampled-item loss
-        loss_mean, loss_dict, priorities = self.loss_pipeline.run(
-            predictions=predictions,
-            targets=targets,
-            context=context,
-        )
-
-        return loss_mean, priorities
 
     def after_optimizer_step(self, batch, step_result: StepResult, stats=None) -> None:
         self.agent_network.reset_noise()

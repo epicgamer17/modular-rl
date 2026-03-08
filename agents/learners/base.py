@@ -245,8 +245,10 @@ class UniversalLearner:
         )
 
         # Prepare for StepResult
-        preds_dict = predictions._asdict()
-        targs_dict = targets._asdict()
+        preds_dict = (
+            predictions._asdict() if hasattr(predictions, "_asdict") else predictions
+        )
+        targs_dict = targets._asdict() if hasattr(targets, "_asdict") else targets
 
         return StepResult(
             loss=loss,

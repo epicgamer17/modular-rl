@@ -218,6 +218,14 @@ def rainbow_config(make_rainbow_config_dict, cartpole_game_config):
 
 
 @pytest.fixture(scope="session")
+def catan_game_config():
+    """Real, lightweight Catan game configuration."""
+    from configs.games.catan import CatanConfig
+
+    return CatanConfig()
+
+
+@pytest.fixture(scope="session")
 def tictactoe_game_config():
     """Real, lightweight multi-agent game configuration."""
     from configs.games.tictactoe import TicTacToeConfig

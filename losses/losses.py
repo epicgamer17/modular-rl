@@ -403,7 +403,7 @@ class ConsistencyLoss(LossModule):
 
     @property
     def required_predictions(self) -> set[str]:
-        return {"latent_states"}
+        return {"latents"}
 
     @property
     def required_targets(self) -> set[str]:
@@ -424,7 +424,7 @@ class ConsistencyLoss(LossModule):
         k: int = 0,
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
-        latent_states_k = predictions["latent_states"]
+        latent_states_k = predictions["latents"]
         target_features_k = targets["consistency_targets"]
         if isinstance(latent_states_k, dict):
             latent_states_k = latent_states_k["dynamics"]
@@ -671,6 +671,12 @@ class LossPipeline:
         config = self.modules[0].config
         device = self.modules[0].device
 
+        # Convert NamedTuples to dicts if necessary
+        if hasattr(predictions, "_asdict"):
+            predictions = predictions._asdict()
+        if hasattr(targets, "_asdict"):
+            targets = targets._asdict()
+
         # Determine batch_size and unroll steps
         first_tensor = next(iter(predictions.values()))
         batch_size = first_tensor.shape[0]
@@ -717,7 +723,12 @@ class LossPipeline:
             step_loss = torch.zeros(batch_size, device=device)
 
             # Special case for ChanceQLoss which needs the next value
-            if "values" in targets and k + 1 < targets["values"].shape[1]:
+            if (
+                "values" in targets
+                and torch.is_tensor(targets["values"])
+                and targets["values"].ndim > 2
+                and k + 1 < targets["values"].shape[1]
+            ):
                 context["target_values_next"] = targets["values"][:, k + 1]
 
             for module in self.modules:

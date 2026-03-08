@@ -60,7 +60,7 @@ from catanatron.state_functions import (
     player_clean_turn,
     player_freqdeck_add,
     player_deck_draw,
-    player_deck_random_draw,
+    player_deck_random_select,
     player_deck_replenish,
     player_freqdeck_subtract,
     player_deck_to_array,
@@ -361,7 +361,7 @@ class CatanAECEnv(AECEnv):
     metadata = {
         "render_modes": ["human", "rgb_array"],
         "name": "catanatron_v1",
-        "is_parallelizable": False,
+        "is_parallelizable": True,
         "render_fps": 30,
     }
 
@@ -522,7 +522,7 @@ class CatanAECEnv(AECEnv):
         core_observation = self._get_core_observation(agent_color)
 
         legal_moves = (
-            self.game.state.playable_actions
+            self.game.playable_actions
             if self.agent_map.get(self.game.state.current_color()) == agent
             else []
         )
@@ -543,7 +543,7 @@ class CatanAECEnv(AECEnv):
             if winning_color is not None:
                 break
 
-            legal_moves = list(self.game.state.playable_actions)
+            legal_moves = list(self.game.playable_actions)
             if len(legal_moves) != 1:
                 break
 
@@ -656,7 +656,7 @@ class CatanAECEnv(AECEnv):
             self.rewards = {agent: 0 for agent in self.agents}
             self.rewards[current_agent] = self.invalid_action_reward
         else:
-            catan_action = from_action_space(action, self.game.state.playable_actions)
+            catan_action = from_action_space(action, self.game.playable_actions)
             self.game.execute(catan_action)
             self.rewards = {agent: 0 for agent in self.agents}
 
@@ -837,7 +837,7 @@ class CatanAECEnv(AECEnv):
 
             # Simplified tile lookup to remove nested try/excepts:
             for coord, map_tile in getattr(board.map, "land_tiles", {}).items():
-                if map_tile.id == tile_id:
+                if map_tile is not None and map_tile.id == tile_id:
                     tile = map_tile
                     break
 
@@ -1213,7 +1213,7 @@ class CatanAECEnv(AECEnv):
         return mask
 
     def _get_valid_action_indices(self):
-        return {to_action_space(action) for action in self.game.state.playable_actions}
+        return {to_action_space(action) for action in self.game.playable_actions}
 
     def _get_core_observation(self, agent_color: Color) -> Union[np.ndarray, dict]:
         """Generates the core observation for a specific agent color."""

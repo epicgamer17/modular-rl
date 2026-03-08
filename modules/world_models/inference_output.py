@@ -198,14 +198,16 @@ class LearningOutput(NamedTuple):
 
     values: Optional[torch.Tensor] = None  # [B, T+1, ...] Logits or Values
     policies: Optional[torch.Tensor] = None  # [B, T+1, ...] Logits (PPO/MuZero)
-    q_values: Optional[torch.Tensor] = None  # [B, T+1, num_actions]  (Rainbow)
-    q_logits: Optional[torch.Tensor] = None  # [B, T+1, num_actions, num_atoms]
     q_values: Optional[torch.Tensor] = (
         None  # [B, T+1, num_actions] (Rainbow/DQN Online)
     )
     q_logits: Optional[torch.Tensor] = (
         None  # [B, T+1, num_actions, num_atoms] (Rainbow Online)
     )
+    next_q_values: Optional[torch.Tensor] = None
+    target_q_values: Optional[torch.Tensor] = None
+    next_q_logits: Optional[torch.Tensor] = None
+    target_q_logits: Optional[torch.Tensor] = None
     rewards: Optional[torch.Tensor] = None  # [B, T+1, ...] Logits
     to_plays: Optional[torch.Tensor] = None  # [B, T+1, ...] Logits
 
