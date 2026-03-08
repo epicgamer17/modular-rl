@@ -104,7 +104,8 @@ class MuZeroLearner(BaseLearner):
         if config.game.num_players != 1:
             modules.append(ToPlayLoss(config, device))
 
-        modules.append(ConsistencyLoss(config, device, agent_network))
+        if config.consistency_loss_factor > 0:
+            modules.append(ConsistencyLoss(config, device, agent_network))
 
         if config.stochastic:
             modules.extend(

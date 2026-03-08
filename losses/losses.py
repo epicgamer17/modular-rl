@@ -730,7 +730,7 @@ class LossPipeline:
                 )
 
                 # Apply mask if any
-                if getattr(config, "mask_absorbing", True):
+                if getattr(config, "mask_absorbing", False):
                     mask_k = module.get_mask(k, context)
                     loss_k = loss_k * mask_k
 

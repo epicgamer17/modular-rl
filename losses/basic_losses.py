@@ -21,15 +21,6 @@ def _select_next_actions(
     return masked_q.argmax(dim=-1)
 
 
-def _resolve_weights(
-    batch: dict, device: torch.device, batch_size: int
-) -> torch.Tensor:
-    weights = batch.get("weights")
-    if weights is None:
-        return torch.ones(batch_size, device=device, dtype=torch.float32)
-    return weights.to(device=device, dtype=torch.float32)
-
-
 class PPOPolicyLoss(LossModule):
     def __init__(
         self,

@@ -1,7 +1,9 @@
 """
 Smoke tests for PPOTrainer to verify initialization and basic training loop.
 """
+
 import pytest
+
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 
@@ -62,6 +64,7 @@ class MinimalPPOConfig:
     """Minimal PPO config for testing."""
 
     def __init__(self):
+        self.agent_type = "ppo"
         self.training_steps = 3
         self.steps_per_epoch = 100
 
@@ -112,8 +115,15 @@ class MinimalPPOConfig:
         self.activation = nn.ReLU()
         self.noisy_sigma = 0.0
         self.norm_type = "none"
+        self.atom_size = 1
+        self.v_min = -10.0
+        self.v_max = 10.0
         self.support_range = None
         self.prob_layer_initializer = None
+
+        from utils.schedule import ScheduleConfig
+
+        self.lr_schedule = ScheduleConfig(type="constant", initial=self.learning_rate)
 
         # Attributes for NetworkBlock
         self.actor_dense_layer_widths = [64, 64]

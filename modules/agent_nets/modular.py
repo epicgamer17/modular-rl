@@ -48,13 +48,15 @@ class ModularAgentNetwork(BaseAgentNetwork):
         # Modules injected at runtime
         self.components = nn.ModuleDict()
 
-        if isinstance(config, MuZeroConfig):
+        config_type = getattr(config, "agent_type", None)
+
+        if isinstance(config, MuZeroConfig) or config_type == "muzero":
             self._init_muzero(config, input_shape, num_actions, **kwargs)
-        elif isinstance(config, PPOConfig):
+        elif isinstance(config, PPOConfig) or config_type == "ppo":
             self._init_ppo(config, input_shape, num_actions, **kwargs)
-        elif isinstance(config, RainbowConfig):
+        elif isinstance(config, RainbowConfig) or config_type == "rainbow":
             self._init_rainbow(config, input_shape, num_actions, **kwargs)
-        elif isinstance(config, SupervisedConfig):
+        elif isinstance(config, SupervisedConfig) or config_type == "supervised":
             self._init_sl(config, input_shape, num_actions, **kwargs)
         else:
             raise ValueError(
