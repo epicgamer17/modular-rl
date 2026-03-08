@@ -23,7 +23,7 @@ class RootPolicyStrategy(ABC):
         over all actions based on the search results.
         Returns: torch.Tensor of shape (num_actions,)
         """
-        pass
+        pass  # pragma: no cover
 
 
 class VisitFrequencyPolicy(RootPolicyStrategy):

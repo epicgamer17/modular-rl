@@ -19,7 +19,7 @@ class BaseActionSelector(ABC):
         exploration: Optional[bool] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover
 
     def mask_actions(
         self,
@@ -80,7 +80,7 @@ class BaseActionSelector(ABC):
         Args:
             params_dict: Dictionary containing parameter updates.
         """
-        pass
+        pass  # pragma: no cover
 
 
 class CategoricalSelector(BaseActionSelector):

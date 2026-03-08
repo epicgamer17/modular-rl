@@ -23,13 +23,17 @@ class ScheduleConfig:
                 raise ValueError("'values' must have one more element than 'steps'")
         elif self.type == "linear":
             if self.initial is None or self.final is None or self.decay_steps is None:
-                raise ValueError("linear schedule requires 'initial', 'final', and 'decay_steps'")
+                raise ValueError(
+                    "linear schedule requires 'initial', 'final', and 'decay_steps'"
+                )
         elif self.type == "inverse_sqrt":
             if self.initial is None:
                 raise ValueError("inverse_sqrt schedule requires 'initial'")
         elif self.type == "cyclical":
             if self.initial is None or self.final is None or self.period is None:
-                raise ValueError("cyclical schedule requires 'initial', 'final', and 'period'")
+                raise ValueError(
+                    "cyclical schedule requires 'initial', 'final', and 'period'"
+                )
 
     @classmethod
     def from_dict(cls, d: Optional[Dict[str, Any]]) -> "ScheduleConfig":
@@ -72,7 +76,7 @@ class Schedule(ABC):
 
     @abstractmethod
     def get_value(self) -> float:
-        pass
+        pass  # pragma: no cover
 
     def step(self, count: int = 1) -> None:
         self._step += count

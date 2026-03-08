@@ -9,7 +9,7 @@ class SearchSet(ABC):
     def create_initial_searchset(
         self, priors, legal_moves, count: int, trajectory_action=None
     ) -> List[int]:
-        pass
+        pass  # pragma: no cover
 
 
 class SelectAll(SearchSet):

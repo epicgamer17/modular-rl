@@ -20,7 +20,7 @@ class IdentityBackbone(nn.Module):
         return self.output_shape
 
     def initialize(self, initializer):
-        pass
+        pass  # pragma: no cover
 
     def reset_noise(self):
-        pass
+        pass  # pragma: no cover

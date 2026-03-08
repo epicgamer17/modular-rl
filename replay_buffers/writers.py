@@ -16,7 +16,7 @@ class Writer(ABC):
         Returns the index, or None if the data should be discarded.
         Updates internal size/pointer state.
         """
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def store_batch(self, batch_size: int) -> list[slice] | None:
@@ -25,7 +25,7 @@ class Writer(ABC):
         Returns a list of slices (e.g., [slice(0, 10)] or [slice(90, 100), slice(0, 5)] for wrap-around).
         Returns None if the batch cannot be added.
         """
-        pass
+        pass  # pragma: no cover
 
     def clear(self):
         self.size = 0
@@ -129,7 +129,9 @@ class ReservoirWriter(Writer):
         return idx
 
     def store_batch(self, batch_size):
-        raise NotImplementedError("Batch store not implemented for ReservoirWriter.")
+        raise NotImplementedError(
+            "Batch store not implemented for ReservoirWriter."
+        )  # pragma: no cover
 
     def clear(self):
         super().clear()

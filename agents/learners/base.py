@@ -36,7 +36,7 @@ class Callback(ABC):
         stats=None,
         **kwargs,
     ) -> None:
-        pass
+        pass  # pragma: no cover
 
 
 class CallbackList:
@@ -247,9 +247,9 @@ class BaseLearner(ABC):
         self, batch: Dict[str, Any], step_result: StepResult, stats=None
     ) -> None:
         """Optional hook for subclasses."""
-        return None
+        return None  # pragma: no cover
 
     @abstractmethod
     def compute_step_result(self, batch: Dict[str, Any], stats=None) -> StepResult:
         """Compute forward pass and loss for one sampled batch."""
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover

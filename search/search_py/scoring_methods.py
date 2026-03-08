@@ -16,7 +16,7 @@ class ScoringMethod(ABC):
     @abstractmethod
     def score(self, node, child, min_max_stats) -> float:
         """Returns a score for a single child."""
-        pass
+        pass  # pragma: no cover
 
     def get_scores(self, node, min_max_stats) -> Dict[int, float]:
         """
@@ -42,7 +42,9 @@ class UCBScoring(ScoringMethod):
 
     def score(self, node, child, min_max_stats) -> float:
         # Fallback to single score if needed
-        raise NotImplementedError("Use get_scores for vectorized UCB")
+        raise NotImplementedError(
+            "Use get_scores for vectorized UCB"
+        )  # pragma: no cover
 
     def get_scores(self, node, min_max_stats) -> torch.Tensor:
         # Vectorized UCB
@@ -106,7 +108,9 @@ class GumbelScoring(ScoringMethod):
         self.config = config
 
     def score(self, node, child, min_max_stats) -> float:
-        raise NotImplementedError("Use get_scores for vectorized Gumbel")
+        raise NotImplementedError(
+            "Use get_scores for vectorized Gumbel"
+        )  # pragma: no cover
 
     def get_scores(self, node, min_max_stats) -> torch.Tensor:
         # Vectorized Gumbel
@@ -182,7 +186,7 @@ class DeterministicChanceScoring(ScoringMethod):
     """
 
     def score(self, node, child, min_max_stats) -> float:
-        raise NotImplementedError("Use get_scores for vectorized")
+        raise NotImplementedError("Use get_scores for vectorized")  # pragma: no cover
 
     def get_scores(self, node, min_max_stats) -> torch.Tensor:
         return node.child_priors / (node.child_visits + 1.0)

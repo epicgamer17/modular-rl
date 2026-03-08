@@ -21,7 +21,7 @@ class WorldModelInterface(ABC):
 
         Returns: (hidden_state)
         """
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def recurrent_inference(
@@ -33,7 +33,7 @@ class WorldModelInterface(ABC):
 
         Returns: (next_hidden_state, reward, to_play, next_recurrent_state)
         """
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def unroll_physics(
@@ -43,7 +43,7 @@ class WorldModelInterface(ABC):
         """
         Unrolls a sequence of actions from the current hidden state. Returns all network output seqeunces from this unrolling.
         """
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def get_networks(self) -> Dict[str, nn.Module]:
@@ -51,4 +51,4 @@ class WorldModelInterface(ABC):
         Returns a dictionary of all trainable PyTorch networks within this model.
         Used by the main training loop for optimization and checkpointing.
         """
-        pass
+        pass  # pragma: no cover

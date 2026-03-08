@@ -30,7 +30,7 @@ class BaseAgentNetwork(nn.Module, ABC):
                 - policy: Action distribution (Categorical, Normal, etc.)
                 - network_state: Opaque state for future search steps (if supported)
         """
-        pass
+        pass  # pragma: no cover
 
     # ==========================================
     # 3. SEARCH API (Hypothetical World, t > 0)
@@ -46,7 +46,7 @@ class BaseAgentNetwork(nn.Module, ABC):
         """
         raise NotImplementedError(
             "hidden_state_inference not implemented for this AgentNetwork"
-        )
+        )  # pragma: no cover
 
     def afterstate_inference(
         self,
@@ -59,7 +59,7 @@ class BaseAgentNetwork(nn.Module, ABC):
         """
         raise NotImplementedError(
             "afterstate_inference not implemented for this AgentNetwork"
-        )
+        )  # pragma: no cover
 
     def search_afterstate(
         self, network_state: Any, action: torch.Tensor
@@ -78,7 +78,9 @@ class BaseAgentNetwork(nn.Module, ABC):
         Raises:
             NotImplementedError: If the agent does not support stochastic afterstates.
         """
-        raise NotImplementedError("This agent does not support stochastic afterstates.")
+        raise NotImplementedError(
+            "This agent does not support stochastic afterstates."
+        )  # pragma: no cover
 
     # ==========================================
     # 3. THE LEARNER'S API (Historical Batch Optimization)
@@ -94,7 +96,7 @@ class BaseAgentNetwork(nn.Module, ABC):
         Returns:
             Algorithm-specific learner predictions (typically a flat dict).
         """
-        pass
+        pass  # pragma: no cover
 
     def compile(self, mode: str = "reduce-overhead", fullgraph: bool = False):
         """

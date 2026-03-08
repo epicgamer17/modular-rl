@@ -18,19 +18,19 @@ class BaseExecutor(ABC):
     @abstractmethod
     def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int):
         """Internal method to start worker instances/processes."""
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def _fetch_available_results(self) -> List[Any]:
         """Internal method to fetch results from workers immediately."""
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def update_weights(
         self, state_dict: Dict[str, Any], params: Optional[Dict[str, Any]] = None
     ):
         """Updates the weights of the workers."""
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def request_work(self, worker_type: Type):
@@ -38,7 +38,7 @@ class BaseExecutor(ABC):
         Requests that workers of a specific type perform their task.
         For some executors, this signals an event to wake up idle workers.
         """
-        pass
+        pass  # pragma: no cover
 
     def launch(self, worker_cls: Type, args: Tuple, num_workers: int):
         """Initializes and starts a group of workers. Appends to existing workers."""

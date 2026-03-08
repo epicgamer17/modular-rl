@@ -24,7 +24,7 @@ class InputProcessor(ABC):
         Returns:
             processed_data: Data ready to be stored (or None if accumulating).
         """
-        pass
+        pass  # pragma: no cover
 
     def process_sequence(self, sequence, **kwargs):
         """Optional hook for processing entire sequence objects."""
@@ -118,7 +118,7 @@ class OutputProcessor(ABC):
         Returns:
             batch: A dictionary containing the final tensors for training.
         """
-        pass
+        pass  # pragma: no cover
 
     def clear(self):
         pass
@@ -143,7 +143,7 @@ class StackedInputProcessor(InputProcessor):
         if args:
             raise NotImplementedError(
                 "Positional arguments are not supported in StackedInputProcessor."
-            )
+            )  # pragma: no cover
         for p in self.processors:
             data = p.process_single(**data)
             if data is None:
@@ -465,7 +465,7 @@ class SequenceTensorProcessor(InputProcessor):
     def process_single(self, **kwargs):
         raise NotImplementedError(
             "SequenceTensorProcessor only supports process_sequence."
-        )
+        )  # pragma: no cover
 
     def process_sequence(self, sequence, **kwargs):
         # 1. Prepare Observations
@@ -606,7 +606,7 @@ class ObservationCompressionProcessor(InputProcessor):
     def process_single(self, **kwargs):
         raise NotImplementedError(
             "ObservationCompressionProcessor only supports process_sequence."
-        )
+        )  # pragma: no cover
 
     def process_sequence(self, sequence, **kwargs):
         if "observations" not in kwargs:

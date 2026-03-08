@@ -16,7 +16,7 @@ class ConcurrencyBackend(ABC):
     @abstractmethod
     def is_shared(self) -> bool:
         """Returns True if the backend supports shared memory/multiprocessing."""
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def create_tensor(
@@ -26,12 +26,12 @@ class ConcurrencyBackend(ABC):
         fill_value: Optional[Any] = None,
     ) -> torch.Tensor:
         """Creates a tensor appropriate for this backend."""
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def create_lock(self):
         """Creates a lock synchronization object appropriate for this backend."""
-        pass
+        pass  # pragma: no cover
 
 
 class NoOpLock:
@@ -41,13 +41,13 @@ class NoOpLock:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        pass
+        pass  # pragma: no cover
 
     def acquire(self):
-        pass
+        pass  # pragma: no cover
 
     def release(self):
-        pass
+        pass  # pragma: no cover
 
 
 class LocalBackend(ConcurrencyBackend):

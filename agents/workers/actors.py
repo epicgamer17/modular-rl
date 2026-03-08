@@ -62,22 +62,22 @@ class BaseActor(ABC):
     @abstractmethod
     def _detect_num_players(self) -> int:
         """Actor-specific player count detection."""
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def _get_player_id(self) -> Optional[str]:
         """Returns current player ID for multi-player, None for single-player."""
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def _finalize_episode_info(self, sequence: Sequence) -> None:
         """Add env-specific info to sequence at episode end."""
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def _get_score(self, sequence: Sequence) -> float:
         """Calculate episode score in env-specific way."""
-        pass
+        pass  # pragma: no cover
 
     def setup(self):
         """Re-initializes the environment."""
@@ -123,7 +123,7 @@ class BaseActor(ABC):
     @abstractmethod
     def _reset_env(self) -> Tuple[Any, Dict[str, Any]]:
         """Environment-specific reset logic."""
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def _step_env(self, action: Any) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
@@ -133,7 +133,7 @@ class BaseActor(ABC):
         Returns:
             Tuple of (next_obs, reward, terminated, truncated, info).
         """
-        pass
+        pass  # pragma: no cover
 
     def step(self) -> Dict[str, Any]:
         """

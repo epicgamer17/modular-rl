@@ -10,7 +10,7 @@ import torch.nn.functional as F
 class SelectionStrategy(ABC):
     @abstractmethod
     def select_child(self, node, min_max_stats, pruned_searchset=None):
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def mask_actions(
@@ -23,7 +23,7 @@ class SelectionStrategy(ABC):
         """
         Masks illegal actions in the given values (logits or scores).
         """
-        pass
+        pass  # pragma: no cover
 
 
 class TopScoreSelection(SelectionStrategy):

@@ -10,20 +10,20 @@ class Sampler(ABC):
     @abstractmethod
     def sample(self, buffer_size: int, batch_size: int):
         """Returns indices and optionally weights."""
-        pass
+        pass  # pragma: no cover
 
     def on_store(self, idx: int, priority: float = None, **kwargs):
         """Hook called when data is stored in the buffer."""
-        pass
+        pass  # pragma: no cover
 
     def update_priorities(self, indices, priorities, **kwargs):
-        pass
+        pass  # pragma: no cover
 
     def clear(self):
-        pass
+        pass  # pragma: no cover
 
     def set_beta(self, beta):
-        pass
+        pass  # pragma: no cover
 
 
 class UniformSampler(Sampler):

@@ -16,29 +16,29 @@ class OutputStrategy(nn.Module, ABC):
     @abstractmethod
     def num_bins(self) -> int:
         """The required output size for the dense layer in the head."""
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def compute_loss(self, predictions: Tensor, targets: Tensor) -> Tensor:
         """Computes the loss between network predictions and targets."""
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def get_distribution(
         self, network_output: Tensor
     ) -> torch.distributions.Distribution | Deterministic:
         """Used by Policy Heads for action selection."""
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def to_expected_value(self, network_output: Tensor) -> Tensor:
         """Used by Value/Reward Heads to get the actual scalar number."""
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def scalar_to_target(self, scalar: Tensor) -> Tensor:
         """Converts a ground-truth scalar to a target format (distribution/scalar)."""
-        pass
+        pass  # pragma: no cover
 
 
 class ScalarStrategy(OutputStrategy):

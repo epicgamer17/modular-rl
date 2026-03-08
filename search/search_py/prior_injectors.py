@@ -20,7 +20,7 @@ class PriorInjector(ABC):
         exploration: bool = True,
     ) -> torch.Tensor:
         """Modifies the context (policy, scores, etc.) in place."""
-        pass
+        pass  # pragma: no cover
 
 
 class DirichletInjector(PriorInjector):

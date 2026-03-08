@@ -12,7 +12,7 @@ class PruningMethod(ABC):
         Initializes the pruning state at the beginning of a search.
         Returns the initial state object.
         """
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def step(
@@ -28,7 +28,7 @@ class PruningMethod(ABC):
         Returns (allowed_actions, next_state).
         If allowed_actions is None, all actions are allowed.
         """
-        pass
+        pass  # pragma: no cover
 
     @property
     def mask_target_policy(self) -> bool:

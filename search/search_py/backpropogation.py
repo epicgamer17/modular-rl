@@ -18,7 +18,7 @@ class Backpropagator(ABC):
         """
         Backpropagates the leaf value up the search path to update node values.
         """
-        pass
+        pass  # pragma: no cover
 
 
 class AverageDiscountedReturnBackpropagator(Backpropagator):

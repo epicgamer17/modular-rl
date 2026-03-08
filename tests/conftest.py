@@ -9,6 +9,7 @@ from configs.agents.rainbow_dqn import RainbowConfig
 from configs.agents.nfsp import NFSPDQNConfig
 from configs.agents.supervised import SupervisedConfig
 from configs.games.cartpole import CartPoleConfig
+from agents.learners.target_builder import BaseTargetBuilder
 
 
 # --- BASE DICTIONARIES ---
@@ -254,3 +255,20 @@ def make_cartpole_config(cartpole_game_config):
         return config
 
     return _builder
+
+
+class DummyTargetBuilder(BaseTargetBuilder):
+    """
+    A simple implementation of BaseTargetBuilder that returns empty dictionaries.
+    Used for testing the Learner without needing a complex target calculation.
+    """
+
+    def build_targets(self, batch, predictions, network):
+        """Returns an empty dictionary of targets."""
+        return {}
+
+
+@pytest.fixture
+def dummy_target_builder():
+    """Fixture providing a DummyTargetBuilder instance."""
+    return DummyTargetBuilder()
