@@ -32,6 +32,9 @@ class TargetOutput:
     action_mask: Optional[Tensor] = None
     obs_mask: Optional[Tensor] = None
     dones: Optional[Tensor] = None
+    actions: Optional[Tensor] = None
+    returns: Optional[Tensor] = None
+    target_policies: Optional[Tensor] = None
 
 
 class BaseTargetBuilder(ABC):
@@ -105,7 +108,11 @@ class DQNTargetBuilder(BaseTargetBuilder):
             ]
 
             target_q = rewards + discount * (~terminal_mask) * max_next_q
-            return TargetOutput(q_values=target_q, values=target_q)
+            return TargetOutput(
+                q_values=target_q,
+                values=target_q,
+                actions=batch["actions"].to(self.device),
+            )
         else:
             next_q_logits = predictions.next_q_logits
             target_q_logits = predictions.target_q_logits
@@ -129,7 +136,11 @@ class DQNTargetBuilder(BaseTargetBuilder):
             )
             target_scalar = (target_dist * self.support).sum(dim=-1)
 
-            return TargetOutput(target_dist=target_dist, values=target_scalar)
+            return TargetOutput(
+                target_dist=target_dist,
+                values=target_scalar,
+                actions=batch["actions"].to(self.device),
+            )
 
     def _project_target_distribution(
         self, rewards: Tensor, terminal_mask: Tensor, next_probs: Tensor
@@ -183,57 +194,33 @@ class MuZeroTargetBuilder(BaseTargetBuilder):
             dones=batch.get("dones"),
             chance_codes=batch.get("chance_codes"),
             consistency_targets=batch.get("consistency_targets"),
+            actions=batch.get("actions"),
+            target_policies=batch.get("target_policies"),
         )
 
 
 class PPOTargetBuilder(BaseTargetBuilder):
     """
-    Implements GAE calculation for PPO.
+    Adapter for PPO targets. Assumes advantages and returns are pre-computed
+    by the GAEProcessor in the replay buffer.
     """
 
     def __init__(self, config: Any, device: torch.device):
         self.config = config
         self.device = device
-        self.gamma = getattr(config, "discount_factor", 0.99)
-        self.gae_lambda = getattr(config, "gae_lambda", 0.95)
 
     def build_targets(
         self, batch: Dict[str, Tensor], predictions: LearningOutput, network: nn.Module
     ) -> TargetOutput:
-        if "advantages" in batch and "returns" in batch:
-            return TargetOutput(
-                advantages=batch["advantages"].to(self.device),
-                value_targets=batch["returns"].to(self.device),
-                old_log_probs=batch.get("log_probs", batch.get("old_log_probs")).to(
-                    self.device
-                ),
-            )
-
-        rewards = batch["rewards"].to(self.device).float()
-        dones = batch["dones"].to(self.device).bool()
-        values = predictions.values.to(self.device).float()
-
-        if values.shape[0] == rewards.shape[0] + 1:
-            v_all = values
-        else:
-            v_all = torch.cat(
-                [values, torch.zeros((1,), device=self.device, dtype=values.dtype)]
-            )
-
-        rewards_np = rewards.cpu().numpy()
-        values_np = v_all.cpu().numpy()
-        dones_np = dones.cpu().numpy()
-
-        deltas = rewards_np + self.gamma * values_np[1:] * (~dones_np) - values_np[:-1]
-        advantages = discounted_cumulative_sums(deltas, self.gamma * self.gae_lambda)
-        returns = discounted_cumulative_sums(rewards_np, self.gamma)
-
+        """
+        Maps pre-computed advantages and returns from the batch.
+        """
         return TargetOutput(
-            advantages=torch.from_numpy(advantages.copy()).to(self.device).float(),
-            value_targets=torch.from_numpy(returns.copy()).to(self.device).float(),
-            old_log_probs=batch.get("log_probs", batch.get("old_log_probs")).to(
-                self.device
-            ),
+            advantages=batch["advantages"].to(self.device),
+            value_targets=batch["returns"].to(self.device),
+            returns=batch["returns"].to(self.device),
+            old_log_probs=batch.get("log_probabilities").to(self.device),
+            actions=batch["actions"].to(self.device),
         )
 
 
@@ -255,3 +242,15 @@ class TargetBuilderPipeline(BaseTargetBuilder):
                 if value is not None:
                     setattr(combined, field_name, value)
         return combined
+
+
+class ImitationTargetBuilder(BaseTargetBuilder):
+    """
+    Target builder for imitation learning (Behavior Cloning).
+    Extracts target policies from the batch.
+    """
+
+    def build_targets(
+        self, batch: Dict[str, Tensor], predictions: LearningOutput, network: nn.Module
+    ) -> TargetOutput:
+        return TargetOutput(target_policies=batch.get("target_policies"))

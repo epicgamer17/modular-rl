@@ -137,6 +137,8 @@ class ImitationLearner(UniversalLearner):
 
         predictions = {"policies": predictions_logits}
         target_dict = {"target_policies": targets}
+        from modules.world_models.inference_output import LearningOutput
+        from agents.learners.target_builders import TargetOutput
 
         loss_mean, loss_dict, priorities = self.loss_pipeline.run(
             predictions=predictions,

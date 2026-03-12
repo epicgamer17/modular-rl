@@ -14,7 +14,7 @@ from losses.basic_losses import C51LossModule, StandardDQNLossModule
 from modules.utils import get_lr_scheduler
 from utils.schedule import create_schedule
 from agents.learners.base import UniversalLearner, StepResult
-from agents.learners.target_builder import DQNTargetBuilder
+from agents.learners.target_builders import DQNTargetBuilder
 from modules.world_models.inference_output import LearningOutput
 
 

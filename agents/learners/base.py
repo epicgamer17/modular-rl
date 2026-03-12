@@ -15,7 +15,7 @@ from replay_buffers.modular_buffer import ModularReplayBuffer
 from modules.agent_nets.modular import ModularAgentNetwork
 
 if TYPE_CHECKING:
-    from agents.learners.target_builder import BaseTargetBuilder
+    from agents.learners.target_builders import BaseTargetBuilder
     from losses.losses import LossPipeline
 
 
@@ -335,3 +335,15 @@ class UniversalLearner:
     ) -> None:
         """Optional hook for subclasses or logging."""
         return None  # pragma: no cover
+
+    def preprocess(self, observation: Any) -> torch.Tensor:
+        """
+        Preprocesses observation for network input.
+
+        Args:
+            observation: Raw observation.
+
+        Returns:
+            Preprocessed tensor on the correct device.
+        """
+        return self._preprocess_observation(observation)

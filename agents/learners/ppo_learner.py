@@ -16,7 +16,7 @@ from losses.basic_losses import PPOPolicyLoss, PPOValueLoss
 from modules.utils import get_lr_scheduler
 from replay_buffers.buffer_factories import create_ppo_buffer
 from agents.learners.base import UniversalLearner, StepResult
-from agents.learners.target_builder import PPOTargetBuilder
+from agents.learners.target_builders import PPOTargetBuilder
 from modules.world_models.inference_output import LearningOutput
 
 

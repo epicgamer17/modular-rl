@@ -12,7 +12,7 @@ from torch.optim.sgd import SGD
 
 from agents.learners.base import UniversalLearner, StepResult
 from agents.learners.callbacks import MetricsCallback
-from agents.learners.target_builder import MuZeroTargetBuilder
+from agents.learners.target_builders import MuZeroTargetBuilder
 from losses.losses import (
     ChanceQLoss,
     ConsistencyLoss,
