@@ -264,7 +264,7 @@ class NFSPTrainer(BaseTrainer):
 
             # 7. Periodic testing
             if self.training_step % self.test_interval == 0:
-                self._run_tests()
+                self.trigger_test(state_dict={}, step=self.training_step)
 
         self.executor.stop()
         self._save_checkpoint()
@@ -476,29 +476,6 @@ class NFSPTrainer(BaseTrainer):
         else:
             for learner in self.learners.values():
                 learner.update_target_network()
-
-    def _run_tests(self) -> None:
-        """Runs evaluation episodes and exploitability tests."""
-        super()._run_tests()
-
-        # Exploitability tests (AVG vs BR matchups)
-        exploit_results = self.test_exploitability(num_trials=self.test_trials)
-        if exploit_results:
-            # Log per-player BR payoffs as subkeys of 'exploitability' for combined plot
-            for pid in self.player_ids:
-                br_key = f"{pid}_br_vs_avg"
-                if br_key in exploit_results:
-                    # Use subkey format: append to 'exploitability' with subkey
-                    self.stats.append(
-                        "exploitability", exploit_results[br_key], subkey=f"{pid}_br"
-                    )
-
-            # Log total exploitability
-            total = exploit_results.get("exploitability", 0.0)
-            self.stats.append("exploitability", total, subkey="total")
-
-            # Print summary
-            print(f"Exploitability (sum of BR payoffs): {total:.3f}")
 
     def test_exploitability(self, num_trials: int = 10) -> Dict[str, float]:
         """

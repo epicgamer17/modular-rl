@@ -77,6 +77,7 @@ class SupervisedConfig(ConfigBase, OptimizationConfig, ReplayConfig):
         self.n_step = 1
         self.discount_factor = 1.0
         self.per_alpha = 0
+        self.per_beta_schedule = None
 
     def parse_backbone_config(self, field_name: str) -> BackboneConfig:
         bb_dict = self.parse_field(field_name, default=None, required=False)

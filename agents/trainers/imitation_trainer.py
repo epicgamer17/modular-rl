@@ -141,7 +141,9 @@ class ImitationTrainer(BaseTrainer):
 
             # 6. Periodic testing
             if self.training_step % self.test_interval == 0:
-                self._run_tests()
+                self.trigger_test(
+                    state_dict=self.agent_network.state_dict(), step=self.training_step
+                )
 
         self.executor.stop()
         self._save_checkpoint()

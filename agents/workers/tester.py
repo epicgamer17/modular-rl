@@ -94,10 +94,9 @@ class StandardGymTest(BaseTestType):
                 action = tester.select_test_action(state, info, env)
 
                 # Handle potential tensor/scalar action conversion
-                try:
-                    action_val = action.item()
-                except AttributeError:
-                    action_val = action
+                action_val = (
+                    action.item() if isinstance(action, torch.Tensor) else action
+                )
 
                 state, reward, terminated, truncated, info = env.step(action_val)
                 episode_reward += float(reward)
@@ -136,10 +135,9 @@ class SelfPlayTest(BaseTestType):
 
                 action = tester.select_test_action(state, info, env)
 
-                try:
-                    action_val = action.item()
-                except AttributeError:
-                    action_val = action
+                action_val = (
+                    action.item() if isinstance(action, torch.Tensor) else action
+                )
 
                 env.step(action_val)
                 episode_length += 1
@@ -201,10 +199,9 @@ class VsAgentTest(BaseTestType):
                     prediction = self.opponent.predict(state, info, env=env)
                     action = self.opponent.select_actions(prediction, info=info)
 
-                try:
-                    action_val = action.item()
-                except AttributeError:
-                    action_val = action
+                action_val = (
+                    action.item() if isinstance(action, torch.Tensor) else action
+                )
 
                 env.step(action_val)
                 episode_length += 1

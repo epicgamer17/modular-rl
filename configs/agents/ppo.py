@@ -32,21 +32,6 @@ class PPOConfig(AgentConfig, DistributionalConfig, NoisyConfig):
         critic_dict = self.parse_field("critic_config", default={}, required=False)
         critic_config = CriticConfig(critic_dict)
 
-        assert (
-            not "replay_buffer_size" in config_dict
-        ), "Replay buffer size must not be set for PPO as it is the same as steps per epoch"
-        config_dict["replay_buffer_size"] = config_dict[
-            "steps_per_epoch"
-        ]  # times number of agents
-        assert (
-            not "minibatch_size" in config_dict
-        ), "Minibatch size must not be set for PPO as it is the same as steps per epoch"
-        config_dict["minibatch_size"] = config_dict["steps_per_epoch"]
-
-        assert (
-            "training_iterations" not in config_dict
-        ), "Please set train_policy_iterations and train_value_iterations instead of training_iterations"
-
         self.actor = actor_config
 
         self.critic = critic_config
@@ -84,15 +69,24 @@ class PPOConfig(AgentConfig, DistributionalConfig, NoisyConfig):
 
         self.clip_param = self.parse_field("clip_param", 0.2)
         self.steps_per_epoch = self.parse_field("steps_per_epoch", 4800)
-
-        # Override ReplayConfig params from AgentConfig/ReplayConfig mixin
-        self.replay_buffer_size = self.parse_field(
-            "replay_buffer_size", self.steps_per_epoch
-        )
-        self.minibatch_size = self.parse_field("minibatch_size", self.steps_per_epoch)
+        self.num_minibatches = self.parse_field("num_minibatches", 4)
 
         self.train_policy_iterations = self.parse_field("train_policy_iterations", 5)
         self.train_value_iterations = self.parse_field("train_value_iterations", 5)
+
+        # Calculate properties for UniversalLearner
+        config_dict["minibatch_size"] = self.steps_per_epoch // self.num_minibatches
+        config_dict["replay_buffer_size"] = self.steps_per_epoch
+        config_dict["training_iterations"] = (
+            max(self.train_policy_iterations, self.train_value_iterations)
+            * self.num_minibatches
+        )
+
+        # Assign to self properties
+        self.minibatch_size = config_dict["minibatch_size"]
+        self.replay_buffer_size = config_dict["replay_buffer_size"]
+        self.training_iterations = config_dict["training_iterations"]
+
         self.target_kl = self.parse_field("target_kl", 0.02)
         # self.discount_factor parsed in Config/AgentConfig
         self.gae_lambda = self.parse_field("gae_lambda", 0.98)
