@@ -110,7 +110,7 @@ class CatanPlayerWrapper:
         self.player.color = game.state.current_color()
 
         # Now call the player's decision routine using the real game state.
-        action = self.player.decide(game, game.state.playable_actions)
+        action = self.player.decide(game, game.playable_actions)
 
         # Convert to action-space integer
         action_int = to_action_space(action)
