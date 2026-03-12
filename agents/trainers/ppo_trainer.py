@@ -194,6 +194,7 @@ class PPOTrainer(BaseTrainer):
                             log_prob.item() if torch.is_tensor(log_prob) else log_prob
                         ),
                         rewards=reward,
+                        dones=done,
                         info=info,
                     )
 
@@ -211,7 +212,7 @@ class PPOTrainer(BaseTrainer):
                         current_episode_length = 0
 
                 # Finish trajectory with bootstrap value
-                if done:
+                if terminated:
                     last_value = 0.0
                 else:
                     with torch.inference_mode():

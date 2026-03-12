@@ -333,8 +333,10 @@ class UniversalLearner:
     def after_optimizer_step(
         self, batch: Dict[str, Any], step_result: StepResult, stats=None
     ) -> None:
-        """Optional hook for subclasses or logging."""
-        return None  # pragma: no cover
+        """Optional hook for subclasses or logging. Automatically resets Noisy layers if present."""
+        # Reset online network noise
+        if hasattr(self.agent_network, "reset_noise"):
+            self.agent_network.reset_noise()
 
     def preprocess(self, observation: Any) -> torch.Tensor:
         """

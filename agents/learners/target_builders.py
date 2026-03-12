@@ -107,7 +107,7 @@ class DQNTargetBuilder(BaseTargetBuilder):
                 torch.arange(batch_size, device=self.device), next_actions
             ]
 
-            target_q = rewards + discount * (~terminal_mask) * max_next_q
+            target_q = rewards + discount * (~terminal_mask.bool()) * max_next_q
             return TargetOutput(
                 q_values=target_q,
                 values=target_q,
@@ -151,7 +151,7 @@ class DQNTargetBuilder(BaseTargetBuilder):
 
         tz = (
             rewards.view(-1, 1)
-            + discount * (~terminal_mask).view(-1, 1) * self.support.view(1, -1)
+            + discount * (~terminal_mask.bool()).view(-1, 1) * self.support.view(1, -1)
         ).clamp(self.v_min, self.v_max)
 
         b = (tz - self.v_min) / delta_z

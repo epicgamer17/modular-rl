@@ -170,6 +170,12 @@ class RainbowLearner(UniversalLearner):
             else:
                 # Hard update
                 self.target_agent_network.load_state_dict(clean_state, strict=False)
+            # Resample target noise ONLY after a weight sync to maintain stable C51 targets
+
+            if hasattr(self.target_agent_network, "reset_noise") and callable(
+                self.target_agent_network.reset_noise
+            ):
+                self.target_agent_network.reset_noise()
 
     def predict(self, states: torch.Tensor) -> torch.Tensor:
         """
