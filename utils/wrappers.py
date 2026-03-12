@@ -61,8 +61,10 @@ class ActionMaskInInfoWrapper(BaseWrapper):
         agent = self.env.agent_selection
         agent_index = self.env.possible_agents.index(agent)
         obs = self.env.observe(agent)
-        info = self.env.infos[agent]
-        _ = action_mask_to_info(obs, info, agent_index)
+        # Check if agent exists in infos before accessing
+        if agent in self.env.infos:
+            info = self.env.infos[agent]
+            _ = action_mask_to_info(obs, info, agent_index)
 
     def last(self, observe: bool = True):
         _, reward, term, trunc, info = self.env.last(observe=False)
