@@ -181,8 +181,6 @@ class UniversalLearner:
             # 7. Priority Updates for PER
             if result.priorities is not None:
                 priorities = result.priorities
-                if isinstance(priorities, torch.Tensor):
-                    priorities = priorities.detach().cpu().numpy()
                 self.replay_buffer.update_priorities(
                     batch["indices"], priorities, ids=batch.get("ids")
                 )
