@@ -673,7 +673,7 @@ class LossPipeline:
 
         # Convert NamedTuples/dataclasses to dicts if necessary
         predictions = predictions._asdict()
-        targets = vars(targets)
+        targets = targets if isinstance(targets, dict) else vars(targets)
         assert predictions is not None and targets is not None
         if weights is None:
             weights = torch.ones(config.minibatch_size, device=device)

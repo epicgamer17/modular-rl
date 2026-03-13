@@ -188,41 +188,6 @@ class MuZeroLearner(UniversalLearner):
                 targets[key] = value.to(self.device)
         return targets
 
-    def _predictions_to_dict(self, out: "LearningOutput") -> Dict[str, torch.Tensor]:
-        """
-        Converts a ``LearningOutput`` NamedTuple into the flat dict expected by
-        the MuZero loss pipeline and callbacks.
-
-        The LearningOutput field names are close but not identical to the legacy
-        dict keys consumed by ``_run_sequence_pipeline``, so we remap explicitly.
-
-        Args:
-            out: LearningOutput produced by ``MuZeroNetwork.learner_inference``.
-
-        Returns:
-            Dict mapping pipeline-expected keys to tensors (None values omitted).
-        """
-        mapping: Dict[str, torch.Tensor] = {
-            "values": out.values,
-            "policies": out.policies,
-            "rewards": out.rewards,
-            "to_plays": out.to_plays,
-            # loss pipeline uses "latent_states" for consistency loss key lookup
-            "latent_states": out.latents,
-        }
-        # Stochastic MuZero optional fields
-        if out.latents_afterstates is not None:
-            mapping["latent_afterstates"] = out.latents_afterstates
-        if out.chance_logits is not None:
-            # loss pipeline uses "chance_codes" for SigmaLoss key lookup
-            mapping["chance_codes"] = out.chance_logits
-        if out.chance_values is not None:
-            mapping["chance_values"] = out.chance_values
-        if out.chance_encoder_embeddings is not None:
-            # loss pipeline uses "chance_encoder_embeddings" for VQVAECommitmentLoss
-            mapping["chance_encoder_embeddings"] = out.chance_encoder_embeddings
-        return {k: v for k, v in mapping.items() if v is not None}
-
     def compute_step_result(self, batch: Dict[str, Any], stats=None) -> StepResult:
         """
         Runs one forward/loss pass for a sampled MuZero batch.
@@ -246,8 +211,6 @@ class MuZeroLearner(UniversalLearner):
 
         # Convert the typed NamedTuple to the dict the loss pipeline and
         # callbacks expect.
-        predictions = self._predictions_to_dict(learning_out)
-
         weights = targets["weights"].float()
         gradient_scales = self._gradient_scales()
         context = self._build_context(targets)
@@ -259,7 +222,7 @@ class MuZeroLearner(UniversalLearner):
         # print("Gradient Scales: ", gradient_scales)
 
         loss_mean, loss_dict, priorities = self.loss_pipeline.run(
-            predictions=predictions,
+            predictions=learning_out,
             targets=targets,
             context=context,
             weights=weights,
@@ -268,7 +231,7 @@ class MuZeroLearner(UniversalLearner):
 
         detached_predictions = {
             key: value.detach() if torch.is_tensor(value) else value
-            for key, value in predictions.items()
+            for key, value in learning_out._asdict().items()
         }
         detached_targets = {
             key: value.detach() if torch.is_tensor(value) else value
