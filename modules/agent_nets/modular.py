@@ -230,12 +230,10 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 module.initialize(initializer)
 
     def reset_noise(self) -> None:
-        """Resamples NoisyNet parameters for exploration (Rainbow DQN)."""
-        if "q_head" in self.components and self.config.noisy_sigma != 0:
-            if hasattr(self.components["feature_block"], "reset_noise"):
-                self.components["feature_block"].reset_noise()
-            if hasattr(self.components["q_head"], "reset_noise"):
-                self.components["q_head"].reset_noise()
+        """Resamples NoisyNet parameters across all configured components."""
+        for name, module in self.components.items():
+            if hasattr(module, "reset_noise"):
+                module.reset_noise()
 
     def obs_inference(self, obs: Tensor) -> InferenceOutput:
         """

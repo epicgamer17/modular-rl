@@ -61,6 +61,11 @@ class RainbowTrainer(BaseTrainer):
             config.action_selector.config_dict
         )
 
+        if hasattr(config, "epsilon_schedule") and config.epsilon_schedule is not None:
+            self.epsilon_schedule = create_schedule(config.epsilon_schedule)
+        else:
+            self.epsilon_schedule = None
+
         # 3. Create support for distributional RL (C51)
         # Note: RainbowNetwork.initial_inference now handles calculating expected value from support
         # So we don't need to pass support explicitly to the selector in the old way
@@ -182,7 +187,16 @@ class RainbowTrainer(BaseTrainer):
         """
         Updates epsilon according to the configured schedule.
         """
-        self.learner._step_schedules()
+        if hasattr(self, "epsilon_schedule") and self.epsilon_schedule is not None:
+            self.epsilon_schedule.step()
+            current_epsilon = self.epsilon_schedule.get_value()
+
+            # Sync the new epsilon to the action selector
+            if hasattr(self.action_selector, "epsilon"):
+                self.action_selector.epsilon = current_epsilon
+
+            # Log it to verify it's working
+            self.stats.append("epsilon", current_epsilon)
 
     def _save_checkpoint(self) -> None:
         """Saves Rainbow checkpoint."""

@@ -107,7 +107,7 @@ class DQNTargetBuilder(BaseTargetBuilder):
                 torch.arange(batch_size, device=self.device), next_actions
             ]
 
-            target_q = rewards + discount * (~terminal_mask.bool()) * max_next_q
+            target_q = (rewards + discount * (~terminal_mask) * max_next_q).detach()
             return TargetOutput(
                 q_values=target_q,
                 values=target_q,
@@ -134,7 +134,8 @@ class DQNTargetBuilder(BaseTargetBuilder):
             target_dist = self._project_target_distribution(
                 rewards, terminal_mask, chosen_target_next_probs
             )
-            target_scalar = (target_dist * self.support).sum(dim=-1)
+            target_dist = target_dist.detach()
+            target_scalar = (target_dist * self.support).sum(dim=-1).detach()
 
             return TargetOutput(
                 target_dist=target_dist,

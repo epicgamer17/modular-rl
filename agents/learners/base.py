@@ -118,6 +118,12 @@ class UniversalLearner:
         ):
             self.schedules["per_beta"] = create_schedule(self.config.per_beta_schedule)
 
+        if (
+            hasattr(self.config, "epsilon_schedule")
+            and self.config.epsilon_schedule is not None
+        ):
+            self.schedules["epsilon"] = create_schedule(self.config.epsilon_schedule)
+
     def _preprocess_observation(self, states: Any) -> torch.Tensor:
         """
         Converts states to torch tensors on the correct device.
@@ -255,14 +261,8 @@ class UniversalLearner:
             loss_dict=loss_dict,
             priorities=priorities,
             # Detach for callbacks/logging safety
-            predictions={
-                k: v.detach().cpu() if torch.is_tensor(v) else v
-                for k, v in preds_dict.items()
-            },
-            targets={
-                k: v.detach().cpu() if torch.is_tensor(v) else v
-                for k, v in targs_dict.items()
-            },
+            predictions={k: v.detach().cpu() for k, v in preds_dict.items()},
+            targets={k: v.detach().cpu() for k, v in targs_dict.items()},
         )
 
     @property
@@ -282,6 +282,8 @@ class UniversalLearner:
             schedule.step()
             if name == "per_beta":
                 self.replay_buffer.set_beta(schedule.get_value())
+            elif name == "epsilon":
+                self.action_selector.epsilon = schedule.get_value()
 
     def save_checkpoint(self, path: str):
         """

@@ -307,16 +307,8 @@ class ModularReplayBuffer:
 
                 if "ids" in self.buffers:
                     indices_np = np.asarray(indices, dtype=np.int64)
-                    priorities_np = (
-                        priorities.cpu().numpy()
-                        if isinstance(priorities, torch.Tensor)
-                        else np.asarray(priorities)
-                    )
-                    ids_np = (
-                        ids.cpu().numpy()
-                        if isinstance(ids, torch.Tensor)
-                        else np.asarray(ids)
-                    )
+                    priorities_np = priorities.cpu().numpy()
+                    ids_np = ids.cpu().numpy()
 
                     valid_indices = []
                     valid_priorities = []

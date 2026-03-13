@@ -73,19 +73,18 @@ class BaseTrainer:
         test_types = TestFactory.create_default_test_types(
             self.config, num_trials=self.test_trials
         )
-        if self.test_agents:
-            from agents.workers.tester import VsAgentTest
+        from agents.workers.tester import VsAgentTest
 
-            for agent in self.test_agents:
-                for player_idx in range(self.num_players):
-                    test_types.append(
-                        VsAgentTest(
-                            name=f"vs_{agent.name}_p{player_idx}",
-                            num_trials=self.test_trials,
-                            opponent=agent,
-                            player_idx=player_idx,
-                        )
+        for agent in self.test_agents:
+            for player_idx in range(self.num_players):
+                test_types.append(
+                    VsAgentTest(
+                        name=f"vs_{agent.name}_p{player_idx}",
+                        num_trials=self.test_trials,
+                        opponent=agent,
+                        player_idx=player_idx,
                     )
+                )
 
         # 3. Launch Tester
         # 1. Safely unwrap the network before passing across process boundaries
@@ -149,13 +148,7 @@ class BaseTrainer:
 
     def _process_test_results(self, all_results: Dict[str, Dict[str, Any]], step: int):
         """Logs results from all test types."""
-        if not isinstance(all_results, dict):
-            return
-
         for test_name, res in all_results.items():
-            if not isinstance(res, dict):
-                continue
-
             # Standard evaluation (e.g., standard, self_play)
             if test_name == "self_play":
                 # Only log p0_score for self_play to show consistent training progress
@@ -252,21 +245,19 @@ class BaseTrainer:
         # Save Config
         config_dir = base_dir / "configs"
         os.makedirs(config_dir, exist_ok=True)
-        if hasattr(self.config, "dump"):
-            self.config.dump(f"{config_dir}/config.yaml")
+        self.config.dump(f"{config_dir}/config.yaml")
 
         # Save Stats
         stats_dir = step_dir / "graphs_stats"
         os.makedirs(stats_dir, exist_ok=True)
 
-        if hasattr(self, "stats"):
-            with open(stats_dir / "stats.pkl", "wb") as f:
-                pickle.dump(self.stats.get_data(), f)
+        with open(stats_dir / "stats.pkl", "wb") as f:
+            pickle.dump(self.stats.get_data(), f)
 
-            # Plot graphs
-            graph_dir = base_dir / "graphs"
-            os.makedirs(graph_dir, exist_ok=True)
-            self.stats.plot_graphs(dir=graph_dir)
+        # Plot graphs
+        graph_dir = base_dir / "graphs"
+        os.makedirs(graph_dir, exist_ok=True)
+        self.stats.plot_graphs(dir=graph_dir)
 
         gc.collect()
         abs_path = os.path.abspath(step_dir)
@@ -323,9 +314,8 @@ class BaseTrainer:
         ]
 
         # Add test_score vs other agents if applicable
-        if hasattr(self, "test_agents") and self.test_agents:
-            for agent in self.test_agents:
-                stat_keys.append(f"vs_{agent.name}_score")
+        for agent in self.test_agents:
+            stat_keys.append(f"vs_{agent.name}_score")
 
         # Initialize keys
         player_subkeys = [f"p{p}" for p in range(self.num_players)]
@@ -355,13 +345,12 @@ class BaseTrainer:
         )
 
         # Test vs agents
-        if hasattr(self, "test_agents") and self.test_agents:
-            for agent in self.test_agents:
-                self.stats.add_plot_types(
-                    f"vs_{agent.name}_score",
-                    PlotType.BEST_FIT_LINE,
-                    PlotType.VARIATION_FILL,
-                )
+        for agent in self.test_agents:
+            self.stats.add_plot_types(
+                f"vs_{agent.name}_score",
+                PlotType.BEST_FIT_LINE,
+                PlotType.VARIATION_FILL,
+            )
 
     def select_test_action(self, state, info, env) -> Any:
         """Override in child classes to specify how to select an action during testing."""

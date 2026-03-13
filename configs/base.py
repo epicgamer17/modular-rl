@@ -51,8 +51,9 @@ class ConfigBase:
         print(f"Using         {field_name:30}: {d}")
         return ScheduleConfig.from_dict(d)
 
-    def __init__(self, config_dict: dict):
+    def __init__(self, config_dict: dict, game_config=None):
         self.config_dict = config_dict.copy()
+        self.game = game_config
         # Merge legacy nested blocks for backward compatibility
         legacy_blocks = ["architecture", "arch", "search", "replay", "optimization"]
         for block in legacy_blocks:
@@ -68,18 +69,12 @@ class ConfigBase:
     def load(cls, filepath: str):
         with open(filepath, "r") as f:
             o = yaml.load(f, yaml.Loader)
-            if "config_dict" in o:
-                config_dict = o["config_dict"]
-                game = o.get("game")
-            else:
-                config_dict = o
-                game = None
+            # Establish a strict contract for how YAML files are formatted
+            config_dict = o.get("config_dict", o)
+            game = o.get("game", None)
 
-            try:
-                a = cls(config_dict=config_dict, game_config=game)
-            except TypeError:
-                a = cls(config_dict=config_dict)
-        return a
+            # Uniform instantiation
+            return cls(config_dict=config_dict, game_config=game)
 
     def dump(self, filepath: str):
         to_dump = dict(config_dict=self.config_dict)

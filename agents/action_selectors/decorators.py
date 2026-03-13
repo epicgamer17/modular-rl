@@ -82,14 +82,7 @@ class MCTSDecorator(BaseActionSelector):
         self.inner_selector = inner_selector
         self.search = search_algorithm
         self.config = config
-        if hasattr(config, "temperature_schedule"):
-            self.temperature_schedule = create_schedule(config.temperature_schedule)
-        else:
-            from utils.schedule import ScheduleConfig
-
-            self.temperature_schedule = create_schedule(
-                ScheduleConfig.stepwise(steps=[5], values=[1.0, 0.0])
-            )
+        self.temperature_schedule = create_schedule(config.temperature_schedule)
         # Cache for temperature schedule to avoid O(N^2)
         self._last_step = -1
 
