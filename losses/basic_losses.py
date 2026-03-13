@@ -155,13 +155,13 @@ class StandardDQNLossModule(LossModule):
     def compute_loss(
         self, predictions: dict, targets: dict, context: dict, k: int = 0
     ) -> torch.Tensor:
-        actions = targets.actions.long()
+        actions = targets["actions"].long()
         batch_size = actions.shape[0]
-        selected_q = predictions.q_values[
+        selected_q = predictions["q_values"][
             torch.arange(batch_size, device=self.device), actions
         ]
 
-        targets_val = targets.target_next_q_values
+        targets_val = targets["target_next_q_values"]
         # Return elementwise loss (B,)
         return self.config.loss_function(selected_q, targets_val, reduction="none")
 
@@ -234,15 +234,15 @@ class C51LossModule(LossModule):
     ) -> torch.Tensor:
         online_q_logits = predictions["q_logits"]
 
-        actions = context["actions"].to(self.device).long()
+        actions = targets["actions"].to(self.device).long()
         batch_size = actions.shape[0]
-        target_dist = targets.target_next_q_logits
+        target_next_q_logits = targets["target_next_q_logits"]
         chosen_logits = online_q_logits[
             torch.arange(batch_size, device=self.device), actions
         ]
         log_probs = F.log_softmax(chosen_logits, dim=-1)
         # Return elementwise loss (B,)
-        return -(target_dist * log_probs).sum(dim=-1)
+        return -(target_next_q_logits * log_probs).sum(dim=-1)
 
 
 class ImitationLoss(LossModule):

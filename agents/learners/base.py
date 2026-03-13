@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 import time
 
@@ -249,8 +249,8 @@ class UniversalLearner:
         )
 
         # Prepare for StepResult
-        preds_dict = {f.name: getattr(predictions, f.name) for f in fields(predictions)}
-        targs_dict = {f.name: getattr(targets, f.name) for f in fields(targets)}
+        preds_dict = predictions._asdict()
+        targs_dict = vars(targets)
 
         return StepResult(
             loss=loss,
@@ -284,8 +284,6 @@ class UniversalLearner:
             schedule.step()
             if name == "per_beta":
                 self.replay_buffer.set_beta(schedule.get_value())
-            elif name == "epsilon":
-                self.action_selector.epsilon = schedule.get_value()
 
     def save_checkpoint(self, path: str):
         """

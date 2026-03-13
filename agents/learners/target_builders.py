@@ -18,6 +18,7 @@ class TargetOutput:
     """
 
     q_values: Optional[Tensor] = None
+    target_next_q_logits: Optional[Tensor] = None
     value_targets: Optional[Tensor] = None
     advantages: Optional[Tensor] = None
     old_log_probs: Optional[Tensor] = None
@@ -25,7 +26,6 @@ class TargetOutput:
     rewards: Optional[Tensor] = None
     chance_codes: Optional[Tensor] = None
     consistency_targets: Optional[Tensor] = None
-    target_dist: Optional[Tensor] = None
     values: Optional[Tensor] = None
     chance_values: Optional[Tensor] = None
     to_plays: Optional[Tensor] = None
@@ -159,14 +159,14 @@ class DQNTargetBuilder(BaseTargetBuilder):
                 torch.arange(batch_size, device=self.device), next_actions
             ]
 
-            target_dist = self._project_target_distribution(
+            target_next_q_logits = self._project_target_distribution(
                 rewards, terminal_mask, chosen_target_next_probs
             )
-            target_dist = target_dist.detach()
-            target_scalar = (target_dist * self.support).sum(dim=-1).detach()
+            target_next_q_logits = target_next_q_logits.detach()
+            target_scalar = (target_next_q_logits * self.support).sum(dim=-1).detach()
 
             return TargetOutput(
-                target_dist=target_dist,
+                target_next_q_logits=target_next_q_logits,
                 values=target_scalar,
                 actions=batch["actions"].to(self.device),
             )

@@ -671,35 +671,19 @@ class LossPipeline:
         config = self.modules[0].config
         device = self.modules[0].device
 
-        # Convert NamedTuples to dicts if necessary
-        if hasattr(predictions, "_asdict"):
-            predictions = predictions._asdict()
-        if hasattr(targets, "_asdict"):
-            targets = targets._asdict()
-
-        # Determine batch_size and unroll steps
-        first_tensor = next(iter(predictions.values()))
-        batch_size = first_tensor.shape[0]
-
+        # Convert NamedTuples/dataclasses to dicts if necessary
+        predictions = predictions._asdict()
+        targets = vars(targets)
+        assert predictions is not None and targets is not None
         if weights is None:
-            weights = torch.ones(batch_size, device=device)
+            weights = torch.ones(config.minibatch_size, device=device)
 
         if gradient_scales is None:
-            # Detect unroll steps from sequence tensors
-            # Default to 1 step if no sequence found
-            expected_steps = 1
-            for val in predictions.values():
-                if (
-                    torch.is_tensor(val) and val.ndim > 2
-                ):  # Very basic heuristic: (B, K+1, ...)
-                    # This heuristic is weak. Better: use a dedicated field or unroll_steps from config
-                    pass
-            # Non-sequence fallthrough: (1, 1)
             gradient_scales = torch.ones((1, 1), device=device)
 
         total_loss = torch.tensor(0.0, device=device)
         loss_dict = {module.name: 0.0 for module in self.modules}
-        priorities = torch.zeros(batch_size, device=device)
+        priorities = torch.zeros(config.minibatch_size, device=device)
 
         # Determine unroll steps from gradient_scales (1, K+1)
         # For non-sequence (DQN), gradient_scales is usually (1, 1)
@@ -720,7 +704,7 @@ class LossPipeline:
                 )
 
             # --- 2. Compute losses for this step ---
-            step_loss = torch.zeros(batch_size, device=device)
+            step_loss = torch.zeros(config.minibatch_size, device=device)
 
             # Special case for ChanceQLoss which needs the next value
             if (
@@ -760,11 +744,11 @@ class LossPipeline:
             total_loss += weighted_scaled_loss_k.sum()
 
         # Average the total loss by batch size
-        loss_mean = total_loss / batch_size
+        loss_mean = total_loss / config.minibatch_size
 
         # Average accumulated losses for logging
         for key in loss_dict:
-            loss_dict[key] /= batch_size
+            loss_dict[key] /= config.minibatch_size
 
         return loss_mean, loss_dict, priorities
 
