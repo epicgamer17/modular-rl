@@ -204,10 +204,6 @@ class LearningOutput(NamedTuple):
     q_logits: Optional[torch.Tensor] = (
         None  # [B, T+1, num_actions, num_atoms] (Rainbow Online)
     )
-    next_q_values: Optional[torch.Tensor] = None
-    target_q_values: Optional[torch.Tensor] = None
-    next_q_logits: Optional[torch.Tensor] = None
-    target_q_logits: Optional[torch.Tensor] = None
     rewards: Optional[torch.Tensor] = None  # [B, T+1, ...] Logits
     to_plays: Optional[torch.Tensor] = None  # [B, T+1, ...] Logits
 

@@ -249,18 +249,22 @@ class UniversalLearner:
         )
 
         # Prepare for StepResult
-        preds_dict = (
-            predictions._asdict() if hasattr(predictions, "_asdict") else predictions
-        )
-        targs_dict = targets._asdict() if hasattr(targets, "_asdict") else targets
+        preds_dict = {f.name: getattr(predictions, f.name) for f in fields(predictions)}
+        targs_dict = {f.name: getattr(targets, f.name) for f in fields(targets)}
 
         return StepResult(
             loss=loss,
             loss_dict=loss_dict,
             priorities=priorities,
             # Detach for callbacks/logging safety
-            predictions={k: v.detach().cpu() for k, v in preds_dict.items()},
-            targets={k: v.detach().cpu() for k, v in targs_dict.items()},
+            predictions={
+                k: v.detach().cpu() if v is not None else v
+                for k, v in preds_dict.items()
+            },
+            targets={
+                k: v.detach().cpu() if v is not None else v
+                for k, v in targs_dict.items()
+            },
         )
 
     @property

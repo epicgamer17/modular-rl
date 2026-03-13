@@ -55,8 +55,6 @@ class RainbowLearner(UniversalLearner):
             observation_dtype=observation_dtype,
         )
         self.target_agent_network = target_agent_network
-        # Link target network to online network for unrolled evaluations in learner_inference
-        self.agent_network.target_network = target_agent_network
 
         # 1. Initialize Replay Buffer
         self.replay_buffer = create_dqn_buffer(
@@ -112,7 +110,9 @@ class RainbowLearner(UniversalLearner):
         self.loss_pipeline = LossPipeline([self.td_loss_module])
 
         # 6. Initialize Target Builder
-        self.target_builder = DQNTargetBuilder(config, device)
+        self.target_builder = DQNTargetBuilder(
+            config, device, self.target_agent_network
+        )
         if config.atom_size > 1:
             self.loss_pipeline.validate_dependencies(
                 network_output_keys={"q_logits", "next_q_logits"},
@@ -144,7 +144,6 @@ class RainbowLearner(UniversalLearner):
 
     def after_optimizer_step(self, batch, step_result: StepResult, stats=None) -> None:
         self.agent_network.reset_noise()
-        self.target_agent_network.reset_noise()
 
     def update_target_network(self) -> None:
         """
@@ -176,40 +175,6 @@ class RainbowLearner(UniversalLearner):
                 self.target_agent_network.reset_noise
             ):
                 self.target_agent_network.reset_noise()
-
-    def predict(self, states: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass through the online network.
-
-        Args:
-            states: Preprocessed observation tensor.
-
-        Returns:
-            Q-distribution (logits) or Q-values tensor.
-        """
-        batch = {"observations": states}
-        out = self.agent_network.learner_inference(batch)
-        if self.config.atom_size > 1:
-            # Distributional RL: Return LOGITS for numerically stable loss calculation (log_softmax)
-            return out.q_logits  # (B, actions, atoms) - LOGITS
-        return out.q_values  # (B, actions)
-
-    def predict_target(self, states: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass through the target network.
-
-        Args:
-            states: Preprocessed observation tensor.
-
-        Returns:
-            Q-distribution (logits) or Q-values tensor.
-        """
-        batch = {"observations": states}
-        out = self.target_agent_network.learner_inference(batch)
-        if self.config.atom_size > 1:
-            # Distributional RL: Return LOGITS for numerically stable loss calculation (log_softmax)
-            return out.q_logits  # (B, actions, atoms) - LOGITS
-        return out.q_values  # (B, actions)
 
     def preprocess(self, observation: Any) -> torch.Tensor:
         """

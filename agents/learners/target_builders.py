@@ -65,12 +65,13 @@ class DQNTargetBuilder(BaseTargetBuilder):
     Implements Bellman equation targets for DQN and C51.
     """
 
-    def __init__(self, config: Any, device: torch.device):
+    def __init__(self, config: Any, device: torch.device, target_network: nn.Module):
         self.config = config
         self.device = device
         self.n_step = getattr(config, "n_step", 1)
         self.gamma = getattr(config, "discount_factor", 0.99)
         self.use_c51 = getattr(config, "atom_size", 1) > 1
+        self.target_network = target_network
 
         if self.use_c51:
             self.v_min = config.v_min
@@ -87,6 +88,7 @@ class DQNTargetBuilder(BaseTargetBuilder):
         dones = batch["dones"].to(self.device).bool()
         terminated = batch.get("terminated", dones).to(self.device).bool()
         next_masks = batch.get("next_legal_moves_masks")
+        next_obs = batch.get("next_observations")  # Extract next_obs once
 
         bootstrap_on_truncated = getattr(self.config, "bootstrap_on_truncated", False)
         terminal_mask = terminated if bootstrap_on_truncated else dones
@@ -94,9 +96,25 @@ class DQNTargetBuilder(BaseTargetBuilder):
         batch_size = rewards.shape[0]
         discount = self.gamma**self.n_step
 
+        # Prepare next_obs if available
+        if next_obs is not None:
+            next_obs = next_obs.to(self.device).float()
+
         if not self.use_c51:
-            next_q_values = predictions.next_q_values
-            target_q_values = predictions.target_q_values
+            # 1. Get online network predictions for next state (Double DQN action selection)
+            with torch.inference_mode():
+                online_next_out = network.learner_inference({"observations": next_obs})
+                next_q_values = online_next_out.q_values
+
+            with torch.inference_mode():
+                target_out = self.target_network.learner_inference(
+                    {"observations": next_obs}
+                )
+                target_q_values = target_out.q_values
+
+            assert (
+                target_q_values is not None
+            ), "target_next_q_values is None and no target_network provided to DQNTargetBuilder"
 
             if next_masks is not None:
                 mask = next_masks.to(self.device).bool()
@@ -110,12 +128,22 @@ class DQNTargetBuilder(BaseTargetBuilder):
             target_q = (rewards + discount * (~terminal_mask) * max_next_q).detach()
             return TargetOutput(
                 q_values=target_q,
-                values=target_q,
                 actions=batch["actions"].to(self.device),
             )
         else:
-            next_q_logits = predictions.next_q_logits
-            target_q_logits = predictions.target_q_logits
+            # 2. Get online network predictions for next state logits (C51 action selection)
+            with torch.inference_mode():
+                online_next_out = network.learner_inference({"observations": next_obs})
+                next_q_logits = online_next_out.q_logits
+
+                target_out = self.target_network.learner_inference(
+                    {"observations": next_obs}
+                )
+                target_q_logits = target_out.q_logits
+
+            assert (
+                target_q_logits is not None
+            ), "target_next_q_logits is None and no target_network provided to DQNTargetBuilder"
 
             online_next_probs = torch.softmax(next_q_logits, dim=-1)
             online_next_q = (online_next_probs * self.support).sum(dim=-1)

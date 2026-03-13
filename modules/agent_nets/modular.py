@@ -429,52 +429,10 @@ class ModularAgentNetwork(BaseAgentNetwork):
             Q = self.components["q_head"](x)
             q_vals = self.components["q_head"].strategy.to_expected_value(Q)
 
-            # Extract Q-values for taken actions (required for loss/priority)
-            actions = batch.get("actions")
-            q_taken = None
-            if actions is not None:
-                actions = actions.to(self.device).long()
-                q_taken = q_vals[
-                    torch.arange(q_vals.shape[0], device=self.device), actions
-                ]
-
-            # 2. Next State Evaluations (Decoupled Unrolling)
-            next_obs = batch.get("next_observations")
-            next_q_vals = None
-            target_next_q_vals = None
-            next_q_logits = None
-            target_next_q_logits = None
-
-            if next_obs is not None:
-                next_obs = next_obs.to(self.device).float()
-                with torch.no_grad():
-                    # Evaluate online network on s_{t+1} (for Double DQN)
-                    x_next = self.components["feature_block"](next_obs)
-                    Q_next = self.components["q_head"](x_next)
-                    next_q_vals = self.components["q_head"].strategy.to_expected_value(
-                        Q_next
-                    )
-                    next_q_logits = Q_next
-
-                    # Evaluate target network on s_{t+1} (if available)
-                    if (
-                        hasattr(self, "target_network")
-                        and self.target_network is not None
-                    ):
-                        target_next_out = self.target_network.learner_inference(
-                            {"observations": next_obs}
-                        )
-                        target_next_q_vals = target_next_out.q_values
-                        target_next_q_logits = target_next_out.q_logits
-
             return LearningOutput(
-                values=q_taken.unsqueeze(-1) if q_taken is not None else None,
+                values=None,
                 q_values=q_vals,
                 q_logits=Q,
-                next_q_values=next_q_vals,
-                target_q_values=target_next_q_vals,
-                next_q_logits=next_q_logits,
-                target_q_logits=target_next_q_logits,
             )
 
         # ----------------------------------------

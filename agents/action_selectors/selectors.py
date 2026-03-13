@@ -121,12 +121,7 @@ class CategoricalSelector(BaseActionSelector):
             # Apply mask to logits (-inf for illegal moves)
             # Categorical distribution usually has logits or probs.
             # We prefer masking logits for numerical stability.
-            if hasattr(policy, "logits") and policy.logits is not None:
-                logits = policy.logits
-            else:
-                # Fallback to probs if logits are not available
-                logits = torch.log(policy.probs + 1e-8)
-
+            logits = policy.logits
             masked_logits = self.mask_actions(
                 logits,
                 legal_moves,
