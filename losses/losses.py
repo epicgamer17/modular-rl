@@ -761,11 +761,27 @@ class LossPipeline:
         # Standard MuZero/DQN approach: Value/Q error
         values_k = preds_k.get("values")
         if values_k is None:
-            values_k = preds_k.get("online_q_values")
+            actions = targets_k.get("actions")
+            if actions is not None:
+                actions = actions.long()
+                batch_size = actions.shape[0]
+                q_logits = preds_k.get("q_logits")
+                if q_logits is not None:
+                    # C51/Rainbow: select chosen-action distribution, convert to scalar
+                    support = torch.linspace(
+                        config.v_min, config.v_max, config.atom_size, device=device
+                    )
+                    chosen = q_logits[torch.arange(batch_size, device=device), actions]
+                    values_k = (torch.softmax(chosen, dim=-1) * support).sum(dim=-1)
+                else:
+                    q_vals = preds_k.get("q_values")
+                    if q_vals is not None:
+                        # Scalar DQN: select Q for the taken action
+                        values_k = q_vals[torch.arange(batch_size, device=device), actions]
 
         target_values_k = targets_k.get("values")
         if target_values_k is None:
-            target_values_k = targets_k.get("target_q_values")
+            target_values_k = targets_k.get("q_values")  # scalar DQN target (TargetOutput.q_values)
 
         if values_k is None or target_values_k is None:
             # Fallback for other loss types if values aren't present
