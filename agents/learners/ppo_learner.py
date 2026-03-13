@@ -12,7 +12,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
 
-from losses.basic_losses import PPOPolicyLoss, PPOValueLoss
+from losses.losses import PPOPolicyLoss, PPOValueLoss
 from modules.utils import get_lr_scheduler
 from replay_buffers.buffer_factories import create_ppo_buffer
 from agents.learners.base import UniversalLearner, StepResult

@@ -16,7 +16,7 @@ pip install -e .
 losses/
 ├── __init__.py           # Loss registry and exports
 ├── losses.py             # Main loss implementations
-├── basic_losses.py       # Basic loss definitions
+├── losses.py       # Basic loss definitions
 └── loss_manager.py       # Loss management utilities
 ```
 
@@ -102,7 +102,7 @@ total_loss = manager.compute(predictions, targets)
 Create custom losses by inheriting from `BaseLoss`:
 
 ```python
-from losses.basic_losses import BaseLoss
+from losses.losses import BaseLoss
 
 class CustomLoss(BaseLoss):
     def __init__(self, param=1.0):

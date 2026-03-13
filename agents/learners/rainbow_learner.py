@@ -9,8 +9,9 @@ import torch
 from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
 
+from modules.agent_nets.modular import ModularAgentNetwork
 from replay_buffers.buffer_factories import create_dqn_buffer
-from losses.basic_losses import C51LossModule, StandardDQNLossModule
+from losses.losses import C51Loss, StandardDQNLoss
 from modules.utils import get_lr_scheduler
 from utils.schedule import create_schedule
 from agents.learners.base import UniversalLearner, StepResult
@@ -27,8 +28,8 @@ class RainbowLearner(UniversalLearner):
     def __init__(
         self,
         config,
-        agent_network: torch.nn.Module,
-        target_agent_network: torch.nn.Module,
+        agent_network: ModularAgentNetwork,
+        target_agent_network: ModularAgentNetwork,
         device: torch.device,
         num_actions: int,
         observation_dimensions: Tuple[int, ...],
@@ -96,13 +97,13 @@ class RainbowLearner(UniversalLearner):
         from losses.losses import LossPipeline
 
         if config.atom_size > 1:
-            self.td_loss_module = C51LossModule(
+            self.td_loss_module = C51Loss(
                 config=config,
                 device=device,
                 action_selector=self.training_selector,
             )
         else:
-            self.td_loss_module = StandardDQNLossModule(
+            self.td_loss_module = StandardDQNLoss(
                 config=config,
                 device=device,
                 action_selector=self.training_selector,

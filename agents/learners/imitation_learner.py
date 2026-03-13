@@ -81,8 +81,7 @@ class ImitationLearner(UniversalLearner):
         self.lr_scheduler = get_lr_scheduler(self.optimizer, config)
 
         # 4. Loss function (ImitationLoss)
-        from losses.basic_losses import ImitationLoss
-        from losses.losses import LossPipeline
+        from losses.losses import LossPipeline, ImitationLoss
 
         self.loss_module = ImitationLoss(
             config=config,
