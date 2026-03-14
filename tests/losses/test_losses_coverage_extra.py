@@ -131,7 +131,7 @@ def test_consistency_loss_latent_dict(base_config):
     agent_network = MagicMock()
     agent_network.project.return_value = torch.randn((1, 64))
     loss = ConsistencyLoss(base_config, torch.device("cpu"), agent_network)
-    predictions = {"latent_states": {"dynamics": torch.randn((1, 64))}}
+    predictions = {"latents": {"dynamics": torch.randn((1, 64))}}
     targets = {"consistency_targets": torch.randn((1, 64))}
     l = loss.compute_loss(predictions, targets, {}, k=1)
     assert l.shape == (1,)
@@ -178,7 +178,6 @@ def test_standard_dqn_double_dqn_path(base_config):
     loss = StandardDQNLossModule(base_config, device, action_selector=selector)
     predictions = {
         "q_values": torch.randn((1, 4)),
-        "next_q_values": torch.randn((1, 4)),
     }
     targets = {
         "q_values": torch.randn((1,)),  # Scalar target values per sample
@@ -200,10 +199,9 @@ def test_c51_dqn_double_dqn_path(base_config):
     loss = C51LossModule(base_config, device, action_selector=selector)
     predictions = {
         "q_logits": torch.randn((1, 4, 21)),
-        "next_q_logits": torch.randn((1, 4, 21)),
     }
     targets = {
-        "target_dist": torch.randn((1, 21)),  # Target distribution per sample
+        "q_logits": torch.randn((1, 21)),  # Target distribution per sample
         "actions": torch.tensor([0]),
         "rewards": torch.tensor([1.0]),
         "dones": torch.tensor([False]),

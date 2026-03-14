@@ -9,7 +9,7 @@ from configs.agents.rainbow_dqn import RainbowConfig
 from configs.agents.nfsp import NFSPDQNConfig
 from configs.agents.supervised import SupervisedConfig
 from configs.games.cartpole import CartPoleConfig
-from agents.learners.target_builder import BaseTargetBuilder
+from agents.learners.target_builders import BaseTargetBuilder, TargetOutput
 
 
 # --- BASE DICTIONARIES ---
@@ -27,6 +27,7 @@ def base_ppo_config_dict():
         "gae_lambda": 0.95,
         "learning_rate": 1e-3,
         "adam_epsilon": 1e-8,
+        "num_minibatches": 1,
         "actor_config": {
             "optimizer": torch.optim.Adam,
             "learning_rate": 1e-3,
@@ -272,8 +273,8 @@ class DummyTargetBuilder(BaseTargetBuilder):
     """
 
     def build_targets(self, batch, predictions, network):
-        """Returns an empty dictionary of targets."""
-        return {}
+        """Returns an empty TargetOutput."""
+        return TargetOutput()
 
 
 @pytest.fixture

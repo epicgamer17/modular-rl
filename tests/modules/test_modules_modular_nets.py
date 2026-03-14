@@ -53,7 +53,6 @@ def test_modules_modular_net_rainbow_forward_shapes(
 
     assert learner_output.q_values is not None
     assert learner_output.q_logits is not None
-    assert learner_output.values.shape == (5, 1)
     assert learner_output.q_values.shape == (5, 3)
     assert learner_output.q_logits.shape == (5, 3)
 

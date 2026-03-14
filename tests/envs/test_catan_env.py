@@ -1,4 +1,9 @@
 import pytest
+try:
+    import custom_gym_envs
+    from custom_gym_envs.envs.catan import CatanAECEnv
+except (ImportError, ModuleNotFoundError):
+    pytest.skip("custom_gym_envs or catan env not found", allow_module_level=True)
 import numpy as np
 import torch
 import gymnasium as gym

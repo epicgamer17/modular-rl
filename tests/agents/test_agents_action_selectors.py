@@ -11,6 +11,7 @@ from agents.action_selectors.selectors import (
 )
 from agents.action_selectors.decorators import PPODecorator, MCTSDecorator
 from modules.world_models.inference_output import InferenceOutput
+from utils.schedule import ScheduleConfig
 
 pytestmark = pytest.mark.unit
 
@@ -200,7 +201,10 @@ class MockSearch:
 def test_mcts_decorator():
     """Test MCTSDecorator temperature handling and search delegation."""
     network = MockNetwork()
-    config = SimpleNamespace(num_simulations=10)
+    config = SimpleNamespace(
+        num_simulations=10,
+        temperature_schedule=ScheduleConfig(type="constant", initial=1.0),
+    )
     search = MockSearch(config)
     inner = CategoricalSelector(exploration=False)
 

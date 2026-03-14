@@ -75,7 +75,7 @@ def test_loss_pipeline_execution():
         values=torch.tensor([[0.1, 0.2], [0.1, 0.2]], device=device)
     )
     targets = LearningOutput(
-        returns=torch.tensor([[0.3, 0.4], [0.3, 0.4]], device=device)
+        values=torch.tensor([[0.3, 0.4], [0.3, 0.4]], device=device)
     )
     weights = torch.tensor([1.0, 1.0], device=device)
     gradient_scales = torch.tensor([[1.0, 0.5]], device=device)  # K=1 (2 steps)
@@ -83,7 +83,7 @@ def test_loss_pipeline_execution():
 
     loss_mean, loss_dict, priorities = pipeline.run(
         predictions=predictions,
-        targets=targets,
+        targets=targets._asdict(),
         context=context,
         weights=weights,
         gradient_scales=gradient_scales,
@@ -106,13 +106,17 @@ def test_priority_calculation():
     config.minibatch_size = 2
     config.support_range = None
 
-    pipeline = LossPipeline([MagicMock(config=config, device=device)])
+    mock_module = MagicMock(config=config, device=device)
+    mock_module.compute_priority.return_value = None
+    pipeline = LossPipeline([mock_module])
 
     # Case 1: Scalar values
     preds_k = {"q_values": torch.tensor([1.0, 3.0], device=device)}
     targets_k = {"q_values": torch.tensor([2.0, 2.0], device=device)}
 
-    priorities = pipeline._calculate_priorities(preds_k, targets_k, config, device)
+    # Mock compute_priority for Case 1
+    mock_module.compute_priority.side_effect = lambda preds, targets, ctx, k: torch.abs(targets["q_values"] - preds["q_values"])
+    priorities = pipeline._calculate_priorities(preds_k, targets_k, {}, config, device)
     # abs(2-1) = 1, abs(2-3) = 1
     assert torch.allclose(priorities, torch.tensor([1.0, 1.0], device=device))
 
@@ -134,7 +138,9 @@ def test_priority_calculation():
     )
 
     try:
-        priorities = pipeline._calculate_priorities(preds_k, targets_k, config, device)
+        # Mock compute_priority for Case 2
+        mock_module.compute_priority.side_effect = lambda preds, targets, ctx, k: torch.abs(targets["values"] - modules.utils.support_to_scalar(preds["values"], config.support_range))
+        priorities = pipeline._calculate_priorities(preds_k, targets_k, {}, config, device)
         # abs(0-0) = 0, abs(10-10) = 0
         assert torch.allclose(priorities, torch.tensor([0.0, 0.0], device=device))
     finally:
@@ -176,14 +182,14 @@ def test_masking_execution():
     pipeline = LossPipeline([module1])
 
     predictions = LearningOutput(values=torch.tensor([[0.1], [0.1]], device=device))
-    targets = LearningOutput(returns=torch.tensor([[0.3], [0.3]], device=device))
+    targets = LearningOutput(values=torch.tensor([[0.3], [0.3]], device=device))
     weights = torch.tensor([1.0, 1.0], device=device)
     gradient_scales = torch.tensor([[1.0]], device=device)
     context = {}
 
     loss_mean, loss_dict, priorities = pipeline.run(
         predictions=predictions,
-        targets=targets,
+        targets=targets._asdict(),
         context=context,
         weights=weights,
         gradient_scales=gradient_scales,

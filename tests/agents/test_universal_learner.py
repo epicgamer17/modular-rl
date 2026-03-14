@@ -6,7 +6,7 @@ import numpy as np
 from typing import Dict, Any
 
 from agents.learners.base import UniversalLearner, StepResult, Callback
-from agents.learners.target_builder import BaseTargetBuilder
+from agents.learners.target_builders import BaseTargetBuilder
 from losses.losses import LossPipeline
 from modules.world_models.inference_output import LearningOutput
 
@@ -100,7 +100,9 @@ def test_universal_learner_full_step_cycle(muzero_config):
     predictions = LearningOutput(values=torch.randn(2, 1))
     agent_network.learner_inference.return_value = predictions
 
-    targets = LearningOutput(values=torch.randn(2, 1))
+    from agents.learners.target_builders import TargetOutput
+
+    targets = TargetOutput(values=torch.randn(2, 1))
     target_builder.build_targets.return_value = targets
 
     loss_val = torch.tensor(0.5, requires_grad=True)
@@ -152,25 +154,27 @@ def test_universal_learner_multiple_iterations(muzero_config):
     muzero_config.min_replay_buffer_size = 0
     muzero_config.training_iterations = 3
 
-    loss_pipeline = MagicMock()
-    loss_pipeline.run.return_value = (
-        torch.tensor(0.1, requires_grad=True),
-        {},
-        torch.zeros(1),
-    )
+    agent_network = MagicMock()
+    agent_network.learner_inference.return_value = LearningOutput(values=torch.randn(1, 1))
+    target_builder = MagicMock(spec=BaseTargetBuilder)
+    from agents.learners.target_builders import TargetOutput
+    target_builder.build_targets.return_value = TargetOutput(values=torch.randn(1, 1))
 
-    optimizer = MagicMock()
+    loss_pipeline = MagicMock(spec=LossPipeline)
+    loss_pipeline.run.return_value = (torch.tensor(0.5, requires_grad=True), {"total_loss": 0.5}, None)
+    optimizer = MagicMock(spec=torch.optim.Optimizer)
     replay_buffer = MagicMock()
-    replay_buffer.size = 1
+    replay_buffer.size = 10
+    replay_buffer.sample.return_value = {"observations": torch.randn(1, 4), "indices": np.array([0])}
 
     learner = UniversalLearner(
         config=muzero_config,
-        agent_network=MagicMock(),
+        agent_network=agent_network,
         device=torch.device("cpu"),
         num_actions=2,
         observation_dimensions=(4,),
         observation_dtype=torch.float32,
-        target_builder=MagicMock(),
+        target_builder=target_builder,
         loss_pipeline=loss_pipeline,
         optimizer=optimizer,
         replay_buffer=replay_buffer,
@@ -186,26 +190,38 @@ def test_universal_learner_clipnorm_zero(muzero_config):
     muzero_config.training_iterations = 1
     muzero_config.clipnorm = 0
 
-    loss_pipeline = MagicMock()
-    loss_pipeline.run.return_value = (
-        torch.tensor(0.1, requires_grad=True),
-        {},
-        torch.zeros(1),
-    )
+    agent_network = MagicMock()
+    param = torch.nn.Parameter(torch.randn(1, requires_grad=True))
+    agent_network.parameters.return_value = [param]
+    agent_network.learner_inference.return_value = LearningOutput(values=torch.randn(1, 1))
+
+    target_builder = MagicMock(spec=BaseTargetBuilder)
+    from agents.learners.target_builders import TargetOutput
+    target_builder.build_targets.return_value = TargetOutput(values=torch.randn(1, 1))
+    
+    replay_buffer = MagicMock()
+    replay_buffer.size = 1
+    replay_buffer.sample.return_value = {
+        "observations": torch.randn(1, 4),
+        "indices": np.array([0]),
+        "weights": torch.ones(1),
+    }
+
+    loss_pipeline = MagicMock(spec=LossPipeline)
+    loss_pipeline.run.return_value = (torch.tensor(0.5, requires_grad=True), {"total_loss": 0.5}, None)
 
     learner = UniversalLearner(
         config=muzero_config,
-        agent_network=MagicMock(),
+        agent_network=agent_network,
         device=torch.device("cpu"),
         num_actions=2,
         observation_dimensions=(4,),
         observation_dtype=torch.float32,
-        target_builder=MagicMock(),
+        target_builder=target_builder,
         loss_pipeline=loss_pipeline,
         optimizer=MagicMock(),
-        replay_buffer=MagicMock(),
+        replay_buffer=replay_buffer,
     )
-    learner.replay_buffer.size = 1
 
     with patch("agents.learners.base.clip_grad_norm_") as mock_clip:
         learner.step()
@@ -218,27 +234,36 @@ def test_universal_learner_lr_scheduler(muzero_config):
     muzero_config.training_iterations = 1
 
     lr_scheduler = MagicMock()
-    loss_pipeline = MagicMock()
-    loss_pipeline.run.return_value = (
-        torch.tensor(0.1, requires_grad=True),
-        {},
-        torch.zeros(1),
-    )
+    agent_network = MagicMock()
+    agent_network.learner_inference.return_value = LearningOutput(values=torch.randn(1, 1))
+    target_builder = MagicMock(spec=BaseTargetBuilder)
+    from agents.learners.target_builders import TargetOutput
+    target_builder.build_targets.return_value = TargetOutput(values=torch.randn(1, 1))
+
+    replay_buffer = MagicMock()
+    replay_buffer.size = 1
+    replay_buffer.sample.return_value = {
+        "observations": torch.randn(1, 4),
+        "indices": np.array([0]),
+        "weights": torch.ones(1),
+    }
+
+    loss_pipeline = MagicMock(spec=LossPipeline)
+    loss_pipeline.run.return_value = (torch.tensor(0.5, requires_grad=True), {"total_loss": 0.5}, None)
 
     learner = UniversalLearner(
         config=muzero_config,
-        agent_network=MagicMock(),
+        agent_network=agent_network,
         device=torch.device("cpu"),
         num_actions=2,
         observation_dimensions=(4,),
         observation_dtype=torch.float32,
-        target_builder=MagicMock(),
+        target_builder=target_builder,
         loss_pipeline=loss_pipeline,
         optimizer=MagicMock(),
-        replay_buffer=MagicMock(),
+        replay_buffer=replay_buffer,
         lr_scheduler=lr_scheduler,
     )
-    learner.replay_buffer.size = 1
 
     learner.step()
     lr_scheduler.step.assert_called_once()
@@ -345,6 +370,7 @@ def test_universal_learner_callbacks(muzero_config):
     config.clipnorm = 0
     config.minibatch_size = 1
     config.per_beta_schedule = None
+    config.epsilon_schedule = None
 
     callback = MagicMock(spec=Callback)
     replay_buffer = MagicMock()
@@ -362,14 +388,20 @@ def test_universal_learner_callbacks(muzero_config):
         torch.zeros(1),
     )
 
+    agent_network = MagicMock()
+    agent_network.learner_inference.return_value = LearningOutput(values=torch.randn(1, 1))
+    target_builder = MagicMock(spec=BaseTargetBuilder)
+    from agents.learners.target_builders import TargetOutput
+    target_builder.build_targets.return_value = TargetOutput(values=torch.randn(1, 1))
+
     learner = UniversalLearner(
         config=config,
-        agent_network=MagicMock(),
+        agent_network=agent_network,
         device=torch.device("cpu"),
         num_actions=2,
         observation_dimensions=(4,),
         observation_dtype=torch.float32,
-        target_builder=MagicMock(),
+        target_builder=target_builder,
         loss_pipeline=loss_pipeline,
         optimizer=MagicMock(),
         replay_buffer=replay_buffer,

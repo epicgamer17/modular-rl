@@ -11,6 +11,7 @@ from losses.losses import (
     RewardLoss,
     ConsistencyLoss,
 )
+from agents.learners.target_builders import TargetOutput
 from modules.world_models.inference_output import LearningOutput
 from types import SimpleNamespace
 
@@ -49,13 +50,14 @@ def test_vectorized_loss_masking():
         latents=torch.randn((batch_size, t_plus_1, 64), device=device),
     )
 
-    targets = LearningOutput(
+    targets = TargetOutput(
         values=torch.ones((batch_size, t_plus_1), device=device) * 1.0,
+        returns=torch.ones((batch_size, t_plus_1), device=device) * 1.0,
         policies=F.softmax(
             torch.randn((batch_size, t_plus_1, num_actions), device=device), dim=-1
         ),
         rewards=torch.ones((batch_size, unroll_steps), device=device) * 1.0,
-        latents=torch.randn((batch_size, t_plus_1, 64), device=device),
+        consistency_targets=torch.randn((batch_size, t_plus_1, 64), device=device),
     )
 
     # 2. Setup Masks
@@ -124,4 +126,5 @@ def test_vectorized_loss_masking():
     # Only k=0 is valid for batch 1.
     # Batch 0: 4 steps. Batch 1: 1 step.
     # Total 5 steps of categorical cross entropy.
+    assert "PolicyLoss" in loss_dict
     assert loss_dict["PolicyLoss"] > 0

@@ -111,7 +111,7 @@ def test_c51_loss_module(base_config):
         "next_q_logits": torch.randn((4, 10, 21), device=device),
     }
     targets = {
-        "target_dist": torch.randn((4, 21), device=device).softmax(dim=-1),
+        "q_logits": torch.randn((4, 21), device=device).softmax(dim=-1),
         "actions": torch.randint(0, 10, (4,), device=device),
         "rewards": torch.randn((4,), device=device),
         "dones": torch.zeros((4,), device=device).bool(),

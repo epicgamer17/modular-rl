@@ -36,7 +36,7 @@ class TestPPOConfigMissingFields:
     ):
         config_dict = make_ppo_config_dict()
         del config_dict["steps_per_epoch"]
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError, match="steps_per_epoch"):
             PPOConfig(config_dict, cartpole_game_config)
 
 

@@ -1,4 +1,5 @@
 import pytest
+pytest.importorskip("hypothesis")
 
 pytestmark = pytest.mark.unit
 

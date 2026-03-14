@@ -38,6 +38,11 @@ def base_config():
     config.loss_function = F.mse_loss
     config.mask_absorbing = True
     config.game.num_players = 2
+    config.v_min = 0.0
+    config.v_max = 10.0
+    config.atom_size = 21
+    config.discount_factor = 0.99
+    config.n_step = 1
     return config
 
 
@@ -140,7 +145,7 @@ def test_consistency_loss(base_config):
 
     loss_module = ConsistencyLoss(base_config, device, agent_network)
 
-    predictions = {"latent_states": torch.randn((4, 64), device=device)}
+    predictions = {"latents": torch.randn((4, 64), device=device)}
     targets = {"consistency_targets": torch.randn((4, 64), device=device)}
     context = {}
 
@@ -198,8 +203,11 @@ def test_standard_dqn_loss(base_config):
     device = torch.device("cpu")
     loss_module = StandardDQNLoss(base_config, device)
 
-    predictions = {"q_values": torch.randn((4,), device=device)}
-    targets = {"target_q_values": torch.randn((4,), device=device)}
+    predictions = {"q_values": torch.randn((4, 10), device=device)}
+    targets = {
+        "q_values": torch.randn((4,), device=device),
+        "actions": torch.zeros(4, dtype=torch.long, device=device),
+    }
     context = {}
 
     loss = loss_module.compute_loss(predictions, targets, context, k=0)
@@ -210,8 +218,11 @@ def test_c51_loss(base_config):
     device = torch.device("cpu")
     loss_module = C51Loss(base_config, device)
 
-    predictions = {"q_logits": torch.randn((4, 21), device=device)}
-    targets = {"target_dist": torch.randn((4, 21), device=device).softmax(dim=-1)}
+    predictions = {"q_logits": torch.randn((4, 10, 21), device=device)}
+    targets = {
+        "q_logits": torch.randn((4, 21), device=device).softmax(dim=-1),
+        "actions": torch.zeros(4, dtype=torch.long, device=device),
+    }
     context = {}
 
     loss = loss_module.compute_loss(predictions, targets, context, k=0)

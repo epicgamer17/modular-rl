@@ -24,6 +24,10 @@ class DummyGame:
     def __init__(self):
         self.state = DummyState()
 
+    @property
+    def playable_actions(self):
+        return self.state.playable_actions
+
 
 class DummyUnwrappedEnv:
     def __init__(self):

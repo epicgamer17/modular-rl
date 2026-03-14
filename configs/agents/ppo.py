@@ -68,7 +68,7 @@ class PPOConfig(AgentConfig, DistributionalConfig, NoisyConfig):
         self.value_head: ValueHeadConfig = ValueHeadConfig(value_dict)
 
         self.clip_param = self.parse_field("clip_param", 0.2)
-        self.steps_per_epoch = self.parse_field("steps_per_epoch", 4800)
+        self.steps_per_epoch = self.parse_field("steps_per_epoch", required=True)
         self.num_minibatches = self.parse_field("num_minibatches", 4)
 
         self.train_policy_iterations = self.parse_field("train_policy_iterations", 5)
