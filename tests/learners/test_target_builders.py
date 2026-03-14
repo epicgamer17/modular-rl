@@ -27,7 +27,7 @@ def test_target_output_defaults():
     assert output.rewards is None
     assert output.chance_codes is None
     assert output.consistency_targets is None
-    assert output.target_dist is None
+    assert output.q_logits is None
     assert output.values is None
     assert output.chance_values is None
     assert output.to_plays is None
@@ -107,7 +107,7 @@ def test_dqn_target_builder_c51(rainbow_config):
 
     targets = builder.build_targets(batch, predictions, MagicMock())
     assert isinstance(targets, TargetOutput)
-    target_dist = targets.target_dist
+    target_dist = targets.q_logits
 
     # Tz = 0.5 + 1.0 * [0.0, 1.0, 2.0] = [0.5, 1.5, 2.5] -> clamp [0.5, 1.5, 2.0]
     # b = 1.5, l = 1, u = 2, dist_l = 0.5, dist_u = 0.5

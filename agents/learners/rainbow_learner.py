@@ -116,13 +116,13 @@ class RainbowLearner(UniversalLearner):
         )
         if config.atom_size > 1:
             self.loss_pipeline.validate_dependencies(
-                network_output_keys={"q_logits", "next_q_logits"},
-                target_keys={"target_next_q_logits", "actions", "rewards", "dones"},
+                network_output_keys={"q_logits"},
+                target_keys={"q_logits", "actions"},
             )
         else:
             self.loss_pipeline.validate_dependencies(
-                network_output_keys={"q_values", "next_q_values"},
-                target_keys={"target_next_q_values", "actions", "rewards", "dones"},
+                network_output_keys={"q_values"},
+                target_keys={"q_values", "actions"},
             )
 
         # 5. Create support for distributional RL

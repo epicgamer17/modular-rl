@@ -150,7 +150,7 @@ class StandardDQNLossModule(LossModule):
 
     @property
     def required_targets(self) -> set[str]:
-        return {"target_next_q_values", "actions", "rewards", "dones"}
+        return {"q_values", "actions"}
 
     def compute_loss(
         self, predictions: dict, targets: dict, context: dict, k: int = 0
@@ -161,7 +161,7 @@ class StandardDQNLossModule(LossModule):
             torch.arange(batch_size, device=self.device), actions
         ]
 
-        targets_val = targets["target_next_q_values"]
+        targets_val = targets["q_values"]
         # Return elementwise loss (B,)
         return self.config.loss_function(selected_q, targets_val, reduction="none")
 
@@ -183,7 +183,7 @@ class C51LossModule(LossModule):
 
     @property
     def required_targets(self) -> set[str]:
-        return {"target_next_q_logits", "actions", "rewards", "dones"}
+        return {"q_logits", "actions"}
 
     def _project_target_distribution(
         self,
@@ -206,26 +206,16 @@ class C51LossModule(LossModule):
         l = b.floor().long()
         u = b.ceil().long()
 
+        dist_l = u.float() - b
+        dist_u = b - l.float()
+
+        mask_equal = l == u
+        dist_l[mask_equal] = 1.0
+        dist_u[mask_equal] = 0.0
+
         projected = torch.zeros((batch_size, self.config.atom_size), device=self.device)
-
-        for j in range(self.config.atom_size):
-            bj = b[:, j]
-            lj = l[:, j]
-            uj = u[:, j]
-
-            mask_equal = lj == uj
-
-            # Non-equal case
-            dist_l = uj.float() - bj
-            dist_u = bj - lj.float()
-
-            # Equal case (bj is integer)
-            dist_l = torch.where(mask_equal, torch.ones_like(dist_l), dist_l)
-
-            prob_j = next_probs[:, j]
-
-            projected.scatter_add_(1, lj.view(-1, 1), (prob_j * dist_l).view(-1, 1))
-            projected.scatter_add_(1, uj.view(-1, 1), (prob_j * dist_u).view(-1, 1))
+        projected.scatter_add_(1, l, next_probs * dist_l)
+        projected.scatter_add_(1, u, next_probs * dist_u)
 
         return projected
 
@@ -236,13 +226,13 @@ class C51LossModule(LossModule):
 
         actions = targets["actions"].to(self.device).long()
         batch_size = actions.shape[0]
-        target_next_q_logits = targets["target_next_q_logits"]
+        target_q_logits = targets["q_logits"]
         chosen_logits = online_q_logits[
             torch.arange(batch_size, device=self.device), actions
         ]
         log_probs = F.log_softmax(chosen_logits, dim=-1)
         # Return elementwise loss (B,)
-        return -(target_next_q_logits * log_probs).sum(dim=-1)
+        return -(target_q_logits * log_probs).sum(dim=-1)
 
 
 class ImitationLoss(LossModule):

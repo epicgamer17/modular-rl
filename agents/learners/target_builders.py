@@ -18,7 +18,7 @@ class TargetOutput:
     """
 
     q_values: Optional[Tensor] = None
-    target_next_q_logits: Optional[Tensor] = None
+    q_logits: Optional[Tensor] = None
     value_targets: Optional[Tensor] = None
     advantages: Optional[Tensor] = None
     old_log_probs: Optional[Tensor] = None
@@ -116,6 +116,12 @@ class DQNTargetBuilder(BaseTargetBuilder):
                 target_q_values is not None
             ), "target_next_q_values is None and no target_network provided to DQNTargetBuilder"
 
+            # learner_inference returns [B, T+1, num_actions]; squeeze the T dim (always 1 here)
+            if next_q_values.dim() == 3:
+                next_q_values = next_q_values.squeeze(1)
+            if target_q_values.dim() == 3:
+                target_q_values = target_q_values.squeeze(1)
+
             if next_masks is not None:
                 mask = next_masks.to(self.device).bool()
                 next_q_values = next_q_values.masked_fill(~mask, -float("inf"))
@@ -143,7 +149,13 @@ class DQNTargetBuilder(BaseTargetBuilder):
 
             assert (
                 target_q_logits is not None
-            ), "target_next_q_logits is None and no target_network provided to DQNTargetBuilder"
+            ), "target_q_logits is None and no target_network provided to DQNTargetBuilder"
+
+            # learner_inference returns [B, T+1, num_actions, atoms]; squeeze the T dim (always 1 here)
+            if next_q_logits.dim() == 4:
+                next_q_logits = next_q_logits.squeeze(1)
+            if target_q_logits.dim() == 4:
+                target_q_logits = target_q_logits.squeeze(1)
 
             online_next_probs = torch.softmax(next_q_logits, dim=-1)
             online_next_q = (online_next_probs * self.support).sum(dim=-1)
@@ -159,15 +171,12 @@ class DQNTargetBuilder(BaseTargetBuilder):
                 torch.arange(batch_size, device=self.device), next_actions
             ]
 
-            target_next_q_logits = self._project_target_distribution(
+            q_logits = self._project_target_distribution(
                 rewards, terminal_mask, chosen_target_next_probs
-            )
-            target_next_q_logits = target_next_q_logits.detach()
-            target_scalar = (target_next_q_logits * self.support).sum(dim=-1).detach()
+            ).detach()
 
             return TargetOutput(
-                target_next_q_logits=target_next_q_logits,
-                values=target_scalar,
+                q_logits=q_logits,
                 actions=batch["actions"].to(self.device),
             )
 
@@ -195,13 +204,8 @@ class DQNTargetBuilder(BaseTargetBuilder):
         dist_l[mask_equal] = 1.0
         dist_u[mask_equal] = 0.0
 
-        for j in range(self.atom_size):
-            projected.scatter_add_(
-                1, l[:, j : j + 1], (next_probs[:, j] * dist_l[:, j]).view(-1, 1)
-            )
-            projected.scatter_add_(
-                1, u[:, j : j + 1], (next_probs[:, j] * dist_u[:, j]).view(-1, 1)
-            )
+        projected.scatter_add_(1, l, next_probs * dist_l)
+        projected.scatter_add_(1, u, next_probs * dist_u)
 
         return projected
 

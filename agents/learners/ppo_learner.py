@@ -287,11 +287,6 @@ class PPOLearner(UniversalLearner):
         unroll_out = self.agent_network.learner_inference(batch)
         losses: Dict[str, torch.Tensor] = {}
 
-        predictions = {
-            "policies": unroll_out.policies,
-            "values": unroll_out.values,
-        }
-
         if (
             actions is not None
             and old_log_probs is not None
@@ -305,7 +300,7 @@ class PPOLearner(UniversalLearner):
             }
             context = {}
             loss_mean, loss_dict, priorities = self.policy_pipeline.run(
-                predictions=predictions,
+                predictions=unroll_out,
                 targets=targets,
                 context=context,
             )
@@ -318,7 +313,7 @@ class PPOLearner(UniversalLearner):
         if returns is not None and unroll_out.values is not None:
             targets = {"returns": returns}
             loss_mean, loss_dict, priorities = self.value_pipeline.run(
-                predictions=predictions,
+                predictions=unroll_out,
                 targets=targets,
             )
             losses["value_loss"] = loss_mean
