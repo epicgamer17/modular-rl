@@ -8,6 +8,7 @@ from agents.executors.local_executor import LocalExecutor
 from agents.executors.torch_mp_executor import TorchMPExecutor
 from agents.learners.ppo_learner import PPOLearner
 from agents.action_selectors.factory import SelectorFactory
+from agents.action_selectors.policy_sources import NetworkPolicySource
 
 # from agents.workers.actors import get_actor_class # REMOVED as unused
 
@@ -62,10 +63,11 @@ class PPOTrainer(BaseTrainer):
         if config.multi_process:
             self.agent_network.share_memory()
 
-        # 2. Initialize Action Selector
+        # 2. Initialize Action Selector and Policy Source
         self.action_selector = SelectorFactory.create(
             config.action_selector.config_dict
         )
+        self.policy_source = NetworkPolicySource(self.agent_network)
 
         # 3. Initialize Learner
         self.learner = PPOLearner(
@@ -161,10 +163,10 @@ class PPOTrainer(BaseTrainer):
                 while not done and steps_collected < self.config.steps_per_epoch:
                     obs_tensor = torch.tensor(
                         state, dtype=torch.float32, device=self.device
-                    )
+                    ).unsqueeze(0)
+                    result = self.policy_source.get_inference(obs=obs_tensor, info=info)
                     action, metadata = self.action_selector.select_action(
-                        agent_network=self.agent_network,
-                        obs=obs_tensor,
+                        result=result,
                         info=info,
                         exploration=True,
                     )

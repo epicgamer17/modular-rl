@@ -1,4 +1,5 @@
 import pytest
+
 pytestmark = pytest.mark.integration
 
 import copy
@@ -11,6 +12,7 @@ from agents.action_selectors.selectors import (
     ArgmaxSelector,
 )
 from agents.action_selectors.factory import SelectorFactory
+from agents.action_selectors.types import InferenceResult
 from configs.selectors import SelectorConfig
 from modules.world_models.inference_output import InferenceOutput
 
@@ -59,7 +61,8 @@ def test_categorical_selector():
     agent_network, obs, _, probs, _ = _setup_action_selector_state()
     selector = CategoricalSelector(exploration=False)
     output = InferenceOutput(value=torch.tensor([0.0]), policy=MockPolicyDist(probs))
-    action, _ = selector.select_action(agent_network, obs, network_output=output)
+    inf_result = InferenceResult.from_inference_output(output)
+    action, _ = selector.select_action(inf_result, {})
     assert action.item() == 2  # argmax of [1, 2, 3] is index 2
 
 
@@ -75,7 +78,8 @@ def test_argmax_selector():
         network_state=None,
         q_values=logits,  # reusing logits as q_values for test
     )
-    action, _ = selector.select_action(agent_network, obs, network_output=output)
+    inf_result = InferenceResult.from_inference_output(output)
+    action, _ = selector.select_action(inf_result, {})
     assert action.item() == 2  # argmax of logits [1.0, 2.0, 3.0] is index 2
 
 
@@ -91,7 +95,8 @@ def test_epsilon_greedy_selector():
         network_state=None,
         q_values=logits,  # reusing logits as q_values
     )
-    action, _ = selector.select_action(agent_network, obs, network_output=output)
+    inf_result = InferenceResult.from_inference_output(output)
+    action, _ = selector.select_action(inf_result, {})
     assert action.item() == 2  # argmax of [1.0, 2.0, 3.0] is index 2
 
 
@@ -102,7 +107,7 @@ def test_ppo_decorator():
     output = InferenceOutput(policy=MockPolicyDist(probs), value=value)
 
     action, meta = decorated_selector.select_action(
-        agent_network, obs, network_output=output
+        InferenceResult.from_inference_output(output), {}
     )
 
     assert action.item() == 2
@@ -131,38 +136,20 @@ def test_factory_categorical_ppo(rainbow_cartpole_replay_config):
 
 def test_exploration_override():
     """Test that passing exploration arg overrides the default."""
-    agent_network, obs, _, _, _ = _setup_action_selector_state()
+    torch.manual_seed(42)
     # Default exploration=True
     selector = CategoricalSelector(exploration=True)
 
-    # Mock policy
-    class StrictPolicy:
-        def __init__(self):
-            self.probs = torch.tensor([[0.1, 0.9]])
+    probs = torch.tensor([[0.1, 0.9]])
+    inf_result = InferenceResult(probs=probs, value=torch.tensor([0.0]))
 
-        def sample(self):
-            raise RuntimeError("Should not sample when exploration=False")
+    # 1. Test exploration=False (Should use argmax regardless of default)
+    action, _ = selector.select_action(inf_result, {}, exploration=False)
+    assert action.item() == 1, "exploration=False should pick argmax"
 
-    output = InferenceOutput(value=torch.tensor([0.0]), policy=StrictPolicy())
-
-    # 1. Test exploration=False (Should use argmax, not sample)
-    try:
-        action, _ = selector.select_action(
-            agent_network, obs, network_output=output, exploration=False
-        )
-        assert action.item() == 1
-    except RuntimeError:
-        pytest.fail("select_action called sample() despite exploration=False")
-
-    # 2. Test exploration=True (Should call sample)
-    try:
-        selector.select_action(
-            agent_network, obs, network_output=output, exploration=True
-        )
-    except RuntimeError:
-        pass  # Expected
-    else:
-        pytest.fail("select_action should have called sample() with exploration=True")
+    # 2. Test exploration=True (Should sample; run many times to see non-determinism)
+    actions = {selector.select_action(inf_result, {}, exploration=True)[0].item() for _ in range(50)}
+    assert 0 in actions, "exploration=True should occasionally sample action 0"
 
 
 def test_categorical_selector_masking():
@@ -175,18 +162,20 @@ def test_categorical_selector_masking():
 
     from torch.distributions import Categorical
 
-    output = InferenceOutput(value=torch.tensor([0.0]), policy=Categorical(logits=logits))
+    output = InferenceOutput(
+        value=torch.tensor([0.0]), policy=Categorical(logits=logits)
+    )
 
     # Mask out index 2 (the most likely one)
-    info = {"legal_moves": [[0, 1]]}
+    mask = torch.tensor([[True, True, False]])
+    info = {"legal_moves_mask": mask}
 
     # If it doesn't mask, it will likely pick 2 (70% of the time, but deterministic for argmax)
     # Since we use exploration=True, result is stochastic. Let's force exploration=False for deterministic test.
+    inf_result = InferenceResult.from_inference_output(output)
     action, _ = selector.select_action(
-        agent_network,
-        obs,
+        inf_result,
         info=info,
-        network_output=output,
         exploration=False,
     )
 
@@ -204,17 +193,19 @@ def test_categorical_selector_unmasked_log_prob():
     selector = PPODecorator(base_selector)
 
     logits = torch.tensor([[1.0, 2.0, 3.0]])  # Probs are [.09, .24, .67]
-    output = InferenceOutput(value=torch.tensor([0.0]), policy=Categorical(logits=logits))
+    output = InferenceOutput(
+        value=torch.tensor([0.0]), policy=Categorical(logits=logits)
+    )
 
     # Mask out 2. New probs should be [.09/(.09+.24), .24/(.09+.24), 0] -> approx [0.27, 0.73, 0]
     # Argmax should be 1.
-    info = {"legal_moves": [[0, 1]]}
+    mask = torch.tensor([[True, True, False]])
+    info = {"legal_moves_mask": mask}
 
+    inf_result = InferenceResult.from_inference_output(output)
     action, meta = selector.select_action(
-        agent_network,
-        obs,
+        inf_result,
         info=info,
-        network_output=output,
         exploration=False,
     )
 
@@ -247,4 +238,7 @@ def test_nested_decorators_exploration_passing():
     decorator = PPODecorator(base)
 
     # Pass exploration=False, should NOT raise
-    decorator.select_action(agent_network, obs, exploration=False)
+    inf_result = InferenceResult(
+        logits=torch.tensor([[1.0]]), value=torch.tensor([0.0])
+    )
+    decorator.select_action(inf_result, {}, exploration=False)

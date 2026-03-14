@@ -5,12 +5,12 @@ pytestmark = [pytest.mark.integration, pytest.mark.slow]
 import torch
 import numpy as np
 from agents.workers.puffer_actor import GymPufferActor
-from agents.action_selectors.decorators import MCTSDecorator
+from agents.action_selectors.decorators import TemperatureSelector
 from agents.action_selectors.selectors import ArgmaxSelector
+from agents.action_selectors.policy_sources import SearchPolicySource
 from replay_buffers.sequence import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
-
 
 from types import SimpleNamespace
 
@@ -126,20 +126,21 @@ def test_batched_mcts_puffer():
     net = MockNetwork()
     search = MockModularSearch(config)
     inner_sel = ArgmaxSelector()
-    mcts_sel = MCTSDecorator(inner_sel, search, config)
+    sel = TemperatureSelector(inner_sel, config)
+    policy_src = SearchPolicySource(search, net, config)
     buf = MockBuffer()
 
     actor = GymPufferActor(
         env_factory=make_mock_env,
         agent_network=net,
-        action_selector=mcts_sel,
+        action_selector=sel,
         replay_buffer=buf,
         num_players=1,
         config=config,
+        policy_source=policy_src,
     )
 
     print("Verifying batched MCTS path in GymPufferActor...")
-    # This triggers play_sequence -> select_action (batched) -> run_vectorized
     results = actor.play_sequence()
     print("Results:", results)
     assert results["mcts_simulations"] > 0

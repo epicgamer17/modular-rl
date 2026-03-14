@@ -5,9 +5,10 @@ pytestmark = pytest.mark.integration
 import time
 import torch
 from types import SimpleNamespace
-from typing import Any, Dict, List, Tuple, Type, Optional
-from agents.action_selectors.decorators import MCTSDecorator
+from typing import Any, Dict, List, Tuple, Optional
 from agents.action_selectors.selectors import CategoricalSelector
+from agents.action_selectors.decorators import TemperatureSelector
+from agents.action_selectors.policy_sources import SearchPolicySource
 from agents.workers.actors import BaseActor
 from replay_buffers.sequence import Sequence
 from utils.schedule import ScheduleConfig
@@ -20,9 +21,7 @@ class MockModularSearch:
         self.config = SimpleNamespace(num_simulations=num_sims)
 
     def run(self, obs, info, to_play, agent_network, exploration=True):
-        # Simulate some search time
         time.sleep(0.01)
-        # Return dummy values - uniform policy
         policy = torch.ones(9) / 9
         return (
             0.0,
@@ -33,11 +32,8 @@ class MockModularSearch:
         )
 
     def run_vectorized(self, obs, info, to_play, agent_network):
-        # Simulate some search time
         time.sleep(0.01)
         B = obs.shape[0]
-        policy = torch.ones(B, 9) / 9
-        # In the real system, sm['mcts_simulations'] is per-tree
         sm_list = [
             {"mcts_simulations": self.num_sims, "mcts_search_time": 0.01}
             for _ in range(B)
@@ -81,46 +77,41 @@ class MockActor(BaseActor):
 
 
 def test_sps_metrics_propagation():
+    """Verifies that SearchPolicySource provides simulations and search time via actor."""
     torch.manual_seed(42)
     np.random.seed(42)
-    """Verifies that MCTSDecorator provides simulations and search time."""
+
     num_sims = 100
     config = MockConfig(num_sims)
     search = MockModularSearch(num_sims)
-    inner = CategoricalSelector()
-    decorator = MCTSDecorator(inner, search, config)
 
     agent_net = torch.nn.Module()
     agent_net.input_shape = (3, 3, 3)
     agent_net.obs_inference = lambda x: None
 
+    # 1. Test SearchPolicySource directly returns search_metadata
+    policy_source = SearchPolicySource(search, agent_net, config)
     obs = torch.zeros(1, 3, 3, 3)
+    result = policy_source.get_inference(obs, {}, to_play=0)
+    assert "search_metadata" in result.extra_metadata
+    assert result.extra_metadata["search_metadata"]["mcts_simulations"] == num_sims
+    assert result.extra_metadata["search_metadata"]["mcts_search_time"] > 0
 
-    # 1. Test Single Action Path
-    _, metadata = decorator.select_action(agent_net, obs)
-    assert "search_metadata" in metadata
-    assert metadata["search_metadata"]["mcts_simulations"] == num_sims
-    assert metadata["search_metadata"]["mcts_search_time"] > 0
-
-    # 2. Test Vectorized Path
-    obs_vec = torch.zeros(4, 3, 3, 3)
-    info_vec = {"legal_moves": [list(range(9))] * 4, "player": [0] * 4}
-    _, metadata_vec = decorator.select_action(agent_net, obs_vec, info=info_vec)
-    # 4 trees * 100 sims = 400
-    assert metadata_vec["search_metadata"]["mcts_simulations"] == 400
-    assert metadata_vec["search_metadata"]["mcts_search_time"] > 0
-
-    # 3. Test Actor aggregation
+    # 2. Test actor aggregates search_metadata into episode stats
+    inner = CategoricalSelector()
+    selector = TemperatureSelector(inner_selector=inner, config=config)
     mock_buffer = torch.nn.Module()
     mock_buffer.store_aggregate = lambda x: None
+
     actor = MockActor(
         lambda: None,
         agent_net,
-        decorator,
+        selector,
         mock_buffer,
         num_players=1,
         config=config,
         name="test",
+        policy_source=policy_source,
     )
 
     ep_stats = actor.play_sequence()

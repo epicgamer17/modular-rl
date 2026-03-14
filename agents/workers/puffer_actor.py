@@ -17,6 +17,12 @@ from utils.wrappers import AECSequentialWrapper
 from replay_buffers.modular_buffer import ModularReplayBuffer
 from modules.agent_nets.modular import ModularAgentNetwork
 from agents.action_selectors.selectors import BaseActionSelector
+from agents.action_selectors.types import InferenceResult
+from agents.action_selectors.policy_sources import (
+    BasePolicySource,
+    NetworkPolicySource,
+    SearchPolicySource,
+)
 
 
 def _make_puffer_env(env_factory, buf=None, seed=None):
@@ -55,6 +61,7 @@ class BasePufferActor(BaseActor):
         name: str = "puffer_actor",
         *,
         worker_id: int = 0,
+        policy_source: Optional[BasePolicySource] = None,
     ):
         super().__init__(
             env_factory=env_factory,
@@ -66,6 +73,7 @@ class BasePufferActor(BaseActor):
             device=device,
             name=name,
             worker_id=worker_id,
+            policy_source=policy_source,
         )
 
         print("PufferActor initialized", worker_id)
@@ -133,19 +141,49 @@ class BasePufferActor(BaseActor):
             if obs_tensor.dim() == len(self.agent_network.input_shape):
                 obs_tensor = obs_tensor.unsqueeze(0)
 
-            actions_tensor, metadata = self.selector.select_action(
-                agent_network=self.agent_network,
+            # Perform batched inference via PolicySource
+            result = self.policy_source.get_inference(
                 obs=obs_tensor,
+                info=batched_info,
+                agent_network=self.agent_network,
+                exploration=True,
+                to_play=0,  # Default for batched search for now
+            )
+
+            # Generate legal_moves_mask if needed
+            if "legal_moves" in batched_info and "legal_moves_mask" not in batched_info:
+                action_tensor = result.action_dim
+                assert action_tensor is not None, "InferenceResult has no action tensor for mask shape"
+                B = action_tensor.shape[0]
+                num_actions = action_tensor.shape[-1]
+                mask = torch.zeros(
+                    (B, num_actions), dtype=torch.bool, device=self.device
+                )
+                for i, lm in enumerate(batched_info["legal_moves"]):
+                    if isinstance(lm, (list, np.ndarray, torch.Tensor)) and len(lm) > 0:
+                        mask[i, lm] = True
+                batched_info["legal_moves_mask"] = mask
+
+            actions_tensor, metadata = self.selector.select_action(
+                result=result,
                 info=batched_info,
                 exploration=True,
             )
+            # Merge search_metadata (and other extras) from the policy source result
+            if result.extra_metadata:
+                metadata.update(result.extra_metadata)
             actions = actions_tensor.cpu().numpy()
 
-            # Collect MCTS metrics from search metadata
+            # Collect MCTS metrics from search metadata (list for batched, dict for single)
             search_meta = metadata.get("search_metadata")
             if search_meta:
-                mcts_sims_total += int(search_meta.get("mcts_simulations", 0))
-                mcts_search_total += float(search_meta.get("mcts_search_time", 0.0))
+                if isinstance(search_meta, list):
+                    for sm in search_meta:
+                        mcts_sims_total += int(sm.get("mcts_simulations", 0))
+                        mcts_search_total += float(sm.get("mcts_search_time", 0.0))
+                else:
+                    mcts_sims_total += int(search_meta.get("mcts_simulations", 0))
+                    mcts_search_total += float(search_meta.get("mcts_search_time", 0.0))
 
             # 2. Step Environments
             self.vec_env.send(actions)

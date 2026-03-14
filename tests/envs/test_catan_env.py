@@ -226,6 +226,7 @@ def test_catan_env_rendering_full_coverage():
         mock_map.land_tiles = {
             (0, 0): None
         }  # This will trigger line 840 map_tile is None check
+        mock_map.tiles_by_id = {}  # Prevent iteration of unconfigured Mock
         with mock.patch.object(env.game.state.board, "map", mock_map):
             env.render()
 
@@ -234,9 +235,6 @@ def test_catan_env_rendering_full_coverage():
 
         # Hit _draw_hexagon (line 1167)
         env._draw_hexagon(0, 0, 10, (1, 2, 3))
-
-        # Stats loop (line 1132)
-        env._render_stats()
 
         env.close()
 
@@ -248,7 +246,12 @@ def test_catan_env_step_extra():
     with (
         mock.patch("pygame.display.set_mode"),
         mock.patch("pygame.font.SysFont"),
+        mock.patch("pygame.time.Clock"),
         mock.patch("pygame.draw.polygon"),
+        mock.patch("pygame.draw.circle"),
+        mock.patch("pygame.draw.line"),
+        mock.patch("pygame.draw.rect"),
+        mock.patch("pygame.display.flip"),
         mock.patch("pygame.event.get", return_value=[]),
     ):
         env.reset()

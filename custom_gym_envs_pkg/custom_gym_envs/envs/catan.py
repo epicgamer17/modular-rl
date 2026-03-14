@@ -862,7 +862,7 @@ class CatanAECEnv(AECEnv):
             # Simplified tile lookup for Tile Numbers
             if tile is None:
                 for coord, map_tile in board.map.land_tiles.items():
-                    if map_tile.id == tile_id:
+                    if map_tile is not None and map_tile.id == tile_id:
                         tile = map_tile
                         break
 

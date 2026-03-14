@@ -8,6 +8,9 @@ class BaseSelectorConfig(ConfigBase):
         self.type: str = self.parse_field("type", required=True)
         # kwargs will be passed to the selector constructor
         self.kwargs: Dict[str, Any] = self.parse_field("kwargs", {}, required=False)
+        self.default_mask_value: float = self.parse_field(
+            "default_mask_value", -float("inf"), required=False
+        )
 
 
 class DecoratorConfig(ConfigBase):

@@ -4,8 +4,7 @@ from typing import Optional, List, Dict, Any
 from agents.trainers.base_trainer import BaseTrainer
 from agents.learners.muzero_learner import MuZeroLearner
 from agents.action_selectors.selectors import CategoricalSelector
-from agents.action_selectors.decorators import MCTSDecorator
-from search.search_factories import create_mcts
+from agents.action_selectors.decorators import TemperatureSelector
 from agents.workers.actors import get_actor_class
 from modules.agent_nets.modular import ModularAgentNetwork
 from stats.stats import StatTracker, PlotType
@@ -52,18 +51,12 @@ class MuZeroTrainer(BaseTrainer):
         if config.multi_process:
             self.agent_network.share_memory()
 
-        # 2. Initialize Search Algorithm (MCTS)
-        from search.search_factories import create_mcts
-
-        self.search_alg = create_mcts(config, device, self.num_actions)
-
-        # 3. Initialize Action Selector (MCTS)
-        # Inner: Chooses action from MCTS distribution (Categorical)
+        # 2. Initialize Action Selector (MCTS)
+        # Actors auto-create SearchPolicySource from config.search.
+        # TemperatureSelector applies temperature scheduling; CategoricalSelector samples.
         inner_selector = CategoricalSelector()
-        # Decorator: Runs MCTS and applies temperature
-        self.action_selector = MCTSDecorator(
+        self.action_selector = TemperatureSelector(
             inner_selector=inner_selector,
-            search_algorithm=self.search_alg,
             config=config,
         )
 

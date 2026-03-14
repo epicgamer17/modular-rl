@@ -1,10 +1,17 @@
 import torch
 import time
+import numpy as np
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Union, Tuple
 
 from modules.agent_nets.modular import ModularAgentNetwork
 from agents.action_selectors.selectors import BaseActionSelector
+from agents.action_selectors.types import InferenceResult
+from agents.action_selectors.policy_sources import (
+    BasePolicySource,
+    NetworkPolicySource,
+    SearchPolicySource,
+)
 from configs.base import Config
 from replay_buffers.modular_buffer import ModularReplayBuffer
 
@@ -24,6 +31,24 @@ class NetworkAgent:
         self.action_selector = action_selector
         self.device = device
         self.actor_state = None
+        self.config = getattr(
+            action_selector, "config", None
+        )  # Fallback if config is not passed directly
+
+        # Initialize PolicySource
+        use_search = False
+        if hasattr(self.config, "search") and self.config.search is not None:
+            use_search = getattr(self.config.search, "enabled", False)
+
+        if use_search:
+            from search.factory import SearchBackendFactory
+
+            search_engine = SearchBackendFactory.create(self.config.search)
+            self.policy_source = SearchPolicySource(
+                search_engine, self.agent_network, self.config
+            )
+        else:
+            self.policy_source = NetworkPolicySource(self.agent_network)
 
     def predict(self, observation, info, *args, **kwargs):
         """Returns the observation unchanged, to be processed by select_actions."""
@@ -39,9 +64,27 @@ class NetworkAgent:
             if obs_tensor.dim() == 1:
                 obs_tensor = obs_tensor.unsqueeze(0)
 
+            # Perform inference via PolicySource
+            result = self.policy_source.get_inference(
+                obs=obs_tensor, info=info, agent_network=self.agent_network, exploration=False
+            )
+
+            # Standardize masking
+            if info is None:
+                info = {}
+            if "legal_moves" in info and "legal_moves_mask" not in info:
+                action_tensor = result.action_dim
+                assert action_tensor is not None, "InferenceResult has no action tensor for mask shape"
+                mask = torch.zeros(
+                    action_tensor.shape, dtype=torch.bool, device=self.device
+                )
+                legal = info["legal_moves"]
+                if isinstance(legal, (list, np.ndarray, torch.Tensor)):
+                    mask[0, legal] = True
+                info["legal_moves_mask"] = mask
+
             output = self.action_selector.select_action(
-                agent_network=self.agent_network,
-                obs=obs_tensor,
+                result=result,
                 info=info,
                 exploration=False,
                 actor_state=self.actor_state,
@@ -257,6 +300,21 @@ class Tester:
         self.env = env_factory()
         self.actor_state = None  # For RNN/MCTS states
 
+        # Initialize PolicySource
+        use_search = False
+        if hasattr(config, "search") and config.search is not None:
+            use_search = getattr(config.search, "enabled", False)
+
+        if use_search:
+            from search.factory import SearchBackendFactory
+
+            search_engine = SearchBackendFactory.create(config.search)
+            self.policy_source = SearchPolicySource(
+                search_engine, self.agent_network, config
+            )
+        else:
+            self.policy_source = NetworkPolicySource(self.agent_network)
+
     def setup(self):
         """Initializes/resets the environment."""
         self.env = self.env_factory()
@@ -292,11 +350,31 @@ class Tester:
         """Selects greedy action from the agent network."""
         with torch.inference_mode():
             # Use action_selector directly
+            # Perform inference
+            obs_tensor = torch.as_tensor(
+                state, dtype=torch.float32, device=self.device
+            ).unsqueeze(0)
+            # Perform inference via PolicySource
+            result = self.policy_source.get_inference(
+                obs=obs_tensor, info=info, agent_network=self.agent_network, exploration=False
+            )
+
+            # Standardize masking
+            if info is None:
+                info = {}
+            if "legal_moves" in info and "legal_moves_mask" not in info:
+                action_tensor = result.action_dim
+                assert action_tensor is not None, "InferenceResult has no action tensor for mask shape"
+                mask = torch.zeros(
+                    action_tensor.shape, dtype=torch.bool, device=self.device
+                )
+                legal = info["legal_moves"]
+                if isinstance(legal, (list, np.ndarray, torch.Tensor)):
+                    mask[0, legal] = True
+                info["legal_moves_mask"] = mask
+
             output = self.action_selector.select_action(
-                agent_network=self.agent_network,
-                obs=torch.as_tensor(
-                    state, dtype=torch.float32, device=self.device
-                ).unsqueeze(0),
+                result=result,
                 info=info,
                 exploration=False,
                 actor_state=self.actor_state,

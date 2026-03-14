@@ -13,17 +13,18 @@ from agents.action_selectors.selectors import (
     CategoricalSelector,
     EpsilonGreedySelector,
 )
+from agents.action_selectors.types import InferenceResult
 from modules.world_models.inference_output import InferenceOutput
 
 
-class MockNetwork:
-    def obs_inference(self, obs):
-        logits = torch.tensor([[0.1, 2.0, 0.2]])
-        return InferenceOutput(
-            value=torch.tensor([0.5]),
-            q_values=logits,
-            policy=Categorical(logits=logits),
-        )
+def _make_result():
+    logits = torch.tensor([[0.1, 2.0, 0.2]])
+    q_values = logits.clone()
+    return InferenceResult(
+        value=torch.tensor([0.5]),
+        q_values=q_values,
+        logits=logits,
+    )
 
 
 def test_selector_factory_builds_ppo_chain(rainbow_cartpole_replay_config):
@@ -53,10 +54,9 @@ def test_ppo_decorator_forwards_updates_to_inner_selector():
 
 def test_selector_stack_produces_action_and_metadata():
     selector = PPODecorator(CategoricalSelector(exploration=False))
-    network = MockNetwork()
-    obs = torch.zeros((1, 4))
+    inf_result = _make_result()
 
-    action, meta = selector.select_action(network, obs)
+    action, meta = selector.select_action(inf_result, {})
 
     assert action.item() == 1
     assert "log_prob" in meta
@@ -64,13 +64,12 @@ def test_selector_stack_produces_action_and_metadata():
 
 
 def test_argmax_and_epsilon_greedy_agree_without_exploration():
-    network = MockNetwork()
-    obs = torch.zeros((1, 4))
+    inf_result = _make_result()
 
-    argmax_action, _ = ArgmaxSelector().select_action(network, obs)
+    argmax_action, _ = ArgmaxSelector().select_action(inf_result, {})
     eg_action, _ = EpsilonGreedySelector(epsilon=1.0).select_action(
-        network,
-        obs,
+        inf_result,
+        {},
         exploration=False,
     )
 

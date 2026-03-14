@@ -5,9 +5,17 @@ from abc import ABC, abstractmethod
 
 from replay_buffers.sequence import Sequence
 from agents.action_selectors.selectors import BaseActionSelector
+from agents.action_selectors.types import InferenceResult
+from agents.action_selectors.policy_sources import (
+    BasePolicySource,
+    NetworkPolicySource,
+    SearchPolicySource,
+)
+from configs.base import Config
 from replay_buffers.modular_buffer import ModularReplayBuffer
 from modules.agent_nets.modular import ModularAgentNetwork
 from utils.wrappers import wrap_recording
+import numpy as np
 
 
 class BaseActor(ABC):
@@ -28,6 +36,7 @@ class BaseActor(ABC):
         name: str = "agent",
         *,
         worker_id: int = 0,
+        policy_source: Optional[BasePolicySource] = None,
     ):
         """
         Initializes the BaseActor.
@@ -43,10 +52,28 @@ class BaseActor(ABC):
         self.selector = action_selector
         self.replay_buffer = replay_buffer
         self.config = config
+        self.device = device or torch.device("cpu")
+        self.name = name
         self.worker_id = worker_id
         self.env = env_factory()
-        self.device = device
-        self.name = name
+
+        # Initialize PolicySource
+        if policy_source is not None:
+            self.policy_source = policy_source
+        else:
+            use_search = False
+            if hasattr(config, "search") and config.search is not None:
+                use_search = getattr(config.search, "enabled", False)
+
+            if use_search:
+                from search.factory import SearchBackendFactory
+
+                search_engine = SearchBackendFactory.create(config.search)
+                self.policy_source = SearchPolicySource(
+                    search_engine, self.agent_network, config
+                )
+            else:
+                self.policy_source = NetworkPolicySource(self.agent_network)
 
         # Determine num_players if not provided
         if num_players is not None:
@@ -160,13 +187,48 @@ class BaseActor(ABC):
             if obs_tensor.dim() == len(expected_shape):
                 obs_tensor = obs_tensor.unsqueeze(0)
 
-            action, metadata = self.selector.select_action(
-                agent_network=self.agent_network,
+            # Perform inference via PolicySource
+            result = self.policy_source.get_inference(
                 obs=obs_tensor,
                 info=self._info,
+                agent_network=self.agent_network,
                 player_id=player_id,
-                episode_step=self._episode_length,  # Pass loop state
+                to_play=(
+                    player_id if isinstance(player_id, int) else 0
+                ),  # Search needs to_play
             )
+
+            # Handle legal_moves_mask if present
+            if (
+                self._info is not None
+                and "legal_moves" in self._info
+                and "legal_moves_mask" not in self._info
+            ):
+                # If we have legal_moves but no mask, create a mask for the selector
+                # This is a bit of a bridge until all envs provide masks.
+                action_tensor = result.action_dim
+                assert action_tensor is not None, "InferenceResult has no action tensor for mask shape"
+                mask = torch.zeros(
+                    action_tensor.shape, dtype=torch.bool, device=self.device
+                )
+                legal = self._info["legal_moves"]
+                if isinstance(legal, (list, np.ndarray, torch.Tensor)):
+                    if obs_tensor.shape[0] == 1:
+                        mask[0, legal] = True
+                    else:
+                        for i, lm in enumerate(legal):
+                            mask[i, lm] = True
+                self._info["legal_moves_mask"] = mask
+
+            action, metadata = self.selector.select_action(
+                result=result,
+                info=self._info,
+                player_id=player_id,
+                episode_step=self._episode_length,
+            )
+            # Merge search_metadata (and other extras) from the policy source result
+            if result.extra_metadata:
+                metadata.update(result.extra_metadata)
             action_val = action.item()
 
             next_obs, reward, term, trunc, next_info = self._step_env(action_val)

@@ -5,7 +5,7 @@ from agents.action_selectors.selectors import (
     ArgmaxSelector,
     BaseActionSelector,
 )
-from agents.action_selectors.decorators import PPODecorator, MCTSDecorator
+from agents.action_selectors.decorators import PPODecorator, TemperatureSelector
 
 
 class SelectorFactory:
@@ -18,7 +18,7 @@ class SelectorFactory:
         "argmax": ArgmaxSelector,
         # Decorators
         "ppo_injector": PPODecorator,
-        "mcts": MCTSDecorator,
+        "temperature": TemperatureSelector,
     }
 
     @classmethod
@@ -28,7 +28,7 @@ class SelectorFactory:
         Expects a dict like:
         {
             "base": {"type": "categorical", "kwargs": {"exploration": True}},
-            "decorators": [{"type": "ppo_injector", "kwargs": {}}]
+            "decorators": [{"type": "temperature", "kwargs": {...}}]
         }
         """
         # 1. Instantiate the Base Selector
@@ -48,7 +48,8 @@ class SelectorFactory:
             raise ValueError(f"Unknown selector type: {base_type}")
 
         # Create the inner-most selector
-        selector = cls.REGISTRY[base_type](**base_kwargs)
+        # Pass the config object (base_cfg) to the constructor
+        selector = cls.REGISTRY[base_type](config=base_cfg, **base_kwargs)
 
         # 2. Recursively wrap it with Decorators (Inside-Out)
         decorators_cfg = config.get("decorators", [])
