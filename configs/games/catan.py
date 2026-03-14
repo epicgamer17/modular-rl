@@ -15,13 +15,13 @@ from custom_gym_envs.envs.catan import (
 
 def make_env(
     num_players=2,
-    map_type="MINI",
-    vps_to_win=5,
+    map_type="BASE",
+    vps_to_win=10,
     representation="image",
     invalid_action_reward=-10,
     render_mode="rgb_array",
     auto_play_single_action=False,
-    bandit_mode=True,
+    bandit_mode=False,
     spatial_encoding: SpatialEncoding = "axial",
     include_validity_mask: bool = True,
     include_last_roll: bool = True,

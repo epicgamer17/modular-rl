@@ -65,7 +65,7 @@ def test_batched_search():
 
     # 3. Create dummy observation and inference functions
     obs = torch.zeros((1, *input_shape))  # Single observation with batch dim
-    info = {"legal_moves": [list(range(num_actions))]}
+    info = {"legal_moves": [list(range(num_actions))], "player_id": 0}
 
     def predict_initial_inference(state):
         return model.obs_inference(state)
@@ -84,7 +84,6 @@ def test_batched_search():
         results = search.run(
             observation=obs,
             info=info,
-            to_play=0,
             agent_network=model,
         )
         print("Batched search passed successfully!")

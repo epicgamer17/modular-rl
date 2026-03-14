@@ -36,14 +36,14 @@ class NetworkAgent:
         )  # Fallback if config is not passed directly
 
         # Initialize PolicySource
-        use_search = False
-        if hasattr(self.config, "search") and self.config.search is not None:
-            use_search = getattr(self.config.search, "enabled", False)
+        use_search = hasattr(self.config, "search_backend") and getattr(
+            self.config, "search_enabled", False
+        )
 
         if use_search:
             from search.factory import SearchBackendFactory
 
-            search_engine = SearchBackendFactory.create(self.config.search)
+            search_engine = SearchBackendFactory.create(self.config)
             self.policy_source = SearchPolicySource(
                 search_engine, self.agent_network, self.config
             )
@@ -301,14 +301,14 @@ class Tester:
         self.actor_state = None  # For RNN/MCTS states
 
         # Initialize PolicySource
-        use_search = False
-        if hasattr(config, "search") and config.search is not None:
-            use_search = getattr(config.search, "enabled", False)
+        use_search = hasattr(config, "search_backend") and getattr(
+            config, "search_enabled", False
+        )
 
         if use_search:
             from search.factory import SearchBackendFactory
 
-            search_engine = SearchBackendFactory.create(config.search)
+            search_engine = SearchBackendFactory.create(config)
             self.policy_source = SearchPolicySource(
                 search_engine, self.agent_network, config
             )

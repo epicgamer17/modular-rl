@@ -15,7 +15,7 @@ import gymnasium as gym
 def action_mask_to_info(state, info, current_player):
     info["legal_moves"] = action_mask_to_legal_moves(state["action_mask"])
 
-    info["player"] = current_player
+    info["player_id"] = current_player
 
     if "observation" in state:
         state = state["observation"]
@@ -958,7 +958,7 @@ class AECSequentialWrapper(gym.Env):
         if info is None:
             info = {}
 
-        info["player"] = self._get_player_idx(self.env.agent_selection)
+        info["player_id"] = self._get_player_idx(self.env.agent_selection)
         info["all_player_rewards"] = dict(self.env.rewards)
 
         return obs, info
@@ -975,10 +975,10 @@ class AECSequentialWrapper(gym.Env):
         Info-Stash keys (only present when ``was_terminal is True``):
             ``terminal_observation``  — true final board state (numpy copy)
             ``terminal_legal_moves``  — legal moves at the terminal state
-            ``terminal_player``       — player index at the terminal state
+            ``terminal_player_id``    — player index at the terminal state
             ``terminal_all_player_rewards`` — per-player reward dict
 
-        Top-level ``player``, ``legal_moves``, ``all_player_rewards`` are
+        Top-level ``player_id``, ``legal_moves``, ``all_player_rewards`` are
         overwritten with fresh-game data so PufferLib's auto-reset obs stays
         in sync.
 
@@ -1000,7 +1000,7 @@ class AECSequentialWrapper(gym.Env):
         if info is None:
             info = {}
 
-        info["player"] = self._get_player_idx(self.env.agent_selection)
+        info["player_id"] = self._get_player_idx(self.env.agent_selection)
         info["acting_player"] = acting_player_idx
         info["all_player_rewards"] = dict(self.env.rewards)
         info["was_terminal"] = done
@@ -1011,7 +1011,7 @@ class AECSequentialWrapper(gym.Env):
             # auto-reset overwriting the environment's internal buffers.
             info["terminal_observation"] = obs.copy() if hasattr(obs, "copy") else obs
             info["terminal_legal_moves"] = info.get("legal_moves", [])
-            info["terminal_player"] = info["player"]
+            info["terminal_player_id"] = info["player_id"]
             info["terminal_all_player_rewards"] = dict(self.env.rewards)
 
             # === DESYNC FIX ===
@@ -1028,7 +1028,7 @@ class AECSequentialWrapper(gym.Env):
                     i for i, v in enumerate(new_info["action_mask"]) if v == 1
                 ]
 
-            info["player"] = self._get_player_idx(self.env.agent_selection)
+            info["player_id"] = self._get_player_idx(self.env.agent_selection)
             info["all_player_rewards"] = dict(self.env.rewards)
 
         return obs, step_reward, done, False, info

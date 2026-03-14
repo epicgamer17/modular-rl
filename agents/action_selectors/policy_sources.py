@@ -53,7 +53,10 @@ class SearchPolicySource(BasePolicySource):
     """
 
     def __init__(
-        self, search_engine: Any, agent_network: Optional[BaseAgentNetwork], config: Any = None
+        self,
+        search_engine: Any,
+        agent_network: Optional[BaseAgentNetwork],
+        config: Any = None,
     ):
         self.search = search_engine
         self.agent_network = agent_network
@@ -67,13 +70,11 @@ class SearchPolicySource(BasePolicySource):
 
         Accepts agent_network via kwargs (takes precedence over self.agent_network).
         """
-        agent_network = kwargs.pop("agent_network", self.agent_network)
-        to_play = kwargs.get("to_play", 0)
         exploration = kwargs.get("exploration", True)
 
         # MCTSDecorator logic uses run_vectorized if B > 1
         is_batched = (
-            obs.dim() > len(agent_network.input_shape) and obs.shape[0] > 1
+            obs.dim() > len(self.agent_network.input_shape) and obs.shape[0] > 1
         )
 
         start_time = time.time()
@@ -85,14 +86,12 @@ class SearchPolicySource(BasePolicySource):
                 infos_list = [
                     {
                         "legal_moves": info["legal_moves"][i],
-                        "player": info.get("player", [0] * B)[i],
+                        "player_id": info.get("player_id", [0] * B)[i],
                     }
                     for i in range(B)
                 ]
 
-            res = self.search.run_vectorized(
-                obs, infos_list, to_play, agent_network
-            )
+            res = self.search.run_vectorized(obs, infos_list, self.agent_network)
             (
                 root_values,
                 exploratory_policies,
@@ -133,7 +132,7 @@ class SearchPolicySource(BasePolicySource):
             )
         else:
             res = self.search.run(
-                obs, info, to_play, agent_network, exploration=exploration
+                obs, info, self.agent_network, exploration=exploration
             )
             (
                 root_value,

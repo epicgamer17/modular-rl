@@ -153,7 +153,9 @@ class BasePufferActor(BaseActor):
             # Generate legal_moves_mask if needed
             if "legal_moves" in batched_info and "legal_moves_mask" not in batched_info:
                 action_tensor = result.action_dim
-                assert action_tensor is not None, "InferenceResult has no action tensor for mask shape"
+                assert (
+                    action_tensor is not None
+                ), "InferenceResult has no action tensor for mask shape"
                 B = action_tensor.shape[0]
                 num_actions = action_tensor.shape[-1]
                 mask = torch.zeros(
@@ -218,7 +220,7 @@ class BasePufferActor(BaseActor):
                     # flags belong exclusively on the terminal-close append.
                     terminated=False,
                     truncated=False,
-                    player_id=batched_info["player"][i],
+                    player_id=batched_info["player_id"][i],
                     legal_moves=info.get("legal_moves", []),
                     all_player_rewards=next_info.get("all_player_rewards"),
                 )
@@ -330,7 +332,10 @@ class GymPufferActor(BasePufferActor):
     ) -> Dict[str, List[Any]]:
         # Robustly handle None entries or empty list
         if not infos:
-            return {"legal_moves": [[]] * self.num_envs, "player": [0] * self.num_envs}
+            return {
+                "legal_moves": [[]] * self.num_envs,
+                "player_id": [0] * self.num_envs,
+            }
 
         extracted_infos = []
         for i in range(self.num_envs):
@@ -341,7 +346,7 @@ class GymPufferActor(BasePufferActor):
 
         return {
             "legal_moves": extracted_infos,
-            "player": [0] * self.num_envs,
+            "player_id": [0] * self.num_envs,
         }
 
 
@@ -373,7 +378,7 @@ class PettingZooPufferActor(BasePufferActor):
         if not infos:
             return {
                 "legal_moves": [[]] * self.num_envs,
-                "player": ["player_0"] * self.num_envs,
+                "player_id": [0] * self.num_envs,
             }
 
         extracted_moves = []
@@ -384,9 +389,9 @@ class PettingZooPufferActor(BasePufferActor):
                 info = {}
             extracted_moves.append(info.get("legal_moves", []))
             # Grab the player injected by AECSequentialWrapper
-            extracted_players.append(info.get("player", "player_0"))
+            extracted_players.append(info.get("player_id", 0))
 
         return {
             "legal_moves": extracted_moves,
-            "player": extracted_players,
+            "player_id": extracted_players,
         }

@@ -168,6 +168,7 @@ class SearchConfig:
         self.search_backend: str = str(
             self.parse_field("search_backend", backend_default)
         ).lower()
+        self.search_enabled: bool = self.parse_field("search_enabled", True)
         if self.search_backend not in {"python", "cpp", "aos"}:
             raise ValueError(
                 f"Unsupported search backend {self.search_backend!r}. Expected 'python', 'cpp', or 'aos'."
@@ -223,6 +224,9 @@ class SearchConfig:
         )
         self.scoring_method: str = self.parse_field(
             "scoring_method", "ucb", required=False
+        )
+        self.backprop_method: str = self.parse_field(
+            "backprop_method", "average", required=False
         )
         self.use_value_prefix: bool = self.parse_field(
             "use_value_prefix", False, required=False

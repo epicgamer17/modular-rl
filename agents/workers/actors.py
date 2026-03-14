@@ -61,14 +61,14 @@ class BaseActor(ABC):
         if policy_source is not None:
             self.policy_source = policy_source
         else:
-            use_search = False
-            if hasattr(config, "search") and config.search is not None:
-                use_search = getattr(config.search, "enabled", False)
+            use_search = hasattr(config, "search_backend") and getattr(
+                config, "search_enabled", False
+            )
 
             if use_search:
                 from search.factory import SearchBackendFactory
 
-                search_engine = SearchBackendFactory.create(config.search)
+                search_engine = SearchBackendFactory.create(config)
                 self.policy_source = SearchPolicySource(
                     search_engine, self.agent_network, config
                 )
@@ -206,7 +206,9 @@ class BaseActor(ABC):
                 # If we have legal_moves but no mask, create a mask for the selector
                 # This is a bit of a bridge until all envs provide masks.
                 action_tensor = result.action_dim
-                assert action_tensor is not None, "InferenceResult has no action tensor for mask shape"
+                assert (
+                    action_tensor is not None
+                ), "InferenceResult has no action tensor for mask shape"
                 mask = torch.zeros(
                     action_tensor.shape, dtype=torch.bool, device=self.device
                 )

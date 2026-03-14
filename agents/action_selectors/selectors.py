@@ -125,7 +125,9 @@ class CategoricalSelector(BaseActionSelector):
                 )
             policy = Categorical(logits=logits)
         else:
-            assert result.probs is not None, "CategoricalSelector requires result.logits or result.probs"
+            assert (
+                result.probs is not None
+            ), "CategoricalSelector requires result.logits or result.probs"
             probs = result.probs
             if mask is not None:
                 probs = probs * mask.float()
@@ -158,7 +160,9 @@ class EpsilonGreedySelector(BaseActionSelector):
         exploration: Optional[bool] = None,
         **kwargs,
     ):
-        assert result.q_values is not None, "EpsilonGreedySelector requires result.q_values"
+        assert (
+            result.q_values is not None
+        ), "EpsilonGreedySelector requires result.q_values"
         q_values = result.q_values
         batch_size = q_values.shape[0] if q_values.dim() == 2 else 1
 
@@ -232,7 +236,9 @@ class ArgmaxSelector(BaseActionSelector):
         values = result.q_values
         if values is None:
             values = result.logits if result.logits is not None else result.probs
-        assert values is not None, "ArgmaxSelector requires result.q_values, result.logits, or result.probs"
+        assert (
+            values is not None
+        ), "ArgmaxSelector requires result.q_values, result.logits, or result.probs"
 
         if mask is not None:
             values = self.mask_actions(values, mask)

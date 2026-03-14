@@ -23,15 +23,18 @@ class ModularSearch:
         self,
         observation,
         info,
-        to_play,
         agent_network,
         trajectory_action=None,
         exploration=True,
     ):
+        assert "player_id" in info, (
+            "info must contain 'player_id'. Got keys: " + str(list(info.keys()))
+        )
+        to_play = info["player_id"]
         batched_obs = (
-            observation.unsqueeze(0)
+            observation.to(self.device)
             if torch.is_tensor(observation)
-            else torch.tensor([observation], device=self.device)
+            else torch.as_tensor(observation, device=self.device)
         )
         batched_info = {k: [v] for k, v in info.items()} if info else {}
         if info and "legal_moves" in info:
@@ -58,15 +61,15 @@ class ModularSearch:
         self,
         batched_obs,
         batched_info,
-        batched_to_play,
         agent_network,
         trajectory_actions=None,
         exploration=True,
     ):
-        batched_to_play_t = (
-            batched_to_play
-            if torch.is_tensor(batched_to_play)
-            else torch.tensor(batched_to_play, dtype=torch.int8, device=self.device)
+        assert all("player_id" in i for i in batched_info), (
+            "Every info dict in batched_info must contain 'player_id'."
+        )
+        batched_to_play_t = torch.tensor(
+            [i["player_id"] for i in batched_info], dtype=torch.int8, device=self.device
         )
         so = self._run_mcts(
             batched_obs,

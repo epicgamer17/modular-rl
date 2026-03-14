@@ -6,6 +6,7 @@ from collections import deque
 from modules.world_models.inference_output import LearningOutput
 from utils.utils import legal_moves_mask
 from replay_buffers.utils import discounted_cumulative_sums
+from logging import warning
 
 # ==========================================
 # Base Classes
@@ -572,16 +573,17 @@ class SequenceTensorProcessor(InputProcessor):
 class ObservationCompressionProcessor(InputProcessor):
     """
     Compresses and/or quantizes observations before storage.
-    Applied during process_sequence in MuZero buffer pipeline.
+    Applied during process_sequence or process_single.
 
     Supports:
     - Quantization: float32 -> float16 (50% reduction)
     - Compression: zlib or lz4 (additional ~70% reduction)
     """
 
-    def __init__(self, quantization=None, compression=None):
+    def __init__(self, quantization=None, compression=None, max_compressed_length=None):
         self.quantization = quantization
         self.compression = compression
+        self.max_compressed_length = max_compressed_length
 
         if compression == "lz4":
             try:
@@ -603,12 +605,61 @@ class ObservationCompressionProcessor(InputProcessor):
                 f"Unsupported quantization: {quantization}. Use None or 'float16'"
             )
 
+        if compression and max_compressed_length is None:
+            warning(
+                "Compression is enabled but max_compressed_length is not set. "
+                "process_single will fail to pad arrays to fit pre-allocated buffer sizes. "
+                "Set max_compressed_length to match your BufferConfig.shape for observations."
+            )
+
     def process_single(self, **kwargs):
-        raise NotImplementedError(
-            "ObservationCompressionProcessor only supports process_sequence."
-        )  # pragma: no cover
+        """Compresses a single step observation into a padded 1D uint8 tensor."""
+        if "observations" not in kwargs:
+            return kwargs
+
+        obs = kwargs["observations"]
+        # Ensure it's a tensor before processing
+        if not torch.is_tensor(obs):
+            obs_tensor = torch.from_numpy(np.array(obs))
+        else:
+            obs_tensor = obs.clone()
+
+        if self.quantization == "float16":
+            obs_tensor = obs_tensor.to(torch.float16)
+
+        if self.compression:
+            obs_bytes = obs_tensor.cpu().numpy().tobytes()
+
+            if self.compression == "zlib":
+                import zlib
+
+                compressed = zlib.compress(obs_bytes, level=1)
+            else:
+                compressed = self._lz4.compress(obs_bytes, compression_level=0)
+
+            # Prepend the 4-byte size header
+            size_bytes = len(compressed).to_bytes(4, byteorder="little")
+            compressed_data = size_bytes + compressed
+
+            # Pad to max_compressed_length to fit in pre-allocated ReplayBuffer
+            if self.max_compressed_length is not None:
+                pad_len = self.max_compressed_length - len(compressed_data)
+                if pad_len < 0:
+                    raise ValueError(
+                        f"Compressed observation length ({len(compressed_data)}) "
+                        f"exceeds max_compressed_length ({self.max_compressed_length}). "
+                        "Increase max_compressed_length in the processor config."
+                    )
+                compressed_data += b"\x00" * pad_len
+
+            # Return as a 1D uint8 tensor so the replay buffer can store it
+            obs_tensor = torch.frombuffer(bytearray(compressed_data), dtype=torch.uint8)
+
+        kwargs["observations"] = obs_tensor
+        return kwargs
 
     def process_sequence(self, sequence, **kwargs):
+        """Compresses a sequence of observations into a padded 2D uint8 tensor."""
         if "observations" not in kwargs:
             return kwargs
 
@@ -641,10 +692,22 @@ class ObservationCompressionProcessor(InputProcessor):
             size_bytes = len(compressed).to_bytes(4, byteorder="little")
             compressed_list.append(size_bytes + compressed)
 
-        max_len = max(len(c) for c in compressed_list)
+        # If storing sequences, we pad to either the local max of the sequence
+        # or the global max_compressed_length
+        target_len = (
+            self.max_compressed_length
+            if self.max_compressed_length
+            else max(len(c) for c in compressed_list)
+        )
 
-        result = torch.zeros((n_states, max_len), dtype=torch.uint8)
+        result = torch.zeros((n_states, target_len), dtype=torch.uint8)
         for i, c in enumerate(compressed_list):
+            if len(c) > target_len:
+                raise ValueError(
+                    f"Compressed observation length ({len(c)}) "
+                    f"exceeds max_compressed_length ({target_len}). "
+                    "Increase max_compressed_length in the processor config."
+                )
             result[i, : len(c)] = torch.frombuffer(bytearray(c), dtype=torch.uint8)
 
         return result
@@ -674,8 +737,10 @@ class LazyDecompressedBuffer:
         elif isinstance(indices, int):
             indices = [indices]
 
-        if tuple(indices) in self._cache:
-            return self._cache[tuple(indices)]
+        # Freeze the indices tuple to use as a cache key
+        cache_key = tuple(indices)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
 
         batch_size = len(indices)
         result = torch.zeros(
@@ -684,12 +749,16 @@ class LazyDecompressedBuffer:
 
         for i, idx in enumerate(indices):
             compressed_data = self.compressed_buffer[idx]
-            non_zero = compressed_data[compressed_data > 0]
-            if len(non_zero) == 0:
-                continue
 
+            # Read the 4-byte header to get the size
             size_bytes = bytes(compressed_data[:4].tolist())
             size = int.from_bytes(size_bytes, byteorder="little")
+
+            # Check if empty based on size, NOT by filtering > 0
+            # (since valid compressed data often contains 0x00 bytes)
+            if size == 0:
+                continue
+
             compressed = bytes(compressed_data[4 : 4 + size].tolist())
 
             if self.decompressor.compression == "zlib":
@@ -704,6 +773,7 @@ class LazyDecompressedBuffer:
                 if self.decompressor.quantization == "float16"
                 else self.obs_dtype
             )
+
             obs = torch.frombuffer(bytearray(decompressed), dtype=dtype).reshape(
                 self.obs_shape
             )
@@ -713,7 +783,7 @@ class LazyDecompressedBuffer:
 
             result[i] = obs
 
-        self._cache[tuple(indices)] = result
+        self._cache[cache_key] = result
         return result
 
 

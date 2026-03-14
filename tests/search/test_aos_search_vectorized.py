@@ -41,15 +41,16 @@ def test_aos_search_vectorized_unbatching(
 
     # Create a batch of 2 observations
     batched_obs = torch.randn(2, 4)
-    batched_info = {"legal_moves": [[0, 1], [0, 1]]}
-    batched_to_play = torch.tensor([0, 0])
+    batched_info = [
+        {"legal_moves": [0, 1], "player_id": 0},
+        {"legal_moves": [0, 1], "player_id": 0},
+    ]
 
     # Run the vectorized unbatching loop
     root_values, exp_policies, tgt_policies, best_actions, metadata = (
         search.run_vectorized(
             batched_obs=batched_obs,
             batched_info=batched_info,
-            batched_to_play=batched_to_play,
             agent_network=None,  # Handled by mock
         )
     )
