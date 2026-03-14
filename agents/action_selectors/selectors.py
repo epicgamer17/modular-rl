@@ -132,8 +132,10 @@ class CategoricalSelector(BaseActionSelector):
                 probs = probs / probs.sum(dim=-1, keepdim=True).clamp(min=1e-8)
             policy = Categorical(probs=probs)
 
-        # Always store distribution for decorators (e.g. PPODecorator)
-        metadata["policy"] = policy
+        # Use 'policy_dist' for decorators (like PPODecorator)
+        # Use 'policy' for the replay buffer (must be a tensor/numpy)
+        metadata["policy_dist"] = policy
+        metadata["policy"] = policy.probs.detach()
 
         if should_explore:
             action = policy.sample()

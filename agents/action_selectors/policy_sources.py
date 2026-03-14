@@ -113,6 +113,12 @@ class SearchPolicySource(BasePolicySource):
                 root_values, device=obs.device, dtype=torch.float32
             )
 
+            # Ensure values is [B, 1] if input was batched
+            if not isinstance(values, torch.Tensor):
+                values = torch.tensor(values, device=obs.device, dtype=torch.float32)
+            if values.dim() == 1:
+                values = values.unsqueeze(-1)
+
             return InferenceResult(
                 probs=probs,
                 value=values,
@@ -121,6 +127,8 @@ class SearchPolicySource(BasePolicySource):
                     "search_duration": search_duration,
                     "search_metadata": sm_list,
                     "best_actions": best_actions,
+                    "value": values.squeeze(-1).tolist(),
+                    "root_value": values.squeeze(-1).tolist(),
                 },
             )
         else:
@@ -136,16 +144,25 @@ class SearchPolicySource(BasePolicySource):
             ) = res
 
             search_duration = time.time() - start_time
+            probs = exploratory_policy.to(obs.device)
+            value = torch.tensor(
+                [root_value], device=obs.device, dtype=torch.float32
+            )
+            
+            # If the input was unsqueezed [1, ...], the output should be [1, A]
+            if obs.dim() > len(self.agent_network.input_shape):
+                probs = probs.unsqueeze(0)
+                # value is already [1] which matches [B]
 
             return InferenceResult(
-                probs=exploratory_policy.to(obs.device),
-                value=torch.tensor(
-                    [root_value], device=obs.device, dtype=torch.float32
-                ),
+                probs=probs,
+                value=value,
                 extra_metadata={
                     "target_policy": target_policy,
                     "search_duration": search_duration,
                     "search_metadata": search_metadata,
                     "best_action": best_action,
+                    "value": float(root_value),
+                    "root_value": float(root_value),
                 },
             )

@@ -32,7 +32,7 @@ class PPODecorator(BaseActionSelector):
         )
 
         # 2. Inject PPO metadata
-        dist = metadata.get("policy")
+        dist = metadata.get("policy_dist")
         if dist is not None:
             metadata["log_prob"] = dist.log_prob(action).cpu()
 

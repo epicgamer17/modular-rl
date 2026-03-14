@@ -202,7 +202,6 @@ class BaseActor(ABC):
             if (
                 self._info is not None
                 and "legal_moves" in self._info
-                and "legal_moves_mask" not in self._info
             ):
                 # If we have legal_moves but no mask, create a mask for the selector
                 # This is a bit of a bridge until all envs provide masks.
@@ -213,11 +212,16 @@ class BaseActor(ABC):
                 )
                 legal = self._info["legal_moves"]
                 if isinstance(legal, (list, np.ndarray, torch.Tensor)):
-                    if obs_tensor.shape[0] == 1:
-                        mask[0, legal] = True
-                    else:
+                    if mask.dim() == 1:
+                        mask[legal] = True
+                    elif mask.dim() == 2:
                         for i, lm in enumerate(legal):
-                            mask[i, lm] = True
+                            if obs_tensor.shape[0] == 1 and not isinstance(lm, (list, np.ndarray, torch.Tensor)):
+                                # Single list for batch size 1
+                                mask[0, legal] = True
+                                break
+                            if lm is not None:
+                                mask[i, lm] = True
                 self._info["legal_moves_mask"] = mask
 
             action, metadata = self.selector.select_action(
@@ -228,7 +232,28 @@ class BaseActor(ABC):
             )
             # Merge search_metadata (and other extras) from the policy source result
             if result.extra_metadata:
-                metadata.update(result.extra_metadata)
+                for k, v in result.extra_metadata.items():
+                    if k not in metadata or metadata[k] is None:
+                        metadata[k] = v
+                    elif k == "search_metadata" and isinstance(v, dict):
+                        if isinstance(metadata.get(k), dict):
+                            metadata[k].update(v)
+                        else:
+                            metadata[k] = v
+
+            # Fallback for policy: if selector didn't provide one, use the probs from the source
+            if metadata.get("policy") is None and result.probs is not None:
+                metadata["policy"] = result.probs
+
+            # Standardize: If we are a sequential actor (batch size 1), 
+            # flatten [1, ...] tensors in metadata to avoid "too many dimensions" in buffer.
+            if obs_tensor.shape[0] == 1:
+                for k, v in metadata.items():
+                    if torch.is_tensor(v) and v.dim() > 0 and v.shape[0] == 1:
+                        # PPODecorator and others might provide [1, A] or [1]
+                        # We want it to be [A] or scalar for chronological history
+                        metadata[k] = v.squeeze(0)
+
             action_val = action.item()
 
             next_obs, reward, term, trunc, next_info = self._step_env(action_val)
@@ -400,8 +425,6 @@ class GymActor(BaseActor):
     """Actor specialized for Gymnasium single-player environments."""
 
     def _detect_num_players(self) -> int:
-        if self.num_players is not None and self.num_players != 1:
-            raise ValueError(f"GymActor requires num_players=1, got {self.num_players}")
         return 1
 
     def _get_player_id(self) -> None:
