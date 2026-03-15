@@ -1,7 +1,6 @@
 """Fully vectorized batched MCTS operating on a :class:`FlatTree` SoA.
 
-Replaces ``search_py/modular_search.py``'s ``_run_batched_simulations`` and
-``_run_batched_vectorized_simulations`` with a single ``batched_mcts_step``
+Replaces the simulation loop with a single ``batched_mcts_step``
 that performs Selection → Expansion → Backpropagation using only tensor
 operations — **no per-batch Python loops**.
 """
@@ -14,7 +13,9 @@ from search.aos_search.tree import FlatTree
 from search.aos_search.scoring import ScoringFn, ucb_score_fn
 from search.aos_search.backpropogation import BackpropFn, average_discounted_backprop
 from search.aos_search.min_max_stats import VectorizedMinMaxStats
-
+import torch.utils._pytree as pytree
+import torch.distributions as dists
+from modules.world_models.inference_output import InferenceOutput
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -166,14 +167,132 @@ def batched_mcts_step(
 
     outputs_decision = None
     if is_decision.any():
-        outputs_decision = agent_network.hidden_state_inference(
-            flat_parents_t[is_decision], flat_actions_t[is_decision].long()
+        parent_b = flat_batch_idx[is_decision]
+        parent_n = flat_parents_t[is_decision].long()
+        actions_dec = flat_actions_t[is_decision].long()
+
+        # Deduplicate: (batch_idx, node_idx, action) identifies a unique request
+        # Note: B fits in 32-bit, node_idx fits in 32-bit, action fits in 32-bit.
+        # However, for safety with large trees, we use torch.unique on the stacked indices.
+        combined = torch.stack(
+            [
+                parent_b.to(torch.int64),
+                parent_n.to(torch.int64),
+                actions_dec.to(torch.int64),
+            ],
+            dim=1,
+        )
+        unique_reqs, inverse_indices = torch.unique(
+            combined, dim=0, return_inverse=True
+        )
+
+        unique_b = unique_reqs[:, 0]
+        unique_n = unique_reqs[:, 1]
+        unique_a = unique_reqs[:, 2]
+
+        # Gather dynamic network states for unique requests
+        def gather_unique(tensor):
+            if not torch.is_tensor(tensor):
+                return tensor
+            return tensor[unique_b, unique_n]
+
+        parent_states_unique = pytree.tree_map(gather_unique, tree.network_state_buffer)
+
+        # Vectorized Inference on Unique Requests
+        outputs_unique = agent_network.hidden_state_inference(
+            parent_states_unique, unique_a
+        )
+
+        # Expand back to original decision batch size using inverse_indices
+        def expand_fn(tensor):
+            if not torch.is_tensor(tensor):
+                return tensor
+            return tensor[inverse_indices]
+
+        # Reconstruct full-sized outputs for the decision batch
+        # value: [U, ...] -> [D, ...]
+        full_value = outputs_unique.value[inverse_indices]
+        full_reward = outputs_unique.reward[inverse_indices]
+        full_to_play = outputs_unique.to_play[inverse_indices]
+        full_net_state = pytree.tree_map(expand_fn, outputs_unique.network_state)
+
+        # Policy is a special case (Distribution object)
+        # We assume the policy data (logits/probs) can be expanded
+        policy_data = (
+            outputs_unique.policy.logits
+            if outputs_unique.policy.logits is not None
+            else outputs_unique.policy.probs
+        )
+        full_policy_data = policy_data[inverse_indices]
+
+        if outputs_unique.policy.logits is not None:
+            full_policy = dists.Categorical(logits=full_policy_data)
+        else:
+            full_policy = dists.Categorical(probs=full_policy_data)
+
+        outputs_decision = InferenceOutput(
+            value=full_value,
+            reward=full_reward,
+            to_play=full_to_play,
+            network_state=full_net_state,
+            policy=full_policy,
         )
 
     outputs_chance = None
     if is_chance.any():
-        outputs_chance = agent_network.afterstate_inference(
-            flat_parents_t[is_chance], flat_actions_t[is_chance].long()
+        parent_b = flat_batch_idx[is_chance]
+        parent_n = flat_parents_t[is_chance].long()
+        actions_cha = flat_actions_t[is_chance].long()
+
+        combined = torch.stack(
+            [
+                parent_b.to(torch.int64),
+                parent_n.to(torch.int64),
+                actions_cha.to(torch.int64),
+            ],
+            dim=1,
+        )
+        unique_reqs, inverse_indices = torch.unique(
+            combined, dim=0, return_inverse=True
+        )
+
+        unique_b = unique_reqs[:, 0]
+        unique_n = unique_reqs[:, 1]
+        unique_a = unique_reqs[:, 2]
+
+        def gather_unique(tensor):
+            if not torch.is_tensor(tensor):
+                return tensor
+            return tensor[unique_b, unique_n]
+
+        parent_states_unique = pytree.tree_map(gather_unique, tree.network_state_buffer)
+
+        outputs_unique = agent_network.afterstate_inference(
+            parent_states_unique, unique_a
+        )
+
+        def expand_fn(tensor):
+            if not torch.is_tensor(tensor):
+                return tensor
+            return tensor[inverse_indices]
+
+        full_value = outputs_unique.value[inverse_indices]
+        full_net_state = pytree.tree_map(expand_fn, outputs_unique.network_state)
+
+        policy_data = (
+            outputs_unique.policy.logits
+            if outputs_unique.policy.logits is not None
+            else outputs_unique.policy.probs
+        )
+        full_policy_data = policy_data[inverse_indices]
+
+        if outputs_unique.policy.logits is not None:
+            full_policy = dists.Categorical(logits=full_policy_data)
+        else:
+            full_policy = dists.Categorical(probs=full_policy_data)
+
+        outputs_chance = InferenceOutput(
+            value=full_value, network_state=full_net_state, policy=full_policy
         )
 
     if outputs_decision is not None:
@@ -205,6 +324,59 @@ def batched_mcts_step(
         device=device,
     )
 
+    # Phase 2b: Setup Opaque Network State Batches
+    sample_state = None
+    if (
+        outputs_decision is not None
+        and getattr(outputs_decision, "network_state", None) is not None
+    ):
+        sample_state = outputs_decision.network_state
+    elif (
+        outputs_chance is not None
+        and getattr(outputs_chance, "network_state", None) is not None
+    ):
+        sample_state = outputs_chance.network_state
+
+    network_state_chunks_pytree = None
+    if sample_state is not None:
+        # Preallocate a full [B_total, ...] pytree
+        def allocate_b_total(tensor):
+            if not torch.is_tensor(tensor):
+                return tensor
+            return torch.zeros(
+                (B_total, *tensor.shape[1:]), dtype=tensor.dtype, device=device
+            )
+
+        network_state_t = pytree.tree_map(allocate_b_total, sample_state)
+
+        # Scatter Decision States
+        if outputs_decision is not None:
+
+            def scatter_dec(t_tot, t_dec):
+                if torch.is_tensor(t_tot) and torch.is_tensor(t_dec):
+                    t_tot[is_decision] = t_dec
+
+            pytree.tree_map(
+                scatter_dec, network_state_t, outputs_decision.network_state
+            )
+
+        # Scatter Chance States
+        if outputs_chance is not None:
+
+            def scatter_cha(t_tot, t_cha):
+                if torch.is_tensor(t_tot) and torch.is_tensor(t_cha):
+                    t_tot[is_chance] = t_cha
+
+            pytree.tree_map(scatter_cha, network_state_t, outputs_chance.network_state)
+
+        # Chunk the states for Phase 3
+        def make_chunks(tensor):
+            if not torch.is_tensor(tensor):
+                return tensor
+            return tensor.chunk(search_batch_size, dim=0)
+
+        network_state_chunks_pytree = pytree.tree_map(make_chunks, network_state_t)
+
     # Scatter decision node results
     if outputs_decision is not None:
         leaf_values_t[is_decision] = outputs_decision.value
@@ -231,6 +403,13 @@ def batched_mcts_step(
             inherited_to_play = inherited_to_play.unsqueeze(-1)
 
         to_plays_t[is_chance] = inherited_to_play.to(play_dtype)
+
+    if leaf_values_t.dim() > 1 and leaf_values_t.shape[-1] == 1:
+        leaf_values_t = leaf_values_t.squeeze(-1)
+    if rewards_t.dim() > 1 and rewards_t.shape[-1] == 1:
+        rewards_t = rewards_t.squeeze(-1)
+    if to_plays_t.dim() > 1 and to_plays_t.shape[-1] == 1:
+        to_plays_t = to_plays_t.squeeze(-1)
 
     leaf_values_chunks = leaf_values_t.chunk(search_batch_size, dim=0)
     rewards_chunks = rewards_t.chunk(search_batch_size, dim=0)
@@ -261,6 +440,17 @@ def batched_mcts_step(
     for k in range(search_batch_size):
         path_nodes, path_actions, depths = paths[k]
 
+        # Extract the k-th chunk of the network_state pytree
+        network_state_k = None
+        if network_state_chunks_pytree is not None:
+
+            def extract_k(chunks):
+                if not isinstance(chunks, tuple) and not isinstance(chunks, list):
+                    return chunks
+                return chunks[k]
+
+            network_state_k = pytree.tree_map(extract_k, network_state_chunks_pytree)
+
         leaf_values = _expand_write(
             tree,
             path_nodes,
@@ -272,6 +462,7 @@ def batched_mcts_step(
             to_plays_chunks[k].detach().to(torch.int8),
             B,
             device,
+            network_state=network_state_k,
             decision_modifier_fn=decision_modifier_fn,
             chance_modifier_fn=chance_modifier_fn,
         )
@@ -550,6 +741,7 @@ def _expand_write(
     to_plays: torch.Tensor,
     B: int,
     device: torch.device,
+    network_state: Any = None,
     decision_modifier_fn=None,
     chance_modifier_fn=None,
 ) -> torch.Tensor:
@@ -592,7 +784,6 @@ def _expand_write(
     new_v = old_v + valid.float() * (leaf_values - old_v) / new_v_count
 
     tree.node_values[batch_idx, new_idx_long] = new_v
-    tree.raw_network_values[batch_idx, new_idx_long] = new_v
 
     # --- 4. Apply functional modifiers ---
     # Assuming standard Decision nodes for the new allocations
@@ -609,6 +800,14 @@ def _expand_write(
         alloc_parents = parent_indices.long()[alloc_mask]
         alloc_actions = leaf_actions.long()[alloc_mask]
 
+        if network_state is not None:
+
+            def scatter_alloc(buffer_tensor, new_tensor):
+                if torch.is_tensor(buffer_tensor) and torch.is_tensor(new_tensor):
+                    buffer_tensor[alloc_idx, alloc_nodes] = new_tensor[alloc_mask]
+
+            pytree.tree_map(scatter_alloc, tree.network_state_buffer, network_state)
+
         # to_plays handling
         if to_plays.dim() > 1:
             tree.to_play[alloc_idx, alloc_nodes] = to_plays[alloc_mask].squeeze(-1)
@@ -617,6 +816,8 @@ def _expand_write(
 
         tree.node_types[alloc_idx, alloc_nodes] = 0
 
+        tree.raw_network_values[alloc_idx, alloc_nodes] = leaf_values[alloc_mask]
+        # --- 6. Write structural data ONLY for newly allocated nodes ---
         # Link parent -> child
         tree.children_index[alloc_idx, alloc_parents, alloc_actions] = new_node_indices[
             alloc_mask
@@ -696,8 +897,10 @@ def _backpropagate(
     # [B, num_players]
     running_values = torch.zeros((B, num_players), dtype=torch.float32, device=device)
     for p in range(num_players):
-        is_p = leaf_to_play.squeeze() == p
-        running_values[:, p] = torch.where(is_p, leaf_values, -leaf_values)
+        is_p = leaf_to_play.view(B) == p
+        running_values[:, p] = torch.where(
+            is_p, leaf_values.view(B), -leaf_values.view(B)
+        )
 
     # Iterate from the deepest possible depth back to root
     for d in range(max_depth - 1, -1, -1):

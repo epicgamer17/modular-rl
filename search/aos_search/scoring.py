@@ -81,7 +81,8 @@ def compute_v_mix(
 
     # Visited mask
     # [B, max_edges]
-    visited = child_visits > 0
+    expanded_mask = tree.children_index[batch_idx, node_indices] != -1
+    visited = expanded_mask
 
     # sum_N = total visit count across children  [B]
     sum_N = child_visits.sum(dim=-1)
@@ -170,7 +171,8 @@ def ucb_score_fn(
     prior_score = pb_c * child_priors  # [B, E]
 
     # --- Q-value (bootstrap unvisited from parent V) --------------------------
-    visited_mask = child_visits > 0  # [B, E]
+    expanded_mask = tree.children_index[batch_idx, node_indices] != -1
+    visited_mask = expanded_mask
 
     if bootstrap_method == "parent_value":
         bootstrap_q = parent_values.unsqueeze(-1).expand_as(child_values)  # [B, E]
@@ -274,7 +276,8 @@ def gumbel_score_fn(
 
     # Use the explicit action mask for edge validity
     real_edge_mask = tree.children_action_mask[batch_idx, node_indices]  # [B, E]
-    visited_mask = child_visits > 0  # [B, E]
+    expanded_mask = tree.children_index[batch_idx, node_indices] != -1
+    visited_mask = expanded_mask
 
     # --- completed Q: visited → stored Q, unvisited → bootstrap ---------
     if bootstrap_method == "parent_value":

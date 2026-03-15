@@ -1,5 +1,6 @@
 import torch
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -7,6 +8,7 @@ class FlatTree:
     node_visits: torch.Tensor  # [B, N] int32
     node_values: torch.Tensor  # [B, N] float32 — backprop-updated running mean
     raw_network_values: torch.Tensor  # [B, N] float32 — immutable v̂_π from network
+
     node_types: torch.Tensor  # [B, N] int8
     node_rewards: torch.Tensor  # [B, N] float32
     to_play: torch.Tensor  # [B, N] int8
@@ -19,6 +21,9 @@ class FlatTree:
     children_values: torch.Tensor
 
     next_alloc_index: torch.Tensor
+
+    # Opaque PyTree containing [B, max_nodes, ...] tensors
+    network_state_buffer: Any = None
 
     @classmethod
     def allocate(
@@ -89,4 +94,5 @@ class FlatTree:
             children_rewards=children_rewards,
             children_values=children_values,
             next_alloc_index=next_alloc_index,
+            network_state_buffer=None,
         )

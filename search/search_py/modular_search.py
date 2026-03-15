@@ -144,7 +144,7 @@ class ModularSearch:
         trajectory_action=None,
         exploration: bool = True,
     ):
-        assert "player" in info, "info must contain 'player_id'. Got keys: " + str(
+        assert "player" in info, "info must contain 'player'. Got keys: " + str(
             list(info.keys())
         )
         to_play: int = info["player"]
@@ -329,14 +329,36 @@ class ModularSearch:
     def run_vectorized(
         self,
         batched_obs: Any,
-        batched_info: List[Dict[str, Any]],
+        batch_info: Dict[str, Any],
         agent_network: BaseAgentNetwork,
         trajectory_actions=None,
         exploration: bool = True,
     ):
+        # 0. Handle standardized Dict info
+        if "infos_list" in batch_info:
+            batched_info = batch_info["infos_list"]
+        else:
+            # Assume it's already a list or a dict-of-tensors
+            batched_info = batch_info
+
+        # If it's a dict of tensors (AO-style), we might need to unbatch it for modular_search's 
+        # Python-heavy loop (modular_search is not as vectorized as aos_search).
+        # We'll just assume it's a list for now or unbatch it if it's a dict.
+        if isinstance(batched_info, dict):
+            B = batched_obs.shape[0] if torch.is_tensor(batched_obs) else len(batched_obs)
+            # Standardize back to a list of dicts for Python MCTS loops
+            # This is slow but modular_search is slow anyway.
+            batched_info = [
+                {
+                    k: v[i].item() if torch.is_tensor(v[i]) and v[i].numel() == 1 else v[i]
+                    for k, v in batched_info.items()
+                }
+                for i in range(B)
+            ]
+
         assert all(
             "player" in i for i in batched_info
-        ), "Every info dict in batched_info must contain 'player_id'."
+        ), "Every info dict in batched_info must contain 'player'."
         batched_to_play: List[int] = [i["player"] for i in batched_info]
         self._set_node_configs()
 
