@@ -6,7 +6,11 @@
       "Bash(.venv/bin/python3 -m pytest*)",
       "Bash(python3 -m pytest*)",
       "Bash(.venv/bin/python -m pytest*)",
-      "Bash(python -m pytest*)"
+      "Bash(python -m pytest*)",
+      "Read(//Users/jonathanlamontange-kratz/Documents/catanatron-master/**)",
+      "Bash(git show*)",
+      "Bash(git diff*)",
+      "Bash(git log*)"
     ]
   }
 }

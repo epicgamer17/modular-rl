@@ -42,8 +42,8 @@ def test_aos_search_vectorized_unbatching(
     # Create a batch of 2 observations
     batched_obs = torch.randn(2, 4)
     batched_info = [
-        {"legal_moves": [0, 1], "player_id": 0},
-        {"legal_moves": [0, 1], "player_id": 0},
+        {"legal_moves": [0, 1], "player": 0},
+        {"legal_moves": [0, 1], "player": 0},
     ]
 
     # Run the vectorized unbatching loop

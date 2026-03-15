@@ -246,6 +246,12 @@ class BaseActor(ABC):
             if metadata.get("policy") is None and result.probs is not None:
                 metadata["policy"] = result.probs
 
+            # Fallback for value: CategoricalSelector/TemperatureSelector don't set this,
+            # but SearchPolicySource always provides the MCTS root value in result.value.
+            # Without this, value_history is empty and bootstrap targets are all zero.
+            if metadata.get("value") is None and result.value is not None:
+                metadata["value"] = result.value
+
             # Standardize: If we are a sequential actor (batch size 1),
             # flatten [1, ...] tensors in metadata to avoid "too many dimensions" in buffer.
             if obs_tensor.shape[0] == 1:
@@ -278,7 +284,7 @@ class BaseActor(ABC):
                 "truncated": bool(trunc),
                 "info": self._info,
                 "next_info": next_info,
-                "player_id": player_id,
+                "player": player_id,
                 "metadata": final_metadata,
             }
 
@@ -324,10 +330,7 @@ class BaseActor(ABC):
 
             # Extract policies/values from metadata if available
             # This logic depends on what decorators inject
-            policy_mode = metadata.get("policy", None)
-            # If multi-agent policy info is nested
-            if "policies" in metadata and player_id:
-                policy_mode = metadata["policies"].get(player_id, policy_mode)
+            policies = metadata.get("target_policies", metadata.get("policy"))
 
             next_info = transition["next_info"]
             next_legal_moves = next_info.get("legal_moves", []) if next_info else []
@@ -341,7 +344,7 @@ class BaseActor(ABC):
                 truncated=transition["truncated"],
                 action=transition["action"],
                 reward=transition["reward"],
-                policy=policy_mode,
+                policy=policies,
                 value=metadata.get("value"),
                 player_id=player_id,
                 legal_moves=next_legal_moves,

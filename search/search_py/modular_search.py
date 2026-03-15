@@ -7,16 +7,34 @@ from torch.distributions import Categorical
 import math
 from modules.utils import support_to_scalar
 from modules.world_models.inference_output import InferenceOutput
-from search.search_selectors import SelectionStrategy, TopScoreSelection, SamplingSelection
+from search.search_selectors import (
+    SelectionStrategy,
+    TopScoreSelection,
+    SamplingSelection,
+)
 from search.backpropogation import Backpropagator, AverageDiscountedReturnBackpropagator
 from search.initial_searchsets import SearchSet, SelectAll, SelectTopK
 from search.nodes import ChanceNode, DecisionNode
 from search.min_max_stats import MinMaxStats
-from search.prior_injectors import PriorInjector, ActionTargetInjector, DirichletInjector, GumbelInjector
-from search.root_policies import RootPolicyStrategy, CompletedQValuesRootPolicy, VisitFrequencyPolicy
+from search.prior_injectors import (
+    PriorInjector,
+    ActionTargetInjector,
+    DirichletInjector,
+    GumbelInjector,
+)
+from search.root_policies import (
+    RootPolicyStrategy,
+    CompletedQValuesRootPolicy,
+    VisitFrequencyPolicy,
+)
 from utils.utils import get_legal_moves
 from search.pruners import PruningMethod, NoPruning, SequentialHalvingPruning
-from search.scoring_methods import GumbelScoring, LeastVisitedScoring, UCBScoring, DeterministicChanceScoring
+from search.scoring_methods import (
+    GumbelScoring,
+    LeastVisitedScoring,
+    UCBScoring,
+    DeterministicChanceScoring,
+)
 from modules.agent_nets.base import BaseAgentNetwork
 from .utils import _safe_log_probs
 
@@ -33,29 +51,59 @@ class ModularSearch:
         self.num_actions = num_actions
 
         if config.gumbel:
-            self.root_selection_strategy: SelectionStrategy = TopScoreSelection(LeastVisitedScoring())
-            self.decision_selection_strategy: SelectionStrategy = TopScoreSelection(GumbelScoring(config))
-            self.chance_selection_strategy: SelectionStrategy = TopScoreSelection(DeterministicChanceScoring())
-            self.root_target_policy: RootPolicyStrategy = CompletedQValuesRootPolicy(config, device, num_actions)
-            self.root_exploratory_policy: RootPolicyStrategy = VisitFrequencyPolicy(config, device, num_actions)
-            self.prior_injectors: List[PriorInjector] = [ActionTargetInjector(), GumbelInjector()]
+            self.root_selection_strategy: SelectionStrategy = TopScoreSelection(
+                LeastVisitedScoring()
+            )
+            self.decision_selection_strategy: SelectionStrategy = TopScoreSelection(
+                GumbelScoring(config)
+            )
+            self.chance_selection_strategy: SelectionStrategy = TopScoreSelection(
+                DeterministicChanceScoring()
+            )
+            self.root_target_policy: RootPolicyStrategy = CompletedQValuesRootPolicy(
+                config, device, num_actions
+            )
+            self.root_exploratory_policy: RootPolicyStrategy = VisitFrequencyPolicy(
+                config, device, num_actions
+            )
+            self.prior_injectors: List[PriorInjector] = [
+                ActionTargetInjector(),
+                GumbelInjector(),
+            ]
             self.root_searchset: SearchSet = SelectTopK()
             self.internal_searchset: SearchSet = SelectAll()
             self.pruning_method: PruningMethod = SequentialHalvingPruning()
             self.internal_pruning_method: PruningMethod = NoPruning()
-            self.backpropagator: Backpropagator = AverageDiscountedReturnBackpropagator()
+            self.backpropagator: Backpropagator = (
+                AverageDiscountedReturnBackpropagator()
+            )
         else:
-            self.root_selection_strategy: SelectionStrategy = TopScoreSelection(UCBScoring())
-            self.decision_selection_strategy: SelectionStrategy = TopScoreSelection(UCBScoring())
-            self.chance_selection_strategy: SelectionStrategy = TopScoreSelection(DeterministicChanceScoring())
-            self.root_target_policy: RootPolicyStrategy = VisitFrequencyPolicy(config, device, num_actions)
-            self.root_exploratory_policy: RootPolicyStrategy = VisitFrequencyPolicy(config, device, num_actions)
-            self.prior_injectors: List[PriorInjector] = [ActionTargetInjector(), DirichletInjector()]
+            self.root_selection_strategy: SelectionStrategy = TopScoreSelection(
+                UCBScoring()
+            )
+            self.decision_selection_strategy: SelectionStrategy = TopScoreSelection(
+                UCBScoring()
+            )
+            self.chance_selection_strategy: SelectionStrategy = TopScoreSelection(
+                DeterministicChanceScoring()
+            )
+            self.root_target_policy: RootPolicyStrategy = VisitFrequencyPolicy(
+                config, device, num_actions
+            )
+            self.root_exploratory_policy: RootPolicyStrategy = VisitFrequencyPolicy(
+                config, device, num_actions
+            )
+            self.prior_injectors: List[PriorInjector] = [
+                ActionTargetInjector(),
+                DirichletInjector(),
+            ]
             self.root_searchset: SearchSet = SelectAll()
             self.internal_searchset: SearchSet = SelectAll()
             self.pruning_method: PruningMethod = NoPruning()
             self.internal_pruning_method: PruningMethod = NoPruning()
-            self.backpropagator: Backpropagator = AverageDiscountedReturnBackpropagator()
+            self.backpropagator: Backpropagator = (
+                AverageDiscountedReturnBackpropagator()
+            )
 
     def _dist_for_batch_index(self, policy_dist, index: int):
         # Optimization: If the distribution is already a single-batch distribution, return it.
@@ -96,10 +144,10 @@ class ModularSearch:
         trajectory_action=None,
         exploration: bool = True,
     ):
-        assert "player_id" in info, (
-            "info must contain 'player_id'. Got keys: " + str(list(info.keys()))
+        assert "player" in info, "info must contain 'player_id'. Got keys: " + str(
+            list(info.keys())
         )
-        to_play: int = info["player_id"]
+        to_play: int = info["player"]
         self._set_node_configs()
         root = DecisionNode(0.0)
 
@@ -286,10 +334,10 @@ class ModularSearch:
         trajectory_actions=None,
         exploration: bool = True,
     ):
-        assert all("player_id" in i for i in batched_info), (
-            "Every info dict in batched_info must contain 'player_id'."
-        )
-        batched_to_play: List[int] = [i["player_id"] for i in batched_info]
+        assert all(
+            "player" in i for i in batched_info
+        ), "Every info dict in batched_info must contain 'player_id'."
+        batched_to_play: List[int] = [i["player"] for i in batched_info]
         self._set_node_configs()
 
         B = (

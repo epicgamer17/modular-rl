@@ -124,7 +124,7 @@ def _run_parity_check(config, net, obs, info, py_info, num_actions, seed=42):
 
     torch.manual_seed(seed)
     np.random.seed(seed)
-    py_info_with_player = {**py_info, "player_id": 0}
+    py_info_with_player = {**py_info, "player": 0}
     _, _, py_target, _, _ = mcts_py.run(obs[0], py_info_with_player, net)
 
     assert torch.allclose(aos_output.target_policy[0], py_target, atol=1e-5)

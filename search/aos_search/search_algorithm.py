@@ -27,10 +27,10 @@ class ModularSearch:
         trajectory_action=None,
         exploration=True,
     ):
-        assert "player_id" in info, (
-            "info must contain 'player_id'. Got keys: " + str(list(info.keys()))
+        assert "player" in info, "info must contain 'player_id'. Got keys: " + str(
+            list(info.keys())
         )
-        to_play = info["player_id"]
+        to_play = info["player"]
         batched_obs = (
             observation.to(self.device)
             if torch.is_tensor(observation)
@@ -65,11 +65,11 @@ class ModularSearch:
         trajectory_actions=None,
         exploration=True,
     ):
-        assert all("player_id" in i for i in batched_info), (
-            "Every info dict in batched_info must contain 'player_id'."
-        )
+        assert all(
+            "player" in i for i in batched_info
+        ), "Every info dict in batched_info must contain 'player_id'."
         batched_to_play_t = torch.tensor(
-            [i["player_id"] for i in batched_info], dtype=torch.int8, device=self.device
+            [i["player"] for i in batched_info], dtype=torch.int8, device=self.device
         )
         so = self._run_mcts(
             batched_obs,

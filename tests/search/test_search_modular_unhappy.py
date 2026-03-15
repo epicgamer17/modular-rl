@@ -60,12 +60,10 @@ def test_modular_search_missing_policy_probs(
 
     bad_net = MockBadSearchNetwork()
     dummy_obs = torch.randn(1, 4)
-    dummy_info = {"legal_moves": [[0, 1]], "player_id": 0}
+    dummy_info = {"legal_moves": [[0, 1]], "player": 0}
 
     # The search should immediately identify the missing probabilities and safely crash
     with pytest.raises(
         ValueError, match="Search requires a policy distribution with logits/probs"
     ):
-        search.run(
-            observation=dummy_obs, info=dummy_info, agent_network=bad_net
-        )
+        search.run(observation=dummy_obs, info=dummy_info, agent_network=bad_net)

@@ -258,7 +258,7 @@ class ToPlayInputProcessor(InputProcessor):
     def __init__(
         self,
         num_players: int,
-        input_key: str = "player_id",
+        input_key: str = "player",
         output_key: str = "to_plays",
     ):
         self.num_players = num_players

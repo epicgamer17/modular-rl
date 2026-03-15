@@ -5,6 +5,7 @@ This module defines the PufferActor subclasses, which are 'Fat Workers' that run
 and pivot the data from horizontal batches back into vertical, chronological Sequence objects.
 """
 
+import numpy as np
 import torch
 import time
 from typing import Callable, Any, Optional, Tuple, Dict, List
@@ -192,8 +193,11 @@ class BasePufferActor(BaseActor):
             next_obs, rewards, terminals, truncs, next_infos, _, _ = self.vec_env.recv()
 
             # 3. Pivot Batch to Chronological Sequences
-            policies = metadata.get("policy")
+            policies = metadata.get("target_policies", metadata.get("policy"))
+            # Fallback: CategoricalSelector/TemperatureSelector don't set "value"; use MCTS root.
             values = metadata.get("value")
+            if values is None and result.value is not None:
+                values = result.value
 
             for i in range(self.num_envs):
                 # Robustly get current and next info
@@ -220,7 +224,7 @@ class BasePufferActor(BaseActor):
                     # flags belong exclusively on the terminal-close append.
                     terminated=False,
                     truncated=False,
-                    player_id=batched_info["player_id"][i],
+                    player_id=batched_info["player"][i],
                     legal_moves=info.get("legal_moves", []),
                     all_player_rewards=next_info.get("all_player_rewards"),
                 )
@@ -334,7 +338,7 @@ class GymPufferActor(BasePufferActor):
         if not infos:
             return {
                 "legal_moves": [[]] * self.num_envs,
-                "player_id": [0] * self.num_envs,
+                "player": [0] * self.num_envs,
             }
 
         extracted_infos = []
@@ -346,7 +350,7 @@ class GymPufferActor(BasePufferActor):
 
         return {
             "legal_moves": extracted_infos,
-            "player_id": [0] * self.num_envs,
+            "player": [0] * self.num_envs,
         }
 
 
@@ -378,7 +382,7 @@ class PettingZooPufferActor(BasePufferActor):
         if not infos:
             return {
                 "legal_moves": [[]] * self.num_envs,
-                "player_id": [0] * self.num_envs,
+                "player": [0] * self.num_envs,
             }
 
         extracted_moves = []
@@ -389,9 +393,9 @@ class PettingZooPufferActor(BasePufferActor):
                 info = {}
             extracted_moves.append(info.get("legal_moves", []))
             # Grab the player injected by AECSequentialWrapper
-            extracted_players.append(info.get("player_id", 0))
+            extracted_players.append(info.get("player", 0))
 
         return {
             "legal_moves": extracted_moves,
-            "player_id": extracted_players,
+            "player": extracted_players,
         }

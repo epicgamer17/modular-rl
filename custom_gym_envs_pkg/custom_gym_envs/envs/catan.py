@@ -628,7 +628,7 @@ class CatanAECEnv(AECEnv):
             self._cumulative_rewards[agent] += self.rewards.get(agent, 0)
             self.infos[agent] = {
                 "turn": self.game.state.num_turns,
-                "player_id": self.possible_agents.index(agent),
+                "player": self.possible_agents.index(agent),
                 "legal_moves": (
                     list(self._get_valid_action_indices())
                     if agent == self.agent_selection
@@ -705,7 +705,7 @@ class CatanAECEnv(AECEnv):
             self._cumulative_rewards[agent] += self.rewards[agent]
             self.infos[agent] = {
                 "turn": self.game.state.num_turns,
-                "player_id": self.possible_agents.index(agent),
+                "player": self.possible_agents.index(agent),
                 "legal_moves": (
                     list(self._get_valid_action_indices())
                     if agent == self.agent_selection
