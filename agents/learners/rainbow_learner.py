@@ -162,11 +162,11 @@ class RainbowLearner(UniversalLearner):
                         # Soft update: target = beta * target + (1 - beta) * online
                         # Ensure we only update floating point tensors (like weights)
                         if target_state[k].is_floating_point():
-                            target_state[k].data.mul_(self.config.ema_beta).add_(
-                                v.data, alpha=1.0 - self.config.ema_beta
+                            target_state[k].mul_(self.config.ema_beta).add_(
+                                v.detach(), alpha=1.0 - self.config.ema_beta
                             )
                         else:
-                            target_state[k].data.copy_(v.data)
+                            target_state[k].copy_(v.detach())
             else:
                 # Hard update
                 self.target_agent_network.load_state_dict(clean_state, strict=False)

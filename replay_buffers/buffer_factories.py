@@ -137,7 +137,6 @@ def create_dqn_buffer(
         )
     else:
         # Standard DQN Stack
-        print("Creating standard DQN buffer")
         input_stack = StackedInputProcessor(
             [
                 TerminationFlagsInputProcessor(

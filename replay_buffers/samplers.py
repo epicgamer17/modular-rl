@@ -106,9 +106,6 @@ class PrioritizedSampler(Sampler):
             )
 
         priority_segment = total_priority / batch_size
-        # print(f"priority_segment: {priority_segment}")
-        # print(f"total_priority: {total_priority}")
-        assert priority_segment * batch_size == total_priority
         for i in range(batch_size):
             a = priority_segment * i
             b = priority_segment * (i + 1)

@@ -51,6 +51,7 @@ class RainbowTrainer(BaseTrainer):
 
         clean_state = get_clean_state_dict(self.agent_network)
         self.target_agent_network.load_state_dict(clean_state, strict=False)
+        self.agent_network.train()
         self.target_agent_network.eval()
 
         if config.multi_process:

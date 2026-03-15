@@ -1,6 +1,4 @@
-from copy import deepcopy
 from math import log, sqrt, inf
-import copy
 import math
 import numpy as np
 import torch

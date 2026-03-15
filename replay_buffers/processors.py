@@ -903,9 +903,11 @@ class GAEProcessor(InputProcessor):
         ).copy()
         returns = discounted_cumulative_sums(rewards_pad, self.gamma).copy()[:-1]
 
-        for i, t in enumerate(transitions):
-            t["advantages"] = float(advantages[i])
-            t["returns"] = float(returns[i])
+        adv_list = advantages.tolist()
+        ret_list = returns.tolist()
+        for t, adv, ret in zip(transitions, adv_list, ret_list):
+            t["advantages"] = adv
+            t["returns"] = ret
             t["log_probabilities"] = t.get("policies", 0.0)
 
         return {"transitions": transitions}

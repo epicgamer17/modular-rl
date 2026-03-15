@@ -118,8 +118,14 @@ class DQNTargetBuilder(BaseTargetBuilder):
 
             # learner_inference returns [B, T+1, num_actions]; squeeze the T dim (always 1 here)
             if next_q_values.dim() == 3:
+                assert next_q_values.shape[1] == 1, (
+                    f"Expected T=1 in next_q_values, got shape {next_q_values.shape}"
+                )
                 next_q_values = next_q_values.squeeze(1)
             if target_q_values.dim() == 3:
+                assert target_q_values.shape[1] == 1, (
+                    f"Expected T=1 in target_q_values, got shape {target_q_values.shape}"
+                )
                 target_q_values = target_q_values.squeeze(1)
 
             if next_masks is not None:

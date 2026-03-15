@@ -152,8 +152,10 @@ class MuZeroLearner(UniversalLearner):
 
     def _build_context(self, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         return {
-            "has_valid_obs_mask": batch["obs_mask"].to(self.device).bool(),
-            "has_valid_action_mask": batch["action_mask"].to(self.device).bool(),
+            "has_valid_obs_mask": batch["has_valid_obs_mask"].to(self.device).bool(),
+            "has_valid_action_mask": batch["has_valid_action_mask"]
+            .to(self.device)
+            .bool(),
             "is_same_game": batch["is_same_game"].to(self.device).bool(),
         }
 

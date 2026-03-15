@@ -71,8 +71,6 @@ class ModularReplayBuffer:
         self.output_processor = (
             output_processor if output_processor else StandardOutputProcessor()
         )
-        print("Max size:", max_size)
-
         self.clear()
         assert self.size == 0, "Replay buffer should be empty at initialization"
         assert self.max_size > 0, "Replay buffer should have a maximum size"
