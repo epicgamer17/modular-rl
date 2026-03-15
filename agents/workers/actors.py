@@ -199,10 +199,7 @@ class BaseActor(ABC):
             )
 
             # Handle legal_moves_mask if present
-            if (
-                self._info is not None
-                and "legal_moves" in self._info
-            ):
+            if self._info is not None and "legal_moves" in self._info:
                 # If we have legal_moves but no mask, create a mask for the selector
                 # This is a bit of a bridge until all envs provide masks.
                 action_tensor = result.action_dim
@@ -218,7 +215,9 @@ class BaseActor(ABC):
                         mask[legal] = True
                     elif mask.dim() == 2:
                         for i, lm in enumerate(legal):
-                            if obs_tensor.shape[0] == 1 and not isinstance(lm, (list, np.ndarray, torch.Tensor)):
+                            if obs_tensor.shape[0] == 1 and not isinstance(
+                                lm, (list, np.ndarray, torch.Tensor)
+                            ):
                                 # Single list for batch size 1
                                 mask[0, legal] = True
                                 break
@@ -247,7 +246,7 @@ class BaseActor(ABC):
             if metadata.get("policy") is None and result.probs is not None:
                 metadata["policy"] = result.probs
 
-            # Standardize: If we are a sequential actor (batch size 1), 
+            # Standardize: If we are a sequential actor (batch size 1),
             # flatten [1, ...] tensors in metadata to avoid "too many dimensions" in buffer.
             if obs_tensor.shape[0] == 1:
                 for k, v in metadata.items():
@@ -257,6 +256,8 @@ class BaseActor(ABC):
                         metadata[k] = v.squeeze(0)
 
             action_val = action.item()
+
+            final_metadata = {**result.extra_metadata, **metadata}
 
             next_obs, reward, term, trunc, next_info = self._step_env(action_val)
 
@@ -278,7 +279,7 @@ class BaseActor(ABC):
                 "info": self._info,
                 "next_info": next_info,
                 "player_id": player_id,
-                "metadata": metadata,
+                "metadata": final_metadata,
             }
 
             self._state = next_obs

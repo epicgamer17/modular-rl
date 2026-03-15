@@ -59,6 +59,7 @@ class PrioritizedSampler(Sampler):
         self.backend = backend or LocalBackend()
 
         self.initial_max_priority = max_priority
+        assert self.initial_max_priority > 0
 
         tree_capacity = 1
         while tree_capacity < max_size:
@@ -84,7 +85,8 @@ class PrioritizedSampler(Sampler):
         else:
             # Importance sampling weights normalization
             # sum() without args now defaults to full capacity
-            min_priority = self.min_tree.min() / self.sum_tree.sum()
+            total_priority = self.sum_tree.sum(0, buffer_size - 1)
+            min_priority = self.min_tree.min(0, buffer_size - 1) / total_priority
             # Avoid divide by zero if tree is empty or min_priority is 0 (though min() init is inf)
             if min_priority == 0:
                 min_priority = 1e-10
@@ -124,7 +126,8 @@ class PrioritizedSampler(Sampler):
         return indices
 
     def _calculate_weight(self, index: int, buffer_size: int):
-        priority_sample = self.sum_tree[index] / self.sum_tree.sum()
+        total_priority = self.sum_tree.sum(0, buffer_size - 1)
+        priority_sample = self.sum_tree[index] / total_priority
         weight = (priority_sample * buffer_size) ** (-self.beta)
         return weight
 
@@ -133,6 +136,7 @@ class PrioritizedSampler(Sampler):
     ):
         """Updates the tree at index idx with specific priority or raw tree values."""
         if priority is None:
+            # print("Priority none using max priority")
             priority = self.max_priority
 
         self.sum_tree[idx] = (

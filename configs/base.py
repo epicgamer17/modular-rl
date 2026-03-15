@@ -344,6 +344,13 @@ class Config(
         compilation_dict = self.parse_field("compilation", default={}, required=False)
         self.compilation = CompilationConfig(compilation_dict)
 
+        self.train_value_iterations = self.parse_field(
+            "train_value_iterations", default=1
+        )
+        self.train_policy_iterations = self.parse_field(
+            "train_policy_iterations", default=1
+        )
+
     def _verify_game(self):
         assert (
             self.game is not None

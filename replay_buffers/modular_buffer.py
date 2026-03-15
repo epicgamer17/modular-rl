@@ -112,6 +112,7 @@ class ModularReplayBuffer:
         """
         Stores a single transition (DQN, PPO, NFSP style).
         """
+        # print("Storing single")
         # 1. Process Input
         processed = self.input_processor.process_single(**kwargs)
 
@@ -158,15 +159,18 @@ class ModularReplayBuffer:
         Stores a complete sequence/trajectory.
         Uses process_sequence instead of process_single.
         """
+        # print("Storing aggregate")
         # 1. Process Sequence
         data = self.input_processor.process_sequence(sequence_object, **kwargs)
 
         if data is None:
+            # print("Data none returning")
             return
 
         # 2. Handle List of Transitions (e.g. N-Step, PPO/GAE)
         if "transitions" in data:
             transitions = data["transitions"]
+            # print("Stored aggregate via transitions")
             for t in transitions:
                 self._store_processed(t, **kwargs)
             return
@@ -184,7 +188,7 @@ class ModularReplayBuffer:
             with self.write_lock:
                 # 2. Reserve Batch Indices
                 slices = self.writer.store_batch(n_items)
-
+                # print("Writer wrote to buffer")
                 # 3. Handle IDs (MuZero specific logic - integrated generally)
                 if "ids" in self.buffers:
                     start_id = int(self._next_id.item())
@@ -195,17 +199,18 @@ class ModularReplayBuffer:
                     data["ids"] = torch.arange(
                         start_id + 1, start_id + n_items + 1, dtype=torch.int64
                     )
-
+                # print("Incremented IDs")
                 if "game_ids" in self.buffers:
                     start_game_id = int(self._next_game_id.item()) + 1
                     self._next_game_id[0] = start_game_id
                     data["game_ids"] = torch.full(
                         (n_items,), start_game_id, dtype=torch.int64
                     )
-
+                # print("Incremented Game IDs")
                 # 4. Write Data to Buffers
                 data_offset = 0
                 for sl in slices:
+                    # print("Processing Slice")
                     slice_len = sl.stop - sl.start
                     rng = sl
 
@@ -213,9 +218,11 @@ class ModularReplayBuffer:
                     # This keeps partial sequence writes safe when some keys have
                     # transition-length data (T) instead of state-length data (T+1).
                     for key, buffer in self.buffers.items():
+                        # print("Resetting buffer ranges")
                         buffer[rng] = self._buffer_fill_values.get(key, 0)
 
                     for key, tensor_data in data.items():
+                        # print("Writing to slices")
                         # Only write if we have a matching buffer
                         if key in self.buffers:
                             if isinstance(tensor_data, np.ndarray):
@@ -239,13 +246,13 @@ class ModularReplayBuffer:
                             self.buffers[key][dst] = batch_slice
 
                     data_offset += slice_len
-
+                # print(f"Made slices {slices}")
             # 5. Update Priorities
             # Reconstruct indices from slices
             all_indices = []
             for sl in slices:
                 all_indices.extend(range(sl.start, sl.stop))
-
+            # print("All indices", all_indices)
             for i, (idx, p) in enumerate(zip(all_indices, priorities)):
                 # TODO: MAKE THIS A SEPERATE PROCESSOR?
                 is_terminal = i == n_items - 1
@@ -255,6 +262,7 @@ class ModularReplayBuffer:
                         idx, sum_tree_val=0.0, min_tree_val=float("inf")
                     )
                 else:
+                    # print(f"Storing non terminal with priority {p}")
                     self.sampler.on_store(idx, priority=p)
 
     def _write_to_buffer(self, name, idx, val):
@@ -307,7 +315,7 @@ class ModularReplayBuffer:
 
                 if "ids" in self.buffers:
                     indices_np = np.asarray(indices, dtype=np.int64)
-                    priorities_np = priorities.cpu().numpy()
+                    priorities_np = priorities
                     ids_np = ids.cpu().numpy()
 
                     valid_indices = []
@@ -333,8 +341,8 @@ class ModularReplayBuffer:
             self.sampler.update_priorities(filtered_indices, filtered_priorities)
 
     def clear(self):
-        with self.write_lock:
-            with self.priority_lock:
+        with self.priority_lock:
+            with self.write_lock:
                 self.sampler.clear()
                 self.writer.clear()
                 self.input_processor.clear()  # Clear processor state if necessary

@@ -75,8 +75,13 @@ class Schedule(ABC):
         self._step = 0
 
     @abstractmethod
-    def get_value(self) -> float:
-        pass  # pragma: no cover
+    def get_value(self, step: Optional[int] = None) -> float:
+        """
+        Calculates the schedule value.
+        If `step` is provided, calculates the value for that specific step (stateless).
+        If `step` is None, uses the internal self._step counter (stateful).
+        """
+        pass
 
     def step(self, count: int = 1) -> None:
         self._step += count
@@ -100,7 +105,7 @@ class ConstantSchedule(Schedule):
         super().__init__(config)
         self._value = config.initial if config.initial is not None else 1.0
 
-    def get_value(self) -> float:
+    def get_value(self, step: Optional[int] = None) -> float:
         return self._value
 
 
@@ -111,8 +116,9 @@ class LinearSchedule(Schedule):
         self._final = config.final
         self._decay_steps = config.decay_steps
 
-    def get_value(self) -> float:
-        progress = min(1.0, self._step / self._decay_steps)
+    def get_value(self, step: Optional[int] = None) -> float:
+        current_step = step if step is not None else self._step
+        progress = min(1.0, current_step / self._decay_steps)
         value = self._initial + (self._final - self._initial) * progress
         if self._initial < self._final:
             return min(self._final, value)
@@ -126,10 +132,11 @@ class StepwiseSchedule(Schedule):
         self._steps = config.steps
         self._values = config.values
 
-    def get_value(self) -> float:
+    def get_value(self, step: Optional[int] = None) -> float:
+        current_step = step if step is not None else self._step
         value = self._values[0]
-        for i, step in enumerate(self._steps):
-            if self._step >= step:
+        for i, s in enumerate(self._steps):
+            if current_step >= s:
                 value = self._values[i + 1]
         return value
 
@@ -139,8 +146,9 @@ class InverseSqrtSchedule(Schedule):
         super().__init__(config)
         self._initial = config.initial
 
-    def get_value(self) -> float:
-        return self._initial / math.sqrt(self._step + 1)
+    def get_value(self, step: Optional[int] = None) -> float:
+        current_step = step if step is not None else self._step
+        return self._initial / math.sqrt(current_step + 1)
 
 
 class CyclicalSchedule(Schedule):
@@ -150,14 +158,19 @@ class CyclicalSchedule(Schedule):
         self._final = config.final
         self._period = config.period
 
-    def get_value(self) -> float:
-        cycle_progress = (self._step % self._period) / self._period
+    def get_value(self, step: Optional[int] = None) -> float:
+        current_step = step if step is not None else self._step
+
+        # We don't actually need cycle_progress here based on your original math,
+        # but leaving it in case you were using it for debugging!
+        cycle_progress = (current_step % self._period) / self._period
         half_period = self._period / 2
-        if (self._step % self._period) < half_period:
-            progress = (self._step % self._period) / half_period
+
+        if (current_step % self._period) < half_period:
+            progress = (current_step % self._period) / half_period
             return self._initial + (self._final - self._initial) * progress
         else:
-            progress = ((self._step % self._period) - half_period) / half_period
+            progress = ((current_step % self._period) - half_period) / half_period
             return self._final - (self._final - self._initial) * progress
 
 

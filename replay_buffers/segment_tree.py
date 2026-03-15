@@ -174,8 +174,10 @@ class SumSegmentTree(SegmentTree):
             backend=backend,
         )
 
-    def sum(self, start: int = 0, end: int = 0) -> float:
+    def sum(self, start: int = 0, end: Optional[int] = None) -> float:
         """Returns arr[start] + ... + arr[end]."""
+        if end is None:
+            end = self.capacity - 1
         return super(SumSegmentTree, self).operate(start, end)
 
     def retrieve(self, upperbound: float) -> int:
@@ -226,8 +228,10 @@ class MinSegmentTree(SegmentTree):
             backend=backend,
         )
 
-    def min(self, start: int = 0, end: int = 0) -> float:
+    def min(self, start: int = 0, end: Optional[int] = None) -> float:
         """Returns min(arr[start], ...,  arr[end])."""
+        if end is None:
+            end = self.capacity - 1
         return super(MinSegmentTree, self).operate(start, end)
 
     def min_index(self, start: int = 0, end: int = 0) -> int:

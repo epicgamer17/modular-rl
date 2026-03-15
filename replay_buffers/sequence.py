@@ -17,6 +17,7 @@ class TimeStep(NamedTuple):
     chance: Optional[int] = None
 
 
+# TODO: update sequence to strip the batch dimension, as a sequence is implied batch 1 (then update replay buffer accordingly)
 @dataclass
 class Sequence:
     num_players: int
@@ -88,7 +89,9 @@ class Sequence:
                 "truncated_history length must match observation_history length"
             )
         if len(self.done_history) != n_states:
-            raise ValueError("done_history length must match observation_history length")
+            raise ValueError(
+                "done_history length must match observation_history length"
+            )
         if len(self.action_history) + 1 != n_states:
             raise ValueError(
                 "observation_history must have exactly one more entry than action_history"
@@ -97,8 +100,16 @@ class Sequence:
         for i in range(len(self.action_history)):
             terminated = bool(self.terminated_history[i + 1])
             truncated = bool(self.truncated_history[i + 1])
-            legal_moves = self.legal_moves_history[i] if i < len(self.legal_moves_history) else None
-            next_legal_moves = self.legal_moves_history[i + 1] if i + 1 < len(self.legal_moves_history) else None
+            legal_moves = (
+                self.legal_moves_history[i]
+                if i < len(self.legal_moves_history)
+                else None
+            )
+            next_legal_moves = (
+                self.legal_moves_history[i + 1]
+                if i + 1 < len(self.legal_moves_history)
+                else None
+            )
             yield Transition(
                 observation=self.observation_history[i],
                 action=self.action_history[i],
