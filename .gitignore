@@ -28,3 +28,4 @@ ffmpeg
 .coverage
 .hypothesis/*
 .hypothesis
+*.json
