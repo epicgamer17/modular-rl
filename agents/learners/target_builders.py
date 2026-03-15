@@ -29,8 +29,8 @@ class TargetOutput:
     values: Optional[Tensor] = None
     chance_values: Optional[Tensor] = None
     to_plays: Optional[Tensor] = None
-    action_mask: Optional[Tensor] = None
-    obs_mask: Optional[Tensor] = None
+    has_valid_action_mask: Optional[Tensor] = None
+    has_valid_obs_mask: Optional[Tensor] = None
     dones: Optional[Tensor] = None
     actions: Optional[Tensor] = None
     returns: Optional[Tensor] = None
@@ -222,8 +222,8 @@ class MuZeroTargetBuilder(BaseTargetBuilder):
             values=batch.get("target_values"),
             policies=batch.get("target_policies"),
             rewards=batch.get("target_rewards"),
-            action_mask=batch.get("action_mask"),
-            obs_mask=batch.get("obs_mask"),
+            has_valid_action_mask=batch.get("has_valid_action_mask"),
+            has_valid_obs_mask=batch.get("has_valid_obs_mask"),
             dones=batch.get("dones"),
             chance_codes=batch.get("chance_codes"),
             consistency_targets=batch.get("consistency_targets"),

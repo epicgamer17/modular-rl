@@ -1117,8 +1117,8 @@ class NStepUnrollProcessor(OutputProcessor):
         return dict(
             observations=buffers["observations"][indices_tensor],
             unroll_observations=unroll_observations,
-            obs_mask=obs_valid_mask,
-            action_mask=dynamics_mask[:, : self.unroll_steps + 1],
+            has_valid_obs_mask=obs_valid_mask,
+            has_valid_action_mask=dynamics_mask[:, : self.unroll_steps + 1],
             rewards=target_rewards,
             policies=target_policies,
             values=target_values,
@@ -1288,6 +1288,10 @@ class NStepUnrollProcessor(OutputProcessor):
         target_values = summed_rewards + torch.where(
             boot_is_valid, boot_term, torch.tensor(0.0, device=device)
         )
+
+        # Grounding: Ensure that any targets for padded steps (past game end) are explicitly 0.0
+        # This is important for "safe absorbing states" logic where we want to learn V(s_absorbing) = 0
+        target_values = target_values * valid_mask[:, :num_windows].float()
 
         # 6. Target Rewards (Value Prefix or Instant)
         target_rewards = torch.zeros(
