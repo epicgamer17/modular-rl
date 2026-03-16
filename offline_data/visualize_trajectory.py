@@ -56,6 +56,9 @@ def generate_video(
     tile_hex_states = map_state.get("tileHexStates", {})
 
     game_settings = d.get("gameSettings", initial_state.get("gameSettings", {}))
+    if not game_settings and "gameSettings" in data:
+        game_settings = data["gameSettings"]
+
     if game_settings:
         stepper.sync_settings(game_settings)
 
@@ -99,6 +102,10 @@ def generate_video(
         if result is not None:
             for i, (action_idx, forced_roll, forced_dev_card) in enumerate(result):
                 if max_steps is not None and step_count >= max_steps:
+                    done = True
+                    break
+
+                if stepper.env.unwrapped.game.winning_color() is not None:
                     done = True
                     break
 

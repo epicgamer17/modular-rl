@@ -43,6 +43,7 @@ class GodModeStepper:
         if "victoryPointsToWin" in settings:
             vps = int(settings["victoryPointsToWin"])
             game.vps_to_win = vps
+            game.state.vps_to_win = vps
             self.env.unwrapped.vps_to_win = vps
 
     def set_board_layout(self, board_config: dict, initial_state: dict = None):
@@ -213,7 +214,8 @@ class GodModeStepper:
             # Expose VP cards to the video renderer if the player has won
             # FORCE the environment to know the game is over if target VPs reached
             is_game_over = getattr(game.state, "is_game_over", False)
-            if actual_vps >= getattr(game, "vps_to_win", 10) or is_game_over:
+            vps_limit = getattr(game, "vps_to_win", getattr(game.state, "vps_to_win", 10))
+            if actual_vps >= vps_limit or is_game_over:
                 game.state.player_state[f"{key}_VICTORY_POINTS"] = actual_vps
                 game.state.is_game_over = True
 

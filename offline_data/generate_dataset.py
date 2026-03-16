@@ -190,7 +190,8 @@ _BOARD_DEPENDENT_CHANNELS = (
 
 def verify_trajectory(json_path: str, max_steps: int = 9999) -> None:
     with open(json_path) as f:
-        data = json.load(f)["data"]
+        data_root = json.load(f)
+        data = data_root["data"]
 
     events: list[dict] = data["eventHistory"]["events"]
     play_order: list[int] = data["playOrder"]
@@ -200,6 +201,10 @@ def verify_trajectory(json_path: str, max_steps: int = 9999) -> None:
     board_config = _board_config_from_initial_state(initial_state)
     tracker = JsonStateTracker(play_order, board_config=board_config)
     tracker.update(initial_state)
+
+    game_settings = data.get("gameSettings", initial_state.get("gameSettings", {}))
+    if game_settings:
+        stepper.sync_settings(game_settings)
 
     _color_idx_to_colonist: dict[int, int] = {i: c for i, c in enumerate(play_order)}
     current_turn_color: int = play_order[0]
@@ -243,6 +248,8 @@ def verify_trajectory(json_path: str, max_steps: int = 9999) -> None:
             valid_actions = env._get_valid_action_indices()
 
             if len(valid_actions) == 1 and DISCARD_IDX in valid_actions:
+                if stepper.env.unwrapped.game.winning_color() is not None:
+                    break
                 stepper.step_and_override(DISCARD_IDX, None, None)
             else:
                 break
@@ -267,6 +274,9 @@ def verify_trajectory(json_path: str, max_steps: int = 9999) -> None:
 
             filtered_result = [r for r in result if r[0] != DISCARD_IDX]
             for action_idx, forced_roll, forced_dev_card in filtered_result:
+                if stepper.env.unwrapped.game.winning_color() is not None:
+                    break
+
                 obs_a_full = stepper.step_and_override(
                     action_idx, forced_roll, forced_dev_card
                 )
@@ -393,6 +403,9 @@ def _process_single_replay(raw: dict) -> Optional[dict]:
                 colonist_actor = play_order[env.game.state.colors.index(c_color)]
                 actor_list.append(colonist_actor)
 
+                if stepper.env.unwrapped.game.winning_color() is not None:
+                    break
+
                 stepper.step_and_override(DISCARD_IDX, None, None)
             else:
                 break
@@ -431,22 +444,26 @@ def _process_single_replay(raw: dict) -> Optional[dict]:
                 act_list.append(action_idx)
                 actor_list.append(acting_player)
 
+                if stepper.env.unwrapped.game.winning_color() is not None:
+                    done_parsing = True
+                    break
+
                 stepper.step_and_override(action_idx, forced_roll, forced_dev_card)
 
                 if i == len(filtered_result) - 1:
                     stepper.flush_corrections()
 
-                if getattr(game.state, "is_game_over", False):
+                if stepper.env.unwrapped.game.winning_color() is not None:
                     done_parsing = True
                     break
 
             if not filtered_result:
                 stepper.flush_corrections()
-                if getattr(stepper.env.unwrapped.game.state, "is_game_over", False):
+                if stepper.env.unwrapped.game.winning_color() is not None:
                     done_parsing = True
         else:
             stepper.flush_corrections()
-            if getattr(stepper.env.unwrapped.game.state, "is_game_over", False):
+            if stepper.env.unwrapped.game.winning_color() is not None:
                 done_parsing = True
 
     stepper.flush_corrections()
