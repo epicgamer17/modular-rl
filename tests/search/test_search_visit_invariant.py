@@ -11,12 +11,13 @@ from search.aos_search.backpropogation import average_discounted_backprop
 
 class MockNetwork:
     def hidden_state_inference(self, state, action):
-        B = state.shape[0]
+        B = action.shape[0]
         return SimpleNamespace(
             value=torch.ones(B),
             reward=torch.zeros(B),
             policy=SimpleNamespace(logits=torch.zeros((B, 4))),
             to_play=torch.zeros(B, dtype=torch.int32),
+            network_state=None,
         )
 
     def obs_inference(self, obs):

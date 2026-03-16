@@ -316,11 +316,11 @@ def test_batched_simulations_coverage(search_setup):
     config.num_simulations = 4
 
     obs_tensor = torch.from_numpy(obs).unsqueeze(0).float()
-    info = {"legal_moves": [list(range(search_engine.num_actions))]}
+    info = {"legal_moves": [list(range(search_engine.num_actions))], "player": 0}
 
     # This calls search.run -> _run_batched_simulations
     val, exploratory, target, best_action, meta = search_engine.run(
-        obs_tensor[0], info, 0, network
+        obs_tensor[0], info, network
     )
 
     assert target.shape == (search_engine.num_actions,)
@@ -340,8 +340,10 @@ def test_batched_vectorized_simulations_coverage(search_setup):
 
     B = 2
     obs_batch = torch.from_numpy(obs).unsqueeze(0).repeat(B, 1, 1, 1).float()
-    info_batch = {"legal_moves": [list(range(search_engine.num_actions))] * B}
-    to_play_batch = [0] * B
+    info_batch = [
+        {"legal_moves": list(range(search_engine.num_actions)), "player": 0}
+        for _ in range(B)
+    ]
 
     # This calls search.run_vectorized -> _run_batched_vectorized_simulations
     (
@@ -350,7 +352,7 @@ def test_batched_vectorized_simulations_coverage(search_setup):
         target_policies,
         best_actions,
         search_metadata,
-    ) = search_engine.run_vectorized(obs_batch, info_batch, to_play_batch, network)
+    ) = search_engine.run_vectorized(obs_batch, info_batch, network)
 
     assert len(target_policies) == B
     for i in range(B):

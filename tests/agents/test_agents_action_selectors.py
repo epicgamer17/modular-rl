@@ -94,8 +94,8 @@ def test_categorical_selector_masking():
 
     action, meta = selector.select_action(inf_result, info)
     assert action.item() == 1, "Should pick action 1 because 0 is masked"
-    assert "policy" in meta
-    assert torch.isinf(meta["policy"].logits[0, 0]) and meta["policy"].logits[0, 0] < 0
+    assert "policy_dist" in meta
+    assert torch.isinf(meta["policy_dist"].logits[0, 0]) and meta["policy_dist"].logits[0, 0] < 0
 
 
 def test_epsilon_greedy_selector_basic():
@@ -199,7 +199,7 @@ class MockSearch:
     def __init__(self, config):
         self.config = config
 
-    def run(self, obs, info, to_play, network, exploration=True):
+    def run(self, obs, info, agent_network, trajectory_action=None, exploration=True):
         # returns root_value, exploratory_policy, target_policy, best_action, search_metadata
         return (
             0.5,
@@ -209,7 +209,7 @@ class MockSearch:
             {"mcts_simulations": 10},
         )
 
-    def run_vectorized(self, obs, infos, to_play, network):
+    def run_vectorized(self, obs, infos, agent_network, trajectory_actions=None):
         # returns root_values, exploratory_policies, target_policies, best_actions, sm_list
         B = obs.shape[0]
         return (
@@ -238,7 +238,7 @@ def test_search_policy_source():
     assert result.probs is not None, "SearchPolicySource must populate probs"
     assert result.logits is None, "SearchPolicySource should not populate logits"
     assert result.value is not None
-    assert result.probs.shape == (2,)
+    assert result.probs.shape == torch.Size([1, 2])
     assert torch.allclose(result.probs, torch.tensor([0.1, 0.9]))
 
 

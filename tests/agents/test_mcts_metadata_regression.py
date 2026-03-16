@@ -10,7 +10,7 @@ from replay_buffers.sequence import Sequence
 pytestmark = pytest.mark.unit
 
 class MockSearch:
-    def run(self, obs, info, to_play, network, exploration=True):
+    def run(self, obs, info, agent_network, trajectory_action=None, exploration=True):
         return (
             0.75, # root_value
             torch.tensor([0.2, 0.8]), # exploratory_policy
@@ -23,6 +23,7 @@ class MockNetwork(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.input_shape = (4,)
+        self.num_actions = 2
     def obs_inference(self, obs):
         return None
 
@@ -79,12 +80,11 @@ def test_mcts_metadata_merging_regression():
     assert stored_seq.stats["mcts_search_time"] == 0.456
     
     # 3. Verify policy in sequence is a tensor (not a Categorical)
-    # SearchPolicySource returns exploratory_policy as the main 'probs'
-    # which we expect to see in the policy history.
+    # Actor prefers target_policies over exploratory policy for the buffer.
     assert len(stored_seq.policy_history) == 1
     policy = stored_seq.policy_history[0]
     assert torch.is_tensor(policy)
-    assert torch.allclose(policy, torch.tensor([0.2, 0.8]))
+    assert torch.allclose(policy, torch.tensor([0.1, 0.9]))
     
     # 4. Verify root_value/value in metadata
     # The value_history contains the values retrieved from metadata

@@ -45,17 +45,6 @@ def test_modular_search_missing_policy_probs(
         config=config,
         device=torch.device("cpu"),
         num_actions=2,
-        root_selection_strategy=None,
-        decision_selection_strategy=None,
-        chance_selection_strategy=None,
-        root_target_policy=None,
-        root_exploratory_policy=None,
-        prior_injectors=[],
-        root_searchset=None,
-        internal_searchset=None,
-        pruning_method=None,
-        internal_pruning_method=None,
-        backpropagator=None,
     )
 
     bad_net = MockBadSearchNetwork()

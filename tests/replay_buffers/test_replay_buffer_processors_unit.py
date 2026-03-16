@@ -69,7 +69,7 @@ def test_nstep_unroll_processor_is_same_game_mask():
 
     assert "is_same_game" in batch
     is_same_game = batch["is_same_game"]
-    obs_mask = batch["obs_mask"]
+    obs_mask = batch["has_valid_obs_mask"]
 
     # Trajectory 0 unroll (steps 0, 1, 2)
     # game_ids are [0, 0, 0]. All same game.
@@ -84,7 +84,7 @@ def test_nstep_unroll_processor_is_same_game_mask():
 
     batch = processor.process_batch(indices, buffers)
     is_same_game = batch["is_same_game"]
-    obs_mask = batch["obs_mask"]
+    obs_mask = batch["has_valid_obs_mask"]
 
     # Batch 0 (idx 0):
     # k=0: idx 0, Game 0, not done before. obs_mask=T, same_game=T

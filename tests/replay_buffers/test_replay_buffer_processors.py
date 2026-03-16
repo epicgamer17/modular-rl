@@ -329,7 +329,7 @@ def test_replay_buffer_processors_unroll_respects_truncated_done_branch():
 
     batch = processor.process_batch(indices=[0], buffers=buffers)
 
-    assert batch["action_mask"].tolist() == [[True, False]]
+    assert batch["has_valid_action_mask"].tolist() == [[True, False]]
     assert batch["dones"].tolist() == [[False, True]]
     assert batch["rewards"][0].tolist() == pytest.approx([0.0, 1.0])
     assert torch.allclose(batch["policies"][0, 1], torch.tensor([0.5, 0.5]))

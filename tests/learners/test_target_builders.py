@@ -35,8 +35,8 @@ def test_target_output_defaults():
     assert output.values is None
     assert output.chance_values is None
     assert output.to_plays is None
-    assert output.action_mask is None
-    assert output.obs_mask is None
+    assert output.has_valid_action_mask is None
+    assert output.has_valid_obs_mask is None
     assert output.dones is None
 
 
