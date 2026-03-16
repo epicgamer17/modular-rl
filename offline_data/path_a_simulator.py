@@ -16,6 +16,7 @@ sys.path.insert(
 
 from custom_gym_envs.envs.catan import env as catan_env_factory
 from catanatron.models.map import init_node_production, init_port_nodes_cache
+from catanatron.models.actions import generate_playable_actions
 
 
 def _dice_pair(forced_roll: int) -> tuple[int, int]:
@@ -29,6 +30,23 @@ class GodModeStepper:
     def __init__(self, **env_kwargs) -> None:
         self.env = catan_env_factory(**env_kwargs)
         self.env.reset()
+
+    def sync_settings(self, settings: dict):
+        """Applies custom colonist.io match rules to Catanatron's engine."""
+        if not settings:
+            return
+
+        game = self.env.unwrapped.game
+
+        if "cardDiscardLimit" in settings:
+            game.state.discard_limit = int(settings["cardDiscardLimit"])
+            print(f"  [Settings Sync] Set Discard Limit to {game.state.discard_limit}")
+
+        if "victoryPointsToWin" in settings:
+            vps = int(settings["victoryPointsToWin"])
+            game.vps_to_win = vps
+            self.env.unwrapped.vps_to_win = vps
+            print(f"  [Settings Sync] Set VPs to Win to {vps}")
 
     def set_board_layout(self, board_config: dict, initial_state: dict = None):
         from offline_data.coordinate_mappings import WEB_TILE_TO_CATAN_COORD
@@ -59,12 +77,10 @@ class GodModeStepper:
             tile.resource = res
             tile.number = num
 
-        # Rebuild node production caches so Catanatron yields the right resources
         game.state.board.map.node_production = init_node_production(
             game.state.board.map.adjacent_tiles
         )
 
-        # Explicitly locate the desert and force the robber coordinate
         for coord, tile in game.state.board.map.land_tiles.items():
             if tile.resource is None:
                 desert_coord = coord
@@ -73,13 +89,12 @@ class GodModeStepper:
         if desert_coord is not None:
             game.state.board.robber_coordinate = desert_coord
 
-        # Force a Pygame renderer redraw by wiping the cached viewer surface
         if hasattr(self.env.unwrapped, "viewer"):
             self.env.unwrapped.viewer = None
 
     def sync_ports(self, map_state: dict) -> None:
         PORT_TYPE_TO_RESOURCE: dict[int, str | None] = {
-            1: None,  # generic 3:1
+            1: None,
             2: "WOOD",
             3: "BRICK",
             4: "SHEEP",
@@ -90,13 +105,11 @@ class GodModeStepper:
         port_states: dict = map_state.get("portEdgeStates", {})
         board = self.env.unwrapped.game.state.board
 
-        # Calculate angle of an axial coordinate (q, r)
         def get_angle(q, r):
             cx = 1.73205 * (q + r / 2.0)
             cy = 1.5 * r
             return math.atan2(cy, cx)
 
-        # 1. Extract Colonist ports and compute their angle
         colonist_ports = []
         for _pid, pe in port_states.items():
             q, r = pe["x"], pe["y"]
@@ -104,26 +117,20 @@ class GodModeStepper:
             resource = PORT_TYPE_TO_RESOURCE.get(pe.get("type", 1), None)
             colonist_ports.append((angle, resource))
 
-        # Sort clockwise
         colonist_ports.sort(key=lambda x: x[0])
 
-        # 2. Extract Catanatron port tiles and compute their angle
         catan_ports = []
         for coord, tile in board.map.tiles.items():
             if type(tile).__name__ == "Port":
-                # In Catanatron Cube coords, q = x and r = z
                 x, y, z = coord
                 angle = get_angle(x, z)
                 catan_ports.append((angle, tile))
 
-        # Sort clockwise
         catan_ports.sort(key=lambda x: x[0])
 
-        # 3. Zip them together! Geometric ordering guarantees a 1-to-1 match
         for (_, res), (_, tile) in zip(colonist_ports, catan_ports):
             tile.resource = res
 
-        # Rebuild the logic caches using native Catanatron functions so the AI works
         board.map.port_nodes = init_port_nodes_cache(board.map.tiles)
         board.player_port_resources_cache = {}
 
@@ -142,25 +149,27 @@ class GodModeStepper:
             p_color = int(p_key)
             if p_color not in play_order:
                 continue
-
             p_idx = play_order.index(p_color)
 
-            # 1. Sync Resources perfectly to the Engine State
+            # 1. Update Catanatron's strict logic engine state directly
             if "resources" in state:
                 for web_res_idx, count in state["resources"].items():
                     res_name = RES_KEYS[int(web_res_idx)]
                     catan_key = f"P{p_idx}_{res_name}_IN_HAND"
-
-                    # Write directly to Catanatron's logic array
                     game.state.player_state[catan_key] = count
 
-            # 2. Sync Development Cards perfectly as well
             if "developmentCards" in state:
                 for web_dev_idx, count in state["developmentCards"].items():
                     dev_name = DEV_KEYS.get(int(web_dev_idx))
                     if dev_name:
                         catan_key = f"P{p_idx}_{dev_name}_IN_HAND"
                         game.state.player_state[catan_key] = count
+
+        # 2. Refill Bank so it never restricts valid Maritime Trades
+        game.state.resource_freqdeck = [19, 19, 19, 19, 19]
+
+        # 3. MUST dynamically regenerate action cache because we manipulated internal state
+        game.playable_actions = generate_playable_actions(game.state)
 
     def step_and_override(
         self,
@@ -177,32 +186,13 @@ class GodModeStepper:
                 deck.append(forced_dev_card)
 
         # ==========================================
-        # ASYNC ACTION RESOLVER
+        # DIAGNOSTIC INTERCEPTOR
         # ==========================================
-        from custom_gym_envs.envs.catan import ACTIONS_ARRAY
-        from catanatron.models.enums import ActionType
-
-        DISCARD_IDX = ACTIONS_ARRAY.index((ActionType.DISCARD, None))
         valid_actions = self.env.unwrapped._get_valid_action_indices()
 
-        # 1. If Colonist sends a late DISCARD but Catanatron already moved past it, safely ignore it.
-        if action_idx == DISCARD_IDX and DISCARD_IDX not in valid_actions:
-            print(f"  [Auto-Sync] Skipping delayed DISCARD event from Colonist.")
-            obs_dict, _rew, _term, _trunc, _info = self.env.last()
-            return obs_dict["observation"]
+        if action_idx not in valid_actions:
+            from custom_gym_envs.envs.catan import ACTIONS_ARRAY
 
-        while action_idx not in valid_actions:
-            # 2. If Catanatron is blocking our action because it demands a DISCARD, auto-play it!
-            if DISCARD_IDX in valid_actions:
-                expected_color = game.state.current_color()
-                print(
-                    f"  [Auto-Sync] Catanatron blocking for discard. Auto-playing DISCARD for {expected_color}..."
-                )
-                self.env.step(DISCARD_IDX)
-                valid_actions = self.env.unwrapped._get_valid_action_indices()
-                continue
-
-            # 3. If it's a completely different desync, trigger the crash diagnostic.
             action_type, value = ACTIONS_ARRAY[action_idx]
 
             print(f"\n{'='*70}")
@@ -222,6 +212,7 @@ class GodModeStepper:
             print(
                 f"Game Num Turns      : {getattr(game.state, 'num_turns', 'Unknown')}"
             )
+            print(f"Discard Limit       : {game.state.discard_limit}")
 
             print(f"\n--- Valid Actions Allowed By Catanatron Right Now ---")
             for va in valid_actions:
@@ -232,6 +223,7 @@ class GodModeStepper:
             raise ValueError(
                 "Stopping execution to review the diagnostic report above."
             )
+
         # ==========================================
 
         if forced_roll is not None:

@@ -8,9 +8,7 @@ from typing import Optional
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-sys.path.insert(
-    0, os.path.dirname(__file__)
-)  # bare imports: json_parser, path_a_simulator
+sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "custom_gym_envs_pkg"))
 sys.path.insert(
     0, "/Users/jonathanlamontange-kratz/Documents/catanatron-master/catanatron"
@@ -18,12 +16,12 @@ sys.path.insert(
 
 import imageio.v2 as imageio
 
-from json_parser import _texts_sorted, parse_step
+# IMPORT THE NEW RESET FUNCTION
+from json_parser import _texts_sorted, parse_step, reset_parser_state
 from path_a_simulator import GodModeStepper
 
 
 def _ensure_hwc(frame: np.ndarray) -> np.ndarray:
-    """Transpose (W, H, 3) → (H, W, 3) if pygame surfarray layout is detected."""
     if frame.ndim == 3 and frame.shape[0] > frame.shape[1]:
         return np.transpose(frame, (1, 0, 2))
     return frame
@@ -35,6 +33,10 @@ def generate_video(
     fps: int = 3,
     max_steps: Optional[int] = None,
 ) -> None:
+
+    # CLEAR THE PARSER CACHE FOR THE NEW GAME
+    reset_parser_state()
+
     with open(json_path) as fh:
         data = json.load(fh)
 
@@ -47,34 +49,31 @@ def generate_video(
 
     writer = imageio.get_writer(output_mp4, fps=fps, macro_block_size=None)
 
-    # Sync board layout and ports. Look in both possible JSON locations.
-    # Sync board layout and ports. Look in both possible JSON locations.
     initial_state = d.get(
         "initialState", d.get("eventHistory", {}).get("initialState", {})
     )
     map_state = initial_state.get("mapState", {})
     tile_hex_states = map_state.get("tileHexStates", {})
 
+    game_settings = d.get("gameSettings", initial_state.get("gameSettings", {}))
+    if game_settings:
+        stepper.sync_settings(game_settings)
+
     if tile_hex_states:
-        # Pass initial_state so we can extract the true robber starting index
         stepper.set_board_layout(tile_hex_states, initial_state)
-    else:
-        print(
-            "WARNING: Could not find tileHexStates in JSON! The board will not be synced."
-        )
 
     if map_state:
         stepper.sync_ports(map_state)
 
     step_count = 0
+    done = False
 
-    # Render the initial board as frame 0.
     frame = stepper.env.render()
     if isinstance(frame, np.ndarray):
         writer.append_data(_ensure_hwc(frame))
 
     for ev_idx, event in enumerate(events):
-        if max_steps is not None and step_count >= max_steps:
+        if done:
             break
 
         sc = event.get("stateChange", {})
@@ -101,19 +100,10 @@ def generate_video(
 
         for action_idx, forced_roll, forced_dev_card in result:
             if max_steps is not None and step_count >= max_steps:
+                done = True
                 break
 
-            try:
-                stepper.step_and_override(action_idx, forced_roll, forced_dev_card)
-            except Exception as exc:
-                print(f"  step {step_count}: ERROR {exc}")
-                step_count += 1
-                continue
-
-            agent = stepper.env.agent_selection
-            if stepper.env.terminations[agent] or stepper.env.truncations[agent]:
-                print(f"  step {step_count}: Terminated/Truncated for agent {agent}")
-                break
+            stepper.step_and_override(action_idx, forced_roll, forced_dev_card)
 
             step_count += 1
 
@@ -144,6 +134,4 @@ if __name__ == "__main__":
             "..",
             "trajectory_verification.mp4",
         )
-
-    print(f"Generating video from {_json_path} → {_output_mp4}")
     generate_video(_json_path, _output_mp4)

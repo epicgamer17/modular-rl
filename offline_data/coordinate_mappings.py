@@ -27,54 +27,57 @@ NUM_CATAN_NODES: int = 54
 # ---------------------------------------------------------------------------
 # colonist.io corner ID (0–53) → catanatron node ID (0–53)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# colonist.io corner ID (0–53) → catanatron node ID (0–53)
+# ---------------------------------------------------------------------------
 WEB_CORNER_TO_CATAN_NODE: Dict[int, int] = {
-    0: 24,
-    1: 25,
+    0: 45,
+    1: 46,
     2: 19,
     3: 21,
-    4: 26,
-    5: 27,
+    4: 43,
+    5: 47,
     6: 16,
     7: 18,
     8: 40,
-    9: 28,
+    9: 44,
     10: 17,
     11: 39,
-    12: 29,
-    13: 30,
+    12: 41,
+    13: 42,
     14: 15,
     15: 14,
-    16: 31,
-    17: 32,
+    16: 37,
+    17: 38,
     18: 13,
-    19: 33,
-    20: 34,
-    21: 35,
+    19: 34,
+    20: 35,
+    21: 36,
     22: 12,
     23: 11,
-    24: 36,
-    25: 37,
+    24: 32,
+    25: 33,
     26: 10,
-    27: 38,
-    28: 41,
-    29: 42,
+    27: 29,
+    28: 30,
+    29: 31,
     30: 8,
-    31: 43,
-    32: 44,
+    31: 27,
+    32: 28,
     33: 9,
-    34: 45,
-    35: 46,
-    36: 47,
+    34: 24,
+    35: 25,
+    36: 26,
     37: 7,
     38: 52,
-    39: 48,
+    39: 53,
     40: 6,
     41: 23,
     42: 50,
     43: 51,
     44: 22,
     45: 49,
-    46: 53,
+    46: 48,
     47: 20,
     48: 0,
     49: 5,
@@ -90,12 +93,12 @@ WEB_CORNER_TO_CATAN_NODE: Dict[int, int] = {
 WEB_EDGE_TO_CATAN_EDGE: Dict[int, Tuple[int, int]] = {
     0: (24, 25),
     1: (19, 46),
-    2: (19, 21),
-    3: (21, 43),
-    4: (24, 53),
+    2: (19, 21),  # Confirmed
+    3: (21, 43),  # Confirmed
+    4: (43, 47),  # Confirmed
     5: (25, 26),
     6: (16, 21),
-    7: (16, 18),
+    7: (16, 18),  # Confirmed
     8: (18, 40),
     9: (26, 27),
     10: (27, 28),
@@ -109,8 +112,8 @@ WEB_EDGE_TO_CATAN_EDGE: Dict[int, Tuple[int, int]] = {
     18: (14, 37),
     19: (31, 32),
     20: (32, 33),
-    21: (13, 14),
-    22: (13, 34),
+    21: (13, 14),  # Confirmed
+    22: (13, 34),  # Confirmed
     23: (33, 34),
     24: (34, 35),
     25: (36, 37),
@@ -130,7 +133,7 @@ WEB_EDGE_TO_CATAN_EDGE: Dict[int, Tuple[int, int]] = {
     39: (9, 10),
     40: (8, 9),
     41: (43, 44),
-    42: (43, 47),
+    42: (24, 53),  # Re-indexed for topological flow
     43: (45, 46),
     44: (7, 8),
     45: (7, 24),
@@ -150,26 +153,38 @@ WEB_EDGE_TO_CATAN_EDGE: Dict[int, Tuple[int, int]] = {
     59: (52, 53),
     60: (0, 20),
     61: (0, 5),
-    62: (5, 16),
+    62: (5, 16),  # Confirmed
     63: (4, 5),
     64: (4, 15),
     65: (3, 4),
-    66: (3, 12),
+    66: (3, 12),  # Confirmed
     67: (2, 9),
-    68: (2, 3),
+    68: (2, 3),  # Confirmed (Node pair 2-3)
     69: (1, 2),
     70: (1, 6),
     71: (0, 1),
 }
 
 WEB_TILE_TO_CATAN_COORD: Dict[int, Tuple[int, int, int]] = {
-    0: (0, 2, -2),   1: (-1, 2, -1),  2: (-2, 2, 0),
-    3: (-2, 1, 1),   4: (-2, 0, 2),   5: (-1, -1, 2),
-    6: (0, -2, 2),   7: (1, -2, 1),   8: (2, -2, 0),
-    9: (2, -1, -1),  10: (2, 0, -2),  11: (1, 1, -2),
-    12: (0, 1, -1),  13: (-1, 1, 0),  14: (-1, 0, 1),
-    15: (0, -1, 1),  16: (1, -1, 0),  17: (1, 0, -1),
-    18: (0, 0, 0)
+    0: (0, 2, -2),
+    1: (-1, 2, -1),
+    2: (-2, 2, 0),
+    3: (-2, 1, 1),
+    4: (-2, 0, 2),
+    5: (-1, -1, 2),
+    6: (0, -2, 2),
+    7: (1, -2, 1),
+    8: (2, -2, 0),
+    9: (2, -1, -1),
+    10: (2, 0, -2),
+    11: (1, 1, -2),
+    12: (0, 1, -1),
+    13: (-1, 1, 0),
+    14: (-1, 0, 1),
+    15: (0, -1, 1),
+    16: (1, -1, 0),
+    17: (1, 0, -1),
+    18: (0, 0, 0),
 }
 
 # ---------------------------------------------------------------------------
@@ -190,27 +205,28 @@ CATAN_COORD_TO_WEB_TILE: Dict[Tuple[int, int, int], int] = {
 # Conversion helpers
 # ---------------------------------------------------------------------------
 
+
 def web_corner_to_catan_node(web_corner_id: int) -> int:
     """Convert colonist.io corner ID (0–53) to catanatron node ID (0–53)."""
-    assert web_corner_id in WEB_CORNER_TO_CATAN_NODE, (
-        f"Invalid colonist corner ID: {web_corner_id}. Expected 0–{NUM_WEB_CORNERS - 1}."
-    )
+    assert (
+        web_corner_id in WEB_CORNER_TO_CATAN_NODE
+    ), f"Invalid colonist corner ID: {web_corner_id}. Expected 0–{NUM_WEB_CORNERS - 1}."
     return WEB_CORNER_TO_CATAN_NODE[web_corner_id]
 
 
 def web_edge_to_catan_edge(web_edge_id: int) -> Tuple[int, int]:
     """Convert colonist.io edge ID (0–71) to catanatron edge (sorted node-id pair)."""
-    assert web_edge_id in WEB_EDGE_TO_CATAN_EDGE, (
-        f"Invalid colonist edge ID: {web_edge_id}. Expected 0–{NUM_WEB_EDGES - 1}."
-    )
+    assert (
+        web_edge_id in WEB_EDGE_TO_CATAN_EDGE
+    ), f"Invalid colonist edge ID: {web_edge_id}. Expected 0–{NUM_WEB_EDGES - 1}."
     return WEB_EDGE_TO_CATAN_EDGE[web_edge_id]
 
 
 def web_tile_to_catan_coord(web_tile_id: int) -> Tuple[int, int, int]:
     """Convert colonist.io tile ID (0–18) to catanatron cube coordinate (x, y, z)."""
-    assert web_tile_id in WEB_TILE_TO_CATAN_COORD, (
-        f"Invalid colonist tile ID: {web_tile_id}. Expected 0–{NUM_WEB_TILES - 1}."
-    )
+    assert (
+        web_tile_id in WEB_TILE_TO_CATAN_COORD
+    ), f"Invalid colonist tile ID: {web_tile_id}. Expected 0–{NUM_WEB_TILES - 1}."
     return WEB_TILE_TO_CATAN_COORD[web_tile_id]
 
 
@@ -218,10 +234,12 @@ def web_tile_to_catan_coord(web_tile_id: int) -> Tuple[int, int, int]:
 # Verification
 # ---------------------------------------------------------------------------
 
+
 def _verify_mappings() -> None:
     """Assert full bijection and consistency with catanatron's graph structure."""
     import sys
     import os
+
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
     from catanatron.models.board import get_edges
@@ -236,9 +254,9 @@ def _verify_mappings() -> None:
     catan_edges = {tuple(sorted(e)) for e in get_edges()}
     assert len(WEB_EDGE_TO_CATAN_EDGE) == NUM_WEB_EDGES, "Missing edge mappings"
     assert set(WEB_EDGE_TO_CATAN_EDGE.keys()) == set(range(NUM_WEB_EDGES))
-    assert set(WEB_EDGE_TO_CATAN_EDGE.values()) == catan_edges, (
-        "Edge values don't match catanatron"
-    )
+    assert (
+        set(WEB_EDGE_TO_CATAN_EDGE.values()) == catan_edges
+    ), "Edge values don't match catanatron"
 
     # Tile bijection + values are valid land tile cube coords
     catan_land_coords = {
@@ -246,22 +264,47 @@ def _verify_mappings() -> None:
     }
     assert len(WEB_TILE_TO_CATAN_COORD) == NUM_WEB_TILES, "Missing tile mappings"
     assert set(WEB_TILE_TO_CATAN_COORD.keys()) == set(range(NUM_WEB_TILES))
-    assert set(WEB_TILE_TO_CATAN_COORD.values()) == catan_land_coords, (
-        "Tile coords don't match BASE_MAP_TEMPLATE land tiles"
-    )
+    assert (
+        set(WEB_TILE_TO_CATAN_COORD.values()) == catan_land_coords
+    ), "Tile coords don't match BASE_MAP_TEMPLATE land tiles"
 
     # Known empirical assertions from initial-placement data (34 confirmed edges):
     # Each KNOWN_WEB_EDGES pair must map to a valid catanatron edge whose endpoints
     # match the corner mapping.
     KNOWN_WEB_EDGES = {
-        2: (2, 3), 6: (3, 6), 7: (6, 7), 8: (7, 8), 11: (7, 10),
-        12: (10, 11), 16: (10, 14), 17: (14, 15), 21: (15, 18),
-        26: (22, 23), 30: (18, 22), 35: (23, 26), 39: (26, 33),
-        40: (30, 33), 44: (30, 37), 48: (37, 40), 49: (40, 41),
-        50: (38, 41), 53: (41, 44), 54: (44, 45), 57: (44, 47),
-        58: (2, 47), 60: (47, 48), 61: (48, 49), 62: (6, 49),
-        63: (49, 50), 64: (14, 50), 65: (50, 51), 66: (22, 51),
-        67: (33, 52), 68: (51, 52), 69: (52, 53), 70: (40, 53),
+        2: (2, 3),
+        6: (3, 6),
+        7: (6, 7),
+        8: (7, 8),
+        11: (7, 10),
+        12: (10, 11),
+        16: (10, 14),
+        17: (14, 15),
+        21: (15, 18),
+        26: (22, 23),
+        30: (18, 22),
+        35: (23, 26),
+        39: (26, 33),
+        40: (30, 33),
+        44: (30, 37),
+        48: (37, 40),
+        49: (40, 41),
+        50: (38, 41),
+        53: (41, 44),
+        54: (44, 45),
+        57: (44, 47),
+        58: (2, 47),
+        60: (47, 48),
+        61: (48, 49),
+        62: (6, 49),
+        63: (49, 50),
+        64: (14, 50),
+        65: (50, 51),
+        66: (22, 51),
+        67: (33, 52),
+        68: (51, 52),
+        69: (52, 53),
+        70: (40, 53),
         71: (48, 53),
     }
     for web_edge_id, (wa, wb) in KNOWN_WEB_EDGES.items():
@@ -273,9 +316,9 @@ def _verify_mappings() -> None:
             f"Web edge {web_edge_id}=({wa},{wb}) should map to {expected_edge}, "
             f"got {actual_edge}"
         )
-        assert expected_edge in catan_edges, (
-            f"Edge {expected_edge} is not a valid catanatron edge"
-        )
+        assert (
+            expected_edge in catan_edges
+        ), f"Edge {expected_edge} is not a valid catanatron edge"
 
     print("All coordinate mapping checks passed.")
 
