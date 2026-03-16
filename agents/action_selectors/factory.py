@@ -32,7 +32,11 @@ class SelectorFactory:
         }
         """
         # 1. Instantiate the Base Selector
-        base_cfg = config.get("base", {})
+        # Handle if config itself is a SelectorConfig object or a plain dict
+        if hasattr(config, "base"):
+            base_cfg = config.base
+        else:
+            base_cfg = config.get("base", {})
         # Handle if base_cfg is a Config object or dict
         if hasattr(base_cfg, "type"):
             base_type = base_cfg.type
@@ -52,7 +56,10 @@ class SelectorFactory:
         selector = cls.REGISTRY[base_type](config=base_cfg, **base_kwargs)
 
         # 2. Recursively wrap it with Decorators (Inside-Out)
-        decorators_cfg = config.get("decorators", [])
+        if hasattr(config, "decorators"):
+            decorators_cfg = config.decorators
+        else:
+            decorators_cfg = config.get("decorators", [])
         for dec_cfg in decorators_cfg:
             # Handle if dec_cfg is a Config object or dict
             if hasattr(dec_cfg, "type"):

@@ -14,7 +14,7 @@ bool LeafBatchRequest::empty() const {
     return total_size() == 0;
 }
 
-SearchAlgorithm::SearchAlgorithm(
+ModularSearch::ModularSearch(
     const SearchConfig& search_config,
     const ScoringConfig& scoring_config,
     const SelectionConfig& root_selection_config,
@@ -83,7 +83,7 @@ SearchAlgorithm::SearchAlgorithm(
     task_buffer_.reserve(simulation_capacity);
 }
 
-void SearchAlgorithm::clear() {
+void ModularSearch::clear() {
     arena_.clear();
     const std::size_t simulation_capacity =
         static_cast<std::size_t>(search_config_.num_simulations);
@@ -105,23 +105,23 @@ void SearchAlgorithm::clear() {
         search_config_.min_max_epsilon);
 }
 
-bool SearchAlgorithm::has_root() const {
+bool ModularSearch::has_root() const {
     return root_index_ >= 0;
 }
 
-int SearchAlgorithm::root_index() const {
+int ModularSearch::root_index() const {
     return root_index_;
 }
 
-std::size_t SearchAlgorithm::node_count() const {
+std::size_t ModularSearch::node_count() const {
     return arena_.size();
 }
 
-std::size_t SearchAlgorithm::pending_count() const {
+std::size_t ModularSearch::pending_count() const {
     return active_pending_count_;
 }
 
-int SearchAlgorithm::initialize_root(
+int ModularSearch::initialize_root(
     const std::vector<double>& policy_priors,
     const int to_play,
     const int64_t state_handle,
@@ -161,7 +161,7 @@ int SearchAlgorithm::initialize_root(
     return root_index_;
 }
 
-bool SearchAlgorithm::build_single_pending_simulation(PendingSimulation& pending) {
+bool ModularSearch::build_single_pending_simulation(PendingSimulation& pending) {
     if (!has_root()) {
         return false;
     }
@@ -234,7 +234,7 @@ bool SearchAlgorithm::build_single_pending_simulation(PendingSimulation& pending
     return true;
 }
 
-int SearchAlgorithm::select_action_for_node(const int node_index, const bool is_root_node) {
+int ModularSearch::select_action_for_node(const int node_index, const bool is_root_node) {
     const Node& node = arena_.node(node_index);
     if (node.is_decision()) {
         const ScoringMethodType scoring_type = is_root_node ? root_scoring_type_ : decision_scoring_type_;
@@ -269,7 +269,7 @@ int SearchAlgorithm::select_action_for_node(const int node_index, const bool is_
     return -1;
 }
 
-int SearchAlgorithm::ensure_child_for_edge(const int parent_index, const int action) {
+int ModularSearch::ensure_child_for_edge(const int parent_index, const int action) {
     Node& parent = arena_.node(parent_index);
     if (parent.has_child(action)) {
         return parent.child_index(action);
@@ -299,9 +299,9 @@ int SearchAlgorithm::ensure_child_for_edge(const int parent_index, const int act
     return child_index;
 }
 
-LeafBatchRequest SearchAlgorithm::step_search_until_leaves(int batch_size) {
+LeafBatchRequest ModularSearch::step_search_until_leaves(int batch_size) {
     if (!has_root()) {
-        throw std::logic_error("SearchAlgorithm has no root. Call initialize_root first.");
+        throw std::logic_error("ModularSearch has no root. Call initialize_root first.");
     }
     if (active_pending_count_ > 0) {
         throw std::logic_error("Cannot step search while pending leaves are unresolved.");
@@ -362,7 +362,7 @@ LeafBatchRequest SearchAlgorithm::step_search_until_leaves(int batch_size) {
     return request;
 }
 
-SearchAlgorithm::PendingSimulation& SearchAlgorithm::pending_or_throw(const int request_id) {
+ModularSearch::PendingSimulation& ModularSearch::pending_or_throw(const int request_id) {
     if (request_id < 0 || static_cast<std::size_t>(request_id) >= pending_.size()) {
         throw std::out_of_range("Invalid request_id.");
     }
@@ -373,7 +373,7 @@ SearchAlgorithm::PendingSimulation& SearchAlgorithm::pending_or_throw(const int 
     return pending;
 }
 
-void SearchAlgorithm::apply_hidden_update(const HiddenInferenceUpdateBatch& updates, const int i) {
+void ModularSearch::apply_hidden_update(const HiddenInferenceUpdateBatch& updates, const int i) {
     const std::size_t row_start = static_cast<std::size_t>(i) * static_cast<std::size_t>(updates.num_actions);
     const double* priors_row = updates.num_actions > 0
         ? updates.priors.data() + row_start
@@ -388,7 +388,7 @@ void SearchAlgorithm::apply_hidden_update(const HiddenInferenceUpdateBatch& upda
         updates.num_actions);
 }
 
-void SearchAlgorithm::apply_afterstate_update(const AfterstateInferenceUpdateBatch& updates, const int i) {
+void ModularSearch::apply_afterstate_update(const AfterstateInferenceUpdateBatch& updates, const int i) {
     const std::size_t row_start = static_cast<std::size_t>(i) * static_cast<std::size_t>(updates.num_codes);
     const double* code_probs_row = updates.num_codes > 0
         ? updates.code_probs.data() + row_start
@@ -401,7 +401,7 @@ void SearchAlgorithm::apply_afterstate_update(const AfterstateInferenceUpdateBat
         updates.num_codes);
 }
 
-void SearchAlgorithm::apply_hidden_update_raw(
+void ModularSearch::apply_hidden_update_raw(
     const int32_t request_id,
     const int64_t next_state_handle,
     const double reward,
@@ -433,7 +433,7 @@ void SearchAlgorithm::apply_hidden_update_raw(
     --active_pending_count_;
 }
 
-void SearchAlgorithm::apply_afterstate_update_raw(
+void ModularSearch::apply_afterstate_update_raw(
     const int32_t request_id,
     const int64_t next_state_handle,
     const double value,
@@ -462,7 +462,7 @@ void SearchAlgorithm::apply_afterstate_update_raw(
     --active_pending_count_;
 }
 
-int SearchAlgorithm::update_leaves_and_backprop(
+int ModularSearch::update_leaves_and_backprop(
     const HiddenInferenceUpdateBatch& hidden_updates,
     const AfterstateInferenceUpdateBatch& afterstate_updates) {
     const std::size_t hidden_n = hidden_updates.request_ids.size();
@@ -526,7 +526,7 @@ int SearchAlgorithm::update_leaves_and_backprop(
         afterstate_updates.num_codes);
 }
 
-int SearchAlgorithm::update_leaves_and_backprop_raw(
+int ModularSearch::update_leaves_and_backprop_raw(
     const int32_t* hidden_request_ids,
     const int64_t* hidden_next_state_handles,
     const double* hidden_rewards,
@@ -623,35 +623,35 @@ int SearchAlgorithm::update_leaves_and_backprop_raw(
     return processed;
 }
 
-double SearchAlgorithm::root_value() const {
+double ModularSearch::root_value() const {
     if (!has_root()) {
         throw std::logic_error("No root node initialized.");
     }
     return arena_.node(root_index_).value();
 }
 
-std::vector<double> SearchAlgorithm::root_child_priors() const {
+std::vector<double> ModularSearch::root_child_priors() const {
     if (!has_root()) {
         return {};
     }
     return arena_.node(root_index_).child_priors();
 }
 
-std::vector<double> SearchAlgorithm::root_child_values() const {
+std::vector<double> ModularSearch::root_child_values() const {
     if (!has_root()) {
         return {};
     }
     return arena_.node(root_index_).child_values();
 }
 
-std::vector<double> SearchAlgorithm::root_child_visits() const {
+std::vector<double> ModularSearch::root_child_visits() const {
     if (!has_root()) {
         return {};
     }
     return arena_.node(root_index_).child_visits();
 }
 
-int SearchAlgorithm::select_root_action(const SelectionMethodType method) {
+int ModularSearch::select_root_action(const SelectionMethodType method) {
     if (!has_root()) {
         return -1;
     }
@@ -669,19 +669,19 @@ int SearchAlgorithm::select_root_action(const SelectionMethodType method) {
     return select_action(method, score_buffer_, root_selection_config_, rng_);
 }
 
-const MinMaxStats& SearchAlgorithm::min_max_stats() const {
+const MinMaxStats& ModularSearch::min_max_stats() const {
     return min_max_stats_;
 }
 
-MinMaxStats& SearchAlgorithm::mutable_min_max_stats() {
+MinMaxStats& ModularSearch::mutable_min_max_stats() {
     return min_max_stats_;
 }
 
-const NodeArena& SearchAlgorithm::arena() const {
+const NodeArena& ModularSearch::arena() const {
     return arena_;
 }
 
-NodeArena& SearchAlgorithm::mutable_arena() {
+NodeArena& ModularSearch::mutable_arena() {
     return arena_;
 }
 

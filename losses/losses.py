@@ -262,9 +262,13 @@ class ValueLoss(LossModule):
         target_values_k = targets["values"]
 
         if self.config.support_range is not None:
+            # Predictions are 21-atom distributions; convert to scalar for comparison.
+            # Targets are stored as raw scalars in the replay buffer (not distributions).
             pred_scalar = support_to_scalar(values_k, self.config.support_range)
-            target_scalar = support_to_scalar(
-                target_values_k, self.config.support_range
+            target_scalar = (
+                target_values_k.squeeze(-1)
+                if target_values_k.ndim > 1
+                else target_values_k
             )
         else:
             pred_scalar = values_k.squeeze(-1)
@@ -608,7 +612,7 @@ class SigmaLoss(LossModule):
 
     @property
     def required_predictions(self) -> set[str]:
-        return {"chance_codes"}
+        return {"chance_logits"}
 
     @property
     def required_targets(self) -> set[str]:
@@ -630,7 +634,8 @@ class SigmaLoss(LossModule):
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         # Note: indexed at k-1 in the stochastic arrays
-        latent_code_probabilities_k = predictions["chance_codes"]
+        # predictions["chance_logits"] is the sigma head output (logits over chance codes)
+        latent_code_probabilities_k = predictions["chance_logits"]
         target_codes_k = targets["chance_codes"].squeeze(-1).long()
         # Default config uses cross entropy (logits + class index). Keep one-hot fallback
         # for custom losses expecting distribution targets.
@@ -921,7 +926,12 @@ class LossPipeline:
         device = self.modules[0].device
 
         # Convert NamedTuples/dataclasses to dicts if necessary
-        predictions = predictions._asdict()
+        if isinstance(predictions, dict):
+            pass
+        elif hasattr(predictions, "_asdict"):
+            predictions = predictions._asdict()
+        else:
+            predictions = vars(predictions)
         targets = targets if isinstance(targets, dict) else vars(targets)
         assert predictions is not None and targets is not None
         if weights is None:
@@ -955,11 +965,12 @@ class LossPipeline:
             # --- 2. Compute losses for this step ---
             step_loss = torch.zeros(config.minibatch_size, device=device)
 
-            # Special case for ChanceQLoss which needs the next value
+            # Special case for ChanceQLoss which needs the next value.
+            # targets["values"] is 2D [B, T] for scalar targets, so ndim >= 2.
             if (
                 "values" in targets
                 and torch.is_tensor(targets["values"])
-                and targets["values"].ndim > 2
+                and targets["values"].ndim >= 2
                 and k + 1 < targets["values"].shape[1]
             ):
                 context["target_values_next"] = targets["values"][:, k + 1]

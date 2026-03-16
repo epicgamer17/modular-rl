@@ -511,7 +511,7 @@ def _apply_virtual_penalty(
     for d in range(max_depth):
         valid = depths > d
         if not valid.any():
-            continue
+            break
 
         nodes_at_d = path_nodes[batch_idx, d].long()
         actions_at_d = path_actions[batch_idx, d].long()
@@ -902,8 +902,15 @@ def _backpropagate(
             is_p, leaf_values.view(B), -leaf_values.view(B)
         )
 
+    # Clamp start to the deepest action any batch element actually took.
+    # max_depth may be as large as num_simulations+1; starting from
+    # depths.max()-1 skips all the all-False depths at the top of the loop.
+    max_actual_d = int(depths.max().item()) - 1
+    if max_actual_d < 0:
+        return  # no paths taken (depths all zero) — nothing to backpropagate
+
     # Iterate from the deepest possible depth back to root
-    for d in range(max_depth - 1, -1, -1):
+    for d in range(max_actual_d, -1, -1):
         # --- validity mask: only update paths that reached this depth ---
         # depths > d means action d was taken
         # [B] bool
@@ -967,3 +974,10 @@ def _backpropagate(
             fresh_q = tree.children_values[batch_idx, parent_long, action_long]  # [B]
             # Expand to [B, 1] so VectorizedMinMaxStats.update accepts [B, A]
             min_max_stats.update(fresh_q.unsqueeze(-1), valid_mask=valid.unsqueeze(-1))
+
+    # Python/C++ parity: also track the root node's value in the min_max_stats!
+    if min_max_stats is not None:
+        root_nodes = path_nodes[:, 0].long()
+        root_v = tree.node_values[batch_idx, root_nodes]  # [B]
+        # Valid mask is always True for root nodes that participated in the search
+        min_max_stats.update(root_v.unsqueeze(-1), valid_mask=torch.ones_like(root_v, dtype=torch.bool).unsqueeze(-1))

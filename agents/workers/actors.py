@@ -141,13 +141,40 @@ class BaseActor(ABC):
         Returns:
             Initial observation and info dictionary.
         """
-        self._state, self._info = self._reset_env()
-        if self._info is None:
-            self._info = {}
+        self._state, info = self._reset_env()
+        self._info = self._sanitize_boundary_data(info)
         self._done = False
         self._episode_reward = 0.0
         self._episode_length = 0
         return self._state, self._info
+
+    def _sanitize_boundary_data(self, info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Converts legal_moves and player IDs into pre-vectorized tensors.
+        This minimizes overhead in the search loop and prevents graph breaks.
+        """
+        if info is None:
+            info = {}
+
+        player_id = self._get_player_id()
+        player_val = player_id if isinstance(player_id, int) else 0
+
+        # Vectorize player ID: [1] tensor for single actor (AOS contract requires shape[0] == 1)
+        info["player"] = torch.tensor([player_val], dtype=torch.int8, device=self.device)
+
+        # Vectorize legal moves: 1D boolean tensor [num_actions]
+        num_actions = self.agent_network.num_actions
+        mask = torch.zeros(num_actions, dtype=torch.bool, device=self.device)
+
+        legal = info.get("legal_moves", [])
+        if isinstance(legal, (list, np.ndarray, torch.Tensor)) and len(legal) > 0:
+            mask[legal] = True
+        else:
+            mask.fill_(True)
+
+        info["legal_moves"] = mask
+        info["legal_moves_mask"] = mask
+        return info
 
     @abstractmethod
     def _reset_env(self) -> Tuple[Any, Dict[str, Any]]:
@@ -188,6 +215,7 @@ class BaseActor(ABC):
                 obs_tensor = obs_tensor.unsqueeze(0)
 
             # Perform inference via PolicySource
+            # Note: info now contains pre-vectorized 'player' and 'legal_moves'
             result = self.policy_source.get_inference(
                 obs=obs_tensor,
                 info=self._info,
@@ -197,33 +225,6 @@ class BaseActor(ABC):
                     player_id if isinstance(player_id, int) else 0
                 ),  # Search needs to_play
             )
-
-            # Handle legal_moves_mask if present
-            if self._info is not None and "legal_moves" in self._info:
-                # If we have legal_moves but no mask, create a mask for the selector
-                # This is a bit of a bridge until all envs provide masks.
-                action_tensor = result.action_dim
-                assert (
-                    action_tensor is not None
-                ), "InferenceResult has no action tensor for mask shape"
-                mask = torch.zeros(
-                    action_tensor.shape, dtype=torch.bool, device=self.device
-                )
-                legal = self._info["legal_moves"]
-                if isinstance(legal, (list, np.ndarray, torch.Tensor)):
-                    if mask.dim() == 1:
-                        mask[legal] = True
-                    elif mask.dim() == 2:
-                        for i, lm in enumerate(legal):
-                            if obs_tensor.shape[0] == 1 and not isinstance(
-                                lm, (list, np.ndarray, torch.Tensor)
-                            ):
-                                # Single list for batch size 1
-                                mask[0, legal] = True
-                                break
-                            if lm is not None:
-                                mask[i, lm] = True
-                self._info["legal_moves_mask"] = mask
 
             action, metadata = self.selector.select_action(
                 result=result,
@@ -289,7 +290,7 @@ class BaseActor(ABC):
             }
 
             self._state = next_obs
-            self._info = next_info
+            self._info = self._sanitize_boundary_data(next_info)
 
             return transition_info
 

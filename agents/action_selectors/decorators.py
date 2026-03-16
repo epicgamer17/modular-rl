@@ -124,7 +124,7 @@ class TemperatureSelector(BaseActionSelector):
 
         # Apply temperature
         if temp == 0.0:
-            mask = info.get("legal_moves_mask") if info else None
+            mask = info.get("legal_moves_mask", info.get("legal_moves")) if info else None
             if mask is not None:
                 logits = self.mask_actions(logits, mask)
             best_actions = logits.argmax(dim=-1)

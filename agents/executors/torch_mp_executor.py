@@ -154,6 +154,11 @@ class TorchMPExecutor(BaseExecutor):
             self.stop()
             print("Error detected in worker process:")
             print("".join(tb))
+            # err is a stringified exception message (intentionally serialized as a string
+            # in _worker_loop to avoid pickling issues with exotic exception types).
+            # Wrap it in RuntimeError so it is a proper BaseException subclass.
+            if not isinstance(err, BaseException):
+                err = RuntimeError(err)
             raise err
 
         # 2. Check if all workers are still alive

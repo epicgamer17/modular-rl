@@ -16,7 +16,7 @@ class MinMaxStats(object):
         self.min = known_bounds[0] if known_bounds else MAXIMUM_FLOAT_VALUE
         self.epsilon = epsilon
 
-    def update(self, value: float):
+    def update(self, value):
         self.max = max(self.max, value)
         self.min = min(self.min, value)
 

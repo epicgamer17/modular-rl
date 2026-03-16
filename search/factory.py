@@ -32,17 +32,8 @@ class SearchBackendFactory:
             if game_cfg:
                 num_actions = getattr(game_cfg, "num_actions", None)
 
-        # 2. Dispatch to the correct backend module directly
-        backend: str = getattr(config, "search_backend", "python").lower()
+        # 2. Configure and import using the search facade
+        import search
+        search.configure_backend(config)
 
-        if backend == "aos":
-            from search.aos_search.search_algorithm import ModularSearch
-        elif backend == "cpp":
-            _cpp = importlib.import_module(
-                os.getenv("MCTS_CPP_MODULE", "mcts_cpp_backend")
-            )
-            ModularSearch = _cpp.ModularSearch
-        else:
-            from search.search_py.modular_search import ModularSearch
-
-        return ModularSearch(config, device, num_actions)
+        return search.ModularSearch(config, device, num_actions)

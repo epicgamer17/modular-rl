@@ -28,7 +28,7 @@ class ModularSearch:
         exploration=True,
     ):
         num_sims = self.config.num_simulations
-        batch_size = self.config.search_batch_size
+        batch_size = max(1, self.config.search_batch_size)
         effective_depth = num_sims / batch_size
         if effective_depth < 5 and num_sims > batch_size:
             import warnings
@@ -86,7 +86,7 @@ class ModularSearch:
         exploration=True,
     ):
         num_sims = self.config.num_simulations
-        batch_size = self.config.search_batch_size
+        batch_size = max(1, self.config.search_batch_size)
         effective_depth = num_sims / batch_size
         if effective_depth < 5 and num_sims > batch_size:
             import warnings
@@ -100,6 +100,18 @@ class ModularSearch:
             )
 
         B = batched_obs.shape[0]
+        # Normalize list-of-dicts to dict-of-tensors (mirrors Python backend behavior)
+        if isinstance(batched_info, list):
+            batched_info = {
+                "player": torch.tensor(
+                    [info["player"] for info in batched_info], dtype=torch.int8
+                ),
+                **{
+                    k: [info[k] for info in batched_info]
+                    for k in batched_info[0]
+                    if k != "player"
+                },
+            }
         assert (
             batched_info["player"].shape[0] == B
         ), f"AOS modular_search.run_vectorized() batch mismatch: {B} vs {batched_info['player'].shape[0]}"

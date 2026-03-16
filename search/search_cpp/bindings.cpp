@@ -26,7 +26,7 @@ using search::NodeArena;
 using search::NodeType;
 using search::ScoringConfig;
 using search::ScoringMethodType;
-using search::SearchAlgorithm;
+using search::ModularSearch;
 using search::SearchConfig;
 using search::SelectionConfig;
 using search::SelectionMethodType;
@@ -69,7 +69,7 @@ py::array_t<T> vector_to_numpy_view(std::vector<T> &values, py::handle owner) {
 
 } // namespace
 
-PYBIND11_MODULE(mcts_cpp_backend, m) {
+PYBIND11_MODULE(search_cpp, m) {
   m.doc() = "C++ search backend for Tree Search";
 
   py::enum_<NodeType>(m, "NodeType")
@@ -305,7 +305,54 @@ PYBIND11_MODULE(mcts_cpp_backend, m) {
         return node_to_dict(arena.node(node_index));
       });
 
-  py::class_<SearchAlgorithm>(m, "SearchAlgorithm")
+  py::class_<ModularSearch>(m, "ModularSearch", py::dynamic_attr())
+      .def(py::init([](py::object config, py::object device, int num_actions) {
+        SearchConfig sc;
+        sc.num_actions = num_actions;
+        sc.num_simulations = py::getattr(config, "num_simulations").cast<int>();
+        sc.discount_factor = py::getattr(config, "discount_factor").cast<double>();
+        sc.stochastic = py::getattr(config, "stochastic", py::cast(false)).cast<bool>();
+        
+        // Extract bounds
+        if (py::hasattr(config, "known_bounds") && !py::getattr(config, "known_bounds").is_none()) {
+            sc.known_bounds = py::getattr(config, "known_bounds").cast<std::vector<double>>();
+        }
+
+        ScoringConfig scoring_cfg;
+        scoring_cfg.pb_c_init = py::getattr(config, "pb_c_init").cast<double>();
+        scoring_cfg.pb_c_base = py::getattr(config, "pb_c_base").cast<double>();
+
+        SelectionConfig root_selection_cfg;
+        root_selection_cfg.temperature = 1.0;
+        
+        SelectionConfig decision_selection_cfg;
+        decision_selection_cfg.temperature = 1.0;
+
+        SelectionConfig chance_selection_cfg;
+        chance_selection_cfg.temperature = 1.0;
+
+        BackpropConfig backprop_cfg;
+        backprop_cfg.discount_factor = sc.discount_factor;
+
+        ScoringMethodType root_scoring = ScoringMethodType::kUcb;
+        ScoringMethodType decision_scoring = ScoringMethodType::kUcb;
+        
+        if (py::getattr(config, "gumbel", py::cast(false)).cast<bool>()) {
+            root_scoring = ScoringMethodType::kGumbel;
+            decision_scoring = ScoringMethodType::kGumbel;
+        }
+
+        auto self = std::make_unique<ModularSearch>(
+            sc, scoring_cfg, root_selection_cfg, decision_selection_cfg,
+            chance_selection_cfg, backprop_cfg, root_scoring, decision_scoring,
+            SelectionMethodType::kTopScore, SelectionMethodType::kTopScore,
+            SelectionMethodType::kProbabilitySample,
+            BackpropMethodType::kAverageDiscountedReturn);
+        
+        // Use set_attr on the Python wrapper to store these
+        // Note: 'self' is the pointer, pybind11 will handle the wrapping.
+        return self;
+      }))
       .def(py::init<const SearchConfig &, const ScoringConfig &,
                     const SelectionConfig &, const SelectionConfig &,
                     const SelectionConfig &, const BackpropConfig &,
@@ -326,18 +373,18 @@ PYBIND11_MODULE(mcts_cpp_backend, m) {
                SelectionMethodType::kProbabilitySample,
            py::arg("backprop_method") =
                BackpropMethodType::kAverageDiscountedReturn)
-      .def("clear", &SearchAlgorithm::clear)
-      .def_property_readonly("has_root", &SearchAlgorithm::has_root)
-      .def_property_readonly("root_index", &SearchAlgorithm::root_index)
-      .def_property_readonly("node_count", &SearchAlgorithm::node_count)
-      .def_property_readonly("pending_count", &SearchAlgorithm::pending_count)
-      .def("initialize_root", &SearchAlgorithm::initialize_root,
+      .def("clear", &ModularSearch::clear)
+      .def_property_readonly("has_root", &ModularSearch::has_root)
+      .def_property_readonly("root_index", &ModularSearch::root_index)
+      .def_property_readonly("node_count", &ModularSearch::node_count)
+      .def_property_readonly("pending_count", &ModularSearch::pending_count)
+      .def("initialize_root", &ModularSearch::initialize_root,
            py::arg("policy_priors"), py::arg("to_play"),
            py::arg("state_handle"), py::arg("root_value") = 0.0,
            py::arg("allowed_actions") = std::vector<int>{})
       .def(
           "step_search_until_leaves",
-          [](SearchAlgorithm &search, int batch_size) {
+          [](ModularSearch &search, int batch_size) {
             LeafBatchRequest req;
             {
               py::gil_scoped_release release;
@@ -348,7 +395,7 @@ PYBIND11_MODULE(mcts_cpp_backend, m) {
           py::arg("batch_size") = -1)
       .def(
           "update_leaves_and_backprop",
-          [](SearchAlgorithm &search,
+          [](ModularSearch &search,
              const py::array_t<int32_t,
                                py::array::c_style | py::array::forcecast>
                  &hidden_request_ids,
@@ -463,11 +510,280 @@ PYBIND11_MODULE(mcts_cpp_backend, m) {
           py::arg("afterstate_request_ids"),
           py::arg("afterstate_next_state_handles"),
           py::arg("afterstate_values"), py::arg("afterstate_code_probs"))
-      .def("root_value", &SearchAlgorithm::root_value)
-      .def("root_child_priors", &SearchAlgorithm::root_child_priors)
-      .def("root_child_values", &SearchAlgorithm::root_child_values)
-      .def("root_child_visits", &SearchAlgorithm::root_child_visits)
-      .def("select_root_action", &SearchAlgorithm::select_root_action,
+      .def("run", [](ModularSearch &self, py::object obs, py::dict info, py::object agent_network, py::object trajectory_actions, bool exploration) {
+          // Wrap single-element case into run_vectorized for DRY
+          // FIX: Use torch.as_tensor and unsqueeze to keep it as a tensor on the correct device
+          py::object torch = py::module_::import("torch");
+          py::object batched_obs = torch.attr("as_tensor")(obs);
+          if (py::hasattr(agent_network, "input_shape")) {
+              auto input_shape = agent_network.attr("input_shape");
+              if (batched_obs.attr("dim")().cast<int>() == py::len(input_shape)) {
+                  batched_obs = batched_obs.attr("unsqueeze")(0);
+              }
+          } else {
+              py::tuple shape = batched_obs.attr("shape").cast<py::tuple>();
+              if (py::len(shape) > 0 && shape[0].cast<int>() != 1) {
+                  batched_obs = batched_obs.attr("unsqueeze")(0);
+              }
+          }
+          
+          py::list batched_info; batched_info.append(info);
+          py::object out = py::cast(&self).attr("run_vectorized")(batched_obs, batched_info, agent_network, trajectory_actions, exploration);
+          
+          return py::make_tuple(
+              out.attr("root_values")[py::cast(0)],
+              out.attr("exploratory_policy")[py::cast(0)],
+              out.attr("target_policy")[py::cast(0)],
+              out.attr("best_actions")[py::cast(0)],
+              py::dict() // metadata
+          );
+      }, py::arg("obs"), py::arg("info"), py::arg("agent_network"), py::arg("trajectory_actions") = py::none(), py::arg("exploration") = true)
+      .def("run_vectorized", [](ModularSearch &self, py::object batched_obs, py::object batched_info, py::object agent_network, py::object trajectory_actions, bool exploration) {
+          int B = py::len(batched_obs);
+          
+          // 1. Initial Inference
+          py::object outputs = agent_network.attr("obs_inference")(batched_obs);
+          // Explicit cpu/detach/double/numpy to avoid reading float32 bytes as float64
+          // (py::array_t<double>::unchecked() is dtype-blind and causes UB on float32 buffers).
+          py::array_t<double> values = outputs.attr("value")
+              .attr("cpu")().attr("detach")().attr("double")().attr("numpy")()
+              .cast<py::array_t<double>>();
+          auto values_view = values.unchecked<1>();
+
+          py::object policy_obj = outputs.attr("policy");
+          py::array_t<double> policy_probs;
+          if (py::hasattr(policy_obj, "probs") && !py::getattr(policy_obj, "probs").is_none()) {
+              policy_probs = py::getattr(policy_obj, "probs")
+                  .attr("cpu")().attr("detach")().attr("double")().attr("numpy")()
+                  .cast<py::array_t<double>>();
+          } else {
+              policy_probs = py::module_::import("torch").attr("softmax")(
+                      py::getattr(policy_obj, "logits"), -1)
+                  .attr("cpu")().attr("detach")().attr("double")().attr("numpy")()
+                  .cast<py::array_t<double>>();
+          }
+          auto probs_view = policy_probs.unchecked<2>();
+          int num_actions = static_cast<int>(probs_view.shape(1));
+          // to_play is now extracted per-environment from the info dictionary
+
+          py::object network_state = outputs.attr("network_state");
+          py::list unbatched_states = network_state.attr("unbatch")();
+          
+          py::list info_list;
+          if (py::isinstance<py::dict>(batched_info)) {
+              // Convert dict-of-tensors to list-of-dicts
+              py::object unbatch_func = py::module_::import("utils.utils").attr("unbatch_dict");
+              info_list = unbatch_func(batched_info);
+          } else {
+              info_list = batched_info.cast<py::list>();
+          }
+
+          // 2. Setup B engines
+          std::vector<std::unique_ptr<ModularSearch>> engines;
+          engines.reserve(B);
+          std::vector<std::unordered_map<int64_t, py::object>> state_registries(B);
+
+          for (int b = 0; b < B; ++b) {
+              engines.push_back(std::make_unique<ModularSearch>(
+                  self.get_search_config(), self.get_scoring_config(),
+                  self.get_root_selection_config(), self.get_decision_selection_config(),
+                  self.get_chance_selection_config(), self.get_backprop_config(),
+                  self.get_root_scoring_type(), self.get_decision_scoring_type(),
+                  self.get_root_selection_type(), self.get_decision_selection_type(),
+                  self.get_chance_selection_type(), self.get_backprop_method()));
+              
+              std::vector<double> priors(num_actions);
+              for (int a = 0; a < num_actions; ++a) priors[a] = probs_view(b, a);
+              int to_play;
+              py::object player_raw = info_list[b].attr("get")("player");
+              if (py::hasattr(player_raw, "item")) {
+                  to_play = player_raw.attr("item")().cast<int>();
+              } else {
+                  to_play = player_raw.cast<int>();
+              }
+
+              py::object legal = info_list[b].attr("get")("legal_moves", py::none());
+              std::vector<int> allowed;
+              if (!legal.is_none()) {
+                  if (py::hasattr(legal, "tolist")) {
+                      allowed = legal.attr("tolist")().cast<std::vector<int>>();
+                  } else {
+                      allowed = legal.cast<std::vector<int>>();
+                  }
+              }
+
+              // Handle 0 is initial unbatched state
+              state_registries[b][0] = unbatched_states[b];
+              engines[b]->initialize_root(priors, to_play, 0, values_view(b), allowed);
+          }
+
+          // 3. Iterative interleaved search
+          int num_sims = self.get_search_config().num_simulations;
+          int sims_done = 0;
+          int search_batch_size = self.get_search_config().default_batch_size;
+
+          while (sims_done < num_sims) {
+              std::vector<LeafBatchRequest> requests(B);
+              std::vector<int> hidden_req_counts(B, 0);
+              std::vector<int> afterstate_req_counts(B, 0);
+              int total_hidden = 0;
+              int total_afterstate = 0;
+
+              for (int b = 0; b < B; ++b) {
+                  requests[b] = engines[b]->step_search_until_leaves(search_batch_size);
+                  hidden_req_counts[b] = static_cast<int>(requests[b].hidden_request_ids.size());
+                  afterstate_req_counts[b] = static_cast<int>(requests[b].afterstate_request_ids.size());
+                  total_hidden += hidden_req_counts[b];
+                  total_afterstate += afterstate_req_counts[b];
+              }
+
+              if (total_hidden == 0 && total_afterstate == 0) break;
+
+              // Batched Hidden Inference
+              if (total_hidden > 0) {
+                  py::list hidden_states;
+                  py::list hidden_actions;
+                  for (int b = 0; b < B; ++b) {
+                      for (std::size_t i = 0; i < requests[b].hidden_request_ids.size(); ++i) {
+                          int64_t handle = requests[b].hidden_parent_state_handles[i];
+                          hidden_states.append(state_registries[b][handle]);
+                          hidden_actions.append(requests[b].hidden_actions[i]);
+                      }
+                  }
+
+                  py::object first_state = hidden_states[0];
+                  py::object batched_hidden_state;
+                  if (py::hasattr(py::type::of(first_state), "batch")) {
+                      batched_hidden_state = py::type::of(first_state).attr("batch")(hidden_states);
+                  } else {
+                      batched_hidden_state = py::module_::import("torch").attr("stack")(hidden_states);
+                  }
+
+                  py::object h_outputs = agent_network.attr("hidden_state_inference")(
+                      batched_hidden_state,
+                      py::module_::import("torch").attr("tensor")(hidden_actions, py::arg("device") = py::getattr(agent_network, "device", py::none()))
+                  );
+
+                  py::array_t<double> h_values = h_outputs.attr("value")
+                      .attr("cpu")().attr("detach")().attr("double")().attr("numpy")()
+                      .cast<py::array_t<double>>();
+                  py::array_t<double> h_rewards = h_outputs.attr("reward")
+                      .attr("cpu")().attr("detach")().attr("double")().attr("numpy")()
+                      .cast<py::array_t<double>>();
+
+                  // Use probs instead of logits for MCTS priors
+                  py::object h_policy_obj = h_outputs.attr("policy");
+                  py::array_t<double> h_probs;
+                  if (py::hasattr(h_policy_obj, "probs") && !py::getattr(h_policy_obj, "probs").is_none()) {
+                      h_probs = py::getattr(h_policy_obj, "probs")
+                          .attr("cpu")().attr("detach")().attr("double")().attr("numpy")()
+                          .cast<py::array_t<double>>();
+                  } else {
+                      h_probs = py::module_::import("torch").attr("softmax")(
+                              py::getattr(h_policy_obj, "logits"), -1)
+                          .attr("cpu")().attr("detach")().attr("double")().attr("numpy")()
+                          .cast<py::array_t<double>>();
+                  }
+
+                  py::array_t<int> h_to_plays = h_outputs.attr("to_play")
+                      .attr("cpu")().attr("detach")().attr("int")().attr("numpy")()
+                      .cast<py::array_t<int>>();
+                  py::list h_unbatched_states = h_outputs.attr("network_state").attr("unbatch")();
+
+                  auto h_values_view = h_values.unchecked<1>();
+                  auto h_rewards_view = h_rewards.unchecked<1>();
+                  auto h_probs_view = h_probs.unchecked<2>();
+                  auto h_to_plays_view = h_to_plays.unchecked<1>();
+
+                  int global_idx = 0;
+                  for (int b = 0; b < B; ++b) {
+                      search::HiddenInferenceUpdateBatch update;
+                      update.num_actions = num_actions;
+                      for (int i = 0; i < hidden_req_counts[b]; ++i) {
+                          int64_t next_handle = static_cast<int64_t>(state_registries[b].size());
+                          state_registries[b][next_handle] = h_unbatched_states[global_idx];
+
+                          update.request_ids.push_back(requests[b].hidden_request_ids[i]);
+                          update.next_state_handles.push_back(next_handle);
+                          update.rewards.push_back(h_rewards_view(global_idx));
+                          update.values.push_back(h_values_view(global_idx));
+                          update.to_plays.push_back(h_to_plays_view(global_idx));
+                          
+                          for (int a = 0; a < num_actions; ++a) update.priors.push_back(h_probs_view(global_idx, a));
+                          global_idx++;
+                      }
+                      engines[b]->update_leaves_and_backprop(update, {});
+                  }
+              }
+
+              // TODO: Afterstate inference if total_afterstate > 0
+              
+              sims_done += search_batch_size;
+          }
+
+          // 4. Extraction
+          py::array_t<float> out_target = py::array_t<float>({B, num_actions});
+          py::array_t<float> out_exploratory = py::array_t<float>({B, num_actions});
+          py::array_t<int64_t> out_best = py::array_t<int64_t>({B});
+          py::array_t<float> out_values = py::array_t<float>({B});
+          
+          auto target_view = out_target.mutable_unchecked<2>();
+          auto exploratory_view = out_exploratory.mutable_unchecked<2>();
+          auto best_view = out_best.mutable_unchecked<1>();
+          auto val_view = out_values.mutable_unchecked<1>();
+
+          for (int b = 0; b < B; ++b) {
+              std::vector<double> visits = engines[b]->root_child_visits();
+              double sum_v = 0;
+              for (double v : visits) sum_v += v;
+              if (sum_v < 1e-8) sum_v = 1.0;
+
+              int best_a = 0;
+              double max_v = -1.0;
+              const int n_visits = static_cast<int>(visits.size());
+              for (int a = 0; a < num_actions; ++a) {
+                  // Guard against visits.size() < num_actions (e.g. when allowed_actions
+                  // is a strict subset and Node::expand sizes child_visits to |allowed|).
+                  const double v = (a < n_visits) ? visits[a] : 0.0;
+                  const float p = static_cast<float>(v / sum_v);
+                  target_view(b, a) = p;
+                  exploratory_view(b, a) = p;
+                  if (v > max_v) {
+                      max_v = v;
+                      best_a = a;
+                  }
+              }
+              best_view(b) = best_a;
+              val_view(b) = static_cast<float>(engines[b]->root_value());
+          }
+
+          py::object torch_module = py::module_::import("torch");
+          py::object SearchOutput = py::module_::import("search.aos_search.search_output").attr("SearchOutput");
+          return SearchOutput(
+              torch_module.attr("as_tensor")(out_target),
+              torch_module.attr("as_tensor")(out_exploratory),
+              torch_module.attr("as_tensor")(out_best),
+              torch_module.attr("as_tensor")(out_values)
+          );
+
+      }, py::arg("batched_obs"), py::arg("batched_info"), py::arg("agent_network"), py::arg("trajectory_actions") = py::none(), py::arg("exploration") = true)
+      .def("get_search_config", &ModularSearch::get_search_config)
+      .def("get_scoring_config", &ModularSearch::get_scoring_config)
+      .def("get_root_selection_config", &ModularSearch::get_root_selection_config)
+      .def("get_decision_selection_config", &ModularSearch::get_decision_selection_config)
+      .def("get_chance_selection_config", &ModularSearch::get_chance_selection_config)
+      .def("get_backprop_config", &ModularSearch::get_backprop_config)
+      .def("get_root_scoring_type", &ModularSearch::get_root_scoring_type)
+      .def("get_decision_scoring_type", &ModularSearch::get_decision_scoring_type)
+      .def("get_root_selection_type", &ModularSearch::get_root_selection_type)
+      .def("get_decision_selection_type", &ModularSearch::get_decision_selection_type)
+      .def("get_chance_selection_type", &ModularSearch::get_chance_selection_type)
+      .def("get_backprop_method", &ModularSearch::get_backprop_method)
+      .def("root_value", &ModularSearch::root_value)
+      .def("root_child_priors", &ModularSearch::root_child_priors)
+      .def("root_child_values", &ModularSearch::root_child_values)
+      .def("root_child_visits", &ModularSearch::root_child_visits)
+      .def("select_root_action", &ModularSearch::select_root_action,
            py::arg("method") = SelectionMethodType::kMaxVisit);
 
   py::class_<AverageDiscountedReturnBackpropagator>(

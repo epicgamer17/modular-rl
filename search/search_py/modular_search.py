@@ -78,21 +78,25 @@ class ModularSearch:
                 AverageDiscountedReturnBackpropagator()
             )
         else:
+            _bootstrap = getattr(config, "bootstrap_method", "parent_value")
             self.root_selection_strategy: SelectionStrategy = TopScoreSelection(
-                UCBScoring()
+                UCBScoring(bootstrap_method=_bootstrap)
             )
             self.decision_selection_strategy: SelectionStrategy = TopScoreSelection(
-                UCBScoring()
+                UCBScoring(bootstrap_method=_bootstrap)
             )
             self.chance_selection_strategy: SelectionStrategy = TopScoreSelection(
                 DeterministicChanceScoring()
             )
-            self.root_target_policy: RootPolicyStrategy = VisitFrequencyPolicy(
-                config, device, num_actions
-            )
-            self.root_exploratory_policy: RootPolicyStrategy = VisitFrequencyPolicy(
-                config, device, num_actions
-            )
+            
+            from search.search_py.root_policies import BestActionRootPolicy, VisitFrequencyPolicy
+            if self.config.policy_extraction == "minimax":
+                self.root_target_policy: RootPolicyStrategy = BestActionRootPolicy(config, device, num_actions)
+                self.root_exploratory_policy: RootPolicyStrategy = BestActionRootPolicy(config, device, num_actions)
+            else:
+                self.root_target_policy: RootPolicyStrategy = VisitFrequencyPolicy(config, device, num_actions)
+                self.root_exploratory_policy: RootPolicyStrategy = VisitFrequencyPolicy(config, device, num_actions)
+
             self.prior_injectors: List[PriorInjector] = [
                 ActionTargetInjector(),
                 DirichletInjector(),
@@ -101,9 +105,13 @@ class ModularSearch:
             self.internal_searchset: SearchSet = SelectAll()
             self.pruning_method: PruningMethod = NoPruning()
             self.internal_pruning_method: PruningMethod = NoPruning()
-            self.backpropagator: Backpropagator = (
-                AverageDiscountedReturnBackpropagator()
-            )
+            
+            from search.search_py.backpropogation import MinimaxBackpropagator, AverageDiscountedReturnBackpropagator
+            if hasattr(self.config, "backprop_method") and self.config.backprop_method == "minimax":
+                self.backpropagator: Backpropagator = MinimaxBackpropagator()
+            else:
+                self.backpropagator: Backpropagator = AverageDiscountedReturnBackpropagator()
+
 
     def _dist_for_batch_index(self, policy_dist, index: int):
         # Optimization: If the distribution is already a single-batch distribution, return it.

@@ -635,6 +635,7 @@ class CatanAECEnv(AECEnv):
             seed=seed,
             catan_map=catan_map,
             vps_to_win=self.vps_to_win,
+            restrict_dice_to_board=(self.map_type == "MINI"),
         )
         self.port_coords = compute_port_coordinates(
             self.game.state.board.map, self.node_coords, offset_dist=0

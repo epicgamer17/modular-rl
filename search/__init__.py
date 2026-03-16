@@ -85,13 +85,15 @@ def _resolve_backend_name(config: Any = None, backend: str | None = None) -> str
 
 def _load_cpp_backend_module():
     module_candidates = [
-        os.getenv("MCTS_CPP_MODULE", "mcts_cpp_backend"),
-        "search_cpp",
-        "rainbow_search_cpp",
+        ".search_cpp",  # Relative to search package
+        "search.search_cpp",  # Absolute
+        os.getenv("MCTS_CPP_MODULE", "search_cpp"),
     ]
     last_exc: Exception | None = None
     for module_name in module_candidates:
         try:
+            if module_name.startswith("."):
+                return importlib.import_module(module_name, package="search")
             return importlib.import_module(module_name)
         except Exception as exc:  # pragma: no cover - best effort fallback
             last_exc = exc
@@ -121,6 +123,11 @@ def configure_backend(config: Any = None, backend: str | None = None) -> str:
             _active_backend = "cpp"
             return requested
         except Exception as exc:
+            # If explicitly requested via arguments or config, fail loudly.
+            is_explicit = (backend is not None) or (_extract_backend_from_config(config) is not None)
+            if is_explicit:
+                raise ImportError(f"C++ backend explicitly requested but unavailable: {exc}") from exc
+
             warnings.warn(
                 f"C++ backend requested but unavailable ({exc}). Falling back to Python backend.",
                 RuntimeWarning,

@@ -86,8 +86,9 @@ class MuZeroConfig(
             rew_strat = rh_dict.get("output_strategy", None)
             if rew_strat is None:
                 rew_strat = {"type": "muzero", "support_range": self.support_range}
-            # Force num_classes to be atom_size
+            # Force num_classes and support_range to match atom_size
             rew_strat["num_classes"] = self.atom_size
+            rew_strat["support_range"] = self.support_range
             rh_dict["output_strategy"] = rew_strat
 
         self.reward_head: RewardHeadConfig = reward_head_cls(rh_dict)
@@ -98,8 +99,9 @@ class MuZeroConfig(
             val_strat = value_dict.get("output_strategy", None)
             if val_strat is None:
                 val_strat = {"type": "muzero", "support_range": self.support_range}
-            # Force num_classes to be atom_size
+            # Force num_classes and support_range to match atom_size
             val_strat["num_classes"] = self.atom_size
+            val_strat["support_range"] = self.support_range
             value_dict["output_strategy"] = val_strat
 
         self.value_head: ValueHeadConfig = ValueHeadConfig(value_dict)

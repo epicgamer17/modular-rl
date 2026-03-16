@@ -241,6 +241,7 @@ class DecisionNode:
         self.child_visits = None
         self.child_values = None
         self.child_priors = None
+        self._v_mix = None
 
     @property
     def is_decision(self) -> bool:

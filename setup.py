@@ -17,7 +17,7 @@ CPP_SOURCES = [
 
 ext_modules = [
     Pybind11Extension(
-        "mcts_cpp_backend",
+        "search.search_cpp",
         [str(CPP_DIR / src) for src in CPP_SOURCES],
         include_dirs=[str(CPP_DIR)],
         cxx_std=17,

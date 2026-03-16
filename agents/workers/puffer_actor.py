@@ -87,6 +87,20 @@ class BasePufferActor(BaseActor):
         self._obs = None
         self._infos = None
 
+    def reset(self) -> Tuple[Any, Any]:
+        """Override reset for vectorized puffer environments.
+
+        The base class ``reset()`` calls ``_sanitize_boundary_data(info)`` which
+        expects a single dict, but puffer's ``_reset_env()`` returns a *list* of
+        dicts (one per vectorized env).  We store the raw list in ``self._infos``
+        and leave vectorization to ``_extract_batched_info``.
+        """
+        self._state, self._infos = self._reset_env()
+        self._done = False
+        self._episode_reward = 0.0
+        self._episode_length = 0
+        return self._state, self._infos
+
     def _reset_env(self) -> Tuple[Any, Dict[str, Any]]:
         """Initializes the vectorized environment on the first call."""
         if not self._initialized:
@@ -143,6 +157,7 @@ class BasePufferActor(BaseActor):
                 obs_tensor = obs_tensor.unsqueeze(0)
 
             # Perform batched inference via PolicySource
+            # Note: batched_info now contains pre-vectorized 'player' and 'legal_moves'
             result = self.policy_source.get_inference(
                 obs=obs_tensor,
                 info=batched_info,
@@ -150,22 +165,6 @@ class BasePufferActor(BaseActor):
                 exploration=True,
                 to_play=0,  # Default for batched search for now
             )
-
-            # Generate legal_moves_mask if needed
-            if "legal_moves" in batched_info and "legal_moves_mask" not in batched_info:
-                action_tensor = result.action_dim
-                assert (
-                    action_tensor is not None
-                ), "InferenceResult has no action tensor for mask shape"
-                B = action_tensor.shape[0]
-                num_actions = action_tensor.shape[-1]
-                mask = torch.zeros(
-                    (B, num_actions), dtype=torch.bool, device=self.device
-                )
-                for i, lm in enumerate(batched_info["legal_moves"]):
-                    if isinstance(lm, (list, np.ndarray, torch.Tensor)) and len(lm) > 0:
-                        mask[i, lm] = True
-                batched_info["legal_moves_mask"] = mask
 
             actions_tensor, metadata = self.selector.select_action(
                 result=result,
@@ -224,7 +223,7 @@ class BasePufferActor(BaseActor):
                     # flags belong exclusively on the terminal-close append.
                     terminated=False,
                     truncated=False,
-                    player_id=batched_info["player"][i],
+                    player_id=batched_info["player"][i].item(),
                     legal_moves=info.get("legal_moves", []),
                     all_player_rewards=next_info.get("all_player_rewards"),
                 )
@@ -333,24 +332,33 @@ class GymPufferActor(BasePufferActor):
 
     def _extract_batched_info(
         self, infos: List[Dict[str, Any]]
-    ) -> Dict[str, List[Any]]:
-        # Robustly handle None entries or empty list
-        if not infos:
-            return {
-                "legal_moves": [[]] * self.num_envs,
-                "player": [0] * self.num_envs,
-            }
+    ) -> Dict[str, Any]:
+        """Ready-to-use vectorized tensors for Gymnasium environments."""
+        num_actions = self.agent_network.num_actions
 
-        extracted_infos = []
+        # 1. Vectorize Legal Moves and Players
+        mask = torch.zeros((self.num_envs, num_actions), dtype=torch.bool, device=self.device)
+        player_tensor = torch.zeros(self.num_envs, dtype=torch.int8, device=self.device)
+
+        if not infos:
+            mask.fill_(True)
+            return {"legal_moves": mask, "legal_moves_mask": mask, "player": player_tensor}
+
         for i in range(self.num_envs):
-            info = infos[i] if i < len(infos) else {}
+            info = infos[i] if (infos and i < len(infos)) else {}
             if info is None:
                 info = {}
-            extracted_infos.append(info.get("legal_moves", []))
+
+            legal = info.get("legal_moves", [])
+            if isinstance(legal, (list, np.ndarray, torch.Tensor)) and len(legal) > 0:
+                mask[i, legal] = True
+            else:
+                mask[i, :].fill_(True)
 
         return {
-            "legal_moves": extracted_infos,
-            "player": [0] * self.num_envs,
+            "legal_moves": mask,
+            "legal_moves_mask": mask,
+            "player": player_tensor,
         }
 
 
@@ -378,24 +386,45 @@ class PettingZooPufferActor(BasePufferActor):
 
     def _extract_batched_info(
         self, infos: List[Dict[str, Any]]
-    ) -> Dict[str, List[Any]]:
+    ) -> Dict[str, Any]:
+        """Ready-to-use vectorized tensors for PettingZoo environments."""
+        num_actions = self.agent_network.num_actions
+
+        mask = torch.zeros((self.num_envs, num_actions), dtype=torch.bool, device=self.device)
+        player_ids = []
+
         if not infos:
+            mask.fill_(True)
             return {
-                "legal_moves": [[]] * self.num_envs,
-                "player": [0] * self.num_envs,
+                "legal_moves": mask,
+                "legal_moves_mask": mask,
+                "player": torch.zeros(self.num_envs, dtype=torch.int8, device=self.device),
             }
 
-        extracted_moves = []
-        extracted_players = []
+        batch_indices = []
+        action_indices = []
+
         for i in range(self.num_envs):
-            info = infos[i] if i < len(infos) else {}
+            info = infos[i] if (infos and i < len(infos)) else {}
             if info is None:
                 info = {}
-            extracted_moves.append(info.get("legal_moves", []))
-            # Grab the player injected by AECSequentialWrapper
-            extracted_players.append(info.get("player", 0))
+
+            legal = info.get("legal_moves", [])
+            if isinstance(legal, (list, np.ndarray, torch.Tensor)) and len(legal) > 0:
+                batch_indices.extend([i] * len(legal))
+                action_indices.extend(legal)
+            else:
+                mask[i, :].fill_(True)
+
+            player_ids.append(info.get("player", 0))
+
+        if batch_indices:
+            mask[batch_indices, action_indices] = True
+
+        player_tensor = torch.tensor(player_ids, dtype=torch.int8, device=self.device)
 
         return {
-            "legal_moves": extracted_moves,
-            "player": extracted_players,
+            "legal_moves": mask,
+            "legal_moves_mask": mask,
+            "player": player_tensor,
         }

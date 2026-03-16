@@ -69,31 +69,29 @@ class SearchPolicySource(BasePolicySource):
         Runs MCTS and wraps results into an InferenceResult.
 
         Accepts agent_network via kwargs (takes precedence over self.agent_network).
+        Accepts to_play via kwargs to populate info["player"] if not already set.
         """
         exploration = kwargs.get("exploration", True)
+        agent_network = kwargs.get("agent_network", self.agent_network)
 
-        # Ensure player context and others are in info for the search engine
-        assert "player" in info
+        # Populate info["player"] from to_play kwarg if not already present
+        if "player" not in info and "to_play" in kwargs:
+            info = dict(info)
+            info["player"] = kwargs["to_play"]
+
+        assert "player" in info, (
+            "info must contain 'player', or pass to_play as a kwarg"
+        )
+
         # MCTSDecorator logic uses run_vectorized if B > 1
         is_batched = (
-            obs.dim() > len(self.agent_network.input_shape) and obs.shape[0] > 1
+            obs.dim() > len(agent_network.input_shape) and obs.shape[0] > 1
         )
 
         start_time = time.time()
 
         if is_batched:
-            infos_list = info.get("infos_list", [])
-            if not infos_list and "legal_moves" in info:
-                B = obs.shape[0]
-                infos_list = [
-                    {
-                        "legal_moves": info["legal_moves"][i],
-                        "player": info.get("player", [0] * B)[i],
-                    }
-                    for i in range(B)
-                ]
-
-            res = self.search.run_vectorized(obs, infos_list, self.agent_network)
+            res = self.search.run_vectorized(obs, info, agent_network)
             (
                 root_values,
                 exploratory_policies,
@@ -145,7 +143,7 @@ class SearchPolicySource(BasePolicySource):
             )
         else:
             res = self.search.run(
-                obs, info, self.agent_network, exploration=exploration
+                obs, info, agent_network, exploration=exploration
             )
             (
                 root_value,
@@ -160,7 +158,7 @@ class SearchPolicySource(BasePolicySource):
             value = torch.tensor([root_value], device=obs.device, dtype=torch.float32)
 
             # If the input was unsqueezed [1, ...], the output should be [1, A]
-            if obs.dim() > len(self.agent_network.input_shape):
+            if obs.dim() > len(agent_network.input_shape):
                 probs = probs.unsqueeze(0)
                 # value is already [1] which matches [B]
                 target_policies_out = target_policy.unsqueeze(0).to(obs.device)

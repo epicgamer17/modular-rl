@@ -165,12 +165,11 @@ void average_discounted_return_backprop(
                 }
             }
 
-            const double child_q = compute_child_q_from_parent(arena, parent_idx, child_idx, config);
-            min_max_stats.update(child_q);
-
             const int parent_player = normalize_player(parent.to_play(), num_players);
             const double target_q = acc[static_cast<std::size_t>(parent_player)];
             update_parent_child_stats_with_mean(parent, action, target_q);
+
+            min_max_stats.update(parent.child_values()[static_cast<std::size_t>(action)]);
         } else {
             min_max_stats.update(node.value());
         }

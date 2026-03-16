@@ -58,7 +58,7 @@ void compute_ucb_scores_into(
         const double prior = priors[i];
         const double q = (child_visit > 0.0)
             ? values[i]
-            : config.unvisited_value_bootstrap;
+            : node.value();
         const double prior_score = (pb_c / (child_visit + 1.0)) * prior;
         const double value_score = min_max_stats.normalize(q);
         scores[i] = prior_score + value_score;

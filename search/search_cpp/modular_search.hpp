@@ -66,9 +66,9 @@ struct AfterstateInferenceUpdateBatch {
     int num_codes = 0;
 };
 
-class SearchAlgorithm {
+class ModularSearch {
 public:
-    SearchAlgorithm(
+    ModularSearch(
         const SearchConfig& search_config,
         const ScoringConfig& scoring_config,
         const SelectionConfig& root_selection_config,
@@ -122,6 +122,20 @@ public:
     std::vector<double> root_child_visits() const;
 
     int select_root_action(SelectionMethodType method = SelectionMethodType::kMaxVisit);
+
+    const SearchConfig& get_search_config() const { return search_config_; }
+    const ScoringConfig& get_scoring_config() const { return scoring_config_; }
+    const SelectionConfig& get_root_selection_config() const { return root_selection_config_; }
+    const SelectionConfig& get_decision_selection_config() const { return decision_selection_config_; }
+    const SelectionConfig& get_chance_selection_config() const { return chance_selection_config_; }
+    const BackpropConfig& get_backprop_config() const { return backprop_config_; }
+
+    ScoringMethodType get_root_scoring_type() const { return root_scoring_type_; }
+    ScoringMethodType get_decision_scoring_type() const { return decision_scoring_type_; }
+    SelectionMethodType get_root_selection_type() const { return root_selection_type_; }
+    SelectionMethodType get_decision_selection_type() const { return decision_selection_type_; }
+    SelectionMethodType get_chance_selection_type() const { return chance_selection_type_; }
+    BackpropMethodType get_backprop_method() const { return backprop_method_; }
 
     const MinMaxStats& min_max_stats() const;
     MinMaxStats& mutable_min_max_stats();

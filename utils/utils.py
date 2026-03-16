@@ -6,7 +6,26 @@ from torch import Tensor
 
 
 def legal_moves_mask(num_actions: int, legal_moves, device="cpu"):
-    assert isinstance(legal_moves, list), "Legal moves should be a list"
+    if torch.is_tensor(legal_moves):
+        # Case 1: Boolean mask [num_actions] or [B, num_actions]
+        if legal_moves.dtype == torch.bool:
+            if legal_moves.dim() == 1 and legal_moves.shape[0] == num_actions:
+                return legal_moves.to(device).float()
+            if legal_moves.dim() == 2 and legal_moves.shape[1] == num_actions:
+                # Keep original batch dimension if present
+                return legal_moves.to(device).float()
+
+        # Handle tensors of indices (int/long) by converting to list for existing logic
+        if legal_moves.dtype in [torch.int64, torch.int32, torch.int16, torch.int8, torch.uint8]:
+            if legal_moves.dim() == 0:
+                legal_moves = [legal_moves.item()]
+            else:
+                legal_moves = legal_moves.tolist()
+
+    if isinstance(legal_moves, np.ndarray):
+        legal_moves = legal_moves.tolist()
+
+    assert isinstance(legal_moves, list), f"Legal moves should be a list, got {type(legal_moves)}"
 
     if len(legal_moves) > 0 and isinstance(legal_moves[0], list):
         batch_size = len(legal_moves)
@@ -23,15 +42,34 @@ def legal_moves_mask(num_actions: int, legal_moves, device="cpu"):
 
 
 def get_legal_moves(info: dict | list[dict]):
-    if isinstance(info, list):
-        legal_moves = [i.get("legal_moves", None) for i in info]
-        for legal_list in legal_moves:
-            assert len(legal_list) > 0
-    else:
-        legal_moves = [info.get("legal_moves", None)]
-        if legal_moves[0] is None:
+    def _sanitize_moves(lm):
+        if lm is None:
             return None
-        assert len(legal_moves[0]) > 0
+        if torch.is_tensor(lm):
+            if lm.dtype == torch.bool:
+                # Convert boolean mask to list of indices
+                if lm.dim() == 2 and lm.shape[0] == 1:
+                    lm = lm.squeeze(0)
+                # Ensure we are on CPU for .tolist() if it's large, 
+                # but usually it's small if we are calling this in a Python loop.
+                return torch.where(lm)[0].cpu().tolist()
+            else:
+                return lm.cpu().tolist()
+        if isinstance(lm, np.ndarray):
+            return lm.tolist()
+        return lm
+
+    if isinstance(info, list):
+        legal_moves = [_sanitize_moves(i.get("legal_moves", None)) for i in info]
+        for legal_list in legal_moves:
+            if legal_list is not None:
+                assert len(legal_list) > 0, "Legal moves list is empty"
+    else:
+        lm = _sanitize_moves(info.get("legal_moves", None))
+        if lm is None:
+            return None
+        assert len(lm) > 0, "Legal moves list is empty"
+        legal_moves = [lm]
     return legal_moves
 
 

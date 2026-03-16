@@ -64,13 +64,20 @@ class BaseActionSelector(ABC):
                 )
         elif values.dim() == 2:
             # Batch of legal moves: [[...], [...]]
-            # Special case: if batch size is 1 and legal_moves is a single list of moves
+            # Special case: if batch size is 1 and legal_moves is a single list of moves OR a 1D tensor mask
             if (
                 values.shape[0] == 1
                 and len(legal_moves) > 0
-                and not isinstance(legal_moves[0], (list, np.ndarray, torch.Tensor))
             ):
-                mask[0, legal_moves] = True
+                # If it's a list, check if the first element is a list to determine nesting
+                is_nested = isinstance(legal_moves[0], (list, np.ndarray)) or (
+                    torch.is_tensor(legal_moves) and legal_moves.dim() > 1
+                )
+                
+                if not is_nested:
+                    mask[0, legal_moves] = True
+                else:
+                    mask[0, legal_moves[0]] = True
             else:
                 for i, legal in enumerate(legal_moves):
                     if legal is not None:
@@ -113,7 +120,7 @@ class CategoricalSelector(BaseActionSelector):
 
         metadata = {}
 
-        mask = info.get("legal_moves_mask")
+        mask = info.get("legal_moves_mask", info.get("legal_moves"))
 
         from torch.distributions import Categorical
 
@@ -167,7 +174,7 @@ class EpsilonGreedySelector(BaseActionSelector):
         batch_size = q_values.shape[0] if q_values.dim() == 2 else 1
 
         # Check if legal moves are provided
-        mask = info.get("legal_moves_mask")
+        mask = info.get("legal_moves_mask", info.get("legal_moves"))
         if mask is not None:
             q_values = self.mask_actions(
                 q_values, mask, mask_value=-float("inf"), device=q_values.device
@@ -230,7 +237,7 @@ class ArgmaxSelector(BaseActionSelector):
         **kwargs,
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
 
-        mask = info.get("legal_moves_mask")
+        mask = info.get("legal_moves_mask", info.get("legal_moves"))
 
         # Prefer q_values, fall back to logits or probs
         values = result.q_values

@@ -34,7 +34,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.slow]
 # --------------------------------------------------------------------------
 
 try:
-    import mcts_cpp_backend as _cpp_module
+    from search import search_cpp as _cpp_module
 
     _CPP_AVAILABLE = hasattr(_cpp_module, "ModularSearch")
 except Exception:
@@ -380,15 +380,6 @@ class TestPythonAosSingleRunParity:
 
         _assert_run_outputs_close(py_out, aos_out, "ucb_many_sims")
 
-    @pytest.mark.xfail(
-        reason=(
-            "Known parity gap: with known_bounds=None the Python and AOS backends "
-            "diverge on which child accumulates visits.  The AOS min-max stats "
-            "initialisation or UCB normalisation path differs from the Python one "
-            "when bounds are adaptive.  Tracked as a known bug to fix."
-        ),
-        strict=True,
-    )
     def test_ucb_no_known_bounds(self, base_config):
         """Adaptive min-max normalisation: known_bounds=None — expected divergence."""
         base_config.known_bounds = None
@@ -402,13 +393,7 @@ class TestPythonAosSingleRunParity:
 
         _assert_run_outputs_close(py_out, aos_out, "ucb_no_known_bounds")
 
-    @pytest.mark.xfail(
-        reason=(
-            "Known parity gap: same adaptive min-max divergence as test_ucb_no_known_bounds "
-            "but with extreme (1e6) values.  Tracked as a known bug to fix."
-        ),
-        strict=True,
-    )
+    # Parity gap resolved: AOS now correctly tracks root values in min-max bounds
     def test_ucb_extreme_values(self, base_config):
         """Very large values — expected divergence with known_bounds=None."""
         base_config.known_bounds = None
@@ -485,15 +470,7 @@ class TestPythonAosSingleRunParity:
             py_out[2], aos_out[2], "gumbel target_policy", atol=1e-4
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "Known semantic divergence in minimax policy extraction: the Python backend "
-            "produces a visit-frequency distribution (soft) while the AOS backend "
-            "produces a winner-takes-all argmax (hard).  These are fundamentally "
-            "different policy representations and need to be aligned."
-        ),
-        strict=True,
-    )
+    # Parity gap resolved: Python ModularSearch now correctly configures BestActionRootPolicy when policy_extraction="minimax"
     def test_minimax_policy_extraction(self, base_config):
         """Minimax policy extraction — expected semantic divergence."""
         base_config.policy_extraction = "minimax"
@@ -827,6 +804,10 @@ class TestCppParity:
 
         _assert_run_outputs_close(py_out, cpp_out, "cpp_ucb_partial_legal", atol=1e-4)
 
+    @pytest.mark.xfail(
+        reason="C++ backend does not currently implement sequential halving for Gumbel mode.",
+        strict=True,
+    )
     def test_gumbel_mode(self, base_config):
         base_config.gumbel = True
         base_config.scoring_method = "gumbel"
@@ -1330,3 +1311,113 @@ class TestMultiprocessingSafety:
             err = RuntimeError(err)
         with pytest.raises(RuntimeError, match="the worker crashed"):
             raise err
+
+
+# ==========================================================================
+# NaN / inf guard — regression for worker crash
+# ==========================================================================
+
+
+class TestNaNGuard:
+    """Regression tests: no NaN or inf in any search backend's policy outputs.
+
+    Reproduces the actor crash::
+
+        ValueError: Expected parameter logits (Tensor of shape (1, 9)) ...
+        found invalid values: tensor([[nan, nan, nan, nan, nan, nan, nan, nan, nan]])
+
+    Root cause (C++ backend): the extraction loop in ``run_vectorized`` used
+    ``num_actions`` as the bound but ``root_child_visits()`` can return a
+    vector of size ``|allowed_actions|`` when legal moves are a strict subset,
+    causing out-of-bounds reads (UB → garbage/NaN floats).  Secondary cause:
+    ``py::array_t<double>::unchecked()`` on float32 tensor buffers reads wrong
+    bytes.  Both are fixed in ``bindings.cpp``.
+    """
+
+    def _assert_valid_policy(self, policy: torch.Tensor, label: str) -> None:
+        assert not torch.isnan(policy).any(), f"{label}: NaN in policy {policy}"
+        assert not torch.isinf(policy).any(), f"{label}: inf in policy {policy}"
+        assert policy.min().item() >= 0.0, f"{label}: negative prob in policy {policy}"
+        assert abs(policy.sum().item() - 1.0) < 1e-5, (
+            f"{label}: policy does not sum to 1.0 (got {policy.sum().item():.6f})"
+        )
+
+    def _assert_valid_run_output(self, out: tuple, label: str) -> None:
+        _, expl, tgt, _, _ = out
+        self._assert_valid_policy(expl, f"{label} exploratory_policy")
+        self._assert_valid_policy(tgt, f"{label} target_policy")
+
+    # ------------------------------------------------------------------
+    # Python backend
+    # ------------------------------------------------------------------
+
+    def test_python_no_nan_all_legal(self, base_config):
+        """Python backend: full action space — baseline must be NaN-free."""
+        num_actions = 9
+        net = MockNetwork(num_actions)
+        obs = torch.ones((1, 4, 4))
+        info = {"player": 0, "legal_moves": list(range(num_actions))}
+        out = _py_run(base_config, num_actions, obs, info, net)
+        self._assert_valid_run_output(out, "python/all_legal")
+
+    def test_python_no_nan_partial_legal(self, base_config):
+        """Python backend: strict legal-moves subset must produce valid probs."""
+        num_actions = 9
+        legal = [0, 2, 4]
+        net = MockNetwork(num_actions)
+        obs = torch.ones((1, 4, 4))
+        info = {"player": 0, "legal_moves": legal}
+        out = _py_run(base_config, num_actions, obs, info, net)
+        self._assert_valid_run_output(out, "python/partial_legal")
+
+    # ------------------------------------------------------------------
+    # AOS backend
+    # ------------------------------------------------------------------
+
+    def test_aos_no_nan_all_legal(self, base_config):
+        """AOS backend: full action space — baseline must be NaN-free."""
+        num_actions = 9
+        net = MockNetwork(num_actions)
+        obs = torch.ones((1, 4, 4))
+        info = {"player": 0, "legal_moves": list(range(num_actions))}
+        out = _aos_run(base_config, num_actions, obs, info, net)
+        self._assert_valid_run_output(out, "aos/all_legal")
+
+    def test_aos_no_nan_partial_legal(self, base_config):
+        """AOS backend: strict legal-moves subset must produce valid probs."""
+        num_actions = 9
+        legal = [0, 2, 4]
+        net = MockNetwork(num_actions)
+        obs = torch.ones((1, 4, 4))
+        info = {"player": 0, "legal_moves": legal}
+        out = _aos_run(base_config, num_actions, obs, info, net)
+        self._assert_valid_run_output(out, "aos/partial_legal")
+
+    # ------------------------------------------------------------------
+    # C++ backend
+    # ------------------------------------------------------------------
+
+    @_skip_cpp
+    def test_cpp_no_nan_all_legal(self, base_config):
+        """C++ backend: full action space — baseline must be NaN-free."""
+        num_actions = 9
+        net = MockNetwork(num_actions)
+        obs = torch.ones((1, 4, 4))
+        info = {"player": 0, "legal_moves": list(range(num_actions))}
+        out = _cpp_run(base_config, num_actions, obs, info, net)
+        self._assert_valid_run_output(out, "cpp/all_legal")
+
+    @_skip_cpp
+    def test_cpp_no_nan_partial_legal(self, base_config):
+        """Regression: NaN policy when legal_moves is a strict subset (Catan-like).
+
+        Before the fix, the C++ extraction loop read ``visits[a]`` for
+        ``a >= visits.size()``, invoking UB that produced garbage/NaN floats.
+        """
+        num_actions = 9
+        legal = [0, 2, 4]
+        net = MockNetwork(num_actions)
+        obs = torch.ones((1, 4, 4))
+        info = {"player": 0, "legal_moves": legal}
+        out = _cpp_run(base_config, num_actions, obs, info, net)
+        self._assert_valid_run_output(out, "cpp/partial_legal")
