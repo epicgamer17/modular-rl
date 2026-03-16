@@ -30,23 +30,19 @@ class GodModeStepper:
     def __init__(self, **env_kwargs) -> None:
         self.env = catan_env_factory(**env_kwargs)
         self.env.reset()
+        self._pending_resource_corrections = {}
+        self._pending_dev_corrections = {}
 
     def sync_settings(self, settings: dict):
-        """Applies custom colonist.io match rules to Catanatron's engine."""
         if not settings:
             return
-
         game = self.env.unwrapped.game
-
         if "cardDiscardLimit" in settings:
             game.state.discard_limit = int(settings["cardDiscardLimit"])
-            print(f"  [Settings Sync] Set Discard Limit to {game.state.discard_limit}")
-
         if "victoryPointsToWin" in settings:
             vps = int(settings["victoryPointsToWin"])
             game.vps_to_win = vps
             self.env.unwrapped.vps_to_win = vps
-            print(f"  [Settings Sync] Set VPs to Win to {vps}")
 
     def set_board_layout(self, board_config: dict, initial_state: dict = None):
         from offline_data.coordinate_mappings import WEB_TILE_TO_CATAN_COORD
@@ -59,7 +55,6 @@ class GodModeStepper:
             5: "ORE",
             0: None,
         }
-
         game = self.env.unwrapped.game
         desert_coord = None
 
@@ -68,11 +63,9 @@ class GodModeStepper:
             coord = WEB_TILE_TO_CATAN_COORD.get(web_id)
             if coord is None:
                 continue
-
             res_val = tile_info.get("type", 0)
             res = WEB_RES_TO_CATAN.get(res_val)
             num = tile_info.get("diceNumber", 0) or None
-
             tile = game.state.board.map.land_tiles[coord]
             tile.resource = res
             tile.number = num
@@ -80,15 +73,12 @@ class GodModeStepper:
         game.state.board.map.node_production = init_node_production(
             game.state.board.map.adjacent_tiles
         )
-
         for coord, tile in game.state.board.map.land_tiles.items():
             if tile.resource is None:
                 desert_coord = coord
                 break
-
         if desert_coord is not None:
             game.state.board.robber_coordinate = desert_coord
-
         if hasattr(self.env.unwrapped, "viewer"):
             self.env.unwrapped.viewer = None
 
@@ -101,7 +91,6 @@ class GodModeStepper:
             5: "WHEAT",
             6: "ORE",
         }
-
         port_states: dict = map_state.get("portEdgeStates", {})
         board = self.env.unwrapped.game.state.board
 
@@ -118,7 +107,6 @@ class GodModeStepper:
             colonist_ports.append((angle, resource))
 
         colonist_ports.sort(key=lambda x: x[0])
-
         catan_ports = []
         for coord, tile in board.map.tiles.items():
             if type(tile).__name__ == "Port":
@@ -127,7 +115,6 @@ class GodModeStepper:
                 catan_ports.append((angle, tile))
 
         catan_ports.sort(key=lambda x: x[0])
-
         for (_, res), (_, tile) in zip(colonist_ports, catan_ports):
             tile.resource = res
 
@@ -135,41 +122,50 @@ class GodModeStepper:
         board.player_port_resources_cache = {}
 
     def sync_resources(self, player_states_diff: dict, play_order: list):
-        game = self.env.unwrapped.game
-        RES_KEYS = {1: "WOOD", 2: "BRICK", 3: "SHEEP", 4: "WHEAT", 5: "ORE"}
-        DEV_KEYS = {
-            11: "KNIGHT",
-            12: "MONOPOLY",
-            14: "ROAD_BUILDING",
-            15: "YEAR_OF_PLENTY",
-            13: "VICTORY_POINT",
-        }
-
         for p_key, state in player_states_diff.items():
             p_color = int(p_key)
             if p_color not in play_order:
                 continue
             p_idx = play_order.index(p_color)
 
-            # 1. Update Catanatron's strict logic engine state directly
-            if "resources" in state:
-                for web_res_idx, count in state["resources"].items():
-                    res_name = RES_KEYS[int(web_res_idx)]
-                    catan_key = f"P{p_idx}_{res_name}_IN_HAND"
-                    game.state.player_state[catan_key] = count
+            if "resourceCards" in state and "cards" in state["resourceCards"]:
+                cards = state["resourceCards"]["cards"]
+                if cards is not None:
+                    counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+                    for res_enum in cards:
+                        if 1 <= res_enum <= 5:
+                            counts[res_enum] += 1
+                    self._pending_resource_corrections[p_idx] = counts
 
             if "developmentCards" in state:
-                for web_dev_idx, count in state["developmentCards"].items():
-                    dev_name = DEV_KEYS.get(int(web_dev_idx))
-                    if dev_name:
-                        catan_key = f"P{p_idx}_{dev_name}_IN_HAND"
-                        game.state.player_state[catan_key] = count
+                dev_data = state["developmentCards"]
+                if isinstance(dev_data, dict):
+                    counts = {}
+                    if "cards" in dev_data and isinstance(dev_data["cards"], list):
+                        for dev_enum in dev_data["cards"]:
+                            counts[dev_enum] = counts.get(dev_enum, 0) + 1
+                    else:
+                        for web_dev_idx, count in dev_data.items():
+                            if str(web_dev_idx) != "cards":
+                                counts[int(web_dev_idx)] = int(count)
+                    if counts:
+                        self._pending_dev_corrections[p_idx] = counts
 
-        # 2. Refill Bank so it never restricts valid Maritime Trades
-        game.state.resource_freqdeck = [19, 19, 19, 19, 19]
+    def _update_true_bank(self):
+        """Calculates the exact bank state based on the conservation of 19 cards per resource."""
+        game = self.env.unwrapped.game
+        true_bank = [19, 19, 19, 19, 19]
+        num_players = len(game.state.colors)
+        res_names_in_order = ["WOOD", "BRICK", "SHEEP", "WHEAT", "ORE"]
 
-        # 3. MUST dynamically regenerate action cache because we manipulated internal state
-        game.playable_actions = generate_playable_actions(game.state)
+        for i, res_name in enumerate(res_names_in_order):
+            total_in_hands = sum(
+                game.state.player_state.get(f"P{p}_{res_name}_IN_HAND", 0)
+                for p in range(num_players)
+            )
+            true_bank[i] = max(0, 19 - total_in_hands)
+
+        game.state.resource_freqdeck = true_bank
 
     def step_and_override(
         self,
@@ -185,16 +181,16 @@ class GodModeStepper:
                 deck.remove(forced_dev_card)
                 deck.append(forced_dev_card)
 
-        # ==========================================
-        # DIAGNOSTIC INTERCEPTOR
-        # ==========================================
+        # Ensure the bank is strictly accurate before generating valid actions
+        self._update_true_bank()
+        game.playable_actions = generate_playable_actions(game.state)
+
         valid_actions = self.env.unwrapped._get_valid_action_indices()
 
         if action_idx not in valid_actions:
             from custom_gym_envs.envs.catan import ACTIONS_ARRAY
 
             action_type, value = ACTIONS_ARRAY[action_idx]
-
             print(f"\n{'='*70}")
             print(f"🚨 DESYNC DETECTED: ACTION REJECTED BY CATANATRON 🚨")
             print(f"{'='*70}")
@@ -204,7 +200,6 @@ class GodModeStepper:
             print(f"PettingZoo Expected Agent      : {self.env.agent_selection}")
             print(f"Catanatron Internal Turn Color : {game.state.current_color()}")
             print(f"\n--- Catanatron Game Phase ---")
-
             stages = getattr(game.state, "turn_stages", [])
             print(
                 f"Turn Stages Stack   : {[stage.name if hasattr(stage, 'name') else str(stage) for stage in stages]}"
@@ -213,18 +208,15 @@ class GodModeStepper:
                 f"Game Num Turns      : {getattr(game.state, 'num_turns', 'Unknown')}"
             )
             print(f"Discard Limit       : {game.state.discard_limit}")
-
+            print(f"Bank                : {game.state.resource_freqdeck}")
             print(f"\n--- Valid Actions Allowed By Catanatron Right Now ---")
             for va in valid_actions:
                 v_type, v_val = ACTIONS_ARRAY[va]
                 print(f"  - [{va}] {v_type.name} {v_val}")
             print(f"{'='*70}\n")
-
             raise ValueError(
                 "Stopping execution to review the diagnostic report above."
             )
-
-        # ==========================================
 
         if forced_roll is not None:
             dice = _dice_pair(forced_roll)
@@ -236,6 +228,44 @@ class GodModeStepper:
 
         obs_dict, _rew, _term, _trunc, _info = self.env.last()
         return obs_dict["observation"]
+
+    def flush_corrections(self):
+        """Applies all pending JSON state corrections.
+        MUST be called at the very end of an event, AFTER all actions for that event
+        have been stepped through, so we don't overwrite intermediate hands."""
+        game = self.env.unwrapped.game
+        RES_KEYS = {1: "WOOD", 2: "BRICK", 3: "SHEEP", 4: "WHEAT", 5: "ORE"}
+        DEV_KEYS = {
+            11: "KNIGHT",
+            12: "MONOPOLY",
+            14: "ROAD_BUILDING",
+            15: "YEAR_OF_PLENTY",
+            13: "VICTORY_POINT",
+        }
+        needs_update = False
+
+        if self._pending_resource_corrections:
+            for p_idx, counts in self._pending_resource_corrections.items():
+                for web_res_idx, count in counts.items():
+                    res_name = RES_KEYS[web_res_idx]
+                    catan_key = f"P{p_idx}_{res_name}_IN_HAND"
+                    game.state.player_state[catan_key] = count
+            self._pending_resource_corrections.clear()
+            needs_update = True
+
+        if self._pending_dev_corrections:
+            for p_idx, counts in self._pending_dev_corrections.items():
+                for web_dev_idx, count in counts.items():
+                    dev_name = DEV_KEYS.get(web_dev_idx)
+                    if dev_name:
+                        catan_key = f"P{p_idx}_{dev_name}_IN_HAND"
+                        game.state.player_state[catan_key] = count
+            self._pending_dev_corrections.clear()
+            needs_update = True
+
+        if needs_update:
+            self._update_true_bank()
+            game.playable_actions = generate_playable_actions(game.state)
 
 
 if __name__ == "__main__":

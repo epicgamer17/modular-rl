@@ -95,21 +95,24 @@ def generate_video(
             stepper.sync_resources(sc["playerStates"], play_order)
 
         result = parse_step(event, acting_player)
-        if result is None:
-            continue
 
-        for action_idx, forced_roll, forced_dev_card in result:
-            if max_steps is not None and step_count >= max_steps:
-                done = True
-                break
+        # Wrap action execution so we never `continue` early
+        if result is not None:
+            for action_idx, forced_roll, forced_dev_card in result:
+                if max_steps is not None and step_count >= max_steps:
+                    done = True
+                    break
 
-            stepper.step_and_override(action_idx, forced_roll, forced_dev_card)
+                stepper.step_and_override(action_idx, forced_roll, forced_dev_card)
 
-            step_count += 1
+                step_count += 1
 
-            frame = stepper.env.render()
-            if isinstance(frame, np.ndarray):
-                writer.append_data(_ensure_hwc(frame))
+                frame = stepper.env.render()
+                if isinstance(frame, np.ndarray):
+                    writer.append_data(_ensure_hwc(frame))
+
+        # FLUSH CORRECTIONS at the very end of the event loop!
+        stepper.flush_corrections()
 
     writer.close()
     print(f"Wrote {step_count} frames → {output_mp4}")

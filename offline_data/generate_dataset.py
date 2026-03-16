@@ -370,6 +370,10 @@ def verify_trajectory(json_path: str, max_steps: int = 9999) -> None:
         # Get pre-action obs from tracker (BEFORE update)
         obs_b_pre = tracker.to_tensor(acting_player)
 
+        # Sync resources to Path A pending cache
+        if "playerStates" in sc:
+            stepper.sync_resources(sc["playerStates"], play_order)
+
         result = parse_step(event, acting_player)
 
         # Update tracker with this event's state change
@@ -380,57 +384,56 @@ def verify_trajectory(json_path: str, max_steps: int = 9999) -> None:
         if "currentTurnPlayerColor" in cs:
             current_turn_color = cs["currentTurnPlayerColor"]
 
-        if result is None:
-            # No parseable action: still step path A through any auto-play ticks
-            # (e.g. actions the env handles automatically).  Don't count as a step.
-            continue
-
-        # Stop comparing once the initial placement phase ends (first dice roll).
-        if not tracker._initial_phase:
-            remaining = len(events) - ev_idx - 1
-            print(
-                f"\nInitial placement phase complete at ev{ev_idx}. "
-                f"Stopping comparison ({remaining} events remaining).\n"
-                f"Post-placement comparison is unsound: catanatron uses a random\n"
-                f"board so paid actions become invalid after resource production diverges."
-            )
-            break
-
-        for action_idx, forced_roll, forced_dev_card in result:
-            # Path A: step env, get post-action obs.
-            obs_a_full = stepper.step_and_override(
-                action_idx, forced_roll, forced_dev_card
-            )
-            obs_a = obs_a_full["board"]
-
-            # Use the env's current agent as the perspective reference for Path B.
-            # This handles batched events (e.g. BUILD_ROAD + END_TURN) where we
-            # only step Path A for the first action.
-            env_agent = stepper.env.agent_selection
-            env_agent_idx = int(env_agent.split("_")[-1])
-            env_next_colonist = _color_idx_to_colonist[env_agent_idx]
-            obs_b = tracker.to_tensor(env_next_colonist)
-
-            try:
-                np.testing.assert_allclose(
-                    obs_a[dynamic_ch_indices],
-                    obs_b[dynamic_ch_indices],
-                    atol=1e-5,
-                    rtol=0,
-                )
+        if result is not None:
+            # Stop comparing once the initial placement phase ends (first dice roll).
+            if not tracker._initial_phase:
+                remaining = len(events) - ev_idx - 1
                 print(
-                    f"{step:<5} ev{ev_idx:<4} p{acting_player:<7} {action_idx:<12} OK"
+                    f"\nInitial placement phase complete at ev{ev_idx}. "
+                    f"Stopping comparison ({remaining} events remaining).\n"
+                    f"Post-placement comparison is unsound: catanatron uses a random\n"
+                    f"board so paid actions become invalid after resource production diverges."
                 )
-            except AssertionError:
-                print(
-                    f"{step:<5} ev{ev_idx:<4} p{acting_player:<7} {action_idx:<12} FAIL"
-                )
-                _report_mismatch(obs_a, obs_b, step)
-                raise
-
-            step += 1
-            if step >= max_steps:
                 break
+
+            for action_idx, forced_roll, forced_dev_card in result:
+                # Path A: step env, get post-action obs.
+                obs_a_full = stepper.step_and_override(
+                    action_idx, forced_roll, forced_dev_card
+                )
+                obs_a = obs_a_full["board"]
+
+                # Use the env's current agent as the perspective reference for Path B.
+                # This handles batched events (e.g. BUILD_ROAD + END_TURN) where we
+                # only step Path A for the first action.
+                env_agent = stepper.env.agent_selection
+                env_agent_idx = int(env_agent.split("_")[-1])
+                env_next_colonist = _color_idx_to_colonist[env_agent_idx]
+                obs_b = tracker.to_tensor(env_next_colonist)
+
+                try:
+                    np.testing.assert_allclose(
+                        obs_a[dynamic_ch_indices],
+                        obs_b[dynamic_ch_indices],
+                        atol=1e-5,
+                        rtol=0,
+                    )
+                    print(
+                        f"{step:<5} ev{ev_idx:<4} p{acting_player:<7} {action_idx:<12} OK"
+                    )
+                except AssertionError:
+                    print(
+                        f"{step:<5} ev{ev_idx:<4} p{acting_player:<7} {action_idx:<12} FAIL"
+                    )
+                    _report_mismatch(obs_a, obs_b, step)
+                    raise
+
+                step += 1
+                if step >= max_steps:
+                    break
+
+        # FLUSH CORRECTIONS at the end of the event loop
+        stepper.flush_corrections()
 
     print(
         f"\nVerification complete: {step} initial-placement steps checked — ALL MATCH"
