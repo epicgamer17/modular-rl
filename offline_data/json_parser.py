@@ -41,7 +41,7 @@ sys.path.insert(
 
 from catanatron.models.enums import ActionType as AT
 from custom_gym_envs.envs.catan import ACTIONS_ARRAY
-from offline_data.coordinate_mappings import (
+from coordinate_mappings import (
     WEB_CORNER_TO_CATAN_NODE,
     WEB_EDGE_TO_CATAN_EDGE,
     WEB_TILE_TO_CATAN_COORD,
@@ -243,9 +243,7 @@ def parse_step(
                         and cdata.get("buildingType") == 1
                     ):
                         catan_node = WEB_CORNER_TO_CATAN_NODE[int(cid_str)]
-                        idx = ACTIONS_ARRAY.index(
-                            (AT.BUILD_SETTLEMENT, catan_node)
-                        )
+                        idx = ACTIONS_ARRAY.index((AT.BUILD_SETTLEMENT, catan_node))
                         return [(idx, None, None)]
 
             elif piece_enum in (1, 3):  # City (pieceEnum 1=city, 3=city+VP)
@@ -255,9 +253,7 @@ def parse_step(
                         and cdata.get("buildingType") == 2
                     ):
                         catan_node = WEB_CORNER_TO_CATAN_NODE[int(cid_str)]
-                        idx = ACTIONS_ARRAY.index(
-                            (AT.BUILD_CITY, catan_node)
-                        )
+                        idx = ACTIONS_ARRAY.index((AT.BUILD_CITY, catan_node))
                         return [(idx, None, None)]
 
         # ------------------------------------------------- BUY_DEVELOPMENT_CARD
@@ -365,7 +361,9 @@ if __name__ == "__main__":
     parsed_count = 0
     TARGET = 30
 
-    print(f"{'#':<4}  {'Event':<6}  {'gameLogState (text types)':<55}  {'Parsed tuple'}")
+    print(
+        f"{'#':<4}  {'Event':<6}  {'gameLogState (text types)':<55}  {'Parsed tuple'}"
+    )
     print("-" * 110)
 
     for ev_idx, event in enumerate(events):

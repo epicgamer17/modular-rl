@@ -17,11 +17,13 @@ import sys
 from typing import Optional
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 
+sys.path.insert(0, os.path.dirname(__file__))  # bare imports: json_parser, path_a_simulator
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "custom_gym_envs_pkg"))
 sys.path.insert(
     0,
@@ -33,43 +35,43 @@ from catanatron.gym.board_tensor_features import get_axial_node_edge_maps
 from catanatron.models.enums import CITY, RESOURCES, SETTLEMENT
 from catanatron.models.player import Color
 
-from offline_data.json_parser import _texts_sorted, parse_step
-from offline_data.path_a_simulator import GodModeStepper
+from json_parser import _texts_sorted, parse_step
+from path_a_simulator import GodModeStepper
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 _RESOURCE_FACE_COLORS: dict[Optional[str], str] = {
-    "WOOD":  "#3a7d2c",
+    "WOOD": "#3a7d2c",
     "BRICK": "#b84c22",
     "SHEEP": "#8bc34a",
     "WHEAT": "#f5c518",
-    "ORE":   "#7b8c9e",
-    None:    "#d4b483",  # desert
+    "ORE": "#7b8c9e",
+    None: "#d4b483",  # desert
 }
 
 _RESOURCE_LABELS: dict[Optional[str], str] = {
-    "WOOD":  "W",
+    "WOOD": "W",
     "BRICK": "Br",
     "SHEEP": "Sh",
     "WHEAT": "Wh",
-    "ORE":   "Or",
-    None:    "Des",
+    "ORE": "Or",
+    None: "Des",
 }
 
 _PLAYER_MCOLORS: dict[Color, str] = {
-    Color.RED:    "red",
-    Color.BLUE:   "dodgerblue",
+    Color.RED: "red",
+    Color.BLUE: "dodgerblue",
     Color.ORANGE: "darkorange",
-    Color.WHITE:  "white",
+    Color.WHITE: "white",
 }
 
 _PLAYER_LABELS: dict[Color, str] = {
-    Color.RED:    "RED",
-    Color.BLUE:   "BLUE",
+    Color.RED: "RED",
+    Color.BLUE: "BLUE",
     Color.ORANGE: "ORANGE",
-    Color.WHITE:  "WHITE",
+    Color.WHITE: "WHITE",
 }
 
 # Cached axial maps (NodeId → (col, row), edge-pair → (col, row))
@@ -87,6 +89,7 @@ def _get_axial_maps() -> tuple[dict, dict]:
 # ---------------------------------------------------------------------------
 # Board drawing
 # ---------------------------------------------------------------------------
+
 
 def draw_board(
     state,
@@ -146,19 +149,46 @@ def draw_board(
 
         # Resource abbreviation
         label = _RESOURCE_LABELS.get(resource, "?")
-        ax.text(cx, cy - 0.45, label, ha="center", va="center",
-                fontsize=5, fontweight="bold", color="black", zorder=1)
+        ax.text(
+            cx,
+            cy - 0.45,
+            label,
+            ha="center",
+            va="center",
+            fontsize=5,
+            fontweight="bold",
+            color="black",
+            zorder=1,
+        )
 
         # Dice number (red for 6 and 8)
         if tile.number is not None:
             num_color = "darkred" if tile.number in (6, 8) else "black"
-            ax.text(cx, cy + 0.45, str(tile.number), ha="center", va="center",
-                    fontsize=6, color=num_color, fontweight="bold", zorder=1)
+            ax.text(
+                cx,
+                cy + 0.45,
+                str(tile.number),
+                ha="center",
+                va="center",
+                fontsize=6,
+                color=num_color,
+                fontweight="bold",
+                zorder=1,
+            )
 
         # Robber marker
         if board.robber_coordinate == coord:
-            ax.text(cx, cy, "X", ha="center", va="center",
-                    fontsize=9, color="red", fontweight="bold", zorder=2)
+            ax.text(
+                cx,
+                cy,
+                "X",
+                ha="center",
+                va="center",
+                fontsize=9,
+                color="red",
+                fontweight="bold",
+                zorder=2,
+            )
 
     # ------------------------------------------------------------------
     # Roads
@@ -179,8 +209,12 @@ def draw_board(
         mcolor = _PLAYER_MCOLORS.get(color, "gray")
         road_edge = "black" if mcolor == "white" else mcolor
         ax.plot(
-            [ax_pos, bx_pos], [ay_pos, by_pos],
-            color=road_edge, linewidth=2.5, solid_capstyle="round", zorder=2,
+            [ax_pos, bx_pos],
+            [ay_pos, by_pos],
+            color=road_edge,
+            linewidth=2.5,
+            solid_capstyle="round",
+            zorder=2,
         )
 
     # ------------------------------------------------------------------
@@ -195,15 +229,24 @@ def draw_board(
 
         if building_type == SETTLEMENT:
             circle = mpatches.Circle(
-                (x, y), radius=0.38,
-                facecolor=mcolor, edgecolor=ec, linewidth=0.8, zorder=3,
+                (x, y),
+                radius=0.38,
+                facecolor=mcolor,
+                edgecolor=ec,
+                linewidth=0.8,
+                zorder=3,
             )
             ax.add_patch(circle)
         else:  # CITY
             rect = mpatches.FancyBboxPatch(
-                (x - 0.4, y - 0.4), 0.8, 0.8,
+                (x - 0.4, y - 0.4),
+                0.8,
+                0.8,
                 boxstyle="square,pad=0",
-                facecolor=mcolor, edgecolor=ec, linewidth=0.8, zorder=3,
+                facecolor=mcolor,
+                edgecolor=ec,
+                linewidth=0.8,
+                zorder=3,
             )
             ax.add_patch(rect)
 
@@ -223,20 +266,28 @@ def draw_board(
         if color not in state.color_to_index:
             continue
         idx = state.color_to_index[color]
-        total = int(sum(state.player_state.get(f"P{idx}_{r}_IN_HAND", 0) for r in RESOURCES))
+        total = int(
+            sum(state.player_state.get(f"P{idx}_{r}_IN_HAND", 0) for r in RESOURCES)
+        )
         vp = int(state.player_state.get(f"P{idx}_ACTUAL_VICTORY_POINTS", 0))
         parts.append(f"{_PLAYER_LABELS[color]}:{total}res {vp}vp")
 
     ax.text(
-        11, 12.5, "   ".join(parts),
-        ha="center", va="bottom", fontsize=5,
-        transform=ax.transData, zorder=4,
+        11,
+        12.5,
+        "   ".join(parts),
+        ha="center",
+        va="bottom",
+        fontsize=5,
+        transform=ax.transData,
+        zorder=4,
     )
 
 
 # ---------------------------------------------------------------------------
 # Video generation
 # ---------------------------------------------------------------------------
+
 
 def generate_video(
     json_path: str,
@@ -340,9 +391,9 @@ def generate_video(
 def _fig_to_rgb(fig: plt.Figure) -> np.ndarray:
     """Render a matplotlib figure to an HxWx3 uint8 numpy array."""
     fig.canvas.draw()
-    buf = fig.canvas.tostring_rgb()
+    buf = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
     w, h = fig.canvas.get_width_height()
-    return np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 3)
+    return buf.reshape(h, w, 4)[:, :, :3].copy()
 
 
 def _action_label(

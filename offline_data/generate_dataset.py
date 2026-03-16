@@ -94,15 +94,16 @@ from typing import Optional
 
 import numpy as np
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "custom_gym_envs_pkg"))
 sys.path.insert(
     0,
     "/Users/jonathanlamontange-kratz/Documents/catanatron-master/catanatron",
 )
 
-from offline_data.json_parser import _texts_sorted, parse_step
-from offline_data.path_a_simulator import GodModeStepper
-from offline_data.path_b_translator import JsonStateTracker
+from json_parser import _texts_sorted, parse_step
+from path_a_simulator import GodModeStepper
+from path_b_translator import JsonStateTracker
 
 # ---------------------------------------------------------------------------
 # Channel names (57 for n=2)
@@ -282,7 +283,7 @@ def _report_mismatch(obs_a: np.ndarray, obs_b: np.ndarray, step: int) -> None:
 # Verified channels: 0–5 (buildings), 29 (validity mask), 41–44 (game phase),
 #                    55–56 (road distance after initial build phase fix).
 _BOARD_DEPENDENT_CHANNELS = (
-    list(range(6, 29))   # 6–28: tiles, robber, ports
+    list(range(6, 29))  # 6–28: tiles, robber, ports
     + list(range(30, 41))  # 30–40: last roll (catanatron never sets state.last_roll)
     + list(range(45, 55))  # 45–54: bank state
 )
@@ -350,7 +351,9 @@ def verify_trajectory(json_path: str, max_steps: int = 9999) -> None:
 
     print(f"Verifying: {Path(json_path).name}  ({len(events)} events)")
     print(f"Board tiles from initial state: {len(board_config)}/19")
-    print(f"Comparing {dynamic_mask.sum()} channels: buildings(0–5), mask(29), phase(41–44), road(55–56)")
+    print(
+        f"Comparing {dynamic_mask.sum()} channels: buildings(0–5), mask(29), phase(41–44), road(55–56)"
+    )
     print(f"\n{'step':<5} {'ev':<6} {'actor':<8} {'action_idx':<12} status")
     print("-" * 55)
 
@@ -395,7 +398,9 @@ def verify_trajectory(json_path: str, max_steps: int = 9999) -> None:
 
         for action_idx, forced_roll, forced_dev_card in result:
             # Path A: step env, get post-action obs.
-            obs_a_full = stepper.step_and_override(action_idx, forced_roll, forced_dev_card)
+            obs_a_full = stepper.step_and_override(
+                action_idx, forced_roll, forced_dev_card
+            )
             obs_a = obs_a_full["board"]
 
             # Use the env's current agent as the perspective reference for Path B.
@@ -413,9 +418,13 @@ def verify_trajectory(json_path: str, max_steps: int = 9999) -> None:
                     atol=1e-5,
                     rtol=0,
                 )
-                print(f"{step:<5} ev{ev_idx:<4} p{acting_player:<7} {action_idx:<12} OK")
+                print(
+                    f"{step:<5} ev{ev_idx:<4} p{acting_player:<7} {action_idx:<12} OK"
+                )
             except AssertionError:
-                print(f"{step:<5} ev{ev_idx:<4} p{acting_player:<7} {action_idx:<12} FAIL")
+                print(
+                    f"{step:<5} ev{ev_idx:<4} p{acting_player:<7} {action_idx:<12} FAIL"
+                )
                 _report_mismatch(obs_a, obs_b, step)
                 raise
 
@@ -423,7 +432,9 @@ def verify_trajectory(json_path: str, max_steps: int = 9999) -> None:
             if step >= max_steps:
                 break
 
-    print(f"\nVerification complete: {step} initial-placement steps checked — ALL MATCH")
+    print(
+        f"\nVerification complete: {step} initial-placement steps checked — ALL MATCH"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -502,9 +513,9 @@ def _process_single_replay(
 
     T = len(obs_list)
     observations = np.stack(obs_list, axis=0).astype(np.float32)  # (T, 57, 22, 14)
-    actions = np.array(act_list, dtype=np.int32)                  # (T,)
-    rewards = np.zeros(T, dtype=np.float32)                        # (T,)
-    dones = np.zeros(T, dtype=bool)                               # (T,)
+    actions = np.array(act_list, dtype=np.int32)  # (T,)
+    rewards = np.zeros(T, dtype=np.float32)  # (T,)
+    dones = np.zeros(T, dtype=bool)  # (T,)
 
     # Terminal step: award +1 to the winner, -1 to everyone else.
     dones[-1] = True

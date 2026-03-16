@@ -52,7 +52,7 @@ from catanatron.gym.board_tensor_features import (
     AXIAL_HEIGHT,
 )
 
-from offline_data.coordinate_mappings import (
+from coordinate_mappings import (
     WEB_CORNER_TO_CATAN_NODE,
     WEB_EDGE_TO_CATAN_EDGE,
     WEB_TILE_TO_CATAN_COORD,
@@ -82,7 +82,7 @@ _RES_CH[None] = 5  # desert → channel offset 5
 
 MAX_BANK = 19
 MAX_ROAD = 15
-W = AXIAL_WIDTH * 2   # 22
+W = AXIAL_WIDTH * 2  # 22
 H = AXIAL_HEIGHT * 2  # 14
 
 
@@ -230,7 +230,9 @@ class JsonStateTracker:
             new_settlement_count = sum(
                 1 for _, btype in self.node_buildings.values() if btype == 1
             )
-            self._total_settlements_placed += new_settlement_count - prev_settlement_count
+            self._total_settlements_placed += (
+                new_settlement_count - prev_settlement_count
+            )
             if self._total_settlements_placed >= 2 * self.n:
                 self._initial_phase = False
 
@@ -368,9 +370,9 @@ class JsonStateTracker:
         # 1. Player building planes (3*n channels)                           #
         # ------------------------------------------------------------------ #
         for rel_i, colonist_color in ordered:
-            s_ch = 3 * rel_i          # settlement
-            c_ch = 3 * rel_i + 1      # city
-            r_ch = 3 * rel_i + 2      # road
+            s_ch = 3 * rel_i  # settlement
+            c_ch = 3 * rel_i + 1  # city
+            r_ch = 3 * rel_i + 2  # road
 
             for node_id, (owner, btype) in self.node_buildings.items():
                 if owner != colonist_color:
@@ -540,8 +542,7 @@ if __name__ == "__main__":
     TARGET = 30
 
     print(
-        f"{'#':<4}  {'ev':<5}  {'current_player':<16}  "
-        f"{'obs_shape':<16}  obs_sum"
+        f"{'#':<4}  {'ev':<5}  {'current_player':<16}  " f"{'obs_shape':<16}  obs_sum"
     )
     print("-" * 75)
 

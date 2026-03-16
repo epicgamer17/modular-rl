@@ -134,9 +134,12 @@ class ValuePrefixRewardHead(RewardHead):
         # Final projection: Predicted Cumulative Reward (Value Prefix)
         logits = self.output_layer(output)
         expected_cumulative = self.strategy.to_expected_value(logits)
+        # Ensure (B, 1) shape for consistent accumulation with parent_cumulative
+        if expected_cumulative.dim() == 1:
+            expected_cumulative = expected_cumulative.unsqueeze(-1)
 
-        # GET INSTANT REWARD: subtract (potentially reset) parent cumulative
-        instant_reward = expected_cumulative - effective_parent_cumulative
+        # GET INSTANT REWARD: subtract (potentially reset) parent cumulative → (B,)
+        instant_reward = (expected_cumulative - effective_parent_cumulative).squeeze(-1)
 
         # New state: Preserve all existing keys and update internal ones
         new_state = state.copy()
