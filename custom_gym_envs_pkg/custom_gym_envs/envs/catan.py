@@ -539,7 +539,30 @@ class CatanAECEnv(AECEnv):
             return
 
         while True:
-            winning_color = self.game.winning_color()
+            # --- TOP OF LOOP WIN CHECK ---
+            winning_color = None
+            if self.bandit_mode:
+                current_color = self.game.state.current_color()
+                if (
+                    current_color
+                    and player_num_resource_cards(self.game.state, current_color)
+                    >= self.vps_to_win
+                ):
+                    winning_color = current_color
+            else:
+                winning_color = self.game.winning_color()
+                if winning_color is None:
+                    for color in self.game.state.colors:
+                        if (
+                            get_actual_victory_points(self.game.state, color)
+                            >= self.vps_to_win
+                        ):
+                            winning_color = color
+                            self.game.state.is_game_over = True
+                            self.game.playable_actions = []
+                            break
+            # -----------------------------
+
             if winning_color is not None:
                 break
 
@@ -550,7 +573,30 @@ class CatanAECEnv(AECEnv):
             sole_action = legal_moves[0]
             self.game.execute(sole_action)
 
-            winning_color = self.game.winning_color()
+            # --- POST-ACTION WIN CHECK ---
+            winning_color = None
+            if self.bandit_mode:
+                current_color = self.game.state.current_color()
+                if (
+                    current_color
+                    and player_num_resource_cards(self.game.state, current_color)
+                    >= self.vps_to_win
+                ):
+                    winning_color = current_color
+            else:
+                winning_color = self.game.winning_color()
+                if winning_color is None:
+                    for color in self.game.state.colors:
+                        if (
+                            get_actual_victory_points(self.game.state, color)
+                            >= self.vps_to_win
+                        ):
+                            winning_color = color
+                            self.game.state.is_game_over = True
+                            self.game.playable_actions = []
+                            break
+            # -----------------------------
+
             is_terminated = winning_color is not None
             current_agent = (
                 self.agent_map[self.game.state.current_color()]
@@ -668,14 +714,24 @@ class CatanAECEnv(AECEnv):
             # We check the current player's resource count
             current_color = self.game.state.current_color()
             if current_color:
-                # Note: You might need to import player_num_resource_cards or access it via state
-                # Assuming player_num_resource_cards is available as imported or via helper
                 num_cards = player_num_resource_cards(self.game.state, current_color)
                 if num_cards >= self.vps_to_win:
                     winning_color = current_color
         else:
             # Standard Mode: Victory Points (handled by catanatron's game logic)
             winning_color = self.game.winning_color()
+
+            # FORCEFUL OVERRIDE: Catch instantaneous wins mid-action (e.g., Knight -> Largest Army)
+            if winning_color is None:
+                for color in self.game.state.colors:
+                    actual_vps = get_actual_victory_points(self.game.state, color)
+                    if actual_vps >= self.vps_to_win:
+                        winning_color = color
+                        # Forcefully lock Catanatron's state
+                        self.game.state.is_game_over = True
+                        # Clear out the action stack to prevent PettingZoo from seeing ghost actions
+                        self.game.playable_actions = []
+                        break
         # ---------------------------
 
         is_terminated = winning_color is not None

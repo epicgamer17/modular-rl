@@ -26,10 +26,11 @@ _RESOURCE_MAP: dict[int, str] = {
     5: "ORE",
 }
 
+# FIXED: 12 is Victory Point, 13 is Monopoly
 _DEVCARD_MAP: dict[int, str] = {
     11: "KNIGHT",
-    12: "MONOPOLY",
-    13: "VICTORY_POINT",
+    12: "VICTORY_POINT",
+    13: "MONOPOLY",
     14: "ROAD_BUILDING",
     15: "YEAR_OF_PLENTY",
 }
@@ -40,12 +41,15 @@ _DEVCARD_MAP: dict[int, str] = {
 _known_roads = set()
 _known_settlements = set()
 _known_cities = set()
+_game_over_seen = False
 
 
 def reset_parser_state():
+    global _game_over_seen
     _known_roads.clear()
     _known_settlements.clear()
     _known_cities.clear()
+    _game_over_seen = False
 
 
 # ---------------------------------------------------------------------------
@@ -128,9 +132,16 @@ def _build_trade_tuples(res: str, n: int, recv: str) -> list[tuple]:
 def parse_step(
     json_event: dict, current_player_color: int
 ) -> Optional[List[ActionTuple]]:
+    global _game_over_seen
+
     sc = json_event.get("stateChange", {})
     gls = sc.get("gameLogState", {})
     texts = _texts_sorted(gls)
+
+    # Check for game over (type 45) so we can swallow post-game actions
+    for _from_color, text in texts:
+        if text.get("type") == 45:
+            _game_over_seen = True
 
     for _from_color, text in texts:
         ttype = text.get("type")
@@ -236,6 +247,8 @@ def parse_step(
             return result if result else None
 
         if ttype == 44:
+            if _game_over_seen:
+                continue  # Skip END_TURN if the game is already over
             idx = ACTIONS_ARRAY.index((AT.END_TURN, None))
             return [(idx, None, None)]
 

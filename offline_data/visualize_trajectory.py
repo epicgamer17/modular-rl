@@ -96,23 +96,41 @@ def generate_video(
 
         result = parse_step(event, acting_player)
 
-        # Wrap action execution so we never `continue` early
         if result is not None:
-            for action_idx, forced_roll, forced_dev_card in result:
+            for i, (action_idx, forced_roll, forced_dev_card) in enumerate(result):
                 if max_steps is not None and step_count >= max_steps:
                     done = True
                     break
 
                 stepper.step_and_override(action_idx, forced_roll, forced_dev_card)
 
+                # FLUSH IMMEDIATELY IF LAST ACTION IN BATCH BEFORE RENDERING
+                if i == len(result) - 1:
+                    stepper.flush_corrections()
+
                 step_count += 1
 
+                # Render AFTER the flush so the video captures the perfectly synced state
                 frame = stepper.env.render()
                 if isinstance(frame, np.ndarray):
                     writer.append_data(_ensure_hwc(frame))
+        else:
+            # Even if there were no actions, flush passive resource gains!
+            stepper.flush_corrections()
 
-        # FLUSH CORRECTIONS at the very end of the event loop!
-        stepper.flush_corrections()
+    # --- ADD THIS BLOCK AFTER THE LOOP ---
+    # Flush any final terminal state corrections (like the game-over VP reveal)
+    stepper.flush_corrections()
+
+    # Render the absolute final terminal state
+    final_frame = stepper.env.render()
+    if isinstance(final_frame, np.ndarray):
+        hwc_final = _ensure_hwc(final_frame)
+        # Duplicate the final frame to "pause" the video at the end for 3 seconds
+        pause_frames = fps * 3
+        for _ in range(pause_frames):
+            writer.append_data(hwc_final)
+    # -------------------------------------
 
     writer.close()
     print(f"Wrote {step_count} frames → {output_mp4}")

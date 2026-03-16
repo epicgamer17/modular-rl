@@ -10,7 +10,10 @@
       "Read(//Users/jonathanlamontange-kratz/Documents/catanatron-master/**)",
       "Bash(git show*)",
       "Bash(git diff*)",
-      "Bash(git log*)"
+      "Bash(git log*)",
+      "Bash(grep*)",
+      "Bash(find*)",
+      "Bash(ls*)",
     ]
   }
 }

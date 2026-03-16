@@ -17,6 +17,7 @@ sys.path.insert(
 from custom_gym_envs.envs.catan import env as catan_env_factory
 from catanatron.models.map import init_node_production, init_port_nodes_cache
 from catanatron.models.actions import generate_playable_actions
+from catanatron.models.enums import SETTLEMENT, CITY
 
 
 def _dice_pair(forced_roll: int) -> tuple[int, int]:
@@ -167,6 +168,55 @@ class GodModeStepper:
 
         game.state.resource_freqdeck = true_bank
 
+    def _recount_vps(self):
+        """Forces Catanatron's VP counters to perfectly match the ground-truth state."""
+        game = self.env.unwrapped.game
+        for color in game.state.colors:
+            key = f"P{game.state.color_to_index[color]}"
+
+            settlements = len(game.state.buildings_by_color[color][SETTLEMENT])
+            cities = len(game.state.buildings_by_color[color][CITY])
+
+            # Safely check both potential Catanatron naming conventions for Road and Army
+            has_road = (
+                2
+                if (
+                    game.state.player_state.get(f"{key}_HAS_ROAD", False)
+                    or game.state.player_state.get(f"{key}_HAS_LONGEST_ROAD", False)
+                )
+                else 0
+            )
+            has_army = (
+                2
+                if (
+                    game.state.player_state.get(f"{key}_HAS_ARMY", False)
+                    or game.state.player_state.get(f"{key}_HAS_LARGEST_ARMY", False)
+                )
+                else 0
+            )
+
+            # Dev cards might be in hand, just bought this turn, or played. Check all three!
+            vp_cards = (
+                game.state.player_state.get(f"{key}_VICTORY_POINT_IN_HAND", 0)
+                + game.state.player_state.get(
+                    f"{key}_VICTORY_POINT_BOUGHT_THIS_TURN", 0
+                )
+                + game.state.player_state.get(f"{key}_VICTORY_POINT_PLAYED", 0)
+            )
+
+            visible_vps = settlements + (cities * 2) + has_road + has_army
+            actual_vps = visible_vps + vp_cards
+
+            game.state.player_state[f"{key}_VICTORY_POINTS"] = visible_vps
+            game.state.player_state[f"{key}_ACTUAL_VICTORY_POINTS"] = actual_vps
+
+            # Expose VP cards to the video renderer if the player has won
+            # FORCE the environment to know the game is over if target VPs reached
+            is_game_over = getattr(game.state, "is_game_over", False)
+            if actual_vps >= getattr(game, "vps_to_win", 10) or is_game_over:
+                game.state.player_state[f"{key}_VICTORY_POINTS"] = actual_vps
+                game.state.is_game_over = True
+
     def step_and_override(
         self,
         action_idx: int,
@@ -175,21 +225,56 @@ class GodModeStepper:
     ) -> np.ndarray:
         game = self.env.unwrapped.game
 
+        # ==========================================
+        # DEV CARD INFERENCE
+        # ==========================================
+        from custom_gym_envs.envs.catan import ACTIONS_ARRAY
+
+        action_type, _ = ACTIONS_ARRAY[action_idx]
+
+        if action_type.name == "BUY_DEVELOPMENT_CARD" and forced_dev_card is None:
+            acting_color = game.state.current_color()
+            acting_idx = game.state.color_to_index[acting_color]
+
+            if acting_idx in self._pending_dev_corrections:
+                pending_counts = self._pending_dev_corrections[acting_idx]
+
+                # FIXED: 12 is VP, 13 is Monopoly
+                DEV_KEYS = {
+                    11: "KNIGHT",
+                    12: "VICTORY_POINT",
+                    13: "MONOPOLY",
+                    14: "ROAD_BUILDING",
+                    15: "YEAR_OF_PLENTY",
+                }
+
+                # Compare pending future state with current state to isolate the drawn card
+                for web_dev_idx, pending_count in pending_counts.items():
+                    dev_name = DEV_KEYS.get(int(web_dev_idx))
+                    if dev_name:
+                        catan_key = f"P{acting_idx}_{dev_name}_IN_HAND"
+                        current_count = game.state.player_state.get(catan_key, 0)
+                        if pending_count > current_count:
+                            forced_dev_card = dev_name
+                            break
+
         if forced_dev_card is not None:
             deck = game.state.development_listdeck
             if forced_dev_card in deck:
                 deck.remove(forced_dev_card)
-                deck.append(forced_dev_card)
+                deck.append(
+                    forced_dev_card
+                )  # Place at the very end so .pop() grabs it!
+            else:
+                deck.append(forced_dev_card)  # Fallback if deck was somehow empty
 
-        # Ensure the bank is strictly accurate before generating valid actions
         self._update_true_bank()
+        self._recount_vps()
         game.playable_actions = generate_playable_actions(game.state)
 
         valid_actions = self.env.unwrapped._get_valid_action_indices()
 
         if action_idx not in valid_actions:
-            from custom_gym_envs.envs.catan import ACTIONS_ARRAY
-
             action_type, value = ACTIONS_ARRAY[action_idx]
             print(f"\n{'='*70}")
             print(f"🚨 DESYNC DETECTED: ACTION REJECTED BY CATANATRON 🚨")
@@ -230,17 +315,16 @@ class GodModeStepper:
         return obs_dict["observation"]
 
     def flush_corrections(self):
-        """Applies all pending JSON state corrections.
-        MUST be called at the very end of an event, AFTER all actions for that event
-        have been stepped through, so we don't overwrite intermediate hands."""
         game = self.env.unwrapped.game
         RES_KEYS = {1: "WOOD", 2: "BRICK", 3: "SHEEP", 4: "WHEAT", 5: "ORE"}
+
+        # FIXED: 12 is VP, 13 is Monopoly
         DEV_KEYS = {
             11: "KNIGHT",
-            12: "MONOPOLY",
+            12: "VICTORY_POINT",
+            13: "MONOPOLY",
             14: "ROAD_BUILDING",
             15: "YEAR_OF_PLENTY",
-            13: "VICTORY_POINT",
         }
         needs_update = False
 
@@ -262,6 +346,9 @@ class GodModeStepper:
                         game.state.player_state[catan_key] = count
             self._pending_dev_corrections.clear()
             needs_update = True
+
+        # Unconditionally mathematically lock the VPs on every flush
+        self._recount_vps()
 
         if needs_update:
             self._update_true_bank()
