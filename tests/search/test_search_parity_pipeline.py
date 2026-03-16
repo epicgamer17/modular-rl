@@ -32,21 +32,21 @@ class MockNetwork(torch.nn.Module):
             .unsqueeze(0)
             .expand(B, -1)
         )
+        # Use a plain tensor so pytree.tree_map can allocate buffers for it
         mock_states = torch.zeros((B, 1))
 
         return SimpleNamespace(
             value=value,
             policy=torch.distributions.Categorical(logits=logits),
-            network_state=SimpleNamespace(
-                data=mock_states,
-                unbatch=lambda: [
-                    SimpleNamespace(data=mock_states[i]) for i in range(B)
-                ],
-            ),
+            network_state=mock_states,
         )
 
     def hidden_state_inference(self, state, action):
-        B = self._get_b(state)
+        # state is the opaque network_state token (a plain tensor here)
+        if isinstance(state, torch.Tensor):
+            B = state.shape[0] if state.dim() > 0 else 1
+        else:
+            B = self._get_b(state)
         return SimpleNamespace(
             value=torch.ones(B, dtype=torch.float32) * self.mock_value,
             reward=torch.zeros(B, dtype=torch.float32),
@@ -55,12 +55,7 @@ class MockNetwork(torch.nn.Module):
                 .unsqueeze(0)
                 .expand(B, -1)
             ),
-            network_state=SimpleNamespace(
-                data=torch.zeros((B, 1)),
-                unbatch=lambda: [
-                    SimpleNamespace(data=torch.zeros((1, 1))) for _ in range(B)
-                ],
-            ),
+            network_state=torch.zeros((B, 1)),
             to_play=torch.zeros(B, dtype=torch.int32),
         )
 
@@ -120,7 +115,8 @@ def _run_parity_check(config, net, obs, info, py_info, num_actions, seed=42):
 
     torch.manual_seed(seed)
     np.random.seed(seed)
-    aos_output = run_mcts_aos(obs, info, torch.tensor([0], dtype=torch.int8), net)
+    aos_info = {**info, "player": torch.tensor([0], dtype=torch.int8)}
+    aos_output = run_mcts_aos(obs, aos_info, net)
 
     torch.manual_seed(seed)
     np.random.seed(seed)

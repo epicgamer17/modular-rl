@@ -56,16 +56,17 @@ def test_gym_actor_rollout(make_cartpole_config, make_rainbow_config_dict):
     )
     rainbow_config = RainbowConfig(rainbow_config_dict, config)
 
+    cartpole_obs_shape = (4,)  # CartPole observation: [pos, vel, angle, angular_vel]
     network = ModularAgentNetwork(
         config=rainbow_config,
-        input_shape=config.observation_shape,
+        input_shape=cartpole_obs_shape,
         num_actions=config.num_actions,
     )
     selector = SelectorFactory.create(rainbow_config.action_selector)
 
     # 4. Create a dummy buffer (GymActor needs it for play_sequence, but we will call step() directly)
     buffer = create_dqn_buffer(
-        observation_dimensions=config.observation_shape,
+        observation_dimensions=cartpole_obs_shape,
         max_size=10,
         num_actions=config.num_actions,
         batch_size=1,
@@ -95,10 +96,10 @@ def test_gym_actor_rollout(make_cartpole_config, make_rainbow_config_dict):
         assert "done" in transition
 
         # Check shapes
-        assert transition["state"].shape == config.observation_shape
+        assert transition["state"].shape == cartpole_obs_shape
         assert isinstance(transition["action"], (int, np.integer))
         assert isinstance(transition["reward"], float)
-        assert transition["next_state"].shape == config.observation_shape
+        assert transition["next_state"].shape == cartpole_obs_shape
         assert isinstance(transition["done"], bool)
 
 
@@ -136,7 +137,7 @@ def test_tester_worker_rollout(make_cartpole_config, make_rainbow_config_dict):
 
     network = ModularAgentNetwork(
         config=rainbow_config,
-        input_shape=config.observation_shape,
+        input_shape=(4,),  # CartPole observation: [pos, vel, angle, angular_vel]
         num_actions=config.num_actions,
     )
     selector = SelectorFactory.create(rainbow_config.action_selector)

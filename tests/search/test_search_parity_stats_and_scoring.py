@@ -60,7 +60,7 @@ def test_ucb_scoring_parity(parity_config):
     child_priors = torch.tensor([0.4, 0.3, 0.2, 0.1], dtype=torch.float32)
     child_logits = torch.log(child_priors)
 
-    py_node = DecisionNode(prior=0.0, to_play=0)
+    py_node = DecisionNode(prior=0.0)
     py_node.bootstrap_method = "parent_value"
     py_node.visits = parent_visits
     py_node.value_sum = parent_value * parent_visits
@@ -81,6 +81,10 @@ def test_ucb_scoring_parity(parity_config):
     tree.children_values[0, 0, :] = child_values
     tree.children_prior_logits[0, 0, :] = child_logits
     tree.children_action_mask[0, 0, :] = True
+    # AOS uses children_index != -1 as the "visited" mask; set for all visited children
+    for i, v in enumerate(child_visits.tolist()):
+        if v > 0:
+            tree.children_index[0, 0, i] = i + 1
 
     aos_minmax = VectorizedMinMaxStats.allocate(batch_size, device)
     py_minmax = MinMaxStats(known_bounds=None)
@@ -110,7 +114,7 @@ def test_v_mix_parity():
     child_values = torch.tensor([0.7, 0.0, 0.3, 0.0], dtype=torch.float32)
     child_priors = torch.tensor([0.4, 0.3, 0.2, 0.1], dtype=torch.float32)
 
-    py_node = DecisionNode(prior=0.0, to_play=0)
+    py_node = DecisionNode(prior=0.0)
     py_node.network_value = 0.5
     py_node.child_visits, py_node.child_values, py_node.child_priors = (
         child_visits.clone(),
@@ -124,6 +128,10 @@ def test_v_mix_parity():
     tree.children_visits[0, 0, :] = child_visits.to(torch.int32)
     tree.children_values[0, 0, :] = child_values
     tree.children_prior_logits[0, 0, :] = torch.log(child_priors)
+    # AOS uses children_index != -1 as the "visited" mask; set for all visited children
+    for i, v in enumerate(child_visits.tolist()):
+        if v > 0:
+            tree.children_index[0, 0, i] = i + 1
 
     aos_vmix = compute_v_mix(tree, torch.tensor([0], dtype=torch.int32))
     assert torch.allclose(aos_vmix, torch.tensor(py_node.get_v_mix()), atol=1e-5)
@@ -137,7 +145,7 @@ def test_gumbel_scoring_parity(parity_config):
     child_values = torch.tensor([0.7, 0.0, 0.3, 0.0], dtype=torch.float32)
     child_priors = torch.tensor([0.4, 0.3, 0.2, 0.1], dtype=torch.float32)
 
-    py_node = DecisionNode(prior=0.0, to_play=0)
+    py_node = DecisionNode(prior=0.0)
     py_node.network_value = 0.5
     py_node.child_visits, py_node.child_values, py_node.child_priors = (
         child_visits.clone(),
@@ -154,6 +162,10 @@ def test_gumbel_scoring_parity(parity_config):
     tree.children_values[0, 0, :] = child_values
     tree.children_prior_logits[0, 0, :] = torch.log(child_priors)
     tree.children_action_mask[0, 0, :] = True
+    # AOS uses children_index != -1 as the "visited" mask; set for all visited children
+    for i, v in enumerate(child_visits.tolist()):
+        if v > 0:
+            tree.children_index[0, 0, i] = i + 1
 
     aos_minmax = VectorizedMinMaxStats.allocate(1, device)
     aos_minmax.update(torch.tensor([0.0], dtype=torch.float32), torch.tensor([True]))

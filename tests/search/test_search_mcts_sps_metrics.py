@@ -20,7 +20,7 @@ class MockModularSearch:
         self.num_sims = num_sims
         self.config = SimpleNamespace(num_simulations=num_sims)
 
-    def run(self, obs, info, to_play, agent_network, exploration=True):
+    def run(self, obs, info, agent_network, trajectory_action=None, exploration=True):
         time.sleep(0.01)
         policy = torch.ones(9) / 9
         return (
@@ -31,7 +31,7 @@ class MockModularSearch:
             {"mcts_simulations": self.num_sims, "mcts_search_time": 0.01},
         )
 
-    def run_vectorized(self, obs, info, to_play, agent_network):
+    def run_vectorized(self, obs, info, agent_network, trajectory_actions=None):
         time.sleep(0.01)
         B = obs.shape[0]
         sm_list = [
@@ -87,6 +87,7 @@ def test_sps_metrics_propagation():
 
     agent_net = torch.nn.Module()
     agent_net.input_shape = (3, 3, 3)
+    agent_net.num_actions = 9
     agent_net.obs_inference = lambda x: None
 
     # 1. Test SearchPolicySource directly returns search_metadata

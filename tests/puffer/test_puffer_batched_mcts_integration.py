@@ -59,7 +59,7 @@ class MockModularSearch:
     def __init__(self, config):
         self.config = config
 
-    def run_vectorized(self, obs, info_list, to_play, agent_network):
+    def run_vectorized(self, obs, info, agent_network, trajectory_actions=None):
         B = obs.shape[0]
         A = 2
         root_values = [0.5] * B
@@ -82,6 +82,7 @@ class MockNetwork(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.input_shape = (4,)
+        self.num_actions = 2
 
     def obs_inference(self, obs):
         from types import SimpleNamespace

@@ -50,17 +50,6 @@ def test_batched_search():
         config=config,
         device=device,
         num_actions=num_actions,
-        root_selection_strategy=TopScoreSelection(UCBScoring()),
-        decision_selection_strategy=TopScoreSelection(UCBScoring()),
-        chance_selection_strategy=SamplingSelection(PriorScoring()),
-        root_target_policy=VisitFrequencyPolicy(config, device, num_actions),
-        root_exploratory_policy=VisitFrequencyPolicy(config, device, num_actions),
-        prior_injectors=[],
-        root_searchset=SelectAll(),
-        internal_searchset=SelectAll(),
-        pruning_method=NoPruning(),
-        internal_pruning_method=NoPruning(),
-        backpropagator=AverageDiscountedReturnBackpropagator(),
     )
 
     # 3. Create dummy observation and inference functions

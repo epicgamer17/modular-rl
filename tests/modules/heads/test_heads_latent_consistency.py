@@ -1,3 +1,12 @@
+import pytest
+import torch
+from configs.modules.architecture_config import ArchitectureConfig
+from modules.heads.strategies import ScalarStrategy
+from modules.heads.latent_consistency import LatentConsistencyHead
+
+pytestmark = pytest.mark.unit
+
+
 def test_latent_consistency_head_custom_strategy():
     """Verifies that a custom strategy overrides the default projection dimension."""
     torch.manual_seed(42)

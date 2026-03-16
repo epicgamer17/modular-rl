@@ -20,7 +20,7 @@ class MockAOSPipeline:
             self.target_policy = torch.ones((b, 2)) * 0.5
             self.best_actions = torch.tensor([0, 1])
 
-    def __call__(self, obs, info, to_play, net, trajectory_actions=None):
+    def __call__(self, obs, info, net, trajectory_actions=None):
         return self.FakeSearchOutput(self.batch_size)
 
 
@@ -41,10 +41,10 @@ def test_aos_search_vectorized_unbatching(
 
     # Create a batch of 2 observations
     batched_obs = torch.randn(2, 4)
-    batched_info = [
-        {"legal_moves": [0, 1], "player": 0},
-        {"legal_moves": [0, 1], "player": 0},
-    ]
+    batched_info = {
+        "legal_moves": [[0, 1], [0, 1]],
+        "player": torch.tensor([0, 0], dtype=torch.int8),
+    }
 
     # Run the vectorized unbatching loop
     root_values, exp_policies, tgt_policies, best_actions, metadata = (

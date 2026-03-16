@@ -11,7 +11,7 @@ from configs.agents.rainbow_dqn import RainbowConfig
 from configs.agents.muzero import MuZeroConfig
 from configs.agents.supervised import SupervisedConfig
 from configs.games.cartpole import CartPoleConfig
-from modules.world_models.inference_output import LearningOutput
+from modules.world_models.inference_output import LearningOutput, MuZeroNetworkState
 
 pytestmark = pytest.mark.integration
 
@@ -48,23 +48,26 @@ class SimpleNet(nn.Module):
         K_plus_1 = (
             4 if "unroll_observations" in batch or "unroll_actions" in batch else 1
         )
+        # MuZero uses 21-atom distributional values/rewards; scalar otherwise
+        num_atoms = 21 if K_plus_1 > 1 else 1
 
         return LearningOutput(
             policies=torch.randn((B, K_plus_1, 10), requires_grad=True),
-            values=torch.randn((B, K_plus_1, 1), requires_grad=True),
+            values=torch.randn((B, K_plus_1, num_atoms), requires_grad=True),
             q_values=torch.randn((B, K_plus_1, 10), requires_grad=True),
             q_logits=torch.randn((B, K_plus_1, 10, 21), requires_grad=True),
-            rewards=torch.randn((B, K_plus_1, 1), requires_grad=True),
+            rewards=torch.randn((B, K_plus_1, num_atoms), requires_grad=True),
             to_plays=torch.randn((B, K_plus_1, 2), requires_grad=True),
             latents=torch.randn((B, K_plus_1, 16), requires_grad=True),
-            next_q_values=torch.randn((B, K_plus_1, 10), requires_grad=True),
-            target_q_values=torch.randn((B, K_plus_1, 10), requires_grad=True),
         )
 
     def obs_inference(self, obs):
         out = MagicMock()
         out.policy.logits = torch.randn((obs.shape[0], 10), requires_grad=True)
         out.value.logits = torch.randn((obs.shape[0], 21), requires_grad=True)
+        out.network_state = MuZeroNetworkState(
+            dynamics=torch.randn((obs.shape[0], 16))
+        )
         return out
 
     def reset_noise(self):
@@ -124,7 +127,7 @@ def test_ppo_learner_loss_integration(ppo_setup):
 def rainbow_setup(make_rainbow_config_dict, cartpole_game_config, device):
     config_dict = make_rainbow_config_dict(atom_size=1)
     config_dict["batch_size"] = 2
-    config_dict["loss_function"] = torch.nn.MSELoss(reduction="none")
+    config_dict["loss_function"] = torch.nn.functional.mse_loss
     config_dict["discount_factor"] = 0.99
     config_dict["n_step"] = 1
     config_dict["bootstrap_on_truncated"] = False
