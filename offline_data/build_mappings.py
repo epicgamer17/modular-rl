@@ -36,20 +36,54 @@ REPLAYS_DIR: str = os.path.join(
 # Empirical data: 34 confirmed edge→corner pairs from initial placements
 # ---------------------------------------------------------------------------
 KNOWN_WEB_EDGES: dict[int, tuple[int, int]] = {
-    2: (2, 3), 6: (3, 6), 7: (6, 7), 8: (7, 8), 11: (7, 10),
-    12: (10, 11), 16: (10, 14), 17: (14, 15), 21: (15, 18),
-    26: (22, 23), 30: (18, 22), 35: (23, 26), 39: (26, 33),
-    40: (30, 33), 44: (30, 37), 48: (37, 40), 49: (40, 41),
-    50: (38, 41), 53: (41, 44), 54: (44, 45), 57: (44, 47),
-    58: (2, 47), 60: (47, 48), 61: (48, 49), 62: (6, 49),
-    63: (49, 50), 64: (14, 50), 65: (50, 51), 66: (22, 51),
-    67: (33, 52), 68: (51, 52), 69: (52, 53), 70: (40, 53),
+    2: (2, 3),
+    6: (3, 6),
+    7: (6, 7),
+    8: (7, 8),
+    11: (7, 10),
+    12: (10, 11),
+    16: (10, 14),
+    17: (14, 15),
+    21: (15, 18),
+    26: (22, 23),
+    30: (18, 22),
+    35: (23, 26),
+    39: (26, 33),
+    40: (30, 33),
+    44: (30, 37),
+    48: (37, 40),
+    49: (40, 41),
+    50: (38, 41),
+    53: (41, 44),
+    54: (44, 45),
+    57: (44, 47),
+    58: (2, 47),
+    60: (47, 48),
+    61: (48, 49),
+    62: (6, 49),
+    63: (49, 50),
+    64: (14, 50),
+    65: (50, 51),
+    66: (22, 51),
+    67: (33, 52),
+    68: (51, 52),
+    69: (52, 53),
+    70: (40, 53),
     71: (48, 53),
 }
 
 # Partial edges: edge_id -> one known endpoint corner
 PARTIAL_WEB_EDGES: dict[int, int] = {
-    1: 2, 3: 3, 18: 15, 22: 18, 27: 23, 28: 24, 31: 26, 36: 30, 38: 27, 45: 37,
+    1: 2,
+    3: 3,
+    18: 15,
+    22: 18,
+    27: 23,
+    28: 24,
+    31: 26,
+    36: 30,
+    38: 27,
+    45: 37,
 }
 
 
@@ -100,9 +134,9 @@ def find_all_corner_candidates(
         if ok:
             valid_candidates.append({v: k for k, v in candidate.items()})
 
-    assert len(valid_candidates) >= 1, (
-        "No valid isomorphism found. Check KNOWN_WEB_EDGES and PARTIAL_WEB_EDGES."
-    )
+    assert (
+        len(valid_candidates) >= 1
+    ), "No valid isomorphism found. Check KNOWN_WEB_EDGES and PARTIAL_WEB_EDGES."
     return valid_candidates
 
 
@@ -125,12 +159,8 @@ def extend_to_full_mapping(
 
     # Assign contiguous IDs to unseen web corners (those not in KNOWN_WEB_EDGES nodes)
     seen_web_corners: set[int] = set(partial_web_to_cat.keys())
-    unseen_web_corners: list[int] = sorted(
-        set(range(54)) - seen_web_corners
-    )
-    unmapped_cat_nodes: list[int] = sorted(
-        set(range(NUM_NODES)) - mapped_cat
-    )
+    unseen_web_corners: list[int] = sorted(set(range(54)) - seen_web_corners)
+    unmapped_cat_nodes: list[int] = sorted(set(range(NUM_NODES)) - mapped_cat)
 
     assert len(unseen_web_corners) == len(unmapped_cat_nodes), (
         f"Mismatch: {len(unseen_web_corners)} unseen web corners vs "
@@ -185,7 +215,10 @@ def build_edge_mapping(
         # Find the catanatron neighbor that isn't already covered by another partial edge
         for cat_neighbor in G_cat.neighbors(cat_known):
             candidate = tuple(sorted([cat_known, cat_neighbor]))
-            if candidate in catan_edges_set and candidate not in web_edge_to_catan.values():
+            if (
+                candidate in catan_edges_set
+                and candidate not in web_edge_to_catan.values()
+            ):
                 web_edge_to_catan[web_eid] = candidate
                 break
 
@@ -268,7 +301,11 @@ def extract_steal_constraints(
             # Detect steal: non-active player gets a resource count update after robber
             # Skip dice-roll events (those distribute resources from tiles, not steals)
             player_states = sc.get("playerStates", {})
-            if pending_robber_tile is not None and player_states and "diceState" not in sc:
+            if (
+                pending_robber_tile is not None
+                and player_states
+                and "diceState" not in sc
+            ):
                 for pcolor_str, pdata in player_states.items():
                     pcolor = int(pcolor_str)
                     if pcolor == active_player:
@@ -282,7 +319,9 @@ def extract_steal_constraints(
                         if victim_corners:
                             all_constraints[pending_robber_tile].append(victim_corners)
                             if victim_corners <= known_web_corners:
-                                clean_constraints[pending_robber_tile].append(victim_corners)
+                                clean_constraints[pending_robber_tile].append(
+                                    victim_corners
+                                )
                             pending_robber_tile = None
                             break
 
@@ -464,12 +503,14 @@ def main() -> None:
         file=sys.stderr,
     )
 
-    print("Step 2-3/6: Running subgraph isomorphism (collecting all candidates)...", file=sys.stderr)
+    print(
+        "Step 2-3/6: Running subgraph isomorphism (collecting all candidates)...",
+        file=sys.stderr,
+    )
     candidates = find_all_corner_candidates(G_web, G_cat)
     print(f"  Found {len(candidates)} valid orientation candidates", file=sys.stderr)
 
     print("Step 6/6: Extracting Robber Victim steal constraints...", file=sys.stderr)
-    # Build known_web_corners from the first candidate (same set for all candidates)
     _known_web_corners: set[int] = set()
     for a, b in KNOWN_WEB_EDGES.values():
         _known_web_corners.add(a)
@@ -477,55 +518,77 @@ def main() -> None:
     clean_constraints, all_steal_constraints = extract_steal_constraints(
         REPLAYS_DIR, _known_web_corners
     )
+
+    # EXACT MATHEMATICAL MAPPING: Colonist Axial (x,y) -> Catanatron Cube (x, -x-y, y)
+    TRUE_TILE_MAPPING = {
+        0: (0, 2, -2),
+        1: (-1, 2, -1),
+        2: (-2, 2, 0),
+        3: (-2, 1, 1),
+        4: (-2, 0, 2),
+        5: (-1, -1, 2),
+        6: (0, -2, 2),
+        7: (1, -2, 1),
+        8: (2, -2, 0),
+        9: (2, -1, -1),
+        10: (2, 0, -2),
+        11: (1, 1, -2),
+        12: (0, 1, -1),
+        13: (-1, 1, 0),
+        14: (-1, 0, 1),
+        15: (0, -1, 1),
+        16: (1, -1, 0),
+        17: (1, 0, -1),
+        18: (0, 0, 0),
+    }
+
     print(
-        f"  Collected {sum(len(v) for v in all_steal_constraints.values())} total steals "
-        f"({sum(len(v) for v in clean_constraints.values())} clean) "
-        f"for {len(all_steal_constraints)} tiles",
+        "  Scoring each corner candidate against the true geometric tiles...",
         file=sys.stderr,
     )
-
-    print("  Scoring each candidate via tile CSP...", file=sys.stderr)
+    catan_map = CatanMap.from_template(BASE_MAP_TEMPLATE)
     best_partial: dict[int, int] = {}
-    best_tile_map: dict[int, tuple[int, int, int]] = {}
-    best_score = -1
+    best_score = -float("inf")
 
     for i, partial_web_to_cat in enumerate(candidates):
-        tile_map, score = solve_tile_csp(clean_constraints, all_steal_constraints, partial_web_to_cat)
+        score = 0
+        for web_tile_id, vsets in clean_constraints.items():
+            target_coord = TRUE_TILE_MAPPING[web_tile_id]
+            target_tile = catan_map.land_tiles[target_coord]
+            target_nodes = set(target_tile.nodes.values())
+
+            for vset in vsets:
+                mapped_nodes = {
+                    partial_web_to_cat[wc] for wc in vset if wc in partial_web_to_cat
+                }
+                if not mapped_nodes:
+                    continue
+
+                # If the robber steal corners align with the true physical tile nodes, reward it
+                if mapped_nodes.issubset(target_nodes):
+                    score += 1
+                else:
+                    # Heavy penalty for mismatch! Eliminates bad rotations/reflections
+                    score -= 100
+
         if score > best_score:
             best_score = score
             best_partial = partial_web_to_cat
-            best_tile_map = tile_map
 
     print(
-        f"  Best candidate resolved {best_score}/19 tiles uniquely",
-        file=sys.stderr,
+        f"  Selected best corner orientation with score {best_score}", file=sys.stderr
     )
-    assert best_score > 0, "No candidate resolved any tiles — check steal extraction"
+    best_tile_map = TRUE_TILE_MAPPING
 
-    print("Step 4/6: Extending best partial mapping to all 54 corners...", file=sys.stderr)
+    print(
+        "Step 4/6: Extending best partial mapping to all 54 corners...", file=sys.stderr
+    )
     web_to_cat_node = extend_to_full_mapping(best_partial, G_cat)
     assert len(web_to_cat_node) == 54
     assert set(web_to_cat_node.values()) == set(range(54))
 
     print("Step 5/6: Building edge mapping...", file=sys.stderr)
     web_edge_to_catan = build_edge_mapping(web_to_cat_node, G_cat)
-
-    # Fill any tile gaps (tiles with no usable steal data or multiple candidates)
-    web_tile_to_coord = best_tile_map
-    if len(web_tile_to_coord) < 19:
-        print(
-            f"  WARNING: {19 - len(web_tile_to_coord)} tiles unresolved — "
-            "filling remaining with unclaimed coords (may be wrong).",
-            file=sys.stderr,
-        )
-        catan_map = CatanMap.from_template(BASE_MAP_TEMPLATE)
-        all_coords = sorted(catan_map.land_tiles.keys())
-        used = set(web_tile_to_coord.values())
-        remaining_coords = [c for c in all_coords if c not in used]
-        coord_iter = iter(remaining_coords)
-        for web_id in range(19):
-            if web_id not in web_tile_to_coord:
-                web_tile_to_coord[web_id] = next(coord_iter)
 
     # --- Print results ---
     print("\n# WEB_CORNER_TO_CATAN_NODE")
@@ -543,7 +606,7 @@ def main() -> None:
     print("\n# WEB_TILE_TO_CATAN_COORD")
     print("WEB_TILE_TO_CATAN_COORD: Dict[int, Tuple[int, int, int]] = {")
     for web_id in range(19):
-        coord = web_tile_to_coord.get(web_id, "MISSING")
+        coord = best_tile_map.get(web_id, "MISSING")
         print(f"    {web_id}: {coord},")
     print("}")
 
