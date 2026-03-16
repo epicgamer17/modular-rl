@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import functools
 import math
-from typing import Callable, Dict, Optional, Any, Union, List
+from typing import Callable, Dict, Optional, Any
 
 import torch
 import torch.utils._pytree as pytree
@@ -65,31 +65,40 @@ _POLICY_REGISTRY: Dict[str, str] = {
 
 
 def _build_valid_mask(
-    info: Union[Dict[str, Any], List[Dict[str, Any]]],
-    B: int,
-    num_actions: int,
-    device: torch.device,
+    info: Dict[str, Any], B: int, num_actions: int, device: torch.device
 ) -> Optional[torch.Tensor]:
-    """Detect and return a [B, num_actions] boolean mask for legal moves.
+    """Convert a legal-moves info dict to a ``[B, num_actions]`` bool mask.
 
-    Expects info["legal_moves"] to be a [B, num_actions] boolean tensor
-    or equivalent.
+    Returns ``None`` if no legal-move information is present (all actions
+    valid).
+
+    Accepts three input formats for ``info["legal_moves"]``:
+    - ``[B, num_actions]`` bool tensor — returned directly (actors' format)
+    - ``[num_actions]`` bool tensor — broadcast to ``[B, num_actions]``
+    - list of ints (flat) — replicated across batch items
+    - list of lists of ints (per-item) — mapped element-wise
     """
-    if not isinstance(info, dict):
-        return None
-
-    legal_moves = info.get("legal_moves", None)
+    legal_moves = info.get("legal_moves", None) if isinstance(info, dict) else None
     if legal_moves is None:
         return None
 
-    if torch.is_tensor(legal_moves):
-        # If it's already a [B, A] mask, just ensure bool and device
-        if legal_moves.dim() == 2 and legal_moves.shape[1] == num_actions:
-            return legal_moves.to(dtype=torch.bool, device=device)
+    # Fast path: actors pass pre-vectorized bool tensors — handle directly.
+    if torch.is_tensor(legal_moves) and legal_moves.dtype == torch.bool:
+        if legal_moves.dim() == 2:  # [B, num_actions] — already correct
+            return legal_moves.to(device=device)
+        elif legal_moves.dim() == 1:  # [num_actions] — broadcast across batch
+            return legal_moves.unsqueeze(0).expand(B, -1).to(device=device)
 
-    # Fallback/Error: In our optimized AOS, we expect the caller to have
-    # vectorized this already to avoid graph breaks.
-    return None
+    # Fallback: list-of-ints or list-of-lists (e.g. from parity tests / Python backend).
+    if isinstance(legal_moves[0], int):
+        # Flat list — replicate across batch
+        legal_moves = [legal_moves] * B
+
+    mask = torch.zeros(B, num_actions, dtype=torch.bool, device=device)
+    for b, moves in enumerate(legal_moves):
+        for a in moves:
+            mask[b, a] = True
+    return mask
 
 
 class MCTSPipeline:
@@ -168,8 +177,8 @@ class MCTSPipeline:
         Args:
             batched_obs: Batched observations fed to
                 ``agent_network.obs_inference``.
-            batched_info: Dict containing optional ``"legal_moves"`` [B, A] tensor
-                and strictly required `` "player" `` [B] tensor.
+            batched_info: Dict containing optional ``\"legal_moves\"`` for
+                action masking and strictly required ``\"player\"``.
             agent_network: Network with ``obs_inference`` and
                 ``hidden_state_inference`` methods.
             trajectory_actions: Optional tensor of sequence actions (for reanalyze).
@@ -244,7 +253,7 @@ class MCTSPipeline:
         # Root is node 0.  Write initial network value and PRISTINE policy priors.
         root_v = outputs.value.float()  # [B]
         tree.node_values[:, 0] = root_v
-        # Root raw network value - never overwritten by backprop
+        # Root raw network value — never overwritten by backprop
         tree.raw_network_values[:, 0] = root_v
         tree.node_visits[:, 0] = 1  # count the initial \"visit\"
 
@@ -407,10 +416,10 @@ def build_search_pipeline(
     """Build a functional MCTS pipeline from the given config.
 
     Selects pure functions for:
-      * **Modifier** - Dirichlet noise (``config.use_dirichlet``).
-      * **Backprop** - via ``config.backprop_method`` (``"average"`` /
+      * **Modifier** — Dirichlet noise (``config.use_dirichlet``).
+      * **Backprop** — via ``config.backprop_method`` (``"average"`` /
         ``"minimax"``; defaults to ``"average"``).
-      * **Policy extraction** - via ``config.policy_extraction`` (``"visit_count"``,
+      * **Policy extraction** — via ``config.policy_extraction`` (``"visit_count"``,
         ``"gumbel" / "completed_q"``, ``"minimax" / "best_action"``; defaults
         to ``"visit_count"``).
 
@@ -419,13 +428,13 @@ def build_search_pipeline(
     Args:
         config: Agent/search configuration object.  Expected attributes:
 
-            * ``num_simulations`` - int
-            * ``max_search_depth`` - int (tree depth per simulation)
-            * ``max_nodes`` - int (FlatTree pre-allocation budget)
-            * ``pb_c_init`` - float
-            * ``pb_c_base`` - float
-            * ``discount_factor`` - float (gamma)
-            * ``use_dirichlet`` - bool
+            * ``num_simulations`` — int
+            * ``max_search_depth`` — int (tree depth per simulation)
+            * ``max_nodes`` — int (FlatTree pre-allocation budget)
+            * ``pb_c_init`` — float
+            * ``pb_c_base`` — float
+            * ``discount_factor`` — float (γ)
+            * ``use_dirichlet`` — bool
             * ... (see implementation below for full list)
 
         device: Torch device to allocate tensors on.

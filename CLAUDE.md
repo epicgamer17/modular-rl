@@ -1,5 +1,29 @@
 # CLAUDE.md — Project Rules & Standards
 
+## Quick Start
+
+```bash
+# Install main package and environments package (both required)
+pip install -e .
+pip install -e custom_gym_envs_pkg/
+pip install einops  # required but absent from requirements.txt
+```
+
+## Testing
+
+```bash
+pytest tests/ -m unit                  # fast, isolated logic checks
+pytest tests/ -m integration           # component interaction tests
+pytest tests/ -m slow                  # long training loops
+pytest tests/ -m regression            # historical repro checks
+
+pytest tests/ -p no:cov -m unit        # skip coverage for faster iteration
+```
+
+Coverage threshold is **80%** (enforced by `pytest.ini` via `--cov-fail-under=80`).
+
+---
+
 ## Core Philosophy
 
 This framework is built on **Strict Separation of Concerns and Perfect Polymorphism**. Deep RL systems collapse when neural network math bleeds into game logic, or when optimization math bleeds into tree search logic.
@@ -18,13 +42,14 @@ This framework is built on **Strict Separation of Concerns and Perfect Polymorph
 | `agents/learners/` | Loss Pipeline & Optimizer | Calls `learner_inference(batch) -> LearningOutput`, unpacks it, routes raw tensors to `LossPipeline`. Never contains graph routing loops. |
 | `agents/action_selectors/` | Math → Action bridge | Where game rules meet network math. Action masking happens here via `mask_actions()`. |
 | `agents/trainers/` | Training orchestration | Instantiates and wires learner, workers, buffer, and executors. |
-| `agents/workers/` | Actor & testing workers | `BaseActor` subclasses run env loops and write to the replay buffer. |
+| `agents/workers/` | Actor & testing workers | `BaseActor` subclasses (`actors.py`, `puffer_actor.py`) run env loops and write to the replay buffer. |
 | `agents/executors/` | Process management | `local` and `torch_mp` backends for scaling workers. |
 | `replay_buffers/` | High-performance data storage | Stores immutable facts (uint8). Mathematical targets computed on-the-fly in `sample()` via `OutputProcessor`. |
 | `losses/` | Loss computation | `LossModule` subclasses + `LossPipeline`. Take raw tensors — never Distribution objects. |
 | `search/` | CPU-bound MCTS | Lives entirely on CPU. Interacts with GPU only by batching opaque states. |
 | `custom_gym_envs_pkg/custom_gym_envs/` | All RL Environments | **All environments must be in this package.** |
 | `configs/` | Configuration | YAML-backed, composable via mixins (`OptimizationConfig`, `ReplayConfig`, `SearchConfig`, etc.) |
+| `offline_data/` | Offline/human replay data | Stored separately; not committed to git. |
 
 ### The 3 Stages of Preprocessing
 1. **Game Preprocessing** (Env Wrappers in `utils/wrappers.py`): Resize, grayscale, frame-stack → raw NumPy `uint8`.
@@ -290,7 +315,7 @@ Three MCTS backends selectable via `config.search_backend`:
 | `"aos"` | `search/aos_search/` | Array-of-structures batched MCTS with dynamic masking. |
 | `"cpp"` | C++ extension (built via `setup.py`) | Compiled from `search/search_cpp/*.cpp` via pybind11. |
 
-MCTS always lives on CPU. `search_factories.py` instantiates the correct backend from config.
+MCTS always lives on CPU. `search/factory.py` is the top-level router; it delegates to the backend-specific `search_factories.py` based on `config.search_backend`.
 
 ---
 

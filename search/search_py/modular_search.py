@@ -147,7 +147,8 @@ class ModularSearch:
         assert "player" in info, "info must contain 'player'. Got keys: " + str(
             list(info.keys())
         )
-        to_play: int = info["player"]
+        player_raw = info["player"]
+        to_play: int = int(player_raw.item() if torch.is_tensor(player_raw) else player_raw)
         self._set_node_configs()
         root = DecisionNode(0.0)
 

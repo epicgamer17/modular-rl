@@ -1,3 +1,4 @@
+---
 name: Code Quality Analysis with PMAT
 description: |
   Analyzes code quality, complexity, and technical debt using PMAT

@@ -1,5 +1,4 @@
 import torch
-from typing import Dict, List, Union, Optional
 from search.aos_search.search_factories import build_search_pipeline
 
 
@@ -20,96 +19,6 @@ class ModularSearch:
                 self._run_mcts, fullgraph=compile_cfg.fullgraph
             )
 
-    def _vectorize_info(
-        self, info: Union[Dict, List[Dict]], B: int
-    ) -> Dict[str, torch.Tensor]:
-        """Convert any info format into a dict of [B, ...] tensors for MCTSPipeline."""
-        # 1. Standardize to a list of dicts
-        if isinstance(info, dict):
-            # If it's a dict containing lists (like pufferlib info), we might need to handle it.
-            # But the current codebase often passes a single info dict or a list of dicts.
-            if "player" in info and not isinstance(
-                info["player"], (list, torch.Tensor)
-            ):
-                info_list = [info] * B
-            elif "infos_list" in info:
-                info_list = info["infos_list"]
-            else:
-                # Handle dict-of-lists/tensors
-                info_list = None
-        else:
-            info_list = info
-
-        # 2. Extract player_id
-        if info_list is not None:
-            assert all(
-                "player" in i for i in info_list
-            ), "Every info dict must contain 'player'. Got keys: " + str(
-                list(info_list[0].keys())
-            )
-            player_ids = torch.tensor(
-                [i["player"] for i in info_list],
-                dtype=torch.int8,
-                device=self.device,
-            )
-
-            # 3. Extract legal_moves mask
-            legal_moves_list = [i.get("legal_moves", None) for i in info_list]
-            if any(m is not None for m in legal_moves_list):
-                mask = torch.zeros(
-                    (B, self.num_actions), dtype=torch.bool, device=self.device
-                )
-                for b, moves in enumerate(legal_moves_list):
-                    if moves is not None:
-                        if torch.is_tensor(moves):
-                            if moves.dim() == 1 and moves.shape[0] == self.num_actions:
-                                mask[b] = moves.to(torch.bool)
-                            else:
-                                # Fallback for index tensor or other shapes
-                                mask[b, moves] = True
-                        else:
-                            for a in moves:
-                                mask[b, a] = True
-                return {"player": player_ids, "legal_moves": mask}
-            return {"player": player_ids}
-        else:
-            # Handle already-batched dict
-            assert "player" in info, "info must contain 'player'. Got keys: " + str(
-                list(info.keys())
-            )
-            p_val = info["player"]
-            if not torch.is_tensor(p_val):
-                p_val = torch.as_tensor(p_val, dtype=torch.int8, device=self.device)
-
-            out = {"player": p_val}
-            if "legal_moves" in info:
-                lm = info["legal_moves"]
-                if not torch.is_tensor(lm):
-                    # Fallback conversion
-                    mask = torch.zeros(
-                        (B, self.num_actions), dtype=torch.bool, device=self.device
-                    )
-                    if (
-                        isinstance(lm, list)
-                        and len(lm) > 0
-                        and not isinstance(lm[0], list)
-                    ):
-                        # Single list of indices for batch size 1
-                        mask[0, lm] = True
-                    else:
-                        for b, moves in enumerate(lm):
-                            for a in moves:
-                                mask[b, a] = True
-                    out["legal_moves"] = mask
-                else:
-                    # If it's [A], unsqueeze to [B, A]
-                    if lm.dim() == 1 and B > 1:
-                        lm = lm.unsqueeze(0).expand(B, -1)
-                    elif lm.dim() == 1 and B == 1:
-                        lm = lm.unsqueeze(0)
-                    out["legal_moves"] = lm.to(dtype=torch.bool, device=self.device)
-            return out
-
     def run(
         self,
         observation,
@@ -118,24 +27,41 @@ class ModularSearch:
         trajectory_action=None,
         exploration=True,
     ):
-        batched_obs = (
-            observation.to(self.device)
-            if torch.is_tensor(observation)
-            else torch.as_tensor(observation, device=self.device)
-        )
+        num_sims = self.config.num_simulations
+        batch_size = self.config.search_batch_size
+        effective_depth = num_sims / batch_size
+        if effective_depth < 5 and num_sims > batch_size:
+            import warnings
+
+            warnings.warn(
+                f"AOS Search depth is very shallow ({effective_depth:.1f}). "
+                f"Consider decreasing search_batch_size ({batch_size}) "
+                f"or increasing num_simulations ({num_sims}).",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+        batched_obs = observation
+        batched_info = info
+
         B = batched_obs.shape[0]
+        assert (
+            B == 1
+        ), f"AOS modular_search.run() expects exactly 1 observation, got {B}."
 
-        # Pre-vectorize info to avoid graph breaks
-        batched_info_t = self._vectorize_info(info, B)
+        # Normalize player to a [1] tensor so both int and tensor inputs are accepted.
+        player_raw = info["player"]
+        if not torch.is_tensor(player_raw):
+            player_raw = torch.tensor([player_raw], dtype=torch.int8)
+        assert (
+            player_raw.shape[0] == 1
+        ), f"AOS modular_search.run() player batch mismatch: {player_raw.shape}"
+        batched_info = {**info, "player": player_raw}
 
-        so = self._run_mcts(
-            batched_obs,
-            batched_info_t,
-            agent_network,
-            trajectory_actions=(
-                trajectory_action if trajectory_action is not None else None
-            ),
-        )
+        # Extract scalar player for logging / metadata
+        to_play = int(player_raw[0].item())
+        batched_to_play = to_play
+        so = self._run_mcts(batched_obs, batched_info, agent_network)
 
         return (
             so.root_values[0].item(),
@@ -143,7 +69,9 @@ class ModularSearch:
             so.target_policy[0].cpu(),
             so.best_actions[0].item(),
             {
-                "network_value": so.root_values[0].item(),
+                "network_value": so.root_values[
+                    0
+                ].item(),  # AOS returns the network value in tree for now
                 "search_value": so.root_values[0].item(),
                 "search_policy": so.target_policy[0].cpu().tolist(),
             },
@@ -157,22 +85,33 @@ class ModularSearch:
         trajectory_actions=None,
         exploration=True,
     ):
-        B = (
-            batched_obs.shape[0]
-            if isinstance(batched_obs, torch.Tensor)
-            else len(batched_obs)
-        )
+        num_sims = self.config.num_simulations
+        batch_size = self.config.search_batch_size
+        effective_depth = num_sims / batch_size
+        if effective_depth < 5 and num_sims > batch_size:
+            import warnings
 
-        # Pre-vectorize info to avoid graph breaks
-        batched_info_t = self._vectorize_info(batched_info, B)
+            warnings.warn(
+                f"AOS Search depth is very shallow ({effective_depth:.1f}). "
+                f"Consider decreasing search_batch_size ({batch_size}) "
+                f"or increasing num_simulations ({num_sims}).",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+        B = batched_obs.shape[0]
+        assert (
+            batched_info["player"].shape[0] == B
+        ), f"AOS modular_search.run_vectorized() batch mismatch: {B} vs {batched_info['player'].shape[0]}"
 
         so = self._run_mcts(
             batched_obs,
-            batched_info_t,
+            batched_info,
             agent_network,
             trajectory_actions=trajectory_actions,
         )
 
+        B = batched_obs.shape[0]
         root_values = so.root_values.cpu().tolist()
         exploratory_policies = [so.exploratory_policy[i].cpu() for i in range(B)]
         target_policies = [so.target_policy[i].cpu() for i in range(B)]
