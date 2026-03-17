@@ -1,13 +1,11 @@
 import pytest
 import torch
-import torch.nn as nn
-from pathlib import Path
-import numpy as np
 
-from configs.agents.ppo import PPOConfig
-from agents.learners.callbacks import StochasticMetricsCallback, LatentMetricsCallback
-from modules.agent_nets.modular import ModularAgentNetwork
-from stats.stats import StatTracker
+from agents.learners.callbacks import (
+    LatentMetricsCallback,
+    StochasticMetricsCallback,
+    finalize_metrics,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -26,24 +24,23 @@ def test_stochastic_metrics_callback_smoke(make_cartpole_config):
             self.training_step = 0
 
     learner = MockLearner()
-    stats = StatTracker(name="test")
-
     predictions = {
         "chance_codes": torch.randn(8, 2, 1, 10),
     }
     targets = {
         "chance_codes": torch.zeros(8, 2, 1).long(),
     }
+    meta = {"metrics": {}}
 
     callback.on_step_end(
         learner=learner,
         predictions=predictions,
         targets=targets,
         loss_dict={"loss": 0.5},
-        stats=stats,
+        meta=meta,
     )
 
-    data = stats.get_data()
+    data = finalize_metrics(meta["metrics"])
     assert "num_codes" in data
     assert "chance_probs" in data
     assert "chance_entropy" in data
@@ -65,22 +62,21 @@ def test_latent_metrics_callback_smoke(make_cartpole_config):
             self.training_step = 0
 
     learner = MockLearner()
-    stats = StatTracker(name="test")
-
     predictions = {
         "latent_states": torch.randn(8, 2, 128),
     }
     targets = {
         "actions": torch.zeros(8, 2, 1).long(),
     }
+    meta = {"metrics": {}}
 
     callback.on_step_end(
         learner=learner,
         predictions=predictions,
         targets=targets,
         loss_dict={"loss": 0.5},
-        stats=stats,
+        meta=meta,
     )
 
-    # Smoke test: ensuring it doesn't crash is often enough for visualization callbacks
-    # unless we want to inspect the StatTracker interna
+    metrics = finalize_metrics(meta["metrics"])
+    assert "_latent_visualizations" in metrics

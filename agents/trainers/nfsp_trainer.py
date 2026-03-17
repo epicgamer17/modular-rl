@@ -314,10 +314,8 @@ class NFSPTrainer(BaseTrainer):
             self._store_sequence_transitions(sequence)
 
         for _ in range(self.config.num_minibatches):
-            loss_stats = self.learner.step(self.stats)
-            if loss_stats:
-                for key, val in loss_stats.items():
-                    self.stats.append(key, val)
+            loss_stats = self.learner.step()
+            self._record_learner_metrics(loss_stats)
 
         self.training_step += 1
 

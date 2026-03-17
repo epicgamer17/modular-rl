@@ -3,6 +3,7 @@ NFSPLearner handles the training logic for NFSP, coordinating updates for both
 the Best Response (RL) network and the Average Strategy (SL) network.
 """
 
+from copy import deepcopy
 from typing import Any, Dict, Optional, Tuple
 
 import torch
@@ -269,12 +270,9 @@ class NFSPLearner:
                 target_policies=target_policy,
             )
 
-    def step(self, stats=None) -> Optional[Dict[str, float]]:
+    def step(self) -> Optional[Dict[str, Any]]:
         """
         Performs training steps for both RL and SL components.
-
-        Args:
-            stats: Optional StatTracker for logging metrics.
 
         Returns:
             Dictionary of combined loss statistics.
@@ -289,22 +287,51 @@ class NFSPLearner:
             rl_iter = RepeatSampleIterator(
                 self.rl_buffer, self.rl_learner.config.training_iterations, self.device
             )
-            rl_metrics = self.rl_learner.step(batch_iterator=rl_iter, stats=stats)
+            rl_metrics = self.rl_learner.step(batch_iterator=rl_iter)
         else:
             rl_metrics = None
         if rl_metrics:
-            metrics.update({f"rl_{k}": v for k, v in rl_metrics.items()})
+            metrics.update(self._prefix_metric_bundle("rl", rl_metrics))
 
         # 2. SL Step (supervised/imitation)
         if self.sl_replay_buffer.size >= self.sl_learner.config.min_replay_buffer_size:
             sl_iter = RepeatSampleIterator(
                 self.sl_buffer, self.sl_learner.config.training_iterations, self.device
             )
-            sl_metrics = self.sl_learner.step(batch_iterator=sl_iter, stats=stats)
+            sl_metrics = self.sl_learner.step(batch_iterator=sl_iter)
         else:
             sl_metrics = None
         if sl_metrics:
-            metrics.update({f"sl_{k}": v for k, v in sl_metrics.items()})
+            metrics.update(self._prefix_metric_bundle("sl", sl_metrics))
 
         self.training_step += 1
         return metrics if metrics else None
+
+    def _prefix_metric_bundle(
+        self, prefix: str, metric_bundle: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        prefixed = {
+            f"{prefix}_{key}": value
+            for key, value in metric_bundle.items()
+            if key != "metrics"
+        }
+
+        nested_metrics = metric_bundle.get("metrics")
+        if nested_metrics:
+            prefixed["metrics"] = self._prefix_structured_metrics(prefix, nested_metrics)
+
+        return prefixed
+
+    def _prefix_structured_metrics(
+        self, prefix: str, metrics: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        prefixed_metrics: Dict[str, Any] = {}
+        for key, value in metrics.items():
+            if key == "_latent_visualizations":
+                prefixed_metrics[key] = {
+                    f"{prefix}_{viz_key}": deepcopy(viz_payload)
+                    for viz_key, viz_payload in value.items()
+                }
+            else:
+                prefixed_metrics[f"{prefix}_{key}"] = value
+        return prefixed_metrics

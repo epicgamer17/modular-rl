@@ -140,10 +140,8 @@ class ImitationTrainer(BaseTrainer):
         if self.buffer.size >= self.config.min_replay_buffer_size:
             for _ in range(self.config.num_minibatches):
                 iterator = RepeatSampleIterator(self.buffer, self.config.training_iterations, self.device)
-                loss_stats = self.learner.step(batch_iterator=iterator, stats=self.stats)
-                if loss_stats:
-                    for key, val in loss_stats.items():
-                        self.stats.append(key, val)
+                loss_stats = self.learner.step(batch_iterator=iterator)
+                self._record_learner_metrics(loss_stats)
 
         self.training_step += 1
 
@@ -184,4 +182,3 @@ class ImitationTrainer(BaseTrainer):
             if key not in self.stats.stats:
                 self.stats._init_key(key)
         self.stats.add_plot_types("loss", PlotType.ROLLING_AVG, rolling_window=100)
-

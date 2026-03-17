@@ -151,18 +151,15 @@ class MuZeroTrainer(BaseTrainer):
         )
 
         # 2. Log collection stats
-        if self.stats:
-            for key, val in collect_stats.items():
-                self.stats.append(key, val)
+        for key, val in collect_stats.items():
+            self.stats.append(key, val)
 
         # 3. Learning step
         if self.buffer.size >= self.config.min_replay_buffer_size:
             for _ in range(self.config.num_minibatches):
                 iterator = SingleBatchIterator(self.buffer, self.device)
-                step_result = self.learner.step(iterator, self.stats)
-                if self.stats and step_result:
-                    for key, val in step_result.items():
-                        self.stats.append(key, val)
+                step_result = self.learner.step(iterator)
+                self._record_learner_metrics(step_result)
 
             self.training_step += 1
 

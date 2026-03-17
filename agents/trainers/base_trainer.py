@@ -259,6 +259,36 @@ class BaseTrainer:
         os.makedirs(graph_dir, exist_ok=True)
         self.stats.plot_graphs(dir=graph_dir)
 
+    def _record_learner_metrics(self, metric_bundle: Optional[Dict[str, Any]]) -> None:
+        if not metric_bundle:
+            return
+
+        for key, value in metric_bundle.items():
+            if key == "metrics":
+                self._record_structured_metrics(value)
+            else:
+                self.stats.append(key, value)
+
+    def _record_structured_metrics(self, metrics: Optional[Dict[str, Any]]) -> None:
+        if not metrics:
+            return
+
+        for key, value in metrics.items():
+            if key == "_latent_visualizations":
+                for viz_key, viz_payload in value.items():
+                    self.stats.add_latent_visualization(
+                        viz_key,
+                        viz_payload["latents"],
+                        labels=viz_payload.get("labels"),
+                        method=viz_payload.get("method", "pca"),
+                        **viz_payload.get("kwargs", {}),
+                    )
+            elif isinstance(value, dict):
+                for subkey, subvalue in value.items():
+                    self.stats.set(key, subvalue, subkey=subkey)
+            else:
+                self.stats.append(key, value)
+
         gc.collect()
         abs_path = os.path.abspath(step_dir)
         print(f"Saved checkpoint at step {self.training_step} to {abs_path}")
