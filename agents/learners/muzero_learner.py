@@ -12,7 +12,6 @@ from torch.optim.sgd import SGD
 
 from agents.learners.base import UniversalLearner, StepResult
 from agents.learners.callbacks import MetricsCallback
-from agents.learners.target_builders import MuZeroTargetBuilder
 from losses.losses import (
     ChanceQLoss,
     ConsistencyLoss,
@@ -50,7 +49,6 @@ class MuZeroLearner(UniversalLearner):
             observation_dtype=observation_dtype,
             callbacks=[MetricsCallback()],
         )
-        self.target_builder = MuZeroTargetBuilder(config, device)
 
         self.replay_buffer = create_muzero_buffer(
             observation_dimensions=observation_dimensions,

@@ -16,7 +16,6 @@ from losses.losses import PPOPolicyLoss, PPOValueLoss
 from modules.utils import get_lr_scheduler
 from replay_buffers.buffer_factories import create_ppo_buffer
 from agents.learners.base import UniversalLearner, StepResult
-from agents.learners.target_builders import PPOTargetBuilder
 from modules.world_models.inference_output import LearningOutput
 
 
@@ -54,7 +53,6 @@ class PPOLearner(UniversalLearner):
             observation_dimensions=observation_dimensions,
             observation_dtype=observation_dtype,
         )
-        self.target_builder = PPOTargetBuilder(config, device)
         self.discrete_action_space = (
             True  # PPO supports continuous too, but we focus on discrete
         )

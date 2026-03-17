@@ -227,9 +227,14 @@ class UniversalLearner:
 
         # 2. Targets
         # The target_builder computes what the predictions should have ideally been.
-        targets = self.target_builder.build_targets(
-            batch, predictions, self.agent_network
-        )
+        if self.target_builder is not None:
+            targets = self.target_builder.build_targets(
+                batch, predictions, self.agent_network
+            )
+        else:
+            # Passthrough Targets: The buffer processors already populated the batch
+            # with the required target keys (e.g., 'value_targets', 'target_policies').
+            targets = batch
 
         # 3. Contextual and PER data
         # We pass the raw batch as context to the loss pipeline for masks, etc.
@@ -258,11 +263,11 @@ class UniversalLearner:
             priorities=priorities,
             # Detach for callbacks/logging safety
             predictions={
-                k: v.detach().cpu() if v is not None else v
+                k: v.detach().cpu() if torch.is_tensor(v) else v
                 for k, v in preds_dict.items()
             },
             targets={
-                k: v.detach().cpu() if v is not None else v
+                k: v.detach().cpu() if torch.is_tensor(v) else v
                 for k, v in targs_dict.items()
             },
         )
