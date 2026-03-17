@@ -77,6 +77,7 @@ class DQNTargetBuilder(BaseTargetBuilder):
         if next_obs is not None:
             next_obs = next_obs.to(self.device).float()
 
+        # TODO: MAKE SURE WE PREPROCESS OBS AND NEXT OBS HERE OR IN LEARNER
         if not self.use_c51:
             # 1. Get online network predictions for next state (Double DQN action selection)
             with torch.inference_mode():
@@ -95,14 +96,14 @@ class DQNTargetBuilder(BaseTargetBuilder):
 
             # learner_inference returns [B, T+1, num_actions]; squeeze the T dim (always 1 here)
             if next_q_values.dim() == 3:
-                assert next_q_values.shape[1] == 1, (
-                    f"Expected T=1 in next_q_values, got shape {next_q_values.shape}"
-                )
+                assert (
+                    next_q_values.shape[1] == 1
+                ), f"Expected T=1 in next_q_values, got shape {next_q_values.shape}"
                 next_q_values = next_q_values.squeeze(1)
             if target_q_values.dim() == 3:
-                assert target_q_values.shape[1] == 1, (
-                    f"Expected T=1 in target_q_values, got shape {target_q_values.shape}"
-                )
+                assert (
+                    target_q_values.shape[1] == 1
+                ), f"Expected T=1 in target_q_values, got shape {target_q_values.shape}"
                 target_q_values = target_q_values.squeeze(1)
 
             if next_masks is not None:
@@ -162,7 +163,6 @@ class DQNTargetBuilder(BaseTargetBuilder):
                 "q_logits": q_logits,
                 "actions": batch["actions"].to(self.device),
             }
-
 
     def _project_target_distribution(
         self, rewards: Tensor, terminal_mask: Tensor, next_probs: Tensor

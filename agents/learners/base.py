@@ -14,6 +14,9 @@ from modules.agent_nets.modular import ModularAgentNetwork
 if TYPE_CHECKING:
     from agents.learners.target_builders import BaseTargetBuilder
     from losses.losses import LossPipeline
+    from agents.learners.callbacks import Callback, EarlyStopIteration
+
+from agents.learners.callbacks import CallbackList
 
 
 @dataclass
@@ -26,125 +29,6 @@ class StepResult:
     predictions: Dict[str, torch.Tensor] = field(default_factory=dict)
     targets: Dict[str, torch.Tensor] = field(default_factory=dict)
     meta: Dict[str, Any] = field(default_factory=dict)
-
-
-class EarlyStopIteration(Exception):
-    """Raised by callbacks to break the batch iteration loop early."""
-
-    pass
-
-
-class Callback(ABC):
-    """Learner callback interface with event hooks."""
-
-    def on_step_begin(
-        self,
-        learner: UniversalLearner,
-        iterator: Iterable[Dict[str, Any]],
-    ) -> None:
-        """Fired at the very beginning of the learner step, before fetching batches."""
-        pass  # pragma: no cover
-
-    def on_backward_end(
-        self,
-        learner: UniversalLearner,
-        step_result: StepResult,
-        stats=None,
-    ) -> None:
-        """Fired after loss.backward() but before optimizer.step().
-
-        Raise EarlyStopIteration to break the batch iteration loop.
-        """
-        pass  # pragma: no cover
-
-    def on_optimizer_step_end(
-        self,
-        learner: UniversalLearner,
-    ) -> None:
-        """Fired exactly after optimizer.step() and optional lr_scheduler.step()."""
-        pass  # pragma: no cover
-
-    def on_step_end(
-        self,
-        learner: UniversalLearner,
-        predictions: Dict[str, torch.Tensor],
-        targets: Dict[str, torch.Tensor],
-        loss_dict: Dict[str, float],
-        stats=None,
-        **kwargs,
-    ) -> None:
-        """Fired after each sub-batch optimization (forward + backward + step)."""
-        pass  # pragma: no cover
-
-    def on_training_step_end(
-        self,
-        learner: UniversalLearner,
-        stats=None,
-    ) -> None:
-        """Fired after the full training step (all iterations complete)."""
-        pass  # pragma: no cover
-
-
-class CallbackList:
-    """Lightweight callback collection wrapper."""
-
-    def __init__(self, callbacks: Optional[List[Callback]] = None):
-        self.callbacks = callbacks or []
-
-    def on_step_begin(
-        self,
-        learner: UniversalLearner,
-        iterator: Iterable[Dict[str, Any]],
-    ) -> None:
-        for callback in self.callbacks:
-            callback.on_step_begin(learner=learner, iterator=iterator)
-
-    def on_backward_end(
-        self,
-        learner: UniversalLearner,
-        step_result: StepResult,
-        stats=None,
-    ) -> None:
-        for callback in self.callbacks:
-            callback.on_backward_end(
-                learner=learner,
-                step_result=step_result,
-                stats=stats,
-            )
-
-    def on_optimizer_step_end(
-        self,
-        learner: UniversalLearner,
-    ) -> None:
-        for callback in self.callbacks:
-            callback.on_optimizer_step_end(learner=learner)
-
-    def on_step_end(
-        self,
-        learner: UniversalLearner,
-        predictions: Dict[str, torch.Tensor],
-        targets: Dict[str, torch.Tensor],
-        loss_dict: Dict[str, float],
-        stats=None,
-        **kwargs,
-    ) -> None:
-        for callback in self.callbacks:
-            callback.on_step_end(
-                learner=learner,
-                predictions=predictions,
-                targets=targets,
-                loss_dict=loss_dict,
-                stats=stats,
-                **kwargs,
-            )
-
-    def on_training_step_end(
-        self,
-        learner: UniversalLearner,
-        stats=None,
-    ) -> None:
-        for callback in self.callbacks:
-            callback.on_training_step_end(learner=learner, stats=stats)
 
 
 class UniversalLearner:
@@ -174,7 +58,9 @@ class UniversalLearner:
         observation_dtype: torch.dtype,
         target_builder: Optional[BaseTargetBuilder] = None,
         loss_pipeline: Optional[LossPipeline] = None,
-        optimizer: Optional[Union[torch.optim.Optimizer, Dict[str, torch.optim.Optimizer]]] = None,
+        optimizer: Optional[
+            Union[torch.optim.Optimizer, Dict[str, torch.optim.Optimizer]]
+        ] = None,
         lr_scheduler: Optional[Union[Any, Dict[str, Any]]] = None,
         callbacks: Optional[List[Callback]] = None,
     ):
@@ -266,7 +152,9 @@ class UniversalLearner:
                 if self.clipnorm > 0:
                     if isinstance(self.optimizer, dict):
                         for opt in self.optimizer.values():
-                            opt_params = [p for group in opt.param_groups for p in group["params"]]
+                            opt_params = [
+                                p for group in opt.param_groups for p in group["params"]
+                            ]
                             clip_grad_norm_(opt_params, self.clipnorm)
                     else:
                         clip_grad_norm_(self.agent_network.parameters(), self.clipnorm)
@@ -322,11 +210,13 @@ class UniversalLearner:
         if last_result is None:
             return None
 
-        total_loss_val = sum(l.item() for l in last_result.loss.values()) if isinstance(last_result.loss, dict) else float(last_result.loss.item())
-
-        return self._prepare_stats(
-            last_result.loss_dict, total_loss_val
+        total_loss_val = (
+            sum(l.item() for l in last_result.loss.values())
+            if isinstance(last_result.loss, dict)
+            else float(last_result.loss.item())
         )
+
+        return self._prepare_stats(last_result.loss_dict, total_loss_val)
 
     def compute_step_result(self, batch: Dict[str, Any], stats=None) -> StepResult:
         """Pure data-processing pipe: forward → targets → loss.
@@ -398,12 +288,16 @@ class UniversalLearner:
         }
         if self.optimizer is not None:
             if isinstance(self.optimizer, dict):
-                checkpoint["optimizer"] = {k: v.state_dict() for k, v in self.optimizer.items()}
+                checkpoint["optimizer"] = {
+                    k: v.state_dict() for k, v in self.optimizer.items()
+                }
             else:
                 checkpoint["optimizer"] = self.optimizer.state_dict()
         if self.lr_scheduler is not None:
             if isinstance(self.lr_scheduler, dict):
-                checkpoint["lr_scheduler"] = {k: v.state_dict() for k, v in self.lr_scheduler.items()}
+                checkpoint["lr_scheduler"] = {
+                    k: v.state_dict() for k, v in self.lr_scheduler.items()
+                }
             else:
                 checkpoint["lr_scheduler"] = self.lr_scheduler.state_dict()
 
@@ -444,14 +338,3 @@ class UniversalLearner:
         stats = dict(loss_dict)
         stats["loss"] = total_loss
         return stats
-
-    def preprocess(self, observation: Any) -> torch.Tensor:
-        """Preprocesses observation for network input.
-
-        Args:
-            observation: Raw observation.
-
-        Returns:
-            Preprocessed tensor on the correct device.
-        """
-        return self._preprocess_observation(observation)

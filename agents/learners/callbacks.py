@@ -1,10 +1,131 @@
 from __future__ import annotations
 
-from typing import Dict, Any, Iterable
+from typing import Dict, Any, Iterable, TYPE_CHECKING
 
 import torch
 
-from agents.learners.base import Callback, EarlyStopIteration, StepResult
+if TYPE_CHECKING:
+    from agents.learners.base import StepResult
+from abc import ABC, abstractmethod
+
+
+class EarlyStopIteration(Exception):
+    """Raised by callbacks to break the batch iteration loop early."""
+
+    pass
+
+
+class Callback(ABC):
+    """Learner callback interface with event hooks."""
+
+    def on_step_begin(
+        self,
+        learner: UniversalLearner,
+        iterator: Iterable[Dict[str, Any]],
+    ) -> None:
+        """Fired at the very beginning of the learner step, before fetching batches."""
+        pass  # pragma: no cover
+
+    def on_backward_end(
+        self,
+        learner: UniversalLearner,
+        step_result: StepResult,
+        stats=None,
+    ) -> None:
+        """Fired after loss.backward() but before optimizer.step().
+
+        Raise EarlyStopIteration to break the batch iteration loop.
+        """
+        pass  # pragma: no cover
+
+    def on_optimizer_step_end(
+        self,
+        learner: UniversalLearner,
+    ) -> None:
+        """Fired exactly after optimizer.step() and optional lr_scheduler.step()."""
+        pass  # pragma: no cover
+
+    def on_step_end(
+        self,
+        learner: UniversalLearner,
+        predictions: Dict[str, torch.Tensor],
+        targets: Dict[str, torch.Tensor],
+        loss_dict: Dict[str, float],
+        stats=None,
+        **kwargs,
+    ) -> None:
+        """Fired after each sub-batch optimization (forward + backward + step)."""
+        pass  # pragma: no cover
+
+    def on_training_step_end(
+        self,
+        learner: UniversalLearner,
+        stats=None,
+    ) -> None:
+        """Fired after the full training step (all iterations complete)."""
+        pass  # pragma: no cover
+
+
+class CallbackList:
+    """Lightweight callback collection wrapper."""
+
+    def __init__(self, callbacks: Optional[List[Callback]] = None):
+        self.callbacks = callbacks or []
+
+    def on_step_begin(
+        self,
+        learner: UniversalLearner,
+        iterator: Iterable[Dict[str, Any]],
+    ) -> None:
+        for callback in self.callbacks:
+            callback.on_step_begin(learner=learner, iterator=iterator)
+
+    def on_backward_end(
+        self,
+        learner: UniversalLearner,
+        step_result: StepResult,
+        stats=None,
+    ) -> None:
+        for callback in self.callbacks:
+            callback.on_backward_end(
+                learner=learner,
+                step_result=step_result,
+                stats=stats,
+            )
+
+    def on_optimizer_step_end(
+        self,
+        learner: UniversalLearner,
+    ) -> None:
+        for callback in self.callbacks:
+            callback.on_optimizer_step_end(learner=learner)
+
+    def on_step_end(
+        self,
+        learner: UniversalLearner,
+        predictions: Dict[str, torch.Tensor],
+        targets: Dict[str, torch.Tensor],
+        loss_dict: Dict[str, float],
+        stats=None,
+        **kwargs,
+    ) -> None:
+        for callback in self.callbacks:
+            callback.on_step_end(
+                learner=learner,
+                predictions=predictions,
+                targets=targets,
+                loss_dict=loss_dict,
+                stats=stats,
+                **kwargs,
+            )
+
+    def on_training_step_end(
+        self,
+        learner: UniversalLearner,
+        stats=None,
+    ) -> None:
+        for callback in self.callbacks:
+            callback.on_training_step_end(learner=learner, stats=stats)
 
 
 class MetricsCallback(Callback):
@@ -103,12 +224,16 @@ class MetricsCallback(Callback):
 class TargetNetworkSyncCallback(Callback):
     """Syncs target network weights at the end of each training step."""
 
+    # TODO: should we have the init like this or should the learner store the target_agent_network too?
+    def __init__(self, target_agent_network: ModularAgentNetwork):
+        self.target_agent_network = target_agent_network
+
     def on_training_step_end(
         self,
         learner,
         stats=None,
     ) -> None:
-        assert learner.target_agent_network is not None
+        assert self.target_agent_network is not None
 
         transfer_interval = learner.config.transfer_interval
         if transfer_interval is None or transfer_interval == 0:
@@ -124,7 +249,7 @@ class TargetNetworkSyncCallback(Callback):
         with torch.no_grad():
             clean_state = get_clean_state_dict(learner.agent_network)
             if getattr(learner.config, "soft_update", False):
-                target_state = learner.target_agent_network.state_dict()
+                target_state = self.target_agent_network.state_dict()
                 ema_beta = getattr(learner.config, "ema_beta", 0.99)
                 for k, v in clean_state.items():
                     if k not in target_state:
@@ -136,7 +261,7 @@ class TargetNetworkSyncCallback(Callback):
                     else:
                         target_state[k].copy_(v.detach())
             else:
-                learner.target_agent_network.load_state_dict(clean_state, strict=False)
+                self.target_agent_network.load_state_dict(clean_state, strict=False)
 
 
 class ResetNoiseCallback(Callback):
@@ -153,7 +278,7 @@ class ResetNoiseCallback(Callback):
 
 
 class ImitationMetricsCallback(Callback):
-    """Collects and reports policy metrics for ImitationLearner."""
+    """Collects and reports policy metrics for supervised/imitation learning."""
 
     def __init__(self):
         self._policy_total = None
@@ -214,8 +339,9 @@ class PPOEarlyStoppingCallback(Callback):
 class PriorityUpdaterCallback(Callback):
     """Updates Prioritized Experience Replay (PER) buffer priorities."""
 
-    def __init__(self, replay_buffer):
+    def __init__(self, replay_buffer, per_beta_schedule):
         self.replay_buffer = replay_buffer
+        self.per_beta_schedule = per_beta_schedule
 
     def on_step_end(
         self,
@@ -227,18 +353,36 @@ class PriorityUpdaterCallback(Callback):
         **kwargs,
     ) -> None:
         batch = kwargs.get("batch")
-        step_result = kwargs.get("meta", {}).get(
-            "step_result"
-        )  # We will pass step_result in meta
-
-        # If step_result wasn't explicitly passed in meta, we can try to fall back,
-        # but the cleanest way is for UniversalLearner to pass result.priorities directly.
-        # Actually, let's just look for priorities in kwargs since UniversalLearner can pass it.
         priorities = kwargs.get("priorities")
 
         if priorities is not None and batch is not None and "indices" in batch:
             if hasattr(self.replay_buffer, "update_priorities"):
                 ids = batch.get("ids")
+                priorities = priorities.detach().cpu().numpy()
+                # ---------------
+
                 self.replay_buffer.update_priorities(
                     batch["indices"], priorities, ids=ids
                 )
+
+    def on_training_step_end(
+        self,
+        learner,
+        stats=None,
+    ) -> None:
+        self.replay_buffer.set_beta(self.per_beta_schedule.get_value())
+
+
+class EpsilonGreedySchedulerCallback(Callback):
+    """Syncs target network weights at the end of each training step."""
+
+    # TODO: should we have the init like this or should the learner store the target_agent_network too?
+    def __init__(self, epsilon_schedule):
+        self.epsilon_schedule = epsilon_schedule
+
+    def on_training_step_end(
+        self,
+        learner,
+        stats=None,
+    ) -> None:
+        self.epsilon_schedule.step()
