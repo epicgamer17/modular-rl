@@ -1,7 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, TYPE_CHECKING, Union
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+    TYPE_CHECKING,
+    Union,
+)
 
 import torch
 from torch.nn.utils import clip_grad_norm_
@@ -16,9 +26,9 @@ if TYPE_CHECKING:
 from agents.learners.callbacks import (
     CallbackList,
     EarlyStopIteration,
-    finalize_metrics,
     MPSCacheClearCallback,
 )
+from utils.telemetry import finalize_metrics
 
 
 @dataclass
@@ -65,7 +75,7 @@ class UniversalLearner:
         ] = None,
         lr_scheduler: Optional[Union[Any, Dict[str, Any]]] = None,
         callbacks: Optional[List[Callback]] = None,
-        clip_norm: Optional[float] = None,
+        clipnorm: Optional[float] = None,
     ):
         self.config = config
         self.agent_network = agent_network
@@ -76,7 +86,7 @@ class UniversalLearner:
 
         self.target_builder = target_builder
         self.loss_pipeline = loss_pipeline
-        self.clip_norm = clip_norm
+        self.clipnorm = clipnorm
 
         # Normalize optimizers and schedulers into dictionaries
         if isinstance(optimizer, dict):
@@ -98,7 +108,9 @@ class UniversalLearner:
         callback_list.append(MPSCacheClearCallback())
         self.callbacks = CallbackList(callback_list)
 
-    def step(self, batch_iterator: Iterable[Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
+    def step(
+        self, batch_iterator: Iterable[Dict[str, Any]]
+    ) -> Iterator[Dict[str, Any]]:
         """Processes all batches from the iterator through the optimization loop.
 
         The learner is blind to where the data comes from. For DQN/Imitation,
@@ -128,8 +140,8 @@ class UniversalLearner:
                     loss_tensor.backward(retain_graph=len(result.loss) > 1)
 
                     # 4. Optional Gradient Clipping (per optimizer)
-                    if self.clip_norm is not None and self.clip_norm > 0:
-                        clip_grad_norm_(self.agent_network.parameters(), self.clip_norm)
+                    if self.clipnorm is not None and self.clipnorm > 0:
+                        clip_grad_norm_(self.agent_network.parameters(), self.clipnorm)
 
                     # 5. Weight Update
                     self.optimizers[opt_key].step()
@@ -137,9 +149,7 @@ class UniversalLearner:
                 # 6. Fire on_backward_end (e.g. PPO KL early stopping, metrics)
                 # NOTE: The semantics of 'on_backward_end' might be slightly shifted,
                 # but it now happens after the complete routing for that batch.
-                self.callbacks.on_backward_end(
-                    learner=self, step_result=result
-                )
+                self.callbacks.on_backward_end(learner=self, step_result=result)
 
                 # 7. LR Scheduler Step
                 for sched in self.lr_schedulers.values():
@@ -184,6 +194,7 @@ class UniversalLearner:
         """
         # 1. Predictions
         predictions = self.agent_network.learner_inference(batch)
+        batch["training_step"] = self.training_step
 
         # 2. Targets
         if self.target_builder is not None:
@@ -221,7 +232,7 @@ class UniversalLearner:
             targets={
                 k: v.detach().cpu() for k, v in targets.items() if torch.is_tensor(v)
             },
-            meta={**context.copy(), "metrics": {}},
+            meta={**context.copy(), "metrics": context.get("metrics", {})},
         )
 
     def state_dict(self) -> Dict[str, Any]:

@@ -53,6 +53,7 @@ def base_ppo_config_dict():
             "neck": {"type": "identity"},
         },
         "architecture": {"backbone": {"type": "identity"}},
+        "agent_type": "ppo",
     }
 
 
@@ -80,6 +81,7 @@ def base_muzero_config_dict():
             "output_strategy": {"type": "muzero"},
             "neck": {"type": "identity"},
         },
+        "agent_type": "muzero",
     }
 
 
@@ -99,6 +101,7 @@ def base_rainbow_config_dict():
         "architecture": {"backbone": {"type": "identity"}},
         "dueling": True,
         "noisy_sigma": 0.5,
+        "agent_type": "rainbow",
     }
 
 
@@ -112,6 +115,7 @@ def base_nfsp_config_dict(base_rainbow_config_dict):
             "sl_learning_rate": 1e-3,
             "sl_loss_function": F.cross_entropy,
             "training_steps": 100,
+            "agent_type": "nfsp",
         }
     )
     return d
@@ -125,6 +129,7 @@ def base_supervised_config_dict():
         "sl_loss_function": F.cross_entropy,
         "training_steps": 100,
         "architecture": {"backbone": {"type": "identity"}},
+        "agent_type": "supervised",
     }
 
 

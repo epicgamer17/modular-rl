@@ -54,6 +54,9 @@ class ConfigBase:
     def __init__(self, config_dict: dict, game_config=None):
         self.config_dict = config_dict.copy()
         self.game = game_config
+        self.agent_type: Optional[str] = self.parse_field(
+            "agent_type", default=None, required=False
+        )
         # Merge legacy nested blocks for backward compatibility
         legacy_blocks = ["architecture", "arch", "search", "replay", "optimization"]
         for block in legacy_blocks:

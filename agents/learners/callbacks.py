@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import Callable, Dict, Any, Iterable, List, Optional, TYPE_CHECKING
 
 import torch
+from utils.telemetry import (
+    add_latent_visualization_metric,
+    append_metric,
+    set_metric,
+)
 
 if TYPE_CHECKING:
     from agents.learners.base import StepResult, UniversalLearner
@@ -124,214 +128,6 @@ class CallbackList:
             callback.on_training_step_end(learner=learner, metrics=metrics)
 
 
-def append_metric(
-    metrics: Dict[str, Any],
-    key: str,
-    value: Any,
-    *,
-    subkey: Optional[str] = None,
-) -> None:
-    metric_ops = metrics.setdefault("_ops", defaultdict(list))
-    metric_ops[("append", key, subkey)].append(_to_metric_value(value))
-
-
-def set_metric(
-    metrics: Dict[str, Any],
-    key: str,
-    value: Any,
-    *,
-    subkey: Optional[str] = None,
-) -> None:
-    metric_sets = metrics.setdefault("_sets", {})
-    metric_sets[(key, subkey)] = _to_metric_value(value)
-
-
-def add_latent_visualization_metric(
-    metrics: Dict[str, Any],
-    key: str,
-    latents: Any,
-    *,
-    labels: Any = None,
-    method: str = "pca",
-    **kwargs,
-) -> None:
-    metric_visualizations = metrics.setdefault("_latent_visualizations", {})
-    metric_visualizations[key] = {
-        "latents": _to_metric_value(latents),
-        "labels": _to_metric_value(labels),
-        "method": method,
-        "kwargs": kwargs,
-    }
-
-
-def finalize_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
-    finalized: Dict[str, Any] = {}
-
-    for (op, key, subkey), values in metrics.get("_ops", {}).items():
-        if op != "append" or not values:
-            continue
-        aggregated = _aggregate_metric_values(values)
-        _store_metric_value(finalized, key, aggregated, subkey=subkey)
-
-    for (key, subkey), value in metrics.get("_sets", {}).items():
-        _store_metric_value(finalized, key, value, subkey=subkey)
-
-    latent_visualizations = metrics.get("_latent_visualizations")
-    if latent_visualizations:
-        finalized["_latent_visualizations"] = latent_visualizations
-
-    return finalized
-
-
-def _store_metric_value(
-    metrics: Dict[str, Any],
-    key: str,
-    value: Any,
-    *,
-    subkey: Optional[str] = None,
-) -> None:
-    if subkey is None:
-        metrics[key] = value
-        return
-
-    submetrics = metrics.setdefault(key, {})
-    submetrics[subkey] = value
-
-
-def _aggregate_metric_values(values: List[Any]) -> Any:
-    if len(values) == 1:
-        return values[0]
-
-    first = values[0]
-    if isinstance(first, torch.Tensor):
-        return torch.stack([v.float() for v in values]).mean(dim=0)
-    if isinstance(first, (int, float)):
-        return sum(float(v) for v in values) / len(values)
-    return values[-1]
-
-
-def _to_metric_value(value: Any) -> Any:
-    if isinstance(value, torch.Tensor):
-        if value.numel() == 1:
-            return float(value.detach().cpu().item())
-        return value.detach().cpu()
-    return value
-
-
-class StochasticMetricsCallback(Callback):
-    """Tracks stochastic-specific learner diagnostics."""
-
-    def on_step_end(
-        self,
-        learner: UniversalLearner,
-        predictions: Dict[str, torch.Tensor],
-        targets: Dict[str, torch.Tensor],
-        loss_dict: Dict[str, float],
-        **kwargs,
-    ) -> None:
-        self._track_stochastic_stats(
-            predictions,
-            targets,
-            kwargs["meta"].setdefault("metrics", {}),
-            learner.device,
-        )
-
-    def _track_stochastic_stats(
-        self,
-        predictions: Dict[str, torch.Tensor],
-        targets: Dict[str, torch.Tensor],
-        metrics: Dict[str, Any],
-        device,
-    ) -> None:
-        latent_code_logits_tensor = predictions.get("chance_codes")
-        chance_codes = targets.get("chance_codes")
-        if latent_code_logits_tensor is None or chance_codes is None:
-            return
-        latent_code_probs_tensor = torch.softmax(latent_code_logits_tensor, dim=-1)
-
-        if latent_code_probs_tensor.ndim == 3:
-            prob_sums = latent_code_probs_tensor.sum(dim=-1)
-            mask = prob_sums > 0.001
-        else:
-            mask = torch.ones(
-                latent_code_probs_tensor.shape[:-1],
-                dtype=torch.bool,
-                device=device,
-            )
-
-        # chance_codes comes in as [B, T+1, 1]
-        codes = chance_codes.squeeze(-1).long()
-        valid_codes = codes[mask] if mask.shape == codes.shape else codes.flatten()
-
-        unique_codes_all = torch.unique(valid_codes)
-        append_metric(metrics, "num_codes", int(unique_codes_all.numel()))
-
-        if latent_code_probs_tensor.ndim == 3:
-            valid_probs = latent_code_probs_tensor[mask]
-            if valid_probs.shape[0] > 0:
-                mean_probs = valid_probs.mean(dim=0)
-            else:
-                mean_probs = torch.zeros(
-                    latent_code_probs_tensor.shape[-1],
-                    device=latent_code_probs_tensor.device,
-                )
-        else:
-            mean_probs = latent_code_probs_tensor.mean(dim=0)
-        append_metric(metrics, "chance_probs", mean_probs.detach().cpu())
-
-        probs = latent_code_probs_tensor
-        entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1)
-        entropy = entropy[mask] if entropy.shape == mask.shape else entropy.flatten()
-        append_metric(
-            metrics,
-            "chance_entropy",
-            entropy.mean().item() if entropy.numel() > 0 else 0.0,
-        )
-
-
-class LatentMetricsCallback(Callback):
-    """Tracks latent visualization diagnostics."""
-
-    def __init__(self, viz_interval: int, viz_method: str = "tsne"):
-        self.viz_interval = viz_interval
-        self.viz_method = viz_method
-
-    def on_step_end(
-        self,
-        learner: UniversalLearner,
-        predictions: Dict[str, torch.Tensor],
-        targets: Dict[str, torch.Tensor],
-        loss_dict: Dict[str, float],
-        **kwargs,
-    ) -> None:
-        if self.viz_interval > 0 and learner.training_step % self.viz_interval == 0:
-            self._track_latent_visualization(
-                predictions=predictions,
-                targets=targets,
-                metrics=kwargs["meta"].setdefault("metrics", {}),
-                method=self.viz_method,
-            )
-
-    def _track_latent_visualization(
-        self,
-        predictions: Dict[str, torch.Tensor],
-        targets: Dict[str, torch.Tensor],
-        metrics: Dict[str, Any],
-        method: str,
-    ) -> None:
-        latent_states = predictions.get("latent_states")
-        actions = targets.get("actions")
-        if latent_states is None or actions is None:
-            return
-        s0 = latent_states[:, 0].detach().cpu()
-        a0 = actions[:, 0].detach().cpu()
-        add_latent_visualization_metric(
-            metrics,
-            "latent_root",
-            s0,
-            labels=a0,
-            method=method,
-        )
 
 
 class TargetNetworkSyncCallback(Callback):
@@ -387,41 +183,7 @@ class ResetNoiseCallback(Callback):
         learner.agent_network.reset_noise()
 
 
-class ImitationMetricsCallback(Callback):
-    """Collects and reports policy metrics for supervised/imitation learning."""
 
-    def __init__(self):
-        self._policy_total = None
-        self._policy_count = 0
-
-    def on_step_begin(
-        self,
-        learner,
-        iterator: Iterable[Dict[str, Any]],
-    ) -> None:
-        self._policy_total = torch.zeros(learner.num_actions, device=learner.device)
-        self._policy_count = 0
-
-    def on_backward_end(
-        self,
-        learner,
-        step_result: StepResult,
-    ) -> None:
-        if step_result.meta is not None and "policy_mean" in step_result.meta:
-            if self._policy_total is None:
-                self._policy_total = torch.zeros(
-                    learner.num_actions, device=learner.device
-                )
-            self._policy_total += step_result.meta["policy_mean"]
-            self._policy_count += 1
-
-    def on_training_step_end(
-        self,
-        learner,
-        metrics: Dict[str, Any],
-    ) -> None:
-        if self._policy_count > 0:
-            set_metric(metrics, "sl_policy", self._policy_total / self._policy_count)
 
 
 class PPOEarlyStoppingCallback(Callback):

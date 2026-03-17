@@ -31,6 +31,8 @@ class MuZeroConfig(
     NoisyConfig,
 ):
     def __init__(self, config_dict, game_config):
+        if "agent_type" not in config_dict:
+            config_dict["agent_type"] = "muzero"
         super(MuZeroConfig, self).__init__(config_dict, game_config)
 
         # Initialize Architecture Config handled by AgentConfig

@@ -4,7 +4,7 @@ import bisect
 import torch
 import torch.nn.init as init
 from torch import nn, Tensor, optim
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable, Optional, Tuple, Any, Callable
 
 if TYPE_CHECKING:
     from configs.base import Config
@@ -71,6 +71,49 @@ def get_lr_scheduler(optimizer: optim.Optimizer, config: "Config"):
 
     schedule = create_schedule(schedule_config)
     return ScheduleLRScheduler(optimizer, schedule)
+
+
+def create_optimizer(
+    params: Iterable[torch.nn.Parameter],
+    config: "Config",
+    sub_config_parent: Optional["Config"] = None,
+) -> optim.Optimizer:
+    """
+    Creates an optimizer based on the config.
+
+    Args:
+        params: The parameters to optimize.
+        config: The main configuration object.
+        sub_config_parent: Optional sub-configuration object (e.g., actor/critic config).
+
+    Returns:
+        A torch optimizer instance.
+    """
+    from torch.optim.adam import Adam
+    from torch.optim.sgd import SGD
+
+    # Use sub_config_parent if provided, otherwise default to main config
+    parent = sub_config_parent if sub_config_parent is not None else config
+
+    opt_cls = parent.optimizer
+    lr = parent.learning_rate
+
+    if opt_cls == Adam:
+        return Adam(
+            params=params,
+            lr=lr,
+            eps=parent.adam_epsilon,
+            weight_decay=parent.weight_decay,
+        )
+    elif opt_cls == SGD:
+        return SGD(
+            params=params,
+            lr=lr,
+            momentum=parent.momentum,
+            weight_decay=parent.weight_decay,
+        )
+    else:
+        return opt_cls(params, lr=lr)
 
 
 def support_to_scalar(

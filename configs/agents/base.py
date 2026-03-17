@@ -34,6 +34,7 @@ class AgentConfig(
         super().__init__(config_dict)
         self.game = game_config
 
+        self.agent_type: str = self.parse_field("agent_type", required=True)
         self.results_path: str = self.parse_field("results_path", "results")
         self._verify_game()
 

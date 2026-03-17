@@ -7,6 +7,8 @@ from torch.optim import Optimizer, Adam
 class NFSPDQNConfig(ConfigBase):
     def __init__(self, config_dict, game_config):
         # Config type should be a DQN Type
+        if "agent_type" not in config_dict:
+            config_dict["agent_type"] = "nfsp"
         super(NFSPDQNConfig, self).__init__(config_dict)
         print("NFSPDQNConfig")
         self.game = game_config

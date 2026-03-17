@@ -17,7 +17,10 @@ from torch.optim import Optimizer, Adam
 # TODO: MAKE THIS CLEANER AND DONT HAVE THE PREFIX EVERYWHERE
 class SupervisedConfig(ConfigBase, OptimizationConfig, ReplayConfig):
     def __init__(self, config_dict):
+        if "agent_type" not in config_dict:
+            config_dict["agent_type"] = "supervised"
         super().__init__(config_dict)
+        self.agent_type = self.parse_field("agent_type", "supervised")
         print("SupervisedConfig")
         # Parse shared architecture defaults
         arch_dict = self.parse_field("architecture", default={}, required=False)

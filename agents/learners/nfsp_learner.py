@@ -145,7 +145,7 @@ class NFSPLearner:
             loss_pipeline=rl_loss_pipeline,
             optimizer=rl_optimizer,
             lr_scheduler=rl_scheduler,
-            clip_norm=rl_config.clipnorm,
+            clipnorm=rl_config.clipnorm,
             callbacks=[
                 TargetNetworkSyncCallback(
                     target_network=best_response_target_agent_network,
@@ -208,7 +208,7 @@ class NFSPLearner:
             loss_pipeline=sl_loss_pipeline,
             optimizer=sl_optimizer,
             lr_scheduler=sl_scheduler,
-            clip_norm=sl_config.clipnorm,
+            clipnorm=sl_config.clipnorm,
             callbacks=[ResetNoiseCallback()],
         )
         self.sl_learner.replay_buffer = self.sl_buffer
@@ -306,7 +306,9 @@ class NFSPLearner:
 
         nested_metrics = metric_bundle.get("metrics")
         if nested_metrics:
-            prefixed["metrics"] = self._prefix_structured_metrics(prefix, nested_metrics)
+            prefixed["metrics"] = self._prefix_structured_metrics(
+                prefix, nested_metrics
+            )
 
         return prefixed
 

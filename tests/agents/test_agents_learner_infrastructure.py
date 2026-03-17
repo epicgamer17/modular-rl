@@ -1,46 +1,36 @@
 import pytest
 import torch
 
-from agents.learners.callbacks import (
-    LatentMetricsCallback,
-    StochasticMetricsCallback,
-    finalize_metrics,
-)
+from agents.learners.callbacks import LatentMetricsCallback
+from utils.telemetry import finalize_metrics
+from losses.losses import SigmaLoss
 
 pytestmark = pytest.mark.unit
 
 
-def test_stochastic_metrics_callback_smoke(make_cartpole_config):
+def test_sigma_loss_emits_stochastic_metrics(make_cartpole_config):
     """
-    Test the StochasticMetricsCallback by manually firing it with dummy data.
+    Test that SigmaLoss emits stochastic telemetry directly into context metrics.
     """
     config = make_cartpole_config(stochastic=True)
-    callback = StochasticMetricsCallback()
+    loss_module = SigmaLoss(config=config, device=torch.device("cpu"))
 
-    class MockLearner:
-        def __init__(self):
-            self.config = config
-            self.device = torch.device("cpu")
-            self.training_step = 0
-
-    learner = MockLearner()
     predictions = {
-        "chance_codes": torch.randn(8, 2, 1, 10),
+        "chance_logits": torch.randn(8, 10),
     }
     targets = {
-        "chance_codes": torch.zeros(8, 2, 1).long(),
+        "chance_codes": torch.zeros(8, 1).long(),
     }
-    meta = {"metrics": {}}
+    context = {"metrics": {}, "has_valid_action_mask": torch.ones(8, 1)}
 
-    callback.on_step_end(
-        learner=learner,
+    loss_module.compute_loss(
         predictions=predictions,
         targets=targets,
-        loss_dict={"loss": 0.5},
-        meta=meta,
+        context=context,
+        k=0,
     )
 
-    data = finalize_metrics(meta["metrics"])
+    data = finalize_metrics(context["metrics"])
     assert "num_codes" in data
     assert "chance_probs" in data
     assert "chance_entropy" in data

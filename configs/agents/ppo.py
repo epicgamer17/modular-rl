@@ -17,6 +17,8 @@ class PPOConfig(AgentConfig, DistributionalConfig, NoisyConfig):
         config_dict,
         game_config,
     ):
+        if "agent_type" not in config_dict:
+            config_dict["agent_type"] = "ppo"
         super(PPOConfig, self).__init__(config_dict, game_config)
         self.parse_distributional_params()
         self.parse_noisy_params()

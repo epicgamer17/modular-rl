@@ -176,7 +176,7 @@ class RainbowTrainer(BaseTrainer):
             loss_pipeline=self.loss_pipeline,
             optimizer=self.optimizer,
             lr_scheduler=self.lr_scheduler,
-            clip_norm=config.clipnorm,
+            clipnorm=config.clipnorm,
             callbacks=[
                 TargetNetworkSyncCallback(
                     target_network=self.target_agent_network,

@@ -4,6 +4,7 @@ import numpy as np
 from abc import ABC, abstractmethod
 from typing import Dict, Optional, Tuple, Union
 from modules.world_models.inference_output import InferenceOutput
+from utils.telemetry import append_metric
 
 
 class LossModule(ABC):
@@ -206,11 +207,17 @@ class ValueLoss(LossModule):
 
     @property
     def required_predictions(self) -> set[str]:
-        return {"values"}
+        deps = {"values"}
+        if getattr(self.config, "latent_viz_interval", 0) > 0:
+            deps.add("latents")
+        return deps
 
     @property
     def required_targets(self) -> set[str]:
-        return {"values"}
+        deps = {"values"}
+        if getattr(self.config, "latent_viz_interval", 0) > 0:
+            deps.add("actions")
+        return deps
 
     def should_compute(self, k: int, context: dict) -> bool:
         return True  # Compute at all steps
@@ -254,6 +261,31 @@ class ValueLoss(LossModule):
             value_loss_k = value_loss_k.sum(dim=-1)
 
         value_loss = self.config.value_loss_factor * value_loss_k
+
+        # Root stage (k=0) metrics for latent visualization
+        if k == 0:
+            viz_interval = getattr(self.config, "latent_viz_interval", 0)
+            if viz_interval > 0 and context.get("training_step", 0) % viz_interval == 0:
+                from utils.telemetry import add_latent_visualization_metric
+
+                # extract s0 and a0
+                s0 = predictions["latents"]
+                # In MuZero predictions, 'latents' is (B, D) at k=0 if already extracted by LossPipeline.run
+                # Wait, 'latent_states' is the name in modular.py outputs.
+                # LossPipeline.run _extract_step_data uses 'latent_states' -> k if 'latent_states' has K+1.
+                # Actually, modular.py learner_inference returns 'latent_states'.
+                
+                # Check for actions root
+                actions = targets.get("actions")
+                if actions is not None:
+                    metrics = context.setdefault("metrics", {})
+                    add_latent_visualization_metric(
+                        metrics,
+                        "latent_root",
+                        s0.detach().cpu(),
+                        labels=actions.detach().cpu(),
+                        method=getattr(self.config, "latent_viz_method", "pca"),
+                    )
 
         return value_loss
 
@@ -599,6 +631,20 @@ class ChanceQLoss(LossModule):
 
         q_loss = self.config.value_loss_factor * q_loss_k
 
+        # If using supports, track the entropy of the predicted distribution
+        if self.config.support_range is not None:
+            metrics = context.setdefault("metrics", {})
+            probs = torch.softmax(predicted_chance_values_k, dim=-1)
+            entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1)
+            mask = self.get_mask(k, context).bool()
+            if entropy.shape == mask.shape:
+                entropy = entropy[mask]
+            append_metric(
+                metrics,
+                "chance_q_entropy",
+                entropy.mean().item() if entropy.numel() > 0 else 0.0,
+            )
+
         return q_loss
 
     def get_mask(self, k: int, context: dict) -> torch.Tensor:
@@ -654,6 +700,26 @@ class SigmaLoss(LossModule):
                 chance_encoder_onehot_k_plus_1.detach(),
                 reduction="none",
             )
+
+        metrics = context.setdefault("metrics", {})
+        probs = torch.softmax(latent_code_probabilities_k, dim=-1)
+        mask = self.get_mask(k, context).bool()
+        valid_probs = probs[mask] if mask.shape[0] == probs.shape[0] else probs
+        if valid_probs.shape[0] > 0:
+            mean_probs = valid_probs.mean(dim=0)
+        else:
+            mean_probs = torch.zeros(probs.shape[-1], device=probs.device)
+        append_metric(metrics, "chance_probs", mean_probs)
+        entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1)
+        if entropy.shape == mask.shape:
+            entropy = entropy[mask]
+        append_metric(
+            metrics,
+            "chance_entropy",
+            entropy.mean().item() if entropy.numel() > 0 else 0.0,
+        )
+        valid_codes = target_codes_k[mask] if mask.shape == target_codes_k.shape else target_codes_k
+        append_metric(metrics, "num_codes", int(torch.unique(valid_codes).numel()))
 
         return sigma_loss
 
@@ -856,6 +922,11 @@ class ImitationLoss(LossModule):
             )
             targets_onehot.scatter_(1, target_policies.unsqueeze(1).long(), 1.0)
             target_policies = targets_onehot
+
+        # Record policy mean for monitoring
+        probs = torch.softmax(policy_logits, dim=-1)
+        metrics = context.setdefault("metrics", {})
+        append_metric(metrics, "sl_policy", probs.mean(dim=0).detach().cpu())
 
         # Return elementwise loss (B,)
         loss = self.loss_function(policy_logits, target_policies)

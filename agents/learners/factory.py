@@ -23,7 +23,6 @@ from agents.learners.callbacks import (
     TargetNetworkSyncCallback,
     ResetNoiseCallback,
     LatentMetricsCallback,
-    StochasticMetricsCallback,
 )
 from losses.losses import (
     LossPipeline,
@@ -46,11 +45,14 @@ from modules.utils import get_lr_scheduler
 if TYPE_CHECKING:
     from modules.agent_nets.modular import ModularAgentNetwork
 
+from agents.registries.base import AGENT_REGISTRY, register_agent
+
 
 def build_loss_pipeline(
     config: Any, agent_network: ModularAgentNetwork, device: torch.device
 ) -> LossPipeline:
     """
+    DEPRECATED: Use the registry-based build_universal_learner instead.
     Configures the loss pipeline based on the agent configuration.
 
     Args:
@@ -61,80 +63,25 @@ def build_loss_pipeline(
     Returns:
         A LossPipeline containing the appropriate loss modules.
     """
-    # Use agent_type if available, otherwise deduce from config fields
-    agent_type = getattr(config, "agent_type", None)
-    if agent_type is None:
-        if hasattr(config, "clip_param"):
-            agent_type = "ppo"
-        elif hasattr(config, "unroll_steps"):
-            agent_type = "muzero"
-        elif hasattr(config, "dueling") or hasattr(config, "atom_size"):
-            agent_type = "rainbow"
-        else:
-            agent_type = "supervised"
+    agent_type = config.agent_type
 
-    modules = []
+    # This logic is now moved to algorithm-specific builders.
+    # We provide a temporary fallback or redirection if needed.
+    from agents.registries.ppo import build_ppo_loss_pipeline
+    from agents.registries.muzero import build_muzero_loss_pipeline
+    from agents.registries.rainbow import build_rainbow_loss_pipeline
+    from agents.registries.supervised import build_supervised_loss_pipeline
 
     if agent_type == "muzero":
-        modules = [
-            ValueLoss(config, device),
-            PolicyLoss(config, device),
-            RewardLoss(config, device),
-        ]
-        if getattr(config.game, "num_players", 1) > 1:
-            modules.append(ToPlayLoss(config, device))
-        if getattr(config, "consistency_loss_factor", 0) > 0:
-            modules.append(ConsistencyLoss(config, device, agent_network))
-        if getattr(config, "stochastic", False):
-            modules.extend(
-                [
-                    ChanceQLoss(config, device),
-                    SigmaLoss(config, device),
-                    VQVAECommitmentLoss(config, device),
-                ]
-            )
-
+        return build_muzero_loss_pipeline(config, agent_network, device)
     elif agent_type == "ppo":
-        modules = [
-            PPOPolicyLoss(
-                config=config,
-                device=device,
-                clip_param=config.clip_param,
-                entropy_coefficient=config.entropy_coefficient,
-                policy_strategy=getattr(
-                    agent_network.components["policy_head"], "strategy", None
-                ),
-                optimizer_name="policy",
-            ),
-            PPOValueLoss(
-                config=config,
-                device=device,
-                critic_coefficient=config.critic_coefficient,
-                atom_size=getattr(config, "atom_size", 1),
-                v_min=getattr(config, "v_min", None),
-                v_max=getattr(config, "v_max", None),
-                value_strategy=getattr(
-                    agent_network.components["value_head"], "strategy", None
-                ),
-                optimizer_name="value",
-            ),
-        ]
-
+        return build_ppo_loss_pipeline(config, agent_network, device)
     elif agent_type == "rainbow":
-        from agents.action_selectors.selectors import ArgmaxSelector
-
-        selector = ArgmaxSelector()
-        td_loss_module = (
-            C51Loss(config=config, device=device, action_selector=selector)
-            if getattr(config, "atom_size", 1) > 1
-            else StandardDQNLoss(config=config, device=device, action_selector=selector)
-        )
-        modules = [td_loss_module]
-
+        return build_rainbow_loss_pipeline(config, agent_network, device)
     elif agent_type == "supervised":
-        modules = [ImitationLoss(config, device, agent_network.num_actions)]
+        return build_supervised_loss_pipeline(config, agent_network, device)
 
-    return LossPipeline(modules)
+    return LossPipeline([])
 
 
 def build_universal_learner(
@@ -147,6 +94,7 @@ def build_universal_learner(
     """
     Establishes a clean factory interface for assembling a UniversalLearner.
     Wires together the network, device, loss pipeline, and all necessary callbacks.
+    Uses the AGENT_REGISTRY to find algorithm-specific builders.
 
     Args:
         config: The agent configuration object.
@@ -158,13 +106,40 @@ def build_universal_learner(
     Returns:
         Constructed UniversalLearner instance.
     """
+    # 1. Deduce agent type
+    agent_type = config.agent_type
 
-    callbacks = []
+    # 2. Lazy imports to avoid circular dependencies and ensure registration
+    if agent_type == "ppo":
+        import agents.registries.ppo  # noqa: F401
+    elif agent_type == "muzero":
+        import agents.registries.muzero  # noqa: F401
+    elif agent_type == "rainbow":
+        import agents.registries.rainbow  # noqa: F401
+    elif agent_type == "supervised":
+        import agents.registries.supervised  # noqa: F401
 
+    # 3. Get builder from registry
+    assert (
+        agent_type in AGENT_REGISTRY
+    ), f"Agent type '{agent_type}' not found in AGENT_REGISTRY. Registered: {list(AGENT_REGISTRY.keys())}"
+    builder_fn = AGENT_REGISTRY[agent_type]
+
+    # 4. Call algorithm-specific builder
+    # The builder is responsible for setup of losses, optimizers, and algo-specific callbacks.
+    builder_output = builder_fn(config, agent_network, device)
+
+    # Unpack builder output (supporting flexibility in what builders return)
+    # Recommended return: (loss_pipeline, optimizers, lr_schedulers, callbacks, target_builder, observation_dtype)
+    loss_pipeline = builder_output["loss_pipeline"]
+    optimizers = builder_output["optimizers"]
+    lr_schedulers = builder_output["lr_schedulers"]
+    callbacks = builder_output.get("callbacks", [])
+    target_builder = builder_output.get("target_builder", None)
+    observation_dtype = builder_output.get("observation_dtype", torch.float32)
+
+    # 5. Add standard infrastructure callbacks
     if priority_update_fn:
-        # We assume if a priority_update_fn is provided, it's a method of a buffer that also has set_beta
-        # This is a bit of a leap, but in this framework buffers that support PER follow this pattern.
-        # If not, it will fail-fast as requested.
         set_beta_fn = getattr(priority_update_fn.__self__, "set_beta", None)
         from utils.schedule import create_schedule
 
@@ -182,116 +157,7 @@ def build_universal_learner(
     if weight_broadcast_fn:
         callbacks.append(WeightBroadcastCallback(weight_broadcast_fn))
 
-    # Deduce agent type
-    agent_type = getattr(config, "agent_type", None)
-    if agent_type is None:
-        if hasattr(config, "clip_param"):
-            agent_type = "ppo"
-        elif hasattr(config, "unroll_steps"):
-            agent_type = "muzero"
-        elif hasattr(config, "dueling") or hasattr(config, "atom_size"):
-            agent_type = "rainbow"
-        else:
-            agent_type = "supervised"
-
-    # Create Target Builder
-    target_builder = None
-    if agent_type == "rainbow":
-        target_builder = DQNTargetBuilder(config, device)
-    elif agent_type == "muzero":
-        target_builder = MuZeroTargetBuilder(config, device)
-
-    # Append algorithmic callbacks based on config
-    # 7. Setup Callbacks
-    callbacks = list(callbacks or [])
-
-    # Add standard callbacks based on config
-    if agent_type == "ppo" and getattr(config, "use_early_stopping", False):
-        from agents.learners.callbacks import PPOEarlyStoppingCallback
-
-        callbacks.append(PPOEarlyStoppingCallback(config.early_stopping_kl))
-
-    if agent_type == "muzero":
-        from agents.learners.callbacks import (
-            StochasticMetricsCallback,
-            LatentMetricsCallback,
-            ResetNoiseCallback,
-        )
-
-        if getattr(config, "stochastic", False):
-            callbacks.append(StochasticMetricsCallback())
-        if getattr(config, "latent_viz_interval", 0) > 0:
-            callbacks.append(
-                LatentMetricsCallback(
-                    viz_interval=config.latent_viz_interval,
-                    viz_method=config.latent_viz_method,
-                )
-            )
-        if getattr(config, "use_noisy_net", False):
-            callbacks.append(ResetNoiseCallback())
-
-    if agent_type in ["rainbow", "ppo"] and getattr(
-        config, "use_priority_weight_broadcast", False
-    ):
-        # This condition seems misplaced in the original diff, assuming it's a separate condition.
-        pass  # No specific callback added here in the provided diff, just the condition.
-
-    # Setup Optimizers and Schedulers
-    from torch.optim.adam import Adam
-    from torch.optim.sgd import SGD
-
-    optimizers = {}
-    lr_schedulers = {}
-
-    def create_opt(params, sub_config_parent):
-        # Determine which attribute to look at (actor/critic/default)
-        opt_cls = getattr(sub_config_parent, "optimizer", Adam)
-
-        if opt_cls == Adam:
-            return Adam(
-                params=params,
-                lr=config.learning_rate,
-                eps=getattr(config, "adam_epsilon", 1e-8),
-                weight_decay=getattr(config, "weight_decay", 0.0),
-            )
-        elif opt_cls == SGD:
-            return SGD(
-                params=params,
-                lr=config.learning_rate,
-                momentum=getattr(config, "momentum", 0.0),
-                weight_decay=getattr(config, "weight_decay", 0.0),
-            )
-        else:
-            return opt_cls(params, lr=config.learning_rate)
-
-    if agent_type == "ppo":
-        # PPO requires separate optimizers for policy and value heads
-        optimizers["policy"] = create_opt(
-            agent_network.components["policy_head"].parameters(),
-            getattr(config, "actor", config),
-        )
-        optimizers["value"] = create_opt(
-            agent_network.components["value_head"].parameters(),
-            getattr(config, "critic", config),
-        )
-        lr_schedulers["policy"] = get_lr_scheduler(optimizers["policy"], config)
-        lr_schedulers["value"] = get_lr_scheduler(optimizers["value"], config)
-    else:
-        # Default single optimizer
-        opt = create_opt(agent_network.parameters(), config)
-        optimizers["default"] = opt
-        lr_schedulers["default"] = get_lr_scheduler(opt, config)
-
-    # 8. Define specialized preprocessing if needed
-    if agent_type == "muzero":
-        # MuZero handles casting in the backbone, but UniversalLearner
-        # prep_obs converts to float32 by default.
-        pass
-
-    observation_dtype = torch.float32
-    if agent_type == "rainbow":
-        observation_dtype = torch.uint8
-
+    # 6. Construct and return UniversalLearner
     return UniversalLearner(
         config=config,
         agent_network=agent_network,
@@ -299,10 +165,10 @@ def build_universal_learner(
         num_actions=agent_network.num_actions,
         observation_dimensions=agent_network.input_shape,
         observation_dtype=observation_dtype,
-        loss_pipeline=build_loss_pipeline(config, agent_network, device),
+        loss_pipeline=loss_pipeline,
         optimizer=optimizers,
         lr_scheduler=lr_schedulers,
         callbacks=callbacks,
-        clip_norm=getattr(config, "clip_norm", getattr(config, "clipnorm", None)),
+        clipnorm=config.clipnorm,
         target_builder=target_builder,
     )

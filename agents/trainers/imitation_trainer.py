@@ -51,7 +51,9 @@ class ImitationTrainer(BaseTrainer):
             self.agent_network.share_memory()
 
         # Action selector (used by actors to generate demonstrations)
-        self.action_selector = SelectorFactory.create(config.action_selector.config_dict)
+        self.action_selector = SelectorFactory.create(
+            config.action_selector.config_dict
+        )
 
         # Buffer: (observations, legal_moves_mask, target_policies)
         self.buffer = create_nfsp_buffer(
@@ -103,7 +105,7 @@ class ImitationTrainer(BaseTrainer):
             loss_pipeline=loss_pipeline,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
-            clip_norm=config.clipnorm,
+            clipnorm=config.clipnorm,
             callbacks=[ResetNoiseCallback()],
         )
         self.learner.replay_buffer = self.buffer
@@ -139,7 +141,9 @@ class ImitationTrainer(BaseTrainer):
         # 3) Learner updates
         if self.buffer.size >= self.config.min_replay_buffer_size:
             for _ in range(self.config.num_minibatches):
-                iterator = RepeatSampleIterator(self.buffer, self.config.training_iterations, self.device)
+                iterator = RepeatSampleIterator(
+                    self.buffer, self.config.training_iterations, self.device
+                )
                 for step_metrics in self.learner.step(batch_iterator=iterator):
                     self._record_learner_metrics(step_metrics)
 

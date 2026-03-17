@@ -34,7 +34,7 @@ def test_universal_learner_multi_optimizer():
         observation_dtype=torch.float32,
         optimizer=optimizers,
         lr_scheduler=schedulers,
-        clip_norm=config.clipnorm,
+        clipnorm=config.clipnorm,
     )
 
     # Mock compute_step_result
@@ -74,7 +74,7 @@ def test_universal_learner_backward_compatibility():
         observation_dimensions=(4,),
         observation_dtype=torch.float32,
         optimizer=opt,
-        clip_norm=config.clipnorm,
+        clipnorm=config.clipnorm,
     )
 
     # Property access (removed in recent refactor, checking direct instead)
@@ -100,7 +100,7 @@ def test_universal_learner_state_dict_multi_opt():
         observation_dimensions=(4,),
         observation_dtype=torch.float32,
         optimizer={"opt1": opt1, "opt2": opt2},
-        clip_norm=config.clipnorm,
+        clipnorm=config.clipnorm,
     )
 
     state = learner.state_dict()
@@ -114,7 +114,7 @@ def test_universal_learner_state_dict_multi_opt():
         observation_dimensions=(4,),
         observation_dtype=torch.float32,
         optimizer={"opt1": torch.optim.Adam([p1]), "opt2": torch.optim.Adam([p2])},
-        clip_norm=config.clipnorm,
+        clipnorm=config.clipnorm,
     )
 
     # Set different state to verify loading

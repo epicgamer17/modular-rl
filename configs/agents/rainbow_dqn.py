@@ -19,6 +19,8 @@ class RainbowConfig(
     AgentConfig, DistributionalConfig, NoisyConfig, EpsilonGreedyConfig
 ):
     def __init__(self, config_dict: dict, game_config):
+        if "agent_type" not in config_dict:
+            config_dict["agent_type"] = "rainbow"
         super(RainbowConfig, self).__init__(config_dict, game_config)
 
         # Parse shared architecture defaults
