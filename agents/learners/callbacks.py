@@ -4,7 +4,7 @@ from typing import Dict
 
 import torch
 
-from agents.learners.base import Callback
+from agents.learners.base import Callback, EarlyStopIteration, StepResult
 
 
 class MetricsCallback(Callback):
@@ -94,3 +94,23 @@ class MetricsCallback(Callback):
             "chance_entropy",
             entropy.mean().item() if entropy.numel() > 0 else 0.0,
         )
+
+class PPOEarlyStoppingCallback(Callback):
+    """Early stops the optimization loop if KL divergence exceeds target_kl."""
+
+    def __init__(self, target_kl: float, key: str = "approx_kl"):
+        self.target_kl = target_kl
+        self.key = key
+
+    def on_backward_end(
+        self,
+        learner,
+        step_result: StepResult,
+        stats=None,
+    ) -> None:
+        """Checks KL divergence against target threshold."""
+        kl = step_result.loss_dict.get(self.key)
+        if kl is not None and kl > 1.5 * self.target_kl:
+            if stats is not None:
+                stats.append("ppo_early_stop", 1.0)
+            raise EarlyStopIteration(f"KL divergence {kl:.4f} > 1.5 * {self.target_kl}")
