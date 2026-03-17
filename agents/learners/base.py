@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, Iterable, List, Optional, Tuple, TYPE_CHECKING, Union
 import time
 
 import numpy as np
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 class StepResult:
     """Container for a single optimization update."""
 
-    loss: torch.Tensor
+    loss: Union[torch.Tensor, Dict[str, torch.Tensor]]
     loss_dict: Dict[str, float]
     priorities: Optional[torch.Tensor] = None
     predictions: Dict[str, torch.Tensor] = field(default_factory=dict)
@@ -174,8 +174,8 @@ class UniversalLearner:
         observation_dtype: torch.dtype,
         target_builder: Optional[BaseTargetBuilder] = None,
         loss_pipeline: Optional[LossPipeline] = None,
-        optimizer: Optional[torch.optim.Optimizer] = None,
-        lr_scheduler: Optional[Any] = None,
+        optimizer: Optional[Union[torch.optim.Optimizer, Dict[str, torch.optim.Optimizer]]] = None,
+        lr_scheduler: Optional[Union[Any, Dict[str, Any]]] = None,
         callbacks: Optional[List[Callback]] = None,
     ):
         self.config = config
@@ -241,13 +241,21 @@ class UniversalLearner:
         try:
             for batch in batch_iterator:
                 # 1. Gradient Clearing
-                self.optimizer.zero_grad(set_to_none=True)
+                if isinstance(self.optimizer, dict):
+                    for opt in self.optimizer.values():
+                        opt.zero_grad(set_to_none=True)
+                else:
+                    self.optimizer.zero_grad(set_to_none=True)
 
                 # 2. Forward + Targets + Loss
                 result = self.compute_step_result(batch=batch, stats=stats)
 
                 # 3. Backward
-                result.loss.backward()
+                if isinstance(result.loss, dict):
+                    for loss_tensor in result.loss.values():
+                        loss_tensor.backward()
+                else:
+                    result.loss.backward()
 
                 # 4. Fire on_backward_end (e.g. PPO KL early stopping, metrics)
                 self.callbacks.on_backward_end(
@@ -256,14 +264,27 @@ class UniversalLearner:
 
                 # 5. Gradient Clipping
                 if self.clipnorm > 0:
-                    clip_grad_norm_(self.agent_network.parameters(), self.clipnorm)
+                    if isinstance(self.optimizer, dict):
+                        for opt in self.optimizer.values():
+                            opt_params = [p for group in opt.param_groups for p in group["params"]]
+                            clip_grad_norm_(opt_params, self.clipnorm)
+                    else:
+                        clip_grad_norm_(self.agent_network.parameters(), self.clipnorm)
 
                 # 6. Weight Update
-                self.optimizer.step()
+                if isinstance(self.optimizer, dict):
+                    for opt in self.optimizer.values():
+                        opt.step()
+                else:
+                    self.optimizer.step()
 
                 # 7. LR Scheduler Step
                 if self.lr_scheduler is not None:
-                    self.lr_scheduler.step()
+                    if isinstance(self.lr_scheduler, dict):
+                        for sched in self.lr_scheduler.values():
+                            sched.step()
+                    else:
+                        self.lr_scheduler.step()
 
                 # 8. Fire on_optimizer_step_end (e.g. noisy net reset)
                 self.callbacks.on_optimizer_step_end(learner=self)
@@ -301,8 +322,10 @@ class UniversalLearner:
         if last_result is None:
             return None
 
+        total_loss_val = sum(l.item() for l in last_result.loss.values()) if isinstance(last_result.loss, dict) else float(last_result.loss.item())
+
         return self._prepare_stats(
-            last_result.loss_dict, float(last_result.loss.item())
+            last_result.loss_dict, total_loss_val
         )
 
     def compute_step_result(self, batch: Dict[str, Any], stats=None) -> StepResult:
@@ -374,9 +397,15 @@ class UniversalLearner:
             "training_step": self.training_step,
         }
         if self.optimizer is not None:
-            checkpoint["optimizer"] = self.optimizer.state_dict()
+            if isinstance(self.optimizer, dict):
+                checkpoint["optimizer"] = {k: v.state_dict() for k, v in self.optimizer.items()}
+            else:
+                checkpoint["optimizer"] = self.optimizer.state_dict()
         if self.lr_scheduler is not None:
-            checkpoint["lr_scheduler"] = self.lr_scheduler.state_dict()
+            if isinstance(self.lr_scheduler, dict):
+                checkpoint["lr_scheduler"] = {k: v.state_dict() for k, v in self.lr_scheduler.items()}
+            else:
+                checkpoint["lr_scheduler"] = self.lr_scheduler.state_dict()
 
         torch.save(checkpoint, path)
 
@@ -387,9 +416,19 @@ class UniversalLearner:
         self.training_step = checkpoint.get("training_step", 0)
 
         if "optimizer" in checkpoint and self.optimizer is not None:
-            self.optimizer.load_state_dict(checkpoint["optimizer"])
+            if isinstance(self.optimizer, dict):
+                for k, v in self.optimizer.items():
+                    if k in checkpoint["optimizer"]:
+                        v.load_state_dict(checkpoint["optimizer"][k])
+            else:
+                self.optimizer.load_state_dict(checkpoint["optimizer"])
         if "lr_scheduler" in checkpoint and self.lr_scheduler is not None:
-            self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+            if isinstance(self.lr_scheduler, dict):
+                for k, v in self.lr_scheduler.items():
+                    if k in checkpoint["lr_scheduler"]:
+                        v.load_state_dict(checkpoint["lr_scheduler"][k])
+            else:
+                self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
 
     def _maybe_clear_mps_cache(self) -> None:
         if isinstance(self.device, torch.device):

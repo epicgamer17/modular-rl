@@ -11,9 +11,10 @@ class LossModule(ABC):
     Works for both single-step (DQN, C51) and sequence (MuZero) losses.
     """
 
-    def __init__(self, config, device):
+    def __init__(self, config, device, optimizer_name: str = "default"):
         self.config = config
         self.device = device
+        self.optimizer_name = optimizer_name
         self.name = self.__class__.__name__
 
     @property
@@ -903,7 +904,7 @@ class LossPipeline:
         context: dict = {},
         weights: Optional[torch.Tensor] = None,
         gradient_scales: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, Dict[str, float], torch.Tensor]:
+    ) -> Tuple[Union[torch.Tensor, Dict[str, torch.Tensor]], Dict[str, float], torch.Tensor]:
         """
         Run the loss pipeline across all unroll steps.
 
@@ -940,7 +941,7 @@ class LossPipeline:
         if gradient_scales is None:
             gradient_scales = torch.ones((1, 1), device=device)
 
-        total_loss = torch.tensor(0.0, device=device)
+        total_loss_dict = {module.optimizer_name: torch.tensor(0.0, device=device) for module in self.modules}
         loss_dict = {module.name: 0.0 for module in self.modules}
         priorities = torch.zeros(config.minibatch_size, device=device)
 
@@ -963,7 +964,10 @@ class LossPipeline:
                 )
 
             # --- 2. Compute losses for this step ---
-            step_loss = torch.zeros(config.minibatch_size, device=device)
+            step_losses = {
+                opt_name: torch.zeros(config.minibatch_size, device=device)
+                for opt_name in total_loss_dict.keys()
+            }
 
             # Special case for ChanceQLoss which needs the next value.
             # targets["values"] is 2D [B, T] for scalar targets, so ndim >= 2.
@@ -989,28 +993,34 @@ class LossPipeline:
                     mask_k = module.get_mask(k, context)
                     loss_k = loss_k * mask_k
 
-                # Accumulate for this step
-                step_loss = step_loss + loss_k
+                # Accumulate for this step for the specific optimizer
+                step_losses[module.optimizer_name] += loss_k
 
                 # Accumulate for logging (unweighted)
                 loss_dict[module.name] += loss_k.sum().item()
 
             # --- 3. Apply gradient scaling and PER weights ---
             scale_k = gradient_scales[:, k].item()
-            scaled_loss_k = scale_gradient(step_loss, scale_k)
-            weighted_scaled_loss_k = scaled_loss_k * weights
+            
+            for opt_name, step_loss in step_losses.items():
+                scaled_loss_k = scale_gradient(step_loss, scale_k)
+                weighted_scaled_loss_k = scaled_loss_k * weights
 
-            # Accumulate total loss (scalar)
-            total_loss += weighted_scaled_loss_k.sum()
+                # Accumulate total loss per optimizer
+                total_loss_dict[opt_name] += weighted_scaled_loss_k.sum()
 
         # Average the total loss by batch size
-        loss_mean = total_loss / config.minibatch_size
+        for opt_name in total_loss_dict:
+            total_loss_dict[opt_name] = total_loss_dict[opt_name] / config.minibatch_size
 
         # Average accumulated losses for logging
         for key in loss_dict:
             loss_dict[key] /= config.minibatch_size
 
-        return loss_mean, loss_dict, priorities
+        if len(total_loss_dict) == 1 and "default" in total_loss_dict:
+            return total_loss_dict["default"], loss_dict, priorities
+        else:
+            return total_loss_dict, loss_dict, priorities
 
     def _calculate_priorities(
         self,
