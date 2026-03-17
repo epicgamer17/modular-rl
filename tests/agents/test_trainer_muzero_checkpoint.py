@@ -26,12 +26,15 @@ def test_muzero_trainer_checkpointing(
     # Initialize the trainer (this hits dozens of lines in both trainer files)
     trainer = MuZeroTrainer(config=config, env=env, device=torch.device("cpu"))
 
-    # Test the Happy Path: Saving a checkpoint via the learner
+    # Test the Happy Path: saving a checkpoint via learner.state_dict()
     checkpoint_file = tmp_path / "test_muzero_checkpoint.pt"
-    trainer.learner.save_checkpoint(str(checkpoint_file))
+    torch.save(trainer.learner.state_dict(), checkpoint_file)
     assert os.path.exists(checkpoint_file)
 
-    # Test the Unhappy Path: Attempt to load from a file that doesn't exist
+    loaded_state = torch.load(checkpoint_file, map_location="cpu", weights_only=False)
+    trainer.learner.load_state_dict(loaded_state)
+
+    # Test the Unhappy Path: attempt to load from a file that doesn't exist
     bad_file = tmp_path / "does_not_exist.pt"
     with pytest.raises(FileNotFoundError):
-        trainer.learner.load_checkpoint(str(bad_file))
+        torch.load(bad_file, map_location="cpu", weights_only=False)

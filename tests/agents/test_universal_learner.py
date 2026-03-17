@@ -155,7 +155,7 @@ def test_universal_learner_early_stop_iteration_breaks_loop():
     stop_cb.on_training_step_end.assert_called_once()
 
 
-def test_universal_learner_save_load_checkpoint(tmp_path):
+def test_universal_learner_state_dict_round_trip():
     config = _minimal_config()
     device = torch.device("cpu")
 
@@ -176,9 +176,7 @@ def test_universal_learner_save_load_checkpoint(tmp_path):
     )
     learner.training_step = 123
 
-    ckpt = tmp_path / "ckpt.pt"
-    learner.save_checkpoint(str(ckpt))
-    assert ckpt.exists()
+    state = learner.state_dict()
 
     net2 = torch.nn.Linear(4, 2)
     opt2 = torch.optim.Adam(net2.parameters(), lr=1e-3)
@@ -194,6 +192,6 @@ def test_universal_learner_save_load_checkpoint(tmp_path):
         optimizer=opt2,
         clip_norm=config.clipnorm,
     )
-    learner2.load_checkpoint(str(ckpt))
+    learner2.load_state_dict(state)
 
     assert learner2.training_step == 123

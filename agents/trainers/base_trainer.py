@@ -240,7 +240,7 @@ class BaseTrainer:
         weights_dir = step_dir / "model_weights"
         os.makedirs(weights_dir, exist_ok=True)
         weights_path = weights_dir / "weights.pt"
-        self.learner.save_checkpoint(str(weights_path))
+        torch.save(self.learner.state_dict(), weights_path)
 
         # Save Config
         config_dir = base_dir / "configs"
@@ -319,7 +319,8 @@ class BaseTrainer:
         trainer.training_step = training_step
 
         # 3. Load learner state from checkpoint
-        trainer.learner.load_checkpoint(str(weights_path))
+        learner_state = torch.load(weights_path, map_location=device, weights_only=False)
+        trainer.learner.load_state_dict(learner_state)
 
         # 4. Load Stats
         stats_path = step_dir / "graphs_stats/stats.pkl"

@@ -82,7 +82,7 @@ def test_universal_learner_backward_compatibility():
     assert learner.optimizers["default"] is opt
 
 
-def test_universal_learner_checkpoint_multi_opt(tmp_path):
+def test_universal_learner_state_dict_multi_opt():
     config = SimpleNamespace(clipnorm=0.0)
 
     # Real parameters for state_dict
@@ -103,8 +103,7 @@ def test_universal_learner_checkpoint_multi_opt(tmp_path):
         clip_norm=config.clipnorm,
     )
 
-    ckpt_path = tmp_path / "test.pt"
-    learner.save_checkpoint(str(ckpt_path))
+    state = learner.state_dict()
 
     # Load into new learner
     learner2 = UniversalLearner(
@@ -121,7 +120,7 @@ def test_universal_learner_checkpoint_multi_opt(tmp_path):
     # Set different state to verify loading
     learner2.optimizers["opt1"].param_groups[0]["lr"] = 0.1
 
-    learner2.load_checkpoint(str(ckpt_path))
+    learner2.load_state_dict(state)
     assert (
         learner2.optimizers["opt1"].param_groups[0]["lr"] == opt1.param_groups[0]["lr"]
     )

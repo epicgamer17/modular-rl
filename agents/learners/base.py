@@ -224,42 +224,37 @@ class UniversalLearner:
             meta={**context.copy(), "metrics": {}},
         )
 
-    def save_checkpoint(self, path: str):
-        """Saves learner state (network weights, optimizer state, training step)."""
-        checkpoint = {
+    def state_dict(self) -> Dict[str, Any]:
+        """Returns learner state in standard PyTorch dictionary form."""
+        return {
             "agent_network": self.agent_network.state_dict(),
             "training_step": self.training_step,
             "optimizers": {k: v.state_dict() for k, v in self.optimizers.items()},
             "lr_schedulers": {k: v.state_dict() for k, v in self.lr_schedulers.items()},
         }
 
-        torch.save(checkpoint, path)
+    def load_state_dict(self, state: Dict[str, Any]) -> None:
+        """Loads learner state from a standard PyTorch dictionary."""
+        self.agent_network.load_state_dict(state["agent_network"])
+        self.training_step = state.get("training_step", 0)
 
-    def load_checkpoint(self, path: str):
-        """Loads learner state from path."""
-        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
-        self.agent_network.load_state_dict(checkpoint["agent_network"])
-        self.training_step = checkpoint.get("training_step", 0)
-
-        if "optimizers" in checkpoint:
+        if "optimizers" in state:
             for k, v in self.optimizers.items():
-                if k in checkpoint["optimizers"]:
-                    v.load_state_dict(checkpoint["optimizers"][k])
+                if k in state["optimizers"]:
+                    v.load_state_dict(state["optimizers"][k])
         # Backward compatibility for old checkpoints
-        elif "optimizer" in checkpoint:
+        elif "optimizer" in state:
             if "default" in self.optimizers:
-                self.optimizers["default"].load_state_dict(checkpoint["optimizer"])
+                self.optimizers["default"].load_state_dict(state["optimizer"])
 
-        if "lr_schedulers" in checkpoint:
+        if "lr_schedulers" in state:
             for k, v in self.lr_schedulers.items():
-                if k in checkpoint["lr_schedulers"]:
-                    v.load_state_dict(checkpoint["lr_schedulers"][k])
+                if k in state["lr_schedulers"]:
+                    v.load_state_dict(state["lr_schedulers"][k])
         # Backward compatibility for old checkpoints
-        elif "lr_scheduler" in checkpoint:
+        elif "lr_scheduler" in state:
             if "default" in self.lr_schedulers:
-                self.lr_schedulers["default"].load_state_dict(
-                    checkpoint["lr_scheduler"]
-                )
+                self.lr_schedulers["default"].load_state_dict(state["lr_scheduler"])
 
     def _build_step_metrics(self, step_result: StepResult) -> Dict[str, Any]:
         metrics = dict(step_result.loss_dict)

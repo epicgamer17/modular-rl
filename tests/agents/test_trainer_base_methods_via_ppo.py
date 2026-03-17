@@ -17,17 +17,19 @@ def test_base_trainer_checkpointing(
     config_dict = make_ppo_config_dict()
     config = PPOConfig(config_dict, cartpole_game_config)
 
-    # Initialize child trainer to access base methods
+    # Initialize child trainer to access learner state serialization
     trainer = PPOTrainer(config=config)
 
-    # Test the base save/load checkpoint logic using pytest's built-in tmp_path fixture
     checkpoint_file = tmp_path / "test_checkpoint.pt"
 
     # Save
-    trainer.save_checkpoint(str(checkpoint_file))
+    torch.save(trainer.learner.state_dict(), checkpoint_file)
     assert os.path.exists(checkpoint_file)
+
+    loaded_state = torch.load(checkpoint_file, map_location="cpu", weights_only=False)
+    trainer.learner.load_state_dict(loaded_state)
 
     # Load (Unhappy Path): Attempt to load from a non-existent file
     bad_file = tmp_path / "does_not_exist.pt"
     with pytest.raises(FileNotFoundError):
-        trainer.load_checkpoint(str(bad_file))
+        torch.load(bad_file, map_location="cpu", weights_only=False)
