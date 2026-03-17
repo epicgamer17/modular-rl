@@ -103,6 +103,7 @@ class ImitationTrainer(BaseTrainer):
             loss_pipeline=loss_pipeline,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
+            clip_norm=config.clipnorm,
             callbacks=[ResetNoiseCallback()],
         )
         self.learner.replay_buffer = self.buffer

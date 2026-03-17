@@ -160,18 +160,14 @@ class RainbowTrainer(BaseTrainer):
         )
 
         self.schedules: Dict[str, Any] = {}
-        if (
-            hasattr(config, "per_beta_schedule")
-            and config.per_beta_schedule is not None
-        ):
-            self.schedules["per_beta"] = create_schedule(config.per_beta_schedule)
+        per_beta_schedule_config = getattr(config, "per_beta_schedule", None)
+        self.schedules["per_beta"] = create_schedule(per_beta_schedule_config)
         self.schedules["epsilon"] = create_schedule(config.epsilon_schedule)
 
         # 4. Initialize Learner
         self.learner = UniversalLearner(
             config=config,
             agent_network=self.agent_network,
-            target_agent_network=self.target_agent_network,
             device=device,
             num_actions=self.num_actions,
             observation_dimensions=self.obs_dim,
@@ -180,12 +176,20 @@ class RainbowTrainer(BaseTrainer):
             loss_pipeline=self.loss_pipeline,
             optimizer=self.optimizer,
             lr_scheduler=self.lr_scheduler,
+            clip_norm=config.clipnorm,
             callbacks=[
                 TargetNetworkSyncCallback(
-                    target_agent_network=self.target_agent_network
+                    target_network=self.target_agent_network,
+                    sync_interval=config.transfer_interval,
+                    soft_update=getattr(config, "soft_update", False),
+                    ema_beta=getattr(config, "ema_beta", 0.99),
                 ),
                 ResetNoiseCallback(),
-                PriorityUpdaterCallback(self.buffer, self.schedules["per_beta"]),
+                PriorityUpdaterCallback(
+                    priority_update_fn=self.buffer.update_priorities,
+                    set_beta_fn=self.buffer.set_beta,
+                    per_beta_schedule=self.schedules.get("per_beta"),
+                ),
                 EpsilonGreedySchedulerCallback(self.schedules["epsilon"]),
             ],
         )

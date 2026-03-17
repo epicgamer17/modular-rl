@@ -6,7 +6,6 @@ import torch.nn as nn
 from torch import Tensor
 import numpy as np
 
-from modules.world_models.inference_output import LearningOutput
 from replay_buffers.utils import discounted_cumulative_sums
 
 
@@ -17,7 +16,7 @@ class BaseTargetBuilder(ABC):
 
     @abstractmethod
     def build_targets(
-        self, batch: Dict[str, Tensor], predictions: LearningOutput, network: nn.Module
+        self, batch: Dict[str, Tensor], predictions: Dict[str, Tensor], network: nn.Module
     ) -> Dict[str, Tensor]:
         """
         Build target tensors for the loss calculation.
@@ -69,7 +68,7 @@ class DQNTargetBuilder(BaseTargetBuilder):
             )
 
     def build_targets(
-        self, batch: Dict[str, Tensor], predictions: LearningOutput, network: nn.Module
+        self, batch: Dict[str, Tensor], predictions: Dict[str, Tensor], network: nn.Module
     ) -> Dict[str, Tensor]:
         rewards = batch["rewards"].to(self.device).float()
         dones = batch["dones"].to(self.device).bool()
@@ -91,17 +90,13 @@ class DQNTargetBuilder(BaseTargetBuilder):
             # 1. Get online network predictions for next state (Double DQN action selection)
             with torch.inference_mode():
                 online_next_out = network.learner_inference({"observations": next_obs})
-                next_q_values = online_next_out.q_values
+                next_q_values = online_next_out["q_values"]
 
             with torch.inference_mode():
                 target_out = self.target_network.learner_inference(
                     {"observations": next_obs}
                 )
-                target_q_values = target_out.q_values
-
-            assert (
-                target_q_values is not None
-            ), "target_next_q_values is None and no target_network provided to DQNTargetBuilder"
+                target_q_values = target_out["q_values"]
 
             # learner_inference returns [B, T+1, num_actions]; squeeze the T dim (always 1 here)
             if next_q_values.dim() == 3:
@@ -133,16 +128,12 @@ class DQNTargetBuilder(BaseTargetBuilder):
             # 2. Get online network predictions for next state logits (C51 action selection)
             with torch.inference_mode():
                 online_next_out = network.learner_inference({"observations": next_obs})
-                next_q_logits = online_next_out.q_logits
+                next_q_logits = online_next_out["q_logits"]
 
                 target_out = self.target_network.learner_inference(
                     {"observations": next_obs}
                 )
-                target_q_logits = target_out.q_logits
-
-            assert (
-                target_q_logits is not None
-            ), "target_q_logits is None and no target_network provided to DQNTargetBuilder"
+                target_q_logits = target_out["q_logits"]
 
             # learner_inference returns [B, T+1, num_actions, atoms]; squeeze the T dim (always 1 here)
             if next_q_logits.dim() == 4:
@@ -214,7 +205,7 @@ class TargetBuilderPipeline(BaseTargetBuilder):
         self.builders = builders
 
     def build_targets(
-        self, batch: Dict[str, Tensor], predictions: LearningOutput, network: nn.Module
+        self, batch: Dict[str, Tensor], predictions: Dict[str, Tensor], network: nn.Module
     ) -> Dict[str, Tensor]:
         """
         Build targets by calling all builders in the pipeline.

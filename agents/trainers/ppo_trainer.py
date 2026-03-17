@@ -6,7 +6,6 @@ from pathlib import Path
 from agents.trainers.base_trainer import BaseTrainer
 from agents.executors.local_executor import LocalExecutor
 from agents.executors.torch_mp_executor import TorchMPExecutor
-from agents.learners.ppo_learner import PPOLearner
 from agents.action_selectors.factory import SelectorFactory
 from agents.action_selectors.policy_sources import NetworkPolicySource
 
@@ -69,20 +68,33 @@ class PPOTrainer(BaseTrainer):
         )
         self.policy_source = NetworkPolicySource(self.agent_network)
 
-        # 3. Initialize Learner
-        self.learner = PPOLearner(
-            config=config,
-            agent_network=self.agent_network,
-            device=device,
-            num_actions=self.num_actions,
+        # 3. Initialize Replay Buffer
+        from replay_buffers.buffer_factories import create_ppo_buffer
+
+        self.replay_buffer = create_ppo_buffer(
             observation_dimensions=self.obs_dim,
+            max_size=config.replay_buffer_size,
+            gamma=config.discount_factor,
+            gae_lambda=config.gae_lambda,
+            num_actions=self.num_actions,
             observation_dtype=self.obs_dtype,
         )
 
-        # 5. Initialize Executor
+        # 4. Initialize Executor
         from agents.executors.factory import create_executor
 
         self.executor = create_executor(config)
+
+        # 5. Initialize Learner via Factory
+        from agents.learners.factory import build_universal_learner
+
+        self.learner = build_universal_learner(
+            config=config,
+            agent_network=self.agent_network,
+            device=device,
+            batch_iterator=None,  # We create the iterator during train_step
+            weight_broadcast_fn=self.executor.update_weights,
+        )
 
         # 6. Compile network for the learner (main process)
         if config.compilation.enabled:
@@ -143,10 +155,7 @@ class PPOTrainer(BaseTrainer):
         """
         Single training step for PPO: collects a full epoch of data and optimizes.
         """
-        # 1. Broadcast weights to workers
-        self.executor.update_weights(self.agent_network.state_dict())
-
-        # 2. Collect trajectory data (steps_per_epoch transitions)
+        # 1. Collect trajectory data (steps_per_epoch transitions)
         steps_collected = 0
         trajectory_start_index = 0
         completed_scores = []
@@ -188,11 +197,11 @@ class PPOTrainer(BaseTrainer):
                     done = terminated or truncated
 
                     # Store transition
-                    self.learner.replay_buffer.store(
+                    self.replay_buffer.store(
                         observations=state,
                         actions=action_val,
                         values=float(value.item() if torch.is_tensor(value) else value),
-                        log_probabilities=float(
+                        old_log_probs=float(
                             log_prob.item() if torch.is_tensor(log_prob) else log_prob
                         ),
                         rewards=reward,
@@ -222,21 +231,19 @@ class PPOTrainer(BaseTrainer):
                         out = self.agent_network.obs_inference(obs)
                         last_value = out.value.item()
 
-                trajectory_end_index = self.learner.replay_buffer.size
+                trajectory_end_index = self.replay_buffer.size
                 trajectory_slice = slice(trajectory_start_index, trajectory_end_index)
 
                 if trajectory_end_index > trajectory_start_index:
-                    input_processor = self.learner.replay_buffer.input_processor
+                    input_processor = self.replay_buffer.input_processor
                     result = input_processor.finish_trajectory(
-                        self.learner.replay_buffer.buffers,
+                        self.replay_buffer.buffers,
                         trajectory_slice,
                         last_value=last_value,
                     )
                     if result:
                         for key, value in result.items():
-                            self.learner.replay_buffer.buffers[key][
-                                trajectory_slice
-                            ] = value
+                            self.replay_buffer.buffers[key][trajectory_slice] = value
 
                 trajectory_start_index = trajectory_end_index
 
@@ -247,10 +254,22 @@ class PPOTrainer(BaseTrainer):
                 self.stats.append("episode_length", float(l))
 
         # 3. Learning step
-        loss_stats = self.learner.step(self.stats, self.training_step)
+        from agents.learners.batch_iterators import PPOEpochIterator
+
+        iterator = PPOEpochIterator(
+            replay_buffer=self.replay_buffer,
+            num_epochs=self.config.train_policy_iterations,
+            num_minibatches=self.config.num_minibatches,
+            device=self.device,
+        )
+
+        loss_stats = self.learner.step(iterator, self.stats)
         if loss_stats:
             for key, val in loss_stats.items():
                 self.stats.append(key, val)
+
+        # Clear buffer for next epoch
+        self.replay_buffer.clear()
 
         self.training_step += 1
 

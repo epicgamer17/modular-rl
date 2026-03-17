@@ -73,10 +73,8 @@ class NFSPLearner:
             observation_dtype=observation_dtype,
             config=rl_config,
         )
-        self._rl_per_beta_schedule = (
-            create_schedule(rl_config.per_beta_schedule)
-            if getattr(rl_config, "per_beta_schedule", None) is not None
-            else None
+        self._rl_per_beta_schedule = create_schedule(
+            getattr(rl_config, "per_beta_schedule", None)
         )
 
         from torch.optim.adam import Adam
@@ -146,10 +144,20 @@ class NFSPLearner:
             loss_pipeline=rl_loss_pipeline,
             optimizer=rl_optimizer,
             lr_scheduler=rl_scheduler,
+            clip_norm=rl_config.clipnorm,
             callbacks=[
-                TargetNetworkSyncCallback(),
+                TargetNetworkSyncCallback(
+                    target_network=best_response_target_agent_network,
+                    sync_interval=rl_config.transfer_interval,
+                    soft_update=getattr(rl_config, "soft_update", False),
+                    ema_beta=getattr(rl_config, "ema_beta", 0.99),
+                ),
                 ResetNoiseCallback(),
-                PriorityUpdaterCallback(self.rl_buffer),
+                PriorityUpdaterCallback(
+                    priority_update_fn=self.rl_buffer.update_priorities,
+                    set_beta_fn=self.rl_buffer.set_beta,
+                    per_beta_schedule=self._rl_per_beta_schedule,
+                ),
             ],
         )
         self.rl_learner.target_agent_network = best_response_target_agent_network
@@ -199,6 +207,7 @@ class NFSPLearner:
             loss_pipeline=sl_loss_pipeline,
             optimizer=sl_optimizer,
             lr_scheduler=sl_scheduler,
+            clip_norm=sl_config.clipnorm,
             callbacks=[ResetNoiseCallback()],
         )
         self.sl_learner.replay_buffer = self.sl_buffer
@@ -274,15 +283,8 @@ class NFSPLearner:
 
         # 1. RL Step
         if self.rl_buffer.size >= self.rl_learner.config.min_replay_buffer_size:
-            if self._rl_per_beta_schedule is not None and hasattr(
-                self.rl_buffer, "set_beta"
-            ):
-                beta = float(
-                    self._rl_per_beta_schedule.get_value(
-                        step=self.rl_learner.training_step
-                    )
-                )
-                self.rl_buffer.set_beta(beta)
+            if self._rl_per_beta_schedule is not None:
+                self._rl_per_beta_schedule.step()
 
             rl_iter = RepeatSampleIterator(
                 self.rl_buffer, self.rl_learner.config.training_iterations, self.device

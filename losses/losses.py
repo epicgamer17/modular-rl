@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+import numpy as np
 from abc import ABC, abstractmethod
 from typing import Dict, Optional, Tuple, Union
 from modules.world_models.inference_output import InferenceOutput
@@ -75,8 +76,8 @@ class LossModule(ABC):
 
 
 class StandardDQNLoss(LossModule):
-    def __init__(self, config, device, action_selector: Optional[object] = None):
-        super().__init__(config, device)
+    def __init__(self, config, device, action_selector: Optional[object] = None, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
         self.action_selector = action_selector
 
     @property
@@ -112,8 +113,8 @@ class StandardDQNLoss(LossModule):
 
 
 class C51Loss(LossModule):
-    def __init__(self, config, device, action_selector: Optional[object] = None):
-        super().__init__(config, device)
+    def __init__(self, config, device, action_selector: Optional[object] = None, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
         self.action_selector = action_selector
         self.support = torch.linspace(
             self.config.v_min,
@@ -200,8 +201,8 @@ class C51Loss(LossModule):
 class ValueLoss(LossModule):
     """Value prediction loss module."""
 
-    def __init__(self, config, device):
-        super().__init__(config, device)
+    def __init__(self, config, device, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
 
     @property
     def required_predictions(self) -> set[str]:
@@ -285,8 +286,8 @@ class ValueLoss(LossModule):
 class PolicyLoss(LossModule):
     """Policy prediction loss module."""
 
-    def __init__(self, config, device):
-        super().__init__(config, device)
+    def __init__(self, config, device, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
 
     @property
     def required_predictions(self) -> set[str]:
@@ -335,8 +336,8 @@ class PolicyLoss(LossModule):
 class RewardLoss(LossModule):
     """Reward prediction loss module."""
 
-    def __init__(self, config, device):
-        super().__init__(config, device)
+    def __init__(self, config, device, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
 
     @property
     def required_predictions(self) -> set[str]:
@@ -394,8 +395,8 @@ class RewardLoss(LossModule):
 class ToPlayLoss(LossModule):
     """To-play (turn indicator) prediction loss module."""
 
-    def __init__(self, config, device):
-        super().__init__(config, device)
+    def __init__(self, config, device, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
 
     @property
     def required_predictions(self) -> set[str]:
@@ -442,8 +443,8 @@ class RelativeToPlayLoss(LossModule):
     ΔP_k = (P_k - P_{k-1}) mod num_players.
     """
 
-    def __init__(self, config, device):
-        super().__init__(config, device)
+    def __init__(self, config, device, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
 
     @property
     def required_predictions(self) -> set[str]:
@@ -496,8 +497,8 @@ class RelativeToPlayLoss(LossModule):
 class ConsistencyLoss(LossModule):
     """Consistency loss module (EfficientZero style)."""
 
-    def __init__(self, config, device, agent_network):
-        super().__init__(config, device)
+    def __init__(self, config, device, agent_network, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
         self.agent_network = agent_network
 
     @property
@@ -543,8 +544,8 @@ class ConsistencyLoss(LossModule):
 class ChanceQLoss(LossModule):
     """Q-value loss for chance nodes (stochastic MuZero)."""
 
-    def __init__(self, config, device):
-        super().__init__(config, device)
+    def __init__(self, config, device, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
 
     @property
     def required_predictions(self) -> set[str]:
@@ -608,8 +609,8 @@ class ChanceQLoss(LossModule):
 class SigmaLoss(LossModule):
     """Sigma (chance code prediction) loss for stochastic MuZero."""
 
-    def __init__(self, config, device):
-        super().__init__(config, device)
+    def __init__(self, config, device, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
 
     @property
     def required_predictions(self) -> set[str]:
@@ -660,8 +661,8 @@ class SigmaLoss(LossModule):
 class VQVAECommitmentLoss(LossModule):
     """VQ-VAE commitment cost for encoder (stochastic MuZero)."""
 
-    def __init__(self, config, device):
-        super().__init__(config, device)
+    def __init__(self, config, device, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
 
     @property
     def required_predictions(self) -> set[str]:
@@ -714,8 +715,9 @@ class PPOPolicyLoss(LossModule):
         clip_param: float,
         entropy_coefficient: float,
         policy_strategy: Optional[object] = None,
+        optimizer_name: str = "default",
     ):
-        super().__init__(config, device)
+        super().__init__(config, device, optimizer_name=optimizer_name)
         self.clip_param = clip_param
         self.entropy_coefficient = entropy_coefficient
         self.policy_strategy = policy_strategy
@@ -772,8 +774,9 @@ class PPOValueLoss(LossModule):
         v_min: Optional[float] = None,
         v_max: Optional[float] = None,
         value_strategy: Optional[object] = None,
+        optimizer_name: str = "default",
     ):
-        super().__init__(config, device)
+        super().__init__(config, device, optimizer_name=optimizer_name)
         self.critic_coefficient = critic_coefficient
         self.atom_size = atom_size
         self.v_min = v_min
@@ -825,8 +828,8 @@ class PPOValueLoss(LossModule):
 
 
 class ImitationLoss(LossModule):
-    def __init__(self, config, device, num_actions: int):
-        super().__init__(config, device)
+    def __init__(self, config, device, num_actions: int, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
         self.num_actions = num_actions
         self.loss_function = getattr(
             config, "loss_function", torch.nn.CrossEntropyLoss(reduction="none")
@@ -904,7 +907,7 @@ class LossPipeline:
         context: dict = {},
         weights: Optional[torch.Tensor] = None,
         gradient_scales: Optional[torch.Tensor] = None,
-    ) -> Tuple[Union[torch.Tensor, Dict[str, torch.Tensor]], Dict[str, float], torch.Tensor]:
+    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, float], torch.Tensor]:
         """
         Run the loss pipeline across all unroll steps.
 
@@ -916,7 +919,7 @@ class LossPipeline:
             gradient_scales: Gradient scales of shape (1, K+1)
 
         Returns:
-            total_loss: Scalar loss for backpropagation
+            total_loss_dict: Dictionary mapping optimizer names to scalar losses
             loss_dict: Dictionary of accumulated losses for logging
             priorities: Priority tensor of shape (B,) for PER
         """
@@ -934,16 +937,31 @@ class LossPipeline:
         else:
             predictions = vars(predictions)
         targets = targets if isinstance(targets, dict) else vars(targets)
-        assert predictions is not None and targets is not None
+        # Determine actual batch size B from tensors
+        B = 0
+        for val in predictions.values():
+            if torch.is_tensor(val):
+                B = val.shape[0]
+                break
+        if B == 0:
+            for val in targets.values():
+                if torch.is_tensor(val):
+                    B = val.shape[0]
+                    break
+        
+        if B == 0:
+            # Fallback (should not happen if inputs are valid)
+            B = config.minibatch_size
+
         if weights is None:
-            weights = torch.ones(config.minibatch_size, device=device)
+            weights = torch.ones(B, device=device)
 
         if gradient_scales is None:
             gradient_scales = torch.ones((1, 1), device=device)
 
         total_loss_dict = {module.optimizer_name: torch.tensor(0.0, device=device) for module in self.modules}
         loss_dict = {module.name: 0.0 for module in self.modules}
-        priorities = torch.zeros(config.minibatch_size, device=device)
+        priorities = torch.zeros(B, device=device)
 
         # Determine unroll steps from gradient_scales (1, K+1)
         # For non-sequence (DQN), gradient_scales is usually (1, 1)
@@ -965,7 +983,7 @@ class LossPipeline:
 
             # --- 2. Compute losses for this step ---
             step_losses = {
-                opt_name: torch.zeros(config.minibatch_size, device=device)
+                opt_name: torch.zeros(B, device=device)
                 for opt_name in total_loss_dict.keys()
             }
 
@@ -1017,10 +1035,16 @@ class LossPipeline:
         for key in loss_dict:
             loss_dict[key] /= config.minibatch_size
 
-        if len(total_loss_dict) == 1 and "default" in total_loss_dict:
-            return total_loss_dict["default"], loss_dict, priorities
-        else:
-            return total_loss_dict, loss_dict, priorities
+        # --- 4. Propagate auxiliary metrics from context (e.g., approx_kl) ---
+        for key, value in context.items():
+            if key == "full_targets" or key == "target_values_next":
+                continue
+            if isinstance(value, list) and len(value) > 0 and isinstance(value[0], (int, float)):
+                loss_dict[key] = float(np.mean(value))
+            elif isinstance(value, (int, float)):
+                loss_dict[key] = float(value)
+
+        return total_loss_dict, loss_dict, priorities
 
     def _calculate_priorities(
         self,

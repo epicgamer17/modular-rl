@@ -5,7 +5,8 @@ from typing import Dict, Any, Iterable, TYPE_CHECKING
 import torch
 
 if TYPE_CHECKING:
-    from agents.learners.base import StepResult
+    from agents.learners.base import StepResult, UniversalLearner
+    from modules.agent_nets.modular import ModularAgentNetwork
 from abc import ABC, abstractmethod
 
 
@@ -128,46 +129,22 @@ class CallbackList:
             callback.on_training_step_end(learner=learner, stats=stats)
 
 
-class MetricsCallback(Callback):
-    """Tracks MuZero-specific learner diagnostics after each step."""
+class StochasticMetricsCallback(Callback):
+    """Tracks stochastic-specific learner diagnostics."""
 
     def on_step_end(
         self,
-        learner,
+        learner: UniversalLearner,
         predictions: Dict[str, torch.Tensor],
         targets: Dict[str, torch.Tensor],
-        loss_dict,
+        loss_dict: Dict[str, float],
         stats=None,
         **kwargs,
     ) -> None:
         if stats is None:
             return
 
-        if learner.config.stochastic:
-            self._track_stochastic_stats(predictions, targets, stats, learner.device)
-
-        if learner.training_step % learner.config.latent_viz_interval == 0:
-            self._track_latent_visualization(
-                predictions=predictions,
-                targets=targets,
-                stats=stats,
-                method=learner.config.latent_viz_method,
-            )
-
-    def _track_latent_visualization(
-        self,
-        predictions: Dict[str, torch.Tensor],
-        targets: Dict[str, torch.Tensor],
-        stats,
-        method: str,
-    ) -> None:
-        latent_states = predictions.get("latent_states")
-        actions = targets.get("actions")
-        if latent_states is None or actions is None:
-            return
-        s0 = latent_states[:, 0].detach().cpu()
-        a0 = actions[:, 0].detach().cpu()
-        stats.add_latent_visualization("latent_root", s0, labels=a0, method=method)
+        self._track_stochastic_stats(predictions, targets, stats, learner.device)
 
     def _track_stochastic_stats(
         self,
@@ -221,36 +198,79 @@ class MetricsCallback(Callback):
         )
 
 
+class LatentMetricsCallback(Callback):
+    """Tracks latent visualization diagnostics."""
+
+    def __init__(self, viz_interval: int, viz_method: str = "tsne"):
+        self.viz_interval = viz_interval
+        self.viz_method = viz_method
+
+    def on_step_end(
+        self,
+        learner: UniversalLearner,
+        predictions: Dict[str, torch.Tensor],
+        targets: Dict[str, torch.Tensor],
+        loss_dict: Dict[str, float],
+        stats=None,
+        **kwargs,
+    ) -> None:
+        if stats is None:
+            return
+
+        if self.viz_interval > 0 and learner.training_step % self.viz_interval == 0:
+            self._track_latent_visualization(
+                predictions=predictions,
+                targets=targets,
+                stats=stats,
+                method=self.viz_method,
+            )
+
+    def _track_latent_visualization(
+        self,
+        predictions: Dict[str, torch.Tensor],
+        targets: Dict[str, torch.Tensor],
+        stats,
+        method: str,
+    ) -> None:
+        latent_states = predictions.get("latent_states")
+        actions = targets.get("actions")
+        if latent_states is None or actions is None:
+            return
+        s0 = latent_states[:, 0].detach().cpu()
+        a0 = actions[:, 0].detach().cpu()
+        stats.add_latent_visualization("latent_root", s0, labels=a0, method=method)
+
+
 class TargetNetworkSyncCallback(Callback):
     """Syncs target network weights at the end of each training step."""
 
-    # TODO: should we have the init like this or should the learner store the target_agent_network too?
-    def __init__(self, target_agent_network: ModularAgentNetwork):
-        self.target_agent_network = target_agent_network
+    def __init__(
+        self,
+        target_network: ModularAgentNetwork,
+        sync_interval: int,
+        soft_update: bool = False,
+        ema_beta: float = 0.99,
+    ):
+        self.target_network = target_network
+        self.sync_interval = sync_interval
+        self.soft_update = soft_update
+        self.ema_beta = ema_beta
 
     def on_training_step_end(
         self,
-        learner,
+        learner: UniversalLearner,
         stats=None,
     ) -> None:
-        assert self.target_agent_network is not None
-
-        transfer_interval = learner.config.transfer_interval
-        if transfer_interval is None or transfer_interval == 0:
-            should_sync = True
-        else:
-            should_sync = learner.training_step % transfer_interval == 0
-
-        if not should_sync:
+        if self.sync_interval > 0 and learner.training_step % self.sync_interval != 0:
             return
 
         from modules.utils import get_clean_state_dict
 
         with torch.no_grad():
             clean_state = get_clean_state_dict(learner.agent_network)
-            if getattr(learner.config, "soft_update", False):
-                target_state = self.target_agent_network.state_dict()
-                ema_beta = getattr(learner.config, "ema_beta", 0.99)
+            if self.soft_update:
+                target_state = self.target_network.state_dict()
+                ema_beta = self.ema_beta
                 for k, v in clean_state.items():
                     if k not in target_state:
                         continue
@@ -261,7 +281,7 @@ class TargetNetworkSyncCallback(Callback):
                     else:
                         target_state[k].copy_(v.detach())
             else:
-                self.target_agent_network.load_state_dict(clean_state, strict=False)
+                self.target_network.load_state_dict(clean_state, strict=False)
 
 
 class ResetNoiseCallback(Callback):
@@ -316,6 +336,7 @@ class PPOEarlyStoppingCallback(Callback):
     """Early stops the optimization loop if KL divergence exceeds target_kl."""
 
     def __init__(self, target_kl: float, key: str = "approx_kl"):
+        assert target_kl > 0, f"target_kl must be positive, got {target_kl}"
         self.target_kl = target_kl
         self.key = key
 
@@ -326,47 +347,82 @@ class PPOEarlyStoppingCallback(Callback):
         stats=None,
     ) -> None:
         """Checks KL divergence against target threshold."""
-        kl = step_result.loss_dict.get(self.key)
-        if kl is not None and kl > 1.5 * self.target_kl:
+        assert self.key in step_result.loss_dict, (
+            f"Key '{self.key}' missing from StepResult.loss_dict. "
+            f"Available keys: {list(step_result.loss_dict.keys())}. "
+            "Ensure the LossPipeline is propagating this metric from context."
+        )
+        kl = step_result.loss_dict[self.key]
+        if kl > 1.5 * self.target_kl:
             if stats is not None:
                 stats.append("ppo_early_stop", 1.0)
             raise EarlyStopIteration(f"KL divergence {kl:.4f} > 1.5 * {self.target_kl}")
 
 
 class PriorityUpdaterCallback(Callback):
-    """Updates Prioritized Experience Replay (PER) buffer priorities."""
+    """Updates Prioritized Experience Replay (PER) buffer priorities via a callback."""
 
-    def __init__(self, replay_buffer, per_beta_schedule):
-        self.replay_buffer = replay_buffer
+    def __init__(
+        self,
+        priority_update_fn: Callable,
+        set_beta_fn: Callable,
+        per_beta_schedule: Any,
+    ):
+        """
+        Initializes the PriorityUpdaterCallback.
+
+        Args:
+            priority_update_fn: A callable that accepts (indices, priorities, ids).
+            set_beta_fn: A callable to update PER beta (accepts float).
+            per_beta_schedule: A schedule for updating PER beta.
+        """
+        self.priority_update_fn = priority_update_fn
+        self.set_beta_fn = set_beta_fn
         self.per_beta_schedule = per_beta_schedule
 
     def on_step_end(
         self,
-        learner,
+        learner: UniversalLearner,
         predictions: Dict[str, torch.Tensor],
         targets: Dict[str, torch.Tensor],
         loss_dict: Dict[str, float],
         stats=None,
         **kwargs,
     ) -> None:
-        batch = kwargs.get("batch")
-        priorities = kwargs.get("priorities")
+        batch = kwargs["batch"]
+        priorities = kwargs["priorities"]
 
-        if priorities is not None and batch is not None and "indices" in batch:
-            ids = batch.get("ids")
-            priorities = priorities.detach().cpu().numpy()
-            # ---------------
-
-            self.replay_buffer.update_priorities(
-                batch["indices"], priorities, ids=ids
-            )
+        ids = batch.get("ids")
+        priorities_np = priorities.detach().cpu().numpy()
+        self.priority_update_fn(batch["indices"], priorities_np, ids=ids)
 
     def on_training_step_end(
         self,
-        learner,
+        learner: UniversalLearner,
         stats=None,
     ) -> None:
-        self.replay_buffer.set_beta(self.per_beta_schedule.get_value())
+        self.set_beta_fn(self.per_beta_schedule.get_value())
+
+
+class WeightBroadcastCallback(Callback):
+    """Broadcasts network weights to remote workers/executors."""
+
+    def __init__(self, weight_broadcast_fn: Callable[[Dict[str, Any]], None]):
+        """
+        Initializes the WeightBroadcastCallback.
+
+        Args:
+            weight_broadcast_fn: A callable that accepts the state_dict of the agent network.
+        """
+        self.weight_broadcast_fn = weight_broadcast_fn
+
+    def on_training_step_end(
+        self,
+        learner: UniversalLearner,
+        stats=None,
+    ) -> None:
+        """Broadcast weights at the end of the full training step (after all iterations/batches)."""
+        self.weight_broadcast_fn(learner.agent_network.state_dict())
 
 
 class EpsilonGreedySchedulerCallback(Callback):

@@ -12,7 +12,6 @@ from torch.optim.sgd import SGD
 
 from agents.learners.base import UniversalLearner, StepResult
 from agents.learners.batch_iterators import SingleBatchIterator
-from agents.learners.callbacks import MetricsCallback
 from losses.losses import (
     ChanceQLoss,
     ConsistencyLoss,
@@ -41,7 +40,23 @@ class MuZeroLearner(UniversalLearner):
         observation_dtype,
         player_id_mapping: Dict[str, int],
     ):
-        from agents.learners.callbacks import MetricsCallback, ResetNoiseCallback
+        from agents.learners.callbacks import (
+            StochasticMetricsCallback,
+            LatentMetricsCallback,
+            ResetNoiseCallback,
+        )
+
+        callbacks = [ResetNoiseCallback()]
+        if config.stochastic:
+            callbacks.append(StochasticMetricsCallback())
+
+        if getattr(config, "latent_viz_interval", 0) > 0:
+            callbacks.append(
+                LatentMetricsCallback(
+                    viz_interval=config.latent_viz_interval,
+                    viz_method=config.latent_viz_method,
+                )
+            )
 
         super().__init__(
             config=config,
@@ -50,7 +65,7 @@ class MuZeroLearner(UniversalLearner):
             num_actions=num_actions,
             observation_dimensions=observation_dimensions,
             observation_dtype=observation_dtype,
-            callbacks=[MetricsCallback(), ResetNoiseCallback()],
+            callbacks=callbacks,
         )
 
         self.replay_buffer = create_muzero_buffer(
@@ -155,14 +170,15 @@ class MuZeroLearner(UniversalLearner):
         from utils.schedule import create_schedule
 
         self.schedules: Dict[str, Any] = {}
-        if (
-            hasattr(self.config, "per_beta_schedule")
-            and self.config.per_beta_schedule is not None
-        ):
-            self.schedules["per_beta"] = create_schedule(self.config.per_beta_schedule)
+        per_beta_schedule_config = getattr(self.config, "per_beta_schedule", None)
+        self.schedules["per_beta"] = create_schedule(per_beta_schedule_config)
 
         self.callbacks.callbacks.append(
-            PriorityUpdaterCallback(self.replay_buffer, self.schedules["per_beta"])
+            PriorityUpdaterCallback(
+                priority_update_fn=self.replay_buffer.update_priorities,
+                set_beta_fn=self.replay_buffer.set_beta,
+                per_beta_schedule=self.schedules["per_beta"],
+            )
         )
 
     def step(self, stats=None) -> Any:
@@ -173,11 +189,9 @@ class MuZeroLearner(UniversalLearner):
         iterator = SingleBatchIterator(self.replay_buffer, self.device)
         result = super().step(batch_iterator=iterator, stats=stats)
 
-        # Step PER beta schedule
+        # Step PER beta schedule (updates happen via callback)
         for name, schedule in self.schedules.items():
             schedule.step()
-            if name == "per_beta":
-                self.replay_buffer.set_beta(schedule.get_value())
 
         return result
 

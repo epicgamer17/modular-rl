@@ -908,7 +908,7 @@ class GAEProcessor(InputProcessor):
         for t, adv, ret in zip(transitions, adv_list, ret_list):
             t["advantages"] = adv
             t["returns"] = ret
-            t["log_probabilities"] = t.get("policies", 0.0)
+            t["old_log_probs"] = t.get("policies", 0.0)
 
         return {"transitions": transitions}
 
@@ -1358,6 +1358,6 @@ class AdvantageNormalizer(OutputProcessor):
             actions=buffers["actions"][sl],
             advantages=normalized_advantages,
             returns=buffers["returns"][sl],
-            log_probabilities=buffers["log_probabilities"][sl],
+            old_log_probs=buffers["old_log_probs"][sl],
             legal_moves_masks=buffers["legal_moves_masks"][sl],
         )

@@ -34,6 +34,7 @@ def test_universal_learner_init_sets_fields():
         optimizer=None,
         lr_scheduler=None,
         callbacks=None,
+        clip_norm=config.clipnorm,
     )
 
     assert learner.config is config
@@ -68,7 +69,7 @@ def test_universal_learner_step_calls_optimizer_and_callbacks():
 
     loss_val = torch.tensor(0.5, requires_grad=True)
     priorities = torch.tensor([0.1, 0.2])
-    loss_pipeline.run.return_value = (loss_val, {"total_loss": 0.5}, priorities)
+    loss_pipeline.run.return_value = ({"default": loss_val}, {"total_loss": 0.5}, priorities)
 
     callback = MagicMock(spec=Callback)
 
@@ -84,6 +85,7 @@ def test_universal_learner_step_calls_optimizer_and_callbacks():
         optimizer=optimizer,
         lr_scheduler=lr_scheduler,
         callbacks=[callback],
+        clip_norm=config.clipnorm,
     )
 
     with patch("agents.learners.base.clip_grad_norm_") as mock_clip:
@@ -121,7 +123,7 @@ def test_universal_learner_early_stop_iteration_breaks_loop():
 
     loss_pipeline = MagicMock(spec=LossPipeline)
     loss_pipeline.run.return_value = (
-        torch.tensor(0.5, requires_grad=True),
+        {"default": torch.tensor(0.5, requires_grad=True)},
         {"l": 0.5},
         torch.zeros(1),
     )
@@ -142,6 +144,7 @@ def test_universal_learner_early_stop_iteration_breaks_loop():
         loss_pipeline=loss_pipeline,
         optimizer=optimizer,
         callbacks=[stop_cb],
+        clip_norm=config.clipnorm,
     )
 
     batches = [{"observations": torch.randn(1, 4)} for _ in range(3)]
@@ -169,6 +172,7 @@ def test_universal_learner_save_load_checkpoint(tmp_path):
         target_builder=None,
         loss_pipeline=None,
         optimizer=opt,
+        clip_norm=config.clipnorm,
     )
     learner.training_step = 123
 
@@ -188,6 +192,7 @@ def test_universal_learner_save_load_checkpoint(tmp_path):
         target_builder=None,
         loss_pipeline=None,
         optimizer=opt2,
+        clip_norm=config.clipnorm,
     )
     learner2.load_checkpoint(str(ckpt))
 

@@ -558,7 +558,7 @@ def create_ppo_buffer(
         BufferConfig("actions", shape=(), dtype=torch.int64),
         BufferConfig("rewards", shape=(), dtype=torch.float32),
         BufferConfig("values", shape=(), dtype=torch.float32),
-        BufferConfig("log_probabilities", shape=(), dtype=torch.float32),
+        BufferConfig("old_log_probs", shape=(), dtype=torch.float32),
         BufferConfig("legal_moves_masks", shape=(num_actions,), dtype=torch.bool),
         BufferConfig("advantages", shape=(), dtype=torch.float32),
         BufferConfig("returns", shape=(), dtype=torch.float32),

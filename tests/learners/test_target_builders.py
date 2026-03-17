@@ -8,7 +8,6 @@ from agents.learners.target_builders import (
     DQNTargetBuilder,
     BaseTargetBuilder,
 )
-from modules.world_models.inference_output import LearningOutput
 
 pytestmark = pytest.mark.unit
 
@@ -44,18 +43,18 @@ def test_dqn_target_builder_standard(rainbow_config):
     }
     
     # Target Builder expects B dimension (it handles T dimension internally if needed)
-    predictions = LearningOutput(
-        q_values=torch.tensor([[10.0, 20.0], [30.0, 40.0]]),
-    )
+    predictions = {
+        "q_values": torch.tensor([[10.0, 20.0], [30.0, 40.0]]),
+    }
     
     # Monitor network call
     network = MagicMock()
-    network.learner_inference.return_value = LearningOutput(
-        q_values=torch.tensor([[[0.0, 10.0]], [[0.0, 10.0]]]) # [B=2, T=1, Actions]
-    )
-    builder.target_network.learner_inference.return_value = LearningOutput(
-        q_values=torch.tensor([[[100.0, 200.0]], [[300.0, 400.0]]]) # [B=2, T=1, Actions]
-    )
+    network.learner_inference.return_value = {
+        "q_values": torch.tensor([[[0.0, 10.0]], [[0.0, 10.0]]]) # [B=2, T=1, Actions]
+    }
+    builder.target_network.learner_inference.return_value = {
+        "q_values": torch.tensor([[[100.0, 200.0]], [[300.0, 400.0]]]) # [B=2, T=1, Actions]
+    }
 
     targets = builder.build_targets(batch, predictions, network)
 
@@ -101,18 +100,17 @@ def test_dqn_target_builder_c51(rainbow_config):
 
     # Online next q logits: forces max action index 0
     network = MagicMock()
-    network.learner_inference.return_value = LearningOutput(
-        q_logits=torch.tensor([[[10.0, 0.0, 0.0]]])
-    )
-
+    network.learner_inference.return_value = {
+        "q_logits": torch.tensor([[[10.0, 0.0, 0.0]]])
+    }
     # target next distribution: all mass at support index 1 (value=1.0)
-    builder.target_network.learner_inference.return_value = LearningOutput(
-        q_logits=torch.tensor([[[0.0, 10.0, 0.0], [0.0, 0.0, 0.0]]]) # [B=1, T=1, Actions, Atoms]
-    )
+    builder.target_network.learner_inference.return_value = {
+        "q_logits": torch.tensor([[[0.0, 10.0, 0.0], [0.0, 0.0, 0.0]]]) # [B=1, T=1, Actions, Atoms]
+    }
 
-    predictions = LearningOutput(
-        q_logits=torch.randn((1, 2, 3)),
-    )
+    predictions = {
+        "q_logits": torch.randn((1, 2, 3)),
+    }
 
     targets = builder.build_targets(batch, predictions, network)
 
@@ -153,17 +151,17 @@ def test_dqn_target_builder_truncated(rainbow_config):
     batch["terminated"] = torch.tensor([True, False])
 
     network = MagicMock()
-    network.learner_inference.return_value = LearningOutput(
-        q_values=torch.tensor([[[10.0, 10.0]], [[10.0, 10.0]]]),
-    )
+    network.learner_inference.return_value = {
+        "q_values": torch.tensor([[[10.0, 10.0]], [[10.0, 10.0]]]),
+    }
     
-    builder.target_network.learner_inference.return_value = LearningOutput(
-        q_values=torch.tensor([[[100.0, 100.0]], [[100.0, 100.0]]])
-    )
+    builder.target_network.learner_inference.return_value = {
+        "q_values": torch.tensor([[[100.0, 100.0]], [[100.0, 100.0]]])
+    }
 
-    predictions = LearningOutput(
-        q_values=torch.tensor([[10.0, 10.0], [10.0, 10.0]]),
-    )
+    predictions = {
+        "q_values": torch.tensor([[10.0, 10.0], [10.0, 10.0]]),
+    }
 
     targets = builder.build_targets(batch, predictions, network)
 

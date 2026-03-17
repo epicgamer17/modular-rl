@@ -14,16 +14,16 @@ from modules.agent_nets.modular import ModularAgentNetwork
 if TYPE_CHECKING:
     from agents.learners.target_builders import BaseTargetBuilder
     from losses.losses import LossPipeline
-    from agents.learners.callbacks import Callback, EarlyStopIteration
+    from agents.learners.callbacks import Callback
 
-from agents.learners.callbacks import CallbackList
+from agents.learners.callbacks import CallbackList, EarlyStopIteration
 
 
 @dataclass
 class StepResult:
     """Container for a single optimization update."""
 
-    loss: Union[torch.Tensor, Dict[str, torch.Tensor]]
+    loss: Dict[str, torch.Tensor]
     loss_dict: Dict[str, float]
     priorities: Optional[torch.Tensor] = None
     predictions: Dict[str, torch.Tensor] = field(default_factory=dict)
@@ -63,6 +63,7 @@ class UniversalLearner:
         ] = None,
         lr_scheduler: Optional[Union[Any, Dict[str, Any]]] = None,
         callbacks: Optional[List[Callback]] = None,
+        clip_norm: Optional[float] = None,
     ):
         self.config = config
         self.agent_network = agent_network
@@ -73,6 +74,7 @@ class UniversalLearner:
 
         self.target_builder = target_builder
         self.loss_pipeline = loss_pipeline
+        self.clip_norm = clip_norm
 
         # Normalize optimizers and schedulers into dictionaries
         if isinstance(optimizer, dict):
@@ -125,31 +127,23 @@ class UniversalLearner:
                 # 2. Forward + Targets + Loss
                 result = self.compute_step_result(batch=batch, stats=stats)
 
-                # 3. Backward
-                if isinstance(result.loss, dict):
-                    for loss_tensor in result.loss.values():
-                        loss_tensor.backward()
-                else:
-                    result.loss.backward()
+                # 3. Backward + Step (linear, multi-optimizer routing)
+                for opt_key, loss_tensor in result.loss.items():
+                    loss_tensor.backward(retain_graph=len(result.loss) > 1)
 
-                # 4. Fire on_backward_end (e.g. PPO KL early stopping, metrics)
+                    # 4. Optional Gradient Clipping (per optimizer)
+                    if self.clip_norm is not None and self.clip_norm > 0:
+                        clip_grad_norm_(self.agent_network.parameters(), self.clip_norm)
+
+                    # 5. Weight Update
+                    self.optimizers[opt_key].step()
+
+                # 6. Fire on_backward_end (e.g. PPO KL early stopping, metrics)
+                # NOTE: The semantics of 'on_backward_end' might be slightly shifted,
+                # but it now happens after the complete routing for that batch.
                 self.callbacks.on_backward_end(
                     learner=self, step_result=result, stats=stats
                 )
-
-                # 5. Gradient Clipping
-                if self.config.clipnorm > 0:
-                    # Clip all optimizers. For shared parameters, this might be redundant but safe.
-                    # Subclasses should override if specific clipping logic is needed.
-                    for opt in self.optimizers.values():
-                        opt_params = [
-                            p for group in opt.param_groups for p in group["params"]
-                        ]
-                        clip_grad_norm_(opt_params, self.config.clipnorm)
-
-                # 6. Weight Update
-                for opt in self.optimizers.values():
-                    opt.step()
 
                 # 7. LR Scheduler Step
                 for sched in self.lr_schedulers.values():
@@ -191,11 +185,7 @@ class UniversalLearner:
         if last_result is None:
             return None
 
-        total_loss_val = (
-            sum(l.item() for l in last_result.loss.values())
-            if isinstance(last_result.loss, dict)
-            else float(last_result.loss.item())
-        )
+        total_loss_val = sum(l.item() for l in last_result.loss.values())
 
         return self._prepare_stats(last_result.loss_dict, total_loss_val)
 
@@ -238,13 +228,12 @@ class UniversalLearner:
             loss_dict=loss_dict,
             priorities=priorities,
             predictions={
-                k: v.detach().cpu() if torch.is_tensor(v) else v
-                for k, v in predictions.items()
+                k: v.detach().cpu() for k, v in predictions.items() if torch.is_tensor(v)
             },
             targets={
-                k: v.detach().cpu() if torch.is_tensor(v) else v
-                for k, v in targets.items()
+                k: v.detach().cpu() for k, v in targets.items() if torch.is_tensor(v)
             },
+            meta=context.copy(),
         )
 
     def save_checkpoint(self, path: str):
