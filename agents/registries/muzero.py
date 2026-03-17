@@ -14,7 +14,11 @@ from losses.losses import (
 )
 from modules.utils import create_optimizer, get_lr_scheduler
 from agents.learners.callbacks import ResetNoiseCallback
-from agents.learners.target_builders import MuZeroTargetBuilder
+from agents.learners.target_builders import (
+    TargetBuilderPipeline,
+    TrajectoryGradientScaleBuilder,
+    LatentConsistencyBuilder,
+)
 
 def build_muzero_loss_pipeline(config, agent_network, device):
     modules = [
@@ -52,7 +56,11 @@ def build_muzero(config: Any, agent_network: Any, device: torch.device) -> Dict[
         callbacks.append(ResetNoiseCallback())
 
     # 4. Target Builder
-    target_builder = MuZeroTargetBuilder(config, device)
+    builders = [TrajectoryGradientScaleBuilder(unroll_steps=config.unroll_steps)]
+    if getattr(config, "consistency_loss_factor", 0) > 0:
+        builders.append(LatentConsistencyBuilder())
+
+    target_builder = TargetBuilderPipeline(builders)
 
     return {
         "loss_pipeline": loss_pipeline,

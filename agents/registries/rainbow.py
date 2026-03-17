@@ -3,8 +3,12 @@ from typing import Any, Dict, List, Tuple
 from agents.registries.base import register_agent
 from losses.losses import LossPipeline, StandardDQNLoss, C51Loss
 from modules.utils import create_optimizer, get_lr_scheduler
-from agents.learners.target_builders import DQNTargetBuilder
+from agents.learners.target_builders import (
+    TemporalDifferenceBuilder,
+    TDCategoricalProjectionBuilder,
+)
 from agents.action_selectors.selectors import ArgmaxSelector
+
 
 def build_rainbow_loss_pipeline(config, agent_network, device):
     selector = ArgmaxSelector()
@@ -15,8 +19,11 @@ def build_rainbow_loss_pipeline(config, agent_network, device):
     )
     return LossPipeline([td_loss_module])
 
+
 @register_agent("rainbow")
-def build_rainbow(config: Any, agent_network: Any, device: torch.device) -> Dict[str, Any]:
+def build_rainbow(
+    config: Any, agent_network: Any, device: torch.device
+) -> Dict[str, Any]:
     # 1. Losses
     loss_pipeline = build_rainbow_loss_pipeline(config, agent_network, device)
 
@@ -26,7 +33,23 @@ def build_rainbow(config: Any, agent_network: Any, device: torch.device) -> Dict
     lr_schedulers = {"default": get_lr_scheduler(opt, config)}
 
     # 3. Target Builder
-    target_builder = DQNTargetBuilder(config, device)
+    if getattr(config, "atom_size", 1) > 1:
+        target_builder = TDCategoricalProjectionBuilder(
+            target_network=agent_network.target_network,
+            v_min=config.v_min,
+            v_max=config.v_max,
+            atom_size=config.atom_size,
+            gamma=config.discount_factor,
+            n_step=config.n_step,
+            bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
+        )
+    else:
+        target_builder = TemporalDifferenceBuilder(
+            target_network=agent_network.target_network,
+            gamma=config.discount_factor,
+            n_step=config.n_step,
+            bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
+        )
 
     return {
         "loss_pipeline": loss_pipeline,

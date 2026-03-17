@@ -15,14 +15,13 @@ import torch
 from torch import nn
 
 from agents.learners.base import UniversalLearner
-from agents.learners.target_builders import DQNTargetBuilder, MuZeroTargetBuilder
+from agents.learners.target_builders import BaseTargetBuilder
 from agents.learners.callbacks import (
     PriorityUpdaterCallback,
     WeightBroadcastCallback,
     PPOEarlyStoppingCallback,
     TargetNetworkSyncCallback,
     ResetNoiseCallback,
-    LatentMetricsCallback,
 )
 from losses.losses import (
     LossPipeline,

@@ -16,7 +16,10 @@ from agents.learners.callbacks import (
     ResetNoiseCallback,
     TargetNetworkSyncCallback,
 )
-from agents.learners.target_builders import DQNTargetBuilder
+from agents.learners.target_builders import (
+    TemporalDifferenceBuilder,
+    TDCategoricalProjectionBuilder,
+)
 from losses.losses import C51Loss, ImitationLoss, LossPipeline, StandardDQNLoss
 from modules.utils import get_lr_scheduler
 from replay_buffers.buffer_factories import create_dqn_buffer, create_nfsp_buffer
@@ -99,17 +102,27 @@ class NFSPLearner:
             raise ValueError(f"Unsupported optimizer: {rl_config.optimizer}")
 
         rl_scheduler = get_lr_scheduler(rl_optimizer, rl_config)
-        rl_target_builder = DQNTargetBuilder(
-            device=device,
-            target_network=best_response_target_agent_network,
-            gamma=rl_config.discount_factor,
-            n_step=rl_config.n_step,
-            use_c51=rl_config.atom_size > 1,
-            v_min=getattr(rl_config, "v_min", None),
-            v_max=getattr(rl_config, "v_max", None),
-            atom_size=getattr(rl_config, "atom_size", 1),
-            bootstrap_on_truncated=getattr(rl_config, "bootstrap_on_truncated", False),
-        )
+        if rl_config.atom_size > 1:
+            rl_target_builder = TDCategoricalProjectionBuilder(
+                target_network=best_response_target_agent_network,
+                v_min=rl_config.v_min,
+                v_max=rl_config.v_max,
+                atom_size=rl_config.atom_size,
+                gamma=rl_config.discount_factor,
+                n_step=rl_config.n_step,
+                bootstrap_on_truncated=getattr(
+                    rl_config, "bootstrap_on_truncated", False
+                ),
+            )
+        else:
+            rl_target_builder = TemporalDifferenceBuilder(
+                target_network=best_response_target_agent_network,
+                gamma=rl_config.discount_factor,
+                n_step=rl_config.n_step,
+                bootstrap_on_truncated=getattr(
+                    rl_config, "bootstrap_on_truncated", False
+                ),
+            )
 
         from agents.action_selectors.selectors import ArgmaxSelector
 

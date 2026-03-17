@@ -39,6 +39,7 @@ class ConfigBase:
         if field_name in self._parsed_fields:
             print("warning: duplicate field: ", field_name)
         self._parsed_fields.add(field_name)
+        return default
 
     def parse_schedule_config(
         self, field_name: str, defaults: dict = None
@@ -54,6 +55,7 @@ class ConfigBase:
     def __init__(self, config_dict: dict, game_config=None):
         self.config_dict = config_dict.copy()
         self.game = game_config
+        self._parsed_fields = set()
         self.agent_type: Optional[str] = self.parse_field(
             "agent_type", default=None, required=False
         )
@@ -66,7 +68,6 @@ class ConfigBase:
                     if k not in self.config_dict:
                         self.config_dict[k] = v
 
-        self._parsed_fields = set()
 
     @classmethod
     def load(cls, filepath: str):

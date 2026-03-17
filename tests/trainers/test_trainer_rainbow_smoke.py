@@ -125,8 +125,7 @@ def test_rainbow_trainer_epsilon_update(make_rainbow_config_dict):
 
     assert trainer.current_epsilon == pytest.approx(1.0)
 
-    trainer.training_step = 500
-    trainer._update_epsilon()
+    trainer.schedules["epsilon"].step()
     assert trainer.current_epsilon < 1.0
     assert trainer.current_epsilon > 0.05
 

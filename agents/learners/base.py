@@ -197,12 +197,12 @@ class UniversalLearner:
         batch["training_step"] = self.training_step
 
         # 2. Targets
+        targets = batch.copy()
         if self.target_builder is not None:
-            targets = self.target_builder.build_targets(
+            new_targets = self.target_builder.build_targets(
                 batch, predictions, self.agent_network
             )
-        else:
-            targets = batch
+            targets.update(new_targets)
 
         # 3. Context and PER weights
         context = batch

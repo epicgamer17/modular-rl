@@ -11,7 +11,10 @@ from modules.agent_nets.modular import ModularAgentNetwork
 from replay_buffers.transition import TransitionBatch, Transition
 from stats.stats import StatTracker, PlotType
 from utils.schedule import create_schedule
-from agents.learners.target_builders import DQNTargetBuilder
+from agents.learners.target_builders import (
+    TemporalDifferenceBuilder,
+    TDCategoricalProjectionBuilder,
+)
 from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
 from losses.losses import C51Loss, StandardDQNLoss
@@ -129,17 +132,23 @@ class RainbowTrainer(BaseTrainer):
         self.loss_pipeline = LossPipeline([self.td_loss_module])
 
         # 6. Initialize Target Builder
-        self.target_builder = DQNTargetBuilder(
-            device=device,
-            target_network=self.target_agent_network,
-            gamma=config.discount_factor,
-            n_step=config.n_step,
-            use_c51=config.atom_size > 1,
-            v_min=getattr(config, "v_min", None),
-            v_max=getattr(config, "v_max", None),
-            atom_size=getattr(config, "atom_size", 1),
-            bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
-        )
+        if config.atom_size > 1:
+            self.target_builder = TDCategoricalProjectionBuilder(
+                target_network=self.target_agent_network,
+                v_min=config.v_min,
+                v_max=config.v_max,
+                atom_size=config.atom_size,
+                gamma=config.discount_factor,
+                n_step=config.n_step,
+                bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
+            )
+        else:
+            self.target_builder = TemporalDifferenceBuilder(
+                target_network=self.target_agent_network,
+                gamma=config.discount_factor,
+                n_step=config.n_step,
+                bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
+            )
         if config.atom_size > 1:
             self.loss_pipeline.validate_dependencies(
                 network_output_keys={"q_logits"},
