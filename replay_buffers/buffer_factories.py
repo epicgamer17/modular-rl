@@ -48,6 +48,59 @@ from utils.utils import legal_moves_mask
 #             if old_k in kwargs and new_k not in kwargs:
 #                 kwargs[new_k] = kwargs[old_k]
 #         return kwargs
+
+
+class TargetPolicyInputProcessor(InputProcessor):
+    """Ensures `target_policies` exists for supervised/NFSP-style buffers.
+
+    Priority:
+    1) `target_policies` (already provided)
+    2) `target_policy` (legacy singular)
+    3) `policies` (from Sequence.policy_history / search metadata)
+    4) `actions` -> one-hot
+    """
+
+    def __init__(
+        self,
+        num_actions: int,
+        *,
+        action_key: str = "actions",
+        target_policy_key: str = "target_policies",
+    ):
+        self.num_actions = num_actions
+        self.action_key = action_key
+        self.target_policy_key = target_policy_key
+
+    def process_single(self, **kwargs):
+        if kwargs.get(self.target_policy_key) is not None:
+            return kwargs
+
+        if kwargs.get("target_policy") is not None:
+            kwargs[self.target_policy_key] = kwargs["target_policy"]
+            return kwargs
+
+        policies = kwargs.get("policies")
+        if policies is not None:
+            if torch.is_tensor(policies) and policies.ndim == 2 and policies.shape[0] == 1:
+                policies = policies.squeeze(0)
+            kwargs[self.target_policy_key] = policies
+            return kwargs
+
+        action = kwargs.get(self.action_key)
+        if action is None:
+            return kwargs
+
+        if torch.is_tensor(action):
+            action = int(action.item())
+        elif isinstance(action, np.ndarray):
+            action = int(action.item())
+        else:
+            action = int(action)
+
+        one_hot = torch.zeros(self.num_actions, dtype=torch.float32)
+        one_hot[action] = 1.0
+        kwargs[self.target_policy_key] = one_hot
+        return kwargs
 #     def process_single(self, **kwargs):
 #         for old_k, new_k in self.mapping.items():
 #             if old_k in kwargs and new_k not in kwargs:
@@ -421,14 +474,15 @@ def create_nfsp_buffer(
         BufferConfig("target_policies", shape=(num_actions,), dtype=torch.float32),
     ]
 
-    # NFSP Stack:
-    # 1. LegalMoves: Extract mask from 'info' -> 'legal_moves_masks'
-    # 2. Rename: 'observation' -> 'observations', 'target_policy' -> 'target_policies'
+    # NFSP / Supervised Stack:
+    # 1. LegalMoves: Extract mask from 'legal_moves' -> 'legal_moves_masks'
+    # 2. Ensure `target_policies` exists (from policies or actions)
     input_stack = StackedInputProcessor(
         [
             LegalMovesMaskProcessor(
                 num_actions, input_key="legal_moves", output_key="legal_moves_masks"
             ),
+            TargetPolicyInputProcessor(num_actions),
             FilterKeysInputProcessor(
                 ["observations", "legal_moves_masks", "target_policies"]
             ),

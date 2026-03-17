@@ -179,3 +179,42 @@ class SearchPolicySource(BasePolicySource):
                     "root_value": value.squeeze(0),
                 },
             )
+
+
+class NFSPNetworkPolicySource(BasePolicySource):
+    """Combines two networks into one InferenceResult for NFSP.
+
+    Returns BR information in `q_values` and AVG information in `logits`/`probs`,
+    so an `NFSPSelector` can choose between `EpsilonGreedySelector` and
+    `CategoricalSelector` without additional inference passes.
+    """
+
+    def __init__(
+        self,
+        best_response_network: BaseAgentNetwork,
+        average_network: BaseAgentNetwork,
+    ):
+        self.best_response_network = best_response_network
+        self.average_network = average_network
+
+    def get_inference(
+        self, obs: torch.Tensor, info: Dict[str, Any], **kwargs
+    ) -> InferenceResult:
+        br_output = self.best_response_network.obs_inference(obs)
+        avg_output = self.average_network.obs_inference(obs)
+
+        br_result = InferenceResult.from_inference_output(br_output)
+        avg_result = InferenceResult.from_inference_output(avg_output)
+
+        return InferenceResult(
+            value=br_result.value if br_result.value is not None else avg_result.value,
+            q_values=br_result.q_values,
+            logits=avg_result.logits,
+            probs=avg_result.probs,
+            reward=br_result.reward if br_result.reward is not None else avg_result.reward,
+            to_play=br_result.to_play if br_result.to_play is not None else avg_result.to_play,
+            extra_metadata={
+                **(br_result.extra_metadata or {}),
+                **(avg_result.extra_metadata or {}),
+            },
+        )

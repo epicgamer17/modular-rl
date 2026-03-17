@@ -8,15 +8,26 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 
-from agents.learners.rainbow_learner import RainbowLearner
-from agents.learners.imitation_learner import ImitationLearner
+from agents.learners.base import UniversalLearner
+from agents.learners.batch_iterators import RepeatSampleIterator
+from agents.learners.callbacks import (
+    PriorityUpdaterCallback,
+    ResetNoiseCallback,
+    TargetNetworkSyncCallback,
+)
+from agents.learners.target_builders import DQNTargetBuilder
+from losses.losses import C51Loss, ImitationLoss, LossPipeline, StandardDQNLoss
+from modules.utils import get_lr_scheduler
+from replay_buffers.buffer_factories import create_dqn_buffer, create_nfsp_buffer
+from utils.schedule import create_schedule
 
 
 class NFSPLearner:
     """
     NFSPLearner manages the dual-learning process of NFSP.
-    It composes a RainbowLearner for Best Response (RL) and an
-    ImitationLearner for Average Strategy (SL).
+    It composes two UniversalLearners:
+    - Best Response (RL): DQN-style targets + TD loss + PER
+    - Average Strategy (SL): supervised imitation loss on a reservoir buffer
     """
 
     def __init__(
@@ -50,26 +61,139 @@ class NFSPLearner:
         self.observation_dtype = observation_dtype
         self.training_step = 0
 
-        # 1. Initialize Best Response (RL) Learner
-        self.rl_learner = RainbowLearner(
-            config=config.rl_configs[0],
+        rl_config = config.rl_configs[0]
+        sl_config = config.sl_configs[0]
+
+        # 1) RL buffer + learner (Best Response)
+        self.rl_buffer = create_dqn_buffer(
+            observation_dimensions=observation_dimensions,
+            max_size=rl_config.replay_buffer_size,
+            num_actions=num_actions,
+            batch_size=rl_config.minibatch_size,
+            observation_dtype=observation_dtype,
+            config=rl_config,
+        )
+        self._rl_per_beta_schedule = (
+            create_schedule(rl_config.per_beta_schedule)
+            if getattr(rl_config, "per_beta_schedule", None) is not None
+            else None
+        )
+
+        from torch.optim.adam import Adam
+        from torch.optim.sgd import SGD
+
+        if rl_config.optimizer == Adam:
+            rl_optimizer = rl_config.optimizer(
+                params=best_response_agent_network.parameters(),
+                lr=rl_config.learning_rate,
+                eps=rl_config.adam_epsilon,
+                weight_decay=rl_config.weight_decay,
+            )
+        elif rl_config.optimizer == SGD:
+            rl_optimizer = rl_config.optimizer(
+                params=best_response_agent_network.parameters(),
+                lr=rl_config.learning_rate,
+                momentum=rl_config.momentum,
+                weight_decay=rl_config.weight_decay,
+            )
+        else:
+            raise ValueError(f"Unsupported optimizer: {rl_config.optimizer}")
+
+        rl_scheduler = get_lr_scheduler(rl_optimizer, rl_config)
+        rl_target_builder = DQNTargetBuilder(
+            rl_config, device, best_response_target_agent_network
+        )
+
+        from agents.action_selectors.selectors import ArgmaxSelector
+
+        training_selector = ArgmaxSelector()
+        td_loss_module = (
+            C51Loss(config=rl_config, device=device, action_selector=training_selector)
+            if rl_config.atom_size > 1
+            else StandardDQNLoss(
+                config=rl_config, device=device, action_selector=training_selector
+            )
+        )
+        rl_loss_pipeline = LossPipeline([td_loss_module])
+
+        if rl_config.atom_size > 1:
+            rl_loss_pipeline.validate_dependencies(
+                network_output_keys={"q_logits"},
+                target_keys={"q_logits", "actions"},
+            )
+        else:
+            rl_loss_pipeline.validate_dependencies(
+                network_output_keys={"q_values"},
+                target_keys={"q_values", "actions"},
+            )
+
+        self.rl_learner = UniversalLearner(
+            config=rl_config,
             agent_network=best_response_agent_network,
-            target_agent_network=best_response_target_agent_network,
             device=device,
             num_actions=num_actions,
             observation_dimensions=observation_dimensions,
             observation_dtype=observation_dtype,
+            target_builder=rl_target_builder,
+            loss_pipeline=rl_loss_pipeline,
+            optimizer=rl_optimizer,
+            lr_scheduler=rl_scheduler,
+            callbacks=[
+                TargetNetworkSyncCallback(),
+                ResetNoiseCallback(),
+                PriorityUpdaterCallback(self.rl_buffer),
+            ],
+        )
+        self.rl_learner.target_agent_network = best_response_target_agent_network
+        self.rl_learner.replay_buffer = self.rl_buffer
+
+        # 2) SL buffer + learner (Average Strategy)
+        self.sl_buffer = create_nfsp_buffer(
+            observation_dimensions=observation_dimensions,
+            max_size=sl_config.replay_buffer_size,
+            num_actions=num_actions,
+            batch_size=sl_config.minibatch_size,
+            observation_dtype=observation_dtype,
         )
 
-        # 2. Initialize Average Strategy (SL) Learner via composition
-        self.sl_learner = ImitationLearner(
-            config=config.sl_configs[0],
+        if sl_config.optimizer == Adam:
+            sl_optimizer = sl_config.optimizer(
+                params=average_agent_network.parameters(),
+                lr=sl_config.learning_rate,
+                eps=sl_config.adam_epsilon,
+                weight_decay=sl_config.weight_decay,
+            )
+        elif sl_config.optimizer == SGD:
+            sl_optimizer = sl_config.optimizer(
+                params=average_agent_network.parameters(),
+                lr=sl_config.learning_rate,
+                momentum=sl_config.momentum,
+                weight_decay=sl_config.weight_decay,
+            )
+        else:
+            raise ValueError(f"Unsupported optimizer: {sl_config.optimizer}")
+
+        sl_scheduler = get_lr_scheduler(sl_optimizer, sl_config)
+        sl_loss_pipeline = LossPipeline([ImitationLoss(sl_config, device, num_actions)])
+        sl_loss_pipeline.validate_dependencies(
+            network_output_keys={"policies"},
+            target_keys={"target_policies"},
+        )
+
+        self.sl_learner = UniversalLearner(
+            config=sl_config,
             agent_network=average_agent_network,
             device=device,
             num_actions=num_actions,
             observation_dimensions=observation_dimensions,
             observation_dtype=observation_dtype,
+            target_builder=None,
+            loss_pipeline=sl_loss_pipeline,
+            optimizer=sl_optimizer,
+            lr_scheduler=sl_scheduler,
+            callbacks=[ResetNoiseCallback()],
         )
+        self.sl_learner.replay_buffer = self.sl_buffer
 
     @property
     def sl_optimizer(self) -> torch.optim.Optimizer:
@@ -79,7 +203,7 @@ class NFSPLearner:
     @property
     def sl_replay_buffer(self):
         """Backwards compatibility: expose SL buffer from composed learner."""
-        return self.sl_learner.replay_buffer
+        return self.sl_buffer
 
     def store(
         self,
@@ -106,7 +230,7 @@ class NFSPLearner:
             policy_used: Either "best_response" or "average_strategy".
         """
         # Always store in RL replay buffer
-        self.rl_learner.replay_buffer.store(
+        self.rl_buffer.store(
             observations=observation,
             legal_moves=legal_moves,
             actions=action,
@@ -120,12 +244,12 @@ class NFSPLearner:
 
         # If best_response was used, store in SL reservoir buffer
         if policy_used == "best_response":
-            target_policy = torch.zeros(self.num_actions)
+            target_policy = torch.zeros(self.num_actions, dtype=torch.float32)
             target_policy[action] = 1.0
-            self.sl_learner.store(
-                observation=observation,
+            self.sl_buffer.store(
+                observations=observation,
                 legal_moves=legal_moves,
-                target_policy=target_policy,
+                target_policies=target_policy,
             )
 
     def step(self, stats=None) -> Optional[Dict[str, float]]:
@@ -141,12 +265,34 @@ class NFSPLearner:
         metrics = {}
 
         # 1. RL Step
-        rl_metrics = self.rl_learner.step(stats)
+        if self.rl_buffer.size >= self.rl_learner.config.min_replay_buffer_size:
+            if self._rl_per_beta_schedule is not None and hasattr(
+                self.rl_buffer, "set_beta"
+            ):
+                beta = float(
+                    self._rl_per_beta_schedule.get_value(
+                        step=self.rl_learner.training_step
+                    )
+                )
+                self.rl_buffer.set_beta(beta)
+
+            rl_iter = RepeatSampleIterator(
+                self.rl_buffer, self.rl_learner.config.training_iterations
+            )
+            rl_metrics = self.rl_learner.step(batch_iterator=rl_iter, stats=stats)
+        else:
+            rl_metrics = None
         if rl_metrics:
             metrics.update({f"rl_{k}": v for k, v in rl_metrics.items()})
 
-        # 2. SL Step (delegated to ImitationLearner)
-        sl_metrics = self.sl_learner.step(stats)
+        # 2. SL Step (supervised/imitation)
+        if self.sl_replay_buffer.size >= self.sl_learner.config.min_replay_buffer_size:
+            sl_iter = RepeatSampleIterator(
+                self.sl_buffer, self.sl_learner.config.training_iterations
+            )
+            sl_metrics = self.sl_learner.step(batch_iterator=sl_iter, stats=stats)
+        else:
+            sl_metrics = None
         if sl_metrics:
             metrics.update({f"sl_{k}": v for k, v in sl_metrics.items()})
 
