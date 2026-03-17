@@ -2,7 +2,9 @@ import torch
 import time
 from typing import Optional, List, Dict, Any
 from agents.trainers.base_trainer import BaseTrainer
-from agents.learners.muzero_learner import MuZeroLearner
+from agents.learners.factory import build_universal_learner
+from agents.learners.batch_iterators import SingleBatchIterator
+from replay_buffers.buffer_factories import create_muzero_buffer
 from agents.action_selectors.selectors import CategoricalSelector
 from agents.action_selectors.decorators import TemperatureSelector
 from agents.workers.actors import get_actor_class
@@ -35,10 +37,6 @@ class MuZeroTrainer(BaseTrainer):
             self.player_id_mapping = {"player_0": 0}
 
         # 1. Initialize Network
-        # ... (network initialization)
-        # The local import `from modules.agent_nets.muzero import AgentNetwork as Network` is removed
-        # as MuZeroNetwork is already imported at the top and will be used directly.
-
         self.agent_network = ModularAgentNetwork(
             config=config,
             input_shape=self.obs_dim,
@@ -52,42 +50,52 @@ class MuZeroTrainer(BaseTrainer):
             self.agent_network.share_memory()
 
         # 2. Initialize Action Selector (MCTS)
-        # Actors auto-create SearchPolicySource from config.search.
-        # TemperatureSelector applies temperature scheduling; CategoricalSelector samples.
         inner_selector = CategoricalSelector()
         self.action_selector = TemperatureSelector(
             inner_selector=inner_selector,
             config=config,
         )
 
-        # Policy object removed. Learner needs a reference?
-        # MuZeroLearner previously took 'policy'. Let's check if it needs it.
-        # It used policy.preprocess/predict?
-        # If Learner uses policy, we might need to update Learner or provide a shim.
-        # Assuming for now we pass None or remove it if Learner allows.
-        # Checking MuZeroLearner signature... (viewed earlier).
-        # It takes 'policy' arg.
-        # We'll check MuZeroLearner next. For now, passing None.
-
-        # 4. Initialize Learner
-        self.learner = MuZeroLearner(
-            config=config,
-            agent_network=self.agent_network,
-            device=device,
-            num_actions=self.num_actions,
+        # 3. The Facts (Replay Buffer)
+        self.buffer = create_muzero_buffer(
             observation_dimensions=self.obs_dim,
-            observation_dtype=self.obs_dtype,
+            max_size=config.replay_buffer_size,
+            num_actions=self.num_actions,
+            num_players=config.game.num_players,
             player_id_mapping=self.player_id_mapping,
+            unroll_steps=config.unroll_steps,
+            n_step=config.n_step,
+            gamma=config.discount_factor,
+            batch_size=config.minibatch_size,
+            observation_dtype=self.obs_dtype,
+            alpha=config.per_alpha,
+            beta=config.per_beta_schedule.initial,
+            epsilon=config.per_epsilon,
+            use_batch_weights=config.per_use_batch_weights,
+            use_initial_max_priority=config.per_use_initial_max_priority,
+            lstm_horizon_len=config.lstm_horizon_len,
+            value_prefix=config.use_value_prefix,
+            tau=config.reanalyze_tau,
+            multi_process=config.multi_process,
+            observation_quantization=config.observation_quantization,
+            observation_compression=config.observation_compression,
         )
-
-        self.buffer = self.learner.replay_buffer
-        if config.multi_process:
-            self.buffer.share_memory()
-
-        # 6. Initialize Executor
+        # 5. Initialize Executor
         from agents.executors.factory import create_executor
 
         self.executor = create_executor(config)
+
+        # 4. The Orchestrator (Universal Learner)
+        self.learner = build_universal_learner(
+            config=config,
+            agent_network=self.agent_network,
+            device=device,
+            priority_update_fn=self.buffer.update_priorities,
+            weight_broadcast_fn=self.executor.update_weights,
+        )
+
+        if config.multi_process:
+            self.buffer.share_memory()
 
         # Launch workers
         num_workers = config.num_workers
@@ -101,22 +109,17 @@ class MuZeroTrainer(BaseTrainer):
             device,
             self.name,
         )
-        from agents.workers.actors import get_actor_class
-
         self.actor_cls = get_actor_class(env, config)
-
         self.executor.launch(self.actor_cls, worker_args, num_workers)
 
-        # 7. Compile network for the learner (main process)
+        # 6. Compile network for the learner (main process)
         if config.compilation.enabled:
             self.agent_network.compile(
                 mode=config.compilation.mode, fullgraph=config.compilation.fullgraph
             )
 
     def train(self):
-        """
-        Main training loop.
-        """
+        """Main training loop."""
         self._setup_stats()
 
         print(f"Starting training for {self.config.training_steps} steps...")
@@ -132,48 +135,50 @@ class MuZeroTrainer(BaseTrainer):
             if self.training_step % 100 == 0 and self.training_step > 0:
                 print(f"Step {self.training_step}")
 
-            # Drain stats queue to avoid deadlock if workers are logging
+            # Drain stats queue to avoid deadlock
             if hasattr(self.stats, "drain_queue"):
                 self.stats.drain_queue()
 
         self.stop_test()
-        # Final checkpoint and stats plot
         self._save_checkpoint()
         print("Training finished.")
 
-    def train_step(self):
-        """Single training step for MuZero: collect data and perform optimization."""
+    def train_step(self) -> Dict[str, Any]:
+        """Perform one training step (batch of gradients)."""
         # 1. Wait for data to be collected
-        # The actors push directly to the buffer.
         _, collect_stats = self.executor.collect_data(
             min_samples=None, worker_type=self.actor_cls
         )
 
         # 2. Log collection stats
-        for key, val in collect_stats.items():
-            self.stats.append(key, val)
+        if self.stats:
+            for key, val in collect_stats.items():
+                self.stats.append(key, val)
 
         # 3. Learning step
         if self.buffer.size >= self.config.min_replay_buffer_size:
             for _ in range(self.config.num_minibatches):
-                loss_stats = self.learner.step(self.stats)
-                if loss_stats:
-                    for key, val in loss_stats.items():
+                iterator = SingleBatchIterator(self.buffer, self.device)
+                step_result = self.learner.step(iterator, self.stats)
+                if self.stats and step_result:
+                    for key, val in step_result.items():
                         self.stats.append(key, val)
 
             self.training_step += 1
 
-            # 5. Update workers (if needed)
+            # 4. Update workers (if needed)
             if self.training_step % self.config.transfer_interval == 0:
                 self.executor.update_weights(self.agent_network.state_dict())
 
-            # 6. Periodic checkpointing
+            # 5. Periodic checkpointing
             if self.training_step % self.checkpoint_interval == 0:
                 self._save_checkpoint()
 
-            # 7. Periodic testing
+            # 6. Periodic testing
             if self.training_step % self.test_interval == 0:
                 self.trigger_test(self.agent_network.state_dict(), self.training_step)
+
+        return {}
 
     def _save_checkpoint(self) -> None:
         """Saves MuZero checkpoint."""

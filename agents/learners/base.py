@@ -165,7 +165,8 @@ class UniversalLearner:
                 )
 
                 last_result = result
-                batches_processed += 1
+                batch_size = batch["obs"].shape[0]
+                frames_processed += batch_size
 
         except EarlyStopIteration:
             pass  # Callback requested early stop (e.g. PPO KL divergence)
@@ -175,10 +176,10 @@ class UniversalLearner:
         # Fire on_training_step_end (e.g. target network sync)
         self.callbacks.on_training_step_end(learner=self, stats=stats)
 
-        if stats is not None and batches_processed > 0:
+        if stats is not None and frames_processed > 0:
             duration = time.time() - start_time
             if duration > 0:
-                stats.append("learner_fps", batches_processed / duration)
+                stats.append("learner_fps", (frames_processed) / duration)
 
         self._maybe_clear_mps_cache()
 
@@ -219,7 +220,7 @@ class UniversalLearner:
             targets=targets,
             context=context,
             weights=weights,
-            gradient_scales=None,
+            gradient_scales=targets.get("gradient_scales"),
         )
 
         # Prepare detached copies for callbacks/logging safety
@@ -228,7 +229,9 @@ class UniversalLearner:
             loss_dict=loss_dict,
             priorities=priorities,
             predictions={
-                k: v.detach().cpu() for k, v in predictions.items() if torch.is_tensor(v)
+                k: v.detach().cpu()
+                for k, v in predictions.items()
+                if torch.is_tensor(v)
             },
             targets={
                 k: v.detach().cpu() for k, v in targets.items() if torch.is_tensor(v)

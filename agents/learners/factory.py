@@ -15,6 +15,7 @@ import torch
 from torch import nn
 
 from agents.learners.base import UniversalLearner
+from agents.learners.target_builders import DQNTargetBuilder, MuZeroTargetBuilder
 from agents.learners.callbacks import (
     PriorityUpdaterCallback,
     WeightBroadcastCallback,
@@ -140,7 +141,6 @@ def build_universal_learner(
     config: Any,
     agent_network: ModularAgentNetwork,
     device: torch.device,
-    batch_iterator: Iterable,  # Notice: No Replay Buffer here!
     priority_update_fn: Optional[Callable] = None,
     weight_broadcast_fn: Optional[Callable] = None,
 ) -> UniversalLearner:
@@ -152,7 +152,6 @@ def build_universal_learner(
         config: The agent configuration object.
         agent_network: The modular agent network instance.
         device: Torch device (cpu/cuda/mps).
-        batch_iterator: An iterable yielding transition batches.
         priority_update_fn: Optional callable to update PER priorities.
         weight_broadcast_fn: Optional callable to broadcast weights to workers.
 
@@ -195,12 +194,30 @@ def build_universal_learner(
         else:
             agent_type = "supervised"
 
+    # Create Target Builder
+    target_builder = None
+    if agent_type == "rainbow":
+        target_builder = DQNTargetBuilder(config, device)
+    elif agent_type == "muzero":
+        target_builder = MuZeroTargetBuilder(config, device)
+
     # Append algorithmic callbacks based on config
-    if agent_type == "ppo":
-        callbacks.append(PPOEarlyStoppingCallback(config.target_kl))
+    # 7. Setup Callbacks
+    callbacks = list(callbacks or [])
+
+    # Add standard callbacks based on config
+    if agent_type == "ppo" and getattr(config, "use_early_stopping", False):
+        from agents.learners.callbacks import PPOEarlyStoppingCallback
+
+        callbacks.append(PPOEarlyStoppingCallback(config.early_stopping_kl))
 
     if agent_type == "muzero":
-        callbacks.append(ResetNoiseCallback())
+        from agents.learners.callbacks import (
+            StochasticMetricsCallback,
+            LatentMetricsCallback,
+            ResetNoiseCallback,
+        )
+
         if getattr(config, "stochastic", False):
             callbacks.append(StochasticMetricsCallback())
         if getattr(config, "latent_viz_interval", 0) > 0:
@@ -210,12 +227,14 @@ def build_universal_learner(
                     viz_method=config.latent_viz_method,
                 )
             )
+        if getattr(config, "use_noisy_net", False):
+            callbacks.append(ResetNoiseCallback())
 
-    if agent_type == "rainbow":
-        callbacks.append(ResetNoiseCallback())
-        # Target network sync is usually added if a target network exists.
-        # This factory assumes the target network sync logic is either internal
-        # or will be added manually if complex.
+    if agent_type in ["rainbow", "ppo"] and getattr(
+        config, "use_priority_weight_broadcast", False
+    ):
+        # This condition seems misplaced in the original diff, assuming it's a separate condition.
+        pass  # No specific callback added here in the provided diff, just the condition.
 
     # Setup Optimizers and Schedulers
     from torch.optim.adam import Adam
@@ -263,16 +282,27 @@ def build_universal_learner(
         optimizers["default"] = opt
         lr_schedulers["default"] = get_lr_scheduler(opt, config)
 
+    # 8. Define specialized preprocessing if needed
+    if agent_type == "muzero":
+        # MuZero handles casting in the backbone, but UniversalLearner
+        # prep_obs converts to float32 by default.
+        pass
+
+    observation_dtype = torch.float32
+    if agent_type == "rainbow":
+        observation_dtype = torch.uint8
+
     return UniversalLearner(
         config=config,
         agent_network=agent_network,
         device=device,
         num_actions=agent_network.num_actions,
         observation_dimensions=agent_network.input_shape,
-        observation_dtype=torch.float32,
+        observation_dtype=observation_dtype,
         loss_pipeline=build_loss_pipeline(config, agent_network, device),
         optimizer=optimizers,
         lr_scheduler=lr_schedulers,
         callbacks=callbacks,
         clip_norm=getattr(config, "clip_norm", getattr(config, "clipnorm", None)),
+        target_builder=target_builder,
     )

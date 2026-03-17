@@ -222,3 +222,61 @@ class TargetBuilderPipeline(BaseTargetBuilder):
         for builder in self.builders:
             targets.update(builder.build_targets(batch, predictions, network))
         return targets
+
+
+class MuZeroTargetBuilder(BaseTargetBuilder):
+    """
+    MuZero target builder that passes through buffer targets and adds consistency targets.
+    """
+
+    def __init__(self, config: Any, device: torch.device):
+        self.config = config
+        self.device = device
+
+    def _prepare_consistency_targets(self, targets: Dict[str, Tensor], network: nn.Module) -> Tensor:
+        """Build detached target embeddings for EfficientZero consistency loss."""
+        # Use unroll_observations from buffer [B, T+1, C, H, W]
+        real_obs = targets["unroll_observations"].to(self.device, dtype=torch.float32)
+        batch_size, unroll_len = real_obs.shape[:2]
+        flat_obs = real_obs.flatten(0, 1)
+
+        # network.obs_inference is decorated with @torch.inference_mode()
+        initial_out = network.obs_inference(flat_obs)
+        real_latents = initial_out.network_state.dynamics
+
+        # Clone to promote from inference_mode tensors (created by obs_inference's
+        # @torch.inference_mode() decorator) to normal autograd-tracked tensors.
+        # Without this, project() cannot save the tensor for backward.
+        real_latents = real_latents.clone()
+
+        proj_targets = network.project(real_latents, grad=False)
+        normalized_targets = torch.nn.functional.normalize(proj_targets, p=2.0, dim=-1, eps=1e-5)
+        return normalized_targets.reshape(batch_size, unroll_len, -1).detach()
+
+    def _gradient_scales(self) -> torch.Tensor:
+        unroll_steps = self.config.unroll_steps
+        scales = [1.0] + [1.0 / unroll_steps] * unroll_steps
+        return torch.tensor(scales, device=self.device).reshape(1, -1)
+
+    def build_targets(
+        self, batch: Dict[str, Tensor], predictions: Dict[str, Tensor], network: nn.Module
+    ) -> Dict[str, Tensor]:
+        """
+        Pass through all targets already prepared by the MuZeroReplayBuffer.
+        Compute consistency targets if enabled.
+        """
+        targets = {}
+        for key, value in batch.items():
+            if torch.is_tensor(value):
+                targets[key] = value.to(self.device)
+
+        # Consistency Targets (EfficientZero)
+        if getattr(self.config, "consistency_loss_factor", 0) > 0:
+            targets["consistency_targets"] = self._prepare_consistency_targets(targets, network)
+        else:
+            targets["consistency_targets"] = None
+
+        # Gradient Scales for MuZero sequence unrolling
+        targets["gradient_scales"] = self._gradient_scales()
+
+        return targets

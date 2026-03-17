@@ -92,7 +92,6 @@ class PPOTrainer(BaseTrainer):
             config=config,
             agent_network=self.agent_network,
             device=device,
-            batch_iterator=None,  # We create the iterator during train_step
             weight_broadcast_fn=self.executor.update_weights,
         )
 
