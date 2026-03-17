@@ -527,3 +527,23 @@ class EpsilonGreedySchedulerCallback(Callback):
         metrics: Dict[str, Any],
     ) -> None:
         self.epsilon_schedule.step()
+
+
+class MPSCacheClearCallback(Callback):
+    """Clears the MPS cache periodically outside the learner core loop."""
+
+    def __init__(self, interval: int = 100):
+        self.interval = interval
+
+    def on_training_step_end(
+        self,
+        learner: UniversalLearner,
+        metrics: Dict[str, Any],
+    ) -> None:
+        if self.interval <= 0:
+            return
+
+        device = learner.device
+        is_mps = device.type == "mps" if isinstance(device, torch.device) else device == "mps"
+        if is_mps and learner.training_step % self.interval == 0:
+            torch.mps.empty_cache()

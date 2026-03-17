@@ -89,7 +89,7 @@ def test_universal_learner_step_calls_optimizer_and_callbacks():
     )
 
     with patch("agents.learners.base.clip_grad_norm_") as mock_clip:
-        stats = learner.step(batch_iterator=batch_iterator)
+        stats = list(learner.step(batch_iterator=batch_iterator))
 
     optimizer.zero_grad.assert_called_once_with(set_to_none=True)
     optimizer.step.assert_called_once()
@@ -103,9 +103,9 @@ def test_universal_learner_step_calls_optimizer_and_callbacks():
     callback.on_training_step_end.assert_called_once()
 
     assert learner.training_step == 1
-    assert stats is not None
-    assert stats["loss"] == pytest.approx(0.5)
-    assert stats["total_loss"] == pytest.approx(0.5)
+    assert len(stats) == 1
+    assert stats[0]["loss"] == pytest.approx(0.5)
+    assert stats[0]["total_loss"] == pytest.approx(0.5)
 
 
 def test_universal_learner_early_stop_iteration_breaks_loop():
@@ -148,7 +148,7 @@ def test_universal_learner_early_stop_iteration_breaks_loop():
     )
 
     batches = [{"observations": torch.randn(1, 4)} for _ in range(3)]
-    learner.step(batch_iterator=batches)
+    list(learner.step(batch_iterator=batches))
 
     # Only the first batch should be processed before early stop
     assert optimizer.step.call_count == 1

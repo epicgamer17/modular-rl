@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Tuple, TYPE_CHECKING, Union
-import time
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, TYPE_CHECKING, Union
 
 import torch
 from torch.nn.utils import clip_grad_norm_
@@ -17,8 +16,8 @@ if TYPE_CHECKING:
 from agents.learners.callbacks import (
     CallbackList,
     EarlyStopIteration,
-    append_metric,
     finalize_metrics,
+    MPSCacheClearCallback,
 )
 
 
@@ -95,25 +94,21 @@ class UniversalLearner:
             self.lr_schedulers = {}
 
         self.training_step = 0
-        self.callbacks = CallbackList(callbacks)
+        callback_list = list(callbacks or [])
+        callback_list.append(MPSCacheClearCallback())
+        self.callbacks = CallbackList(callback_list)
 
-    def step(self, batch_iterator: Iterable[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    def step(self, batch_iterator: Iterable[Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
         """Processes all batches from the iterator through the optimization loop.
 
         The learner is blind to where the data comes from. For DQN/Imitation,
         the iterator yields exactly one batch. For PPO, it yields shuffled
         mini-batches across multiple epochs. The learner just processes until
         the iterator is exhausted or a callback raises EarlyStopIteration.
-
-        Returns:
-            Dictionary of loss statistics from the last processed batch,
-            or None if no batches were processed.
         """
-        start_time = time.time()
-        last_result: Optional[StepResult] = None
+
         current_result: Optional[StepResult] = None
-        frames_processed = 0
-        aggregated_metrics: Dict[str, Any] = {}
+        yielded_current_result = False
 
         self.callbacks.on_step_begin(learner=self, iterator=batch_iterator)
 
@@ -126,6 +121,7 @@ class UniversalLearner:
                 # 2. Forward + Targets + Loss
                 result = self.compute_step_result(batch=batch)
                 current_result = result
+                yielded_current_result = False
 
                 # 3. Backward + Step (linear, multi-optimizer routing)
                 for opt_key, loss_tensor in result.loss.items():
@@ -163,50 +159,24 @@ class UniversalLearner:
                     meta=result.meta,
                 )
 
-                self._merge_metric_events(
-                    aggregated_metrics, result.meta.setdefault("metrics", {})
-                )
-
-                last_result = result
-                batch_obs = batch.get("obs", batch.get("observations"))
-                if batch_obs is None:
-                    raise KeyError(
-                        "Learner batch is missing both 'obs' and 'observations' keys."
-                    )
-                batch_size = batch_obs.shape[0]
-                frames_processed += batch_size
+                yielded_current_result = True
+                yield self._build_step_metrics(result)
 
         except EarlyStopIteration:
-            if current_result is not None:
-                self._merge_metric_events(
-                    aggregated_metrics, current_result.meta.setdefault("metrics", {})
-                )
+            if current_result is not None and not yielded_current_result:
+                yield self._build_step_metrics(current_result)
 
         self.training_step += 1
 
         # Fire on_training_step_end (e.g. target network sync)
-        self.callbacks.on_training_step_end(learner=self, metrics=aggregated_metrics)
-
-        if frames_processed > 0:
-            duration = time.time() - start_time
-            if duration > 0:
-                append_metric(aggregated_metrics, "learner_fps", frames_processed / duration)
-
-        self._maybe_clear_mps_cache()
-
-        if last_result is None:
-            return None
-
-        total_loss_val = sum(l.item() for l in last_result.loss.values())
-
-        return self._prepare_stats(
-            last_result.loss_dict,
-            total_loss_val,
-            finalize_metrics(aggregated_metrics),
-        )
+        training_step_metrics: Dict[str, Any] = {}
+        self.callbacks.on_training_step_end(learner=self, metrics=training_step_metrics)
+        finalized_training_step_metrics = finalize_metrics(training_step_metrics)
+        if finalized_training_step_metrics:
+            yield {"metrics": finalized_training_step_metrics}
 
     def compute_step_result(self, batch: Dict[str, Any]) -> StepResult:
-        """Pure data-processing pipe: forward → targets → loss.
+        """Pure data-processing pipe: forward -> targets -> loss.
 
         1. Forward Pass (Predictions)
         2. Build Targets (via TargetBuilder or passthrough)
@@ -291,43 +261,12 @@ class UniversalLearner:
                     checkpoint["lr_scheduler"]
                 )
 
-    def _maybe_clear_mps_cache(self) -> None:
-        if isinstance(self.device, torch.device):
-            is_mps = self.device.type == "mps"
-        else:
-            is_mps = self.device == "mps"
-        if is_mps and self.training_step % 100 == 0:
-            torch.mps.empty_cache()
+    def _build_step_metrics(self, step_result: StepResult) -> Dict[str, Any]:
+        metrics = dict(step_result.loss_dict)
+        metrics["loss"] = sum(loss.item() for loss in step_result.loss.values())
 
-    def _prepare_stats(
-        self,
-        loss_dict: Dict[str, float],
-        total_loss: float,
-        metrics: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        stats = dict(loss_dict)
-        stats["loss"] = total_loss
-        if metrics:
-            stats["metrics"] = metrics
-        return stats
+        finalized_metrics = finalize_metrics(step_result.meta.setdefault("metrics", {}))
+        if finalized_metrics:
+            metrics["metrics"] = finalized_metrics
 
-    def _merge_metric_events(
-        self, destination: Dict[str, Any], source: Optional[Dict[str, Any]]
-    ) -> None:
-        if not source:
-            return
-
-        for bucket_name, bucket_values in source.items():
-            if bucket_name not in destination:
-                destination[bucket_name] = bucket_values.copy()
-                continue
-
-            if isinstance(bucket_values, dict):
-                existing_bucket = destination[bucket_name]
-                for key, value in bucket_values.items():
-                    if isinstance(existing_bucket.get(key), list) and isinstance(value, list):
-                        existing_bucket[key].extend(value)
-                    else:
-                        existing_bucket[key] = value
-            else:
-                destination[bucket_name] = bucket_values
+        return metrics

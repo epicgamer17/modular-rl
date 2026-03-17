@@ -262,8 +262,8 @@ class PPOTrainer(BaseTrainer):
             device=self.device,
         )
 
-        loss_stats = self.learner.step(iterator)
-        self._record_learner_metrics(loss_stats)
+        for step_metrics in self.learner.step(iterator):
+            self._record_learner_metrics(step_metrics)
 
         # Clear buffer for next epoch
         self.replay_buffer.clear()

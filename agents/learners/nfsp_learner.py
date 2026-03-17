@@ -4,7 +4,7 @@ the Best Response (RL) network and the Average Strategy (SL) network.
 """
 
 from copy import deepcopy
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterator, Tuple
 
 import torch
 import torch.nn as nn
@@ -270,15 +270,10 @@ class NFSPLearner:
                 target_policies=target_policy,
             )
 
-    def step(self) -> Optional[Dict[str, Any]]:
+    def step(self) -> Iterator[Dict[str, Any]]:
         """
         Performs training steps for both RL and SL components.
-
-        Returns:
-            Dictionary of combined loss statistics.
         """
-        metrics = {}
-
         # 1. RL Step
         if self.rl_buffer.size >= self.rl_learner.config.min_replay_buffer_size:
             if self._rl_per_beta_schedule is not None:
@@ -287,25 +282,18 @@ class NFSPLearner:
             rl_iter = RepeatSampleIterator(
                 self.rl_buffer, self.rl_learner.config.training_iterations, self.device
             )
-            rl_metrics = self.rl_learner.step(batch_iterator=rl_iter)
-        else:
-            rl_metrics = None
-        if rl_metrics:
-            metrics.update(self._prefix_metric_bundle("rl", rl_metrics))
+            for rl_metrics in self.rl_learner.step(batch_iterator=rl_iter):
+                yield self._prefix_metric_bundle("rl", rl_metrics)
 
         # 2. SL Step (supervised/imitation)
         if self.sl_replay_buffer.size >= self.sl_learner.config.min_replay_buffer_size:
             sl_iter = RepeatSampleIterator(
                 self.sl_buffer, self.sl_learner.config.training_iterations, self.device
             )
-            sl_metrics = self.sl_learner.step(batch_iterator=sl_iter)
-        else:
-            sl_metrics = None
-        if sl_metrics:
-            metrics.update(self._prefix_metric_bundle("sl", sl_metrics))
+            for sl_metrics in self.sl_learner.step(batch_iterator=sl_iter):
+                yield self._prefix_metric_bundle("sl", sl_metrics)
 
         self.training_step += 1
-        return metrics if metrics else None
 
     def _prefix_metric_bundle(
         self, prefix: str, metric_bundle: Dict[str, Any]

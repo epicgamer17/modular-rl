@@ -47,7 +47,7 @@ def test_universal_learner_multi_optimizer():
 
     batch_iterator = [{"data": 1}]
 
-    learner.step(batch_iterator)
+    list(learner.step(batch_iterator))
 
     # Verify both optimizers were zeroed
     opt1.zero_grad.assert_called_once()

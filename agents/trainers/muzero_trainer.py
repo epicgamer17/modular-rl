@@ -158,8 +158,8 @@ class MuZeroTrainer(BaseTrainer):
         if self.buffer.size >= self.config.min_replay_buffer_size:
             for _ in range(self.config.num_minibatches):
                 iterator = SingleBatchIterator(self.buffer, self.device)
-                step_result = self.learner.step(iterator)
-                self._record_learner_metrics(step_result)
+                for step_metrics in self.learner.step(iterator):
+                    self._record_learner_metrics(step_metrics)
 
             self.training_step += 1
 

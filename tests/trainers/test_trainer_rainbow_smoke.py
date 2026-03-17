@@ -36,6 +36,12 @@ class MockStats:
     def add_plot_types(self, *args, **kwargs):
         pass
 
+    def set(self, *args, **kwargs):
+        pass
+
+    def add_latent_visualization(self, *args, **kwargs):
+        pass
+
     def get_data(self):
         return {}
 
@@ -141,10 +147,10 @@ def test_rainbow_trainer_scalar_dqn_learner_step(make_rainbow_config_dict):
 
     _populate_cartpole_like_transitions(trainer.buffer, trainer.num_actions, n=10)
     iterator = RepeatSampleIterator(trainer.buffer, trainer.config.training_iterations, trainer.device)
-    loss_stats = trainer.learner.step(batch_iterator=iterator)
+    loss_stats = list(trainer.learner.step(batch_iterator=iterator))
 
-    assert loss_stats is not None
-    assert "loss" in loss_stats
+    assert loss_stats
+    assert "loss" in loss_stats[0]
 
     trainer.executor.stop()
     env.close()
@@ -163,10 +169,10 @@ def test_rainbow_trainer_c51_learner_step(make_rainbow_config_dict):
 
     _populate_cartpole_like_transitions(trainer.buffer, trainer.num_actions, n=10)
     iterator = RepeatSampleIterator(trainer.buffer, trainer.config.training_iterations, trainer.device)
-    loss_stats = trainer.learner.step(batch_iterator=iterator)
+    loss_stats = list(trainer.learner.step(batch_iterator=iterator))
 
-    assert loss_stats is not None
-    assert "loss" in loss_stats
+    assert loss_stats
+    assert "loss" in loss_stats[0]
 
     trainer.executor.stop()
     env.close()

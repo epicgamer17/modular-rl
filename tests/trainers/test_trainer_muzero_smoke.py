@@ -87,6 +87,9 @@ class MockStats:
     def add_plot_types(self, *args, **kwargs):
         pass
 
+    def set(self, *args, **kwargs):
+        pass
+
     def add_latent_visualization(self, *args, **kwargs):
         pass
 
