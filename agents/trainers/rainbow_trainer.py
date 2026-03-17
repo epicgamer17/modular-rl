@@ -130,7 +130,15 @@ class RainbowTrainer(BaseTrainer):
 
         # 6. Initialize Target Builder
         self.target_builder = DQNTargetBuilder(
-            config, device, self.target_agent_network
+            device=device,
+            target_network=self.target_agent_network,
+            gamma=config.discount_factor,
+            n_step=config.n_step,
+            use_c51=config.atom_size > 1,
+            v_min=getattr(config, "v_min", None),
+            v_max=getattr(config, "v_max", None),
+            atom_size=getattr(config, "atom_size", 1),
+            bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
         )
         if config.atom_size > 1:
             self.loss_pipeline.validate_dependencies(

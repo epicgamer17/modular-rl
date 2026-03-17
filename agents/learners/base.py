@@ -73,32 +73,24 @@ class UniversalLearner:
 
         self.target_builder = target_builder
         self.loss_pipeline = loss_pipeline
-        self.optimizer = optimizer
-        self.lr_scheduler = lr_scheduler
+
+        # Normalize optimizers and schedulers into dictionaries
+        if isinstance(optimizer, dict):
+            self.optimizers = optimizer
+        elif optimizer is not None:
+            self.optimizers = {"default": optimizer}
+        else:
+            self.optimizers = {}
+
+        if isinstance(lr_scheduler, dict):
+            self.lr_schedulers = lr_scheduler
+        elif lr_scheduler is not None:
+            self.lr_schedulers = {"default": lr_scheduler}
+        else:
+            self.lr_schedulers = {}
 
         self.training_step = 0
         self.callbacks = CallbackList(callbacks)
-
-    def _preprocess_observation(self, states: Any) -> torch.Tensor:
-        """Converts states to torch tensors on the correct device.
-
-        Adds batch dimension if input is a single observation.
-        """
-        if torch.is_tensor(states):
-            if states.device == self.device and states.dtype == torch.float32:
-                prepared_state = states
-            else:
-                prepared_state = states.to(self.device, dtype=torch.float32)
-        else:
-            np_states = np.array(states, copy=False)
-            prepared_state = torch.tensor(
-                np_states, dtype=torch.float32, device=self.device
-            )
-
-        if prepared_state.ndim == len(self.observation_dimensions):
-            prepared_state = prepared_state.unsqueeze(0)
-
-        return prepared_state
 
     def step(
         self, batch_iterator: Iterable[Dict[str, Any]], stats=None
@@ -127,11 +119,8 @@ class UniversalLearner:
         try:
             for batch in batch_iterator:
                 # 1. Gradient Clearing
-                if isinstance(self.optimizer, dict):
-                    for opt in self.optimizer.values():
-                        opt.zero_grad(set_to_none=True)
-                else:
-                    self.optimizer.zero_grad(set_to_none=True)
+                for opt in self.optimizers.values():
+                    opt.zero_grad(set_to_none=True)
 
                 # 2. Forward + Targets + Loss
                 result = self.compute_step_result(batch=batch, stats=stats)
@@ -149,30 +138,22 @@ class UniversalLearner:
                 )
 
                 # 5. Gradient Clipping
-                if self.clipnorm > 0:
-                    if isinstance(self.optimizer, dict):
-                        for opt in self.optimizer.values():
-                            opt_params = [
-                                p for group in opt.param_groups for p in group["params"]
-                            ]
-                            clip_grad_norm_(opt_params, self.clipnorm)
-                    else:
-                        clip_grad_norm_(self.agent_network.parameters(), self.clipnorm)
+                if self.config.clipnorm > 0:
+                    # Clip all optimizers. For shared parameters, this might be redundant but safe.
+                    # Subclasses should override if specific clipping logic is needed.
+                    for opt in self.optimizers.values():
+                        opt_params = [
+                            p for group in opt.param_groups for p in group["params"]
+                        ]
+                        clip_grad_norm_(opt_params, self.config.clipnorm)
 
                 # 6. Weight Update
-                if isinstance(self.optimizer, dict):
-                    for opt in self.optimizer.values():
-                        opt.step()
-                else:
-                    self.optimizer.step()
+                for opt in self.optimizers.values():
+                    opt.step()
 
                 # 7. LR Scheduler Step
-                if self.lr_scheduler is not None:
-                    if isinstance(self.lr_scheduler, dict):
-                        for sched in self.lr_scheduler.values():
-                            sched.step()
-                    else:
-                        self.lr_scheduler.step()
+                for sched in self.lr_schedulers.values():
+                    sched.step()
 
                 # 8. Fire on_optimizer_step_end (e.g. noisy net reset)
                 self.callbacks.on_optimizer_step_end(learner=self)
@@ -275,31 +256,14 @@ class UniversalLearner:
             },
         )
 
-    @property
-    def clipnorm(self) -> float:
-        """Maximum gradient norm for clipping. 0 means no clipping."""
-        return self.config.clipnorm
-
     def save_checkpoint(self, path: str):
         """Saves learner state (network weights, optimizer state, training step)."""
         checkpoint = {
             "agent_network": self.agent_network.state_dict(),
             "training_step": self.training_step,
+            "optimizers": {k: v.state_dict() for k, v in self.optimizers.items()},
+            "lr_schedulers": {k: v.state_dict() for k, v in self.lr_schedulers.items()},
         }
-        if self.optimizer is not None:
-            if isinstance(self.optimizer, dict):
-                checkpoint["optimizer"] = {
-                    k: v.state_dict() for k, v in self.optimizer.items()
-                }
-            else:
-                checkpoint["optimizer"] = self.optimizer.state_dict()
-        if self.lr_scheduler is not None:
-            if isinstance(self.lr_scheduler, dict):
-                checkpoint["lr_scheduler"] = {
-                    k: v.state_dict() for k, v in self.lr_scheduler.items()
-                }
-            else:
-                checkpoint["lr_scheduler"] = self.lr_scheduler.state_dict()
 
         torch.save(checkpoint, path)
 
@@ -309,20 +273,25 @@ class UniversalLearner:
         self.agent_network.load_state_dict(checkpoint["agent_network"])
         self.training_step = checkpoint.get("training_step", 0)
 
-        if "optimizer" in checkpoint and self.optimizer is not None:
-            if isinstance(self.optimizer, dict):
-                for k, v in self.optimizer.items():
-                    if k in checkpoint["optimizer"]:
-                        v.load_state_dict(checkpoint["optimizer"][k])
-            else:
-                self.optimizer.load_state_dict(checkpoint["optimizer"])
-        if "lr_scheduler" in checkpoint and self.lr_scheduler is not None:
-            if isinstance(self.lr_scheduler, dict):
-                for k, v in self.lr_scheduler.items():
-                    if k in checkpoint["lr_scheduler"]:
-                        v.load_state_dict(checkpoint["lr_scheduler"][k])
-            else:
-                self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+        if "optimizers" in checkpoint:
+            for k, v in self.optimizers.items():
+                if k in checkpoint["optimizers"]:
+                    v.load_state_dict(checkpoint["optimizers"][k])
+        # Backward compatibility for old checkpoints
+        elif "optimizer" in checkpoint:
+            if "default" in self.optimizers:
+                self.optimizers["default"].load_state_dict(checkpoint["optimizer"])
+
+        if "lr_schedulers" in checkpoint:
+            for k, v in self.lr_schedulers.items():
+                if k in checkpoint["lr_schedulers"]:
+                    v.load_state_dict(checkpoint["lr_schedulers"][k])
+        # Backward compatibility for old checkpoints
+        elif "lr_scheduler" in checkpoint:
+            if "default" in self.lr_schedulers:
+                self.lr_schedulers["default"].load_state_dict(
+                    checkpoint["lr_scheduler"]
+                )
 
     def _maybe_clear_mps_cache(self) -> None:
         if isinstance(self.device, torch.device):

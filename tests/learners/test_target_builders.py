@@ -6,8 +6,6 @@ import numpy as np
 
 from agents.learners.target_builders import (
     DQNTargetBuilder,
-    PPOTargetBuilder,
-    MuZeroTargetBuilder,
     BaseTargetBuilder,
 )
 from modules.world_models.inference_output import LearningOutput
@@ -18,7 +16,7 @@ pytestmark = pytest.mark.unit
 def test_base_target_builder_instantiation():
     """Verify BaseTargetBuilder cannot be instantiated directly."""
     with pytest.raises(TypeError):
-        BaseTargetBuilder(MagicMock(), torch.device("cpu"))
+        BaseTargetBuilder()
 
 
 def test_dqn_target_builder_standard(rainbow_config):
@@ -29,7 +27,13 @@ def test_dqn_target_builder_standard(rainbow_config):
     rainbow_config.discount_factor = 0.9
     rainbow_config.n_step = 1
 
-    builder = DQNTargetBuilder(rainbow_config, device, target_network=MagicMock())
+    builder = DQNTargetBuilder(
+        device=device,
+        target_network=MagicMock(),
+        gamma=rainbow_config.discount_factor,
+        n_step=rainbow_config.n_step,
+        use_c51=rainbow_config.atom_size > 1,
+    )
 
     # Batch size 2
     batch = {
@@ -76,7 +80,16 @@ def test_dqn_target_builder_c51(rainbow_config):
     rainbow_config.discount_factor = 1.0
     rainbow_config.n_step = 1
 
-    builder = DQNTargetBuilder(rainbow_config, device, target_network=MagicMock())
+    builder = DQNTargetBuilder(
+        device=device,
+        target_network=MagicMock(),
+        gamma=rainbow_config.discount_factor,
+        n_step=rainbow_config.n_step,
+        use_c51=rainbow_config.atom_size > 1,
+        v_min=rainbow_config.v_min,
+        v_max=rainbow_config.v_max,
+        atom_size=rainbow_config.atom_size,
+    )
 
     # support is [0.0, 1.0, 2.0]
     batch = {
@@ -110,52 +123,6 @@ def test_dqn_target_builder_c51(rainbow_config):
     assert torch.allclose(targets["q_logits"], expected_probs, atol=1e-3)
 
 
-def test_ppo_target_builder_gae(ppo_config):
-    """Test Generalized Advantage Estimation calculation."""
-    device = torch.device("cpu")
-    ppo_config.discount_factor = 0.9
-    ppo_config.gae_lambda = 0.5
-    builder = PPOTargetBuilder(ppo_config, device)
-
-    # PPO Target Builder is an adapter that expects pre-computed tags
-    # It does NOT compute GAE itself; that's done in Replay Buffer Processors
-    batch = {
-        "rewards": torch.tensor([1.0, 2.0]),
-        "advantages": torch.tensor([13.05, 9.0]),
-        "returns": torch.tensor([10.0, 20.0]),
-        "dones": torch.tensor([False, False]),
-        "log_probabilities": torch.tensor([-0.5, -0.6]),
-        "actions": torch.tensor([0, 1]),
-    }
-    # Values for t=0, 1, 2
-    predictions = LearningOutput(
-        values=torch.tensor([10.0, 20.0, 30.0]),
-    )
-
-    targets = builder.build_targets(batch, predictions, MagicMock())
-
-    assert isinstance(targets, dict)
-    assert torch.allclose(targets["advantages"], batch["advantages"])
-    assert torch.allclose(targets["returns"], batch["returns"])
-    assert torch.allclose(targets["old_log_probs"], batch["log_probabilities"])
-
-
-def test_ppo_target_builder_precomputed(ppo_config):
-    """Test passing precomputed PPO targets."""
-    device = torch.device("cpu")
-    builder = PPOTargetBuilder(ppo_config, device)
-
-    batch = {
-        "advantages": torch.tensor([1.0]),
-        "returns": torch.tensor([2.0]),
-        "log_probabilities": torch.tensor([-0.1]),
-        "actions": torch.tensor([0]),
-    }
-    targets = builder.build_targets(batch, LearningOutput(), MagicMock())
-    assert isinstance(targets, dict)
-    assert targets["advantages"][0] == 1.0
-    assert targets["returns"][0] == 2.0
-    assert targets["old_log_probs"][0] == -0.1
 
 
 def test_dqn_target_builder_truncated(rainbow_config):
@@ -167,7 +134,14 @@ def test_dqn_target_builder_truncated(rainbow_config):
     rainbow_config.n_step = 1
     rainbow_config.bootstrap_on_truncated = True
 
-    builder = DQNTargetBuilder(rainbow_config, device, target_network=MagicMock())
+    builder = DQNTargetBuilder(
+        device=device,
+        target_network=MagicMock(),
+        gamma=rainbow_config.discount_factor,
+        n_step=rainbow_config.n_step,
+        use_c51=rainbow_config.atom_size > 1,
+        bootstrap_on_truncated=rainbow_config.bootstrap_on_truncated,
+    )
 
     batch = {
         "next_observations": torch.randn((2, 4)),

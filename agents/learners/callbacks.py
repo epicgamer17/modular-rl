@@ -271,10 +271,7 @@ class ResetNoiseCallback(Callback):
         self,
         learner,
     ) -> None:
-        if hasattr(learner.agent_network, "reset_noise") and callable(
-            learner.agent_network.reset_noise
-        ):
-            learner.agent_network.reset_noise()
+        learner.agent_network.reset_noise()
 
 
 class ImitationMetricsCallback(Callback):
@@ -356,14 +353,13 @@ class PriorityUpdaterCallback(Callback):
         priorities = kwargs.get("priorities")
 
         if priorities is not None and batch is not None and "indices" in batch:
-            if hasattr(self.replay_buffer, "update_priorities"):
-                ids = batch.get("ids")
-                priorities = priorities.detach().cpu().numpy()
-                # ---------------
+            ids = batch.get("ids")
+            priorities = priorities.detach().cpu().numpy()
+            # ---------------
 
-                self.replay_buffer.update_priorities(
-                    batch["indices"], priorities, ids=ids
-                )
+            self.replay_buffer.update_priorities(
+                batch["indices"], priorities, ids=ids
+            )
 
     def on_training_step_end(
         self,

@@ -15,10 +15,6 @@ class BaseTargetBuilder(ABC):
     Abstract base class for Reinforcement Learning target calculation modules.
     """
 
-    def __init__(self, config: Any, device: torch.device):
-        self.config = config
-        self.device = device
-
     @abstractmethod
     def build_targets(
         self, batch: Dict[str, Tensor], predictions: LearningOutput, network: nn.Module
@@ -42,18 +38,32 @@ class DQNTargetBuilder(BaseTargetBuilder):
     Implements Bellman equation targets for DQN and C51.
     """
 
-    def __init__(self, config: Any, device: torch.device, target_network: nn.Module):
-        self.config = config
+    def __init__(
+        self,
+        device: torch.device,
+        target_network: nn.Module,
+        gamma: float = 0.99,
+        n_step: int = 1,
+        use_c51: bool = False,
+        v_min: Optional[float] = None,
+        v_max: Optional[float] = None,
+        atom_size: int = 1,
+        bootstrap_on_truncated: bool = False,
+    ):
         self.device = device
-        self.n_step = getattr(config, "n_step", 1)
-        self.gamma = getattr(config, "discount_factor", 0.99)
-        self.use_c51 = getattr(config, "atom_size", 1) > 1
         self.target_network = target_network
+        self.gamma = gamma
+        self.n_step = n_step
+        self.use_c51 = use_c51
+        self.v_min = v_min
+        self.v_max = v_max
+        self.atom_size = atom_size
+        self.bootstrap_on_truncated = bootstrap_on_truncated
 
         if self.use_c51:
-            self.v_min = config.v_min
-            self.v_max = config.v_max
-            self.atom_size = config.atom_size
+            assert (
+                self.v_min is not None and self.v_max is not None
+            ), "v_min and v_max must be provided for C51"
             self.support = torch.linspace(
                 self.v_min, self.v_max, self.atom_size, device=self.device
             )
@@ -67,8 +77,7 @@ class DQNTargetBuilder(BaseTargetBuilder):
         next_masks = batch.get("next_legal_moves_masks")
         next_obs = batch.get("next_observations")  # Extract next_obs once
 
-        bootstrap_on_truncated = getattr(self.config, "bootstrap_on_truncated", False)
-        terminal_mask = terminated if bootstrap_on_truncated else dones
+        terminal_mask = terminated if self.bootstrap_on_truncated else dones
 
         batch_size = rewards.shape[0]
         discount = self.gamma**self.n_step

@@ -50,10 +50,10 @@ def test_rainbow_learner_hard_update(make_rainbow_config_dict, cartpole_game_con
         optimizer=None,
     )
 
-    learner.target_agent_network = target_net
-
     # Perform the hard update via callback
-    TargetNetworkSyncCallback().on_training_step_end(learner)
+    TargetNetworkSyncCallback(target_agent_network=target_net).on_training_step_end(
+        learner
+    )
 
     # Verify target net explicitly matches online net
     assert torch.allclose(target_net.linear.weight, agent_net.linear.weight)
@@ -64,7 +64,9 @@ def test_rainbow_learner_soft_update(make_rainbow_config_dict, cartpole_game_con
     torch.manual_seed(42)
     np.random.seed(42)
 
-    config_dict = make_rainbow_config_dict(soft_update=True, ema_beta=0.5, transfer_interval=1)
+    config_dict = make_rainbow_config_dict(
+        soft_update=True, ema_beta=0.5, transfer_interval=1
+    )
     config = RainbowConfig(config_dict, cartpole_game_config)
 
     agent_net = SimpleNet()
@@ -85,9 +87,10 @@ def test_rainbow_learner_soft_update(make_rainbow_config_dict, cartpole_game_con
         loss_pipeline=None,
         optimizer=None,
     )
-    learner.target_agent_network = target_net
 
-    TargetNetworkSyncCallback().on_training_step_end(learner)
+    TargetNetworkSyncCallback(target_agent_network=target_net).on_training_step_end(
+        learner
+    )
 
     # EMA update: target = beta*target + (1-beta)*agent = 0.5
     assert torch.allclose(target_net.linear.weight, torch.tensor(0.5))

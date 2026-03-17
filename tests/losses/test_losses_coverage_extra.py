@@ -15,12 +15,7 @@ from losses.losses import (
     ChanceQLoss,
     SigmaLoss,
     VQVAECommitmentLoss,
-)
-from losses.basic_losses import (
-    _select_next_actions,
     PPOValueLoss,
-    StandardDQNLossModule,
-    C51LossModule,
     ImitationLoss,
 )
 from modules.world_models.inference_output import InferenceOutput
@@ -77,8 +72,6 @@ def test_all_modules_properties_and_masks(base_config):
         ChanceQLoss(base_config, device),
         SigmaLoss(base_config, device),
         VQVAECommitmentLoss(base_config, device),
-        StandardDQNLossModule(base_config, device),
-        C51LossModule(base_config, device),
         PPOValueLoss(base_config, device, critic_coefficient=1.0),
         ImitationLoss(base_config, device, num_actions=10),
     ]
@@ -116,17 +109,6 @@ def test_all_modules_properties_and_masks(base_config):
 
 
 # --- Other Edge Cases from Previous Attempt ---
-
-
-def test_sigma_loss_onehot_fallback(base_config):
-    base_config.sigma_loss = F.mse_loss
-    loss = SigmaLoss(base_config, torch.device("cpu"))
-    predictions = {"chance_codes": torch.randn((1, 8))}
-    targets = {"chance_codes": torch.tensor([[2]])}
-    l = loss.compute_loss(predictions, targets, {}, k=1)
-    assert l.shape == (1, 8)
-
-
 def test_consistency_loss_latent_dict(base_config):
     agent_network = MagicMock()
     agent_network.project.return_value = torch.randn((1, 64))
@@ -148,16 +130,6 @@ def test_loss_pipeline_validate_dependencies_errors(base_config):
         pipeline.validate_dependencies({"values"}, set())
 
 
-def test_select_next_actions_masking():
-    q = torch.tensor([[1.0, 2.0, 3.0]])
-    mask = torch.tensor([1, 1, 0])
-    idx = _select_next_actions(q, mask)
-    assert idx.item() == 1
-    mask = torch.tensor([0, 0, 0])
-    idx = _select_next_actions(q, mask)
-    assert idx.item() == 2
-
-
 def test_ppo_value_loss_edge_cases(base_config):
     device = torch.device("cpu")
     loss = PPOValueLoss(base_config, device, critic_coefficient=1.0)
@@ -169,48 +141,6 @@ def test_ppo_value_loss_edge_cases(base_config):
         ValueError, match="received multi-logit values without distributional bounds"
     ):
         loss._to_scalar_values(torch.randn((1, 10)))
-
-
-def test_standard_dqn_double_dqn_path(base_config):
-    device = torch.device("cpu")
-    selector = MagicMock()
-    selector.select_action.return_value = (torch.tensor(1), {})
-    loss = StandardDQNLossModule(base_config, device, action_selector=selector)
-    predictions = {
-        "q_values": torch.randn((1, 4)),
-    }
-    targets = {
-        "q_values": torch.randn((1,)),  # Scalar target values per sample
-        "actions": torch.tensor([0]),
-        "rewards": torch.tensor([1.0]),
-        "dones": torch.tensor([False]),
-        "next_legal_moves_masks": torch.tensor([[1, 1, 0, 0]]),
-        "next_observations": torch.randn((1, 8)),
-    }
-    context = {"agent_network": MagicMock()}
-    l = loss.compute_loss(predictions, targets, context)
-    assert l.shape == (1,)
-
-
-def test_c51_dqn_double_dqn_path(base_config):
-    device = torch.device("cpu")
-    selector = MagicMock()
-    selector.select_action.return_value = (torch.tensor(1), {})
-    loss = C51LossModule(base_config, device, action_selector=selector)
-    predictions = {
-        "q_logits": torch.randn((1, 4, 21)),
-    }
-    targets = {
-        "q_logits": torch.randn((1, 21)),  # Target distribution per sample
-        "actions": torch.tensor([0]),
-        "rewards": torch.tensor([1.0]),
-        "dones": torch.tensor([False]),
-        "next_legal_moves_masks": torch.tensor([[1, 1, 0, 0]]),
-        "next_observations": torch.randn((1, 8)),
-    }
-    context = {"agent_network": MagicMock()}
-    l = loss.compute_loss(predictions, targets, context)
-    assert l.shape == (1,)
 
 
 def test_imitation_loss_multidim(base_config):

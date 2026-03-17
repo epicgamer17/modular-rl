@@ -101,7 +101,15 @@ class NFSPLearner:
 
         rl_scheduler = get_lr_scheduler(rl_optimizer, rl_config)
         rl_target_builder = DQNTargetBuilder(
-            rl_config, device, best_response_target_agent_network
+            device=device,
+            target_network=best_response_target_agent_network,
+            gamma=rl_config.discount_factor,
+            n_step=rl_config.n_step,
+            use_c51=rl_config.atom_size > 1,
+            v_min=getattr(rl_config, "v_min", None),
+            v_max=getattr(rl_config, "v_max", None),
+            atom_size=getattr(rl_config, "atom_size", 1),
+            bootstrap_on_truncated=getattr(rl_config, "bootstrap_on_truncated", False),
         )
 
         from agents.action_selectors.selectors import ArgmaxSelector
@@ -198,7 +206,7 @@ class NFSPLearner:
     @property
     def sl_optimizer(self) -> torch.optim.Optimizer:
         """Backwards compatibility: expose SL optimizer from composed learner."""
-        return self.sl_learner.optimizer
+        return self.sl_learner.optimizers["default"]
 
     @property
     def sl_replay_buffer(self):
@@ -298,8 +306,3 @@ class NFSPLearner:
 
         self.training_step += 1
         return metrics if metrics else None
-
-
-    def preprocess(self, observation: Any) -> torch.Tensor:
-        """Delegates preprocessing to RL learner."""
-        return self.rl_learner.preprocess(observation)

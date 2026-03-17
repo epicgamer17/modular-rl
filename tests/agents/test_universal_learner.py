@@ -4,7 +4,8 @@ import torch
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from agents.learners.base import Callback, EarlyStopIteration, UniversalLearner
+from agents.learners.base import UniversalLearner
+from agents.learners.callbacks import Callback, EarlyStopIteration
 from agents.learners.target_builders import BaseTargetBuilder
 from losses.losses import LossPipeline
 from modules.world_models.inference_output import LearningOutput
@@ -108,8 +109,12 @@ def test_universal_learner_step_calls_optimizer_and_callbacks():
 def test_universal_learner_early_stop_iteration_breaks_loop():
     config = _minimal_config(clipnorm=0.0)
     agent_network = MagicMock()
-    agent_network.parameters.return_value = [torch.nn.Parameter(torch.randn(1, requires_grad=True))]
-    agent_network.learner_inference.return_value = LearningOutput(values=torch.randn(1, 1, requires_grad=True))
+    agent_network.parameters.return_value = [
+        torch.nn.Parameter(torch.randn(1, requires_grad=True))
+    ]
+    agent_network.learner_inference.return_value = LearningOutput(
+        values=torch.randn(1, 1, requires_grad=True)
+    )
 
     target_builder = MagicMock(spec=BaseTargetBuilder)
     target_builder.build_targets.return_value = {"values": torch.randn(1, 1)}
@@ -145,30 +150,6 @@ def test_universal_learner_early_stop_iteration_breaks_loop():
     # Only the first batch should be processed before early stop
     assert optimizer.step.call_count == 1
     stop_cb.on_training_step_end.assert_called_once()
-
-
-def test_universal_learner_preprocess_observation():
-    config = _minimal_config()
-    learner = UniversalLearner(
-        config=config,
-        agent_network=MagicMock(),
-        device=torch.device("cpu"),
-        num_actions=2,
-        observation_dimensions=(4,),
-        observation_dtype=torch.float32,
-        target_builder=None,
-        loss_pipeline=None,
-        optimizer=None,
-    )
-
-    obs_np = np.array([1, 2, 3, 4], dtype=np.float32)
-    obs_t = learner.preprocess(obs_np)
-    assert torch.is_tensor(obs_t)
-    assert obs_t.shape == (1, 4)
-
-    obs_in = torch.randn(4)
-    obs_out = learner.preprocess(obs_in)
-    assert obs_out.shape == (1, 4)
 
 
 def test_universal_learner_save_load_checkpoint(tmp_path):

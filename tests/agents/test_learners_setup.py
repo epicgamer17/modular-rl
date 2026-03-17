@@ -94,7 +94,17 @@ def test_rainbow_learner_setup(make_rainbow_config_dict, cartpole_game_config, d
     )
     lr_scheduler = get_lr_scheduler(optimizer, config)
 
-    target_builder = DQNTargetBuilder(config, device, target_network)
+    target_builder = DQNTargetBuilder(
+        device=device,
+        target_network=target_network,
+        gamma=config.discount_factor,
+        n_step=config.n_step,
+        use_c51=config.atom_size > 1,
+        v_min=getattr(config, "v_min", None),
+        v_max=getattr(config, "v_max", None),
+        atom_size=getattr(config, "atom_size", 1),
+        bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
+    )
     td_loss = StandardDQNLoss(config=config, device=device)
     loss_pipeline = LossPipeline([td_loss])
     loss_pipeline.validate_dependencies(

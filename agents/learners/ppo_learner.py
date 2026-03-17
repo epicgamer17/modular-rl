@@ -68,18 +68,20 @@ class PPOLearner(UniversalLearner):
         )
 
         # 2. Initialize Optimizers (separate for actor and critic)
-        self.policy_optimizer = self._create_optimizer(
+        self.optimizers["policy"] = self._create_optimizer(
             self.agent_network.components["policy_head"].parameters(),
             config.actor,
         )
-        self.value_optimizer = self._create_optimizer(
+        self.optimizers["value"] = self._create_optimizer(
             self.agent_network.components["value_head"].parameters(),
             config.critic,
         )
 
         # 3. Initialize LR Schedulers
-        self.policy_scheduler = get_lr_scheduler(self.policy_optimizer, config)
-        self.value_scheduler = get_lr_scheduler(self.value_optimizer, config)
+        self.lr_schedulers["policy"] = get_lr_scheduler(
+            self.optimizers["policy"], config
+        )
+        self.lr_schedulers["value"] = get_lr_scheduler(self.optimizers["value"], config)
 
         from losses.losses import LossPipeline
 
@@ -153,17 +155,14 @@ class PPOLearner(UniversalLearner):
         start_time = time.time()
 
         # Get current rollout batch from modular replay buffer.
+        # Keep on CPU to avoid memory spikes
         batch = self.replay_buffer.sample()
-        observations = batch["observations"].to(self.device)
-        actions = batch["actions"].to(self.device)
-        old_log_probs = batch["log_probabilities"].to(self.device)
-        advantages = batch["advantages"].to(self.device)
-        returns = batch["returns"].to(self.device)
 
         # Training indices for minibatch sampling
-        num_samples = observations.shape[0]
-        indices = torch.randperm(num_samples, device=self.device)
-        minibatch_size = max(1, num_samples // self.config.num_minibatches)
+        num_samples = batch["observations"].shape[0]
+        indices = torch.randperm(num_samples, device="cpu")
+        # Ensure minibatch_size is correctly calculated or just use the indices slice directly
+        minibatch_size = (num_samples + self.config.num_minibatches - 1) // self.config.num_minibatches
 
         actor_losses = []
         critic_losses = []
@@ -178,11 +177,12 @@ class PPOLearner(UniversalLearner):
             for start in range(0, num_samples, minibatch_size):
                 end = start + minibatch_size
                 batch_indices = indices[start:end]
-
-                batch_obs = observations[batch_indices]
-                batch_actions = actions[batch_indices]
-                batch_old_log_probs = old_log_probs[batch_indices]
-                batch_advantages = advantages[batch_indices]
+                batch_obs = batch["observations"][batch_indices].to(self.device)
+                batch_actions = batch["actions"][batch_indices].to(self.device)
+                batch_old_log_probs = batch["log_probabilities"][batch_indices].to(
+                    self.device
+                )
+                batch_advantages = batch["advantages"][batch_indices].to(self.device)
 
                 loss_terms = self.compute_loss(
                     batch={"observations": batch_obs},
@@ -193,7 +193,7 @@ class PPOLearner(UniversalLearner):
                 actor_loss = loss_terms["policy_loss"]
                 kl_div = loss_terms["approx_kl"]
 
-                self.policy_optimizer.zero_grad(set_to_none=True)
+                self.optimizers["policy"].zero_grad(set_to_none=True)
                 actor_loss.backward()
 
                 if self.config.actor.clipnorm > 0:
@@ -202,7 +202,7 @@ class PPOLearner(UniversalLearner):
                         self.config.actor.clipnorm,
                     )
 
-                self.policy_optimizer.step()
+                self.optimizers["policy"].step()
 
                 actor_losses.append(actor_loss.detach().item())
                 kl_divergences.append(kl_div.detach().item())
@@ -221,9 +221,8 @@ class PPOLearner(UniversalLearner):
             for start in range(0, num_samples, minibatch_size):
                 end = start + minibatch_size
                 batch_indices = indices[start:end]
-
-                batch_obs = observations[batch_indices]
-                batch_returns = returns[batch_indices]
+                batch_obs = batch["observations"][batch_indices].to(self.device)
+                batch_returns = batch["returns"][batch_indices].to(self.device)
 
                 loss_terms = self.compute_loss(
                     batch={"observations": batch_obs},
@@ -231,7 +230,7 @@ class PPOLearner(UniversalLearner):
                 )
                 critic_loss = loss_terms["value_loss"]
 
-                self.value_optimizer.zero_grad(set_to_none=True)
+                self.optimizers["value"].zero_grad(set_to_none=True)
                 critic_loss.backward()
 
                 if self.config.critic.clipnorm > 0:
@@ -240,13 +239,13 @@ class PPOLearner(UniversalLearner):
                         self.config.critic.clipnorm,
                     )
 
-                self.value_optimizer.step()
+                self.optimizers["value"].step()
 
                 critic_losses.append(critic_loss.detach().item())
 
         # Step schedulers
-        self.policy_scheduler.step()
-        self.value_scheduler.step()
+        self.lr_schedulers["policy"].step()
+        self.lr_schedulers["value"].step()
 
         # Clear buffer for next epoch
         self.replay_buffer.clear()
@@ -318,33 +317,14 @@ class PPOLearner(UniversalLearner):
 
         return losses
 
-    def preprocess(self, observation: Any) -> torch.Tensor:
-        """
-        Preprocesses observation for network input.
-
-        Args:
-            observation: Raw observation.
-
-        Returns:
-            Preprocessed tensor on the correct device.
-        """
-        return self._preprocess_observation(observation)
-
-    @property
-    def size(self) -> int:
-        """Returns current number of stored transitions."""
-        return self.replay_buffer.size
-
     def save_checkpoint(self, path: str):
         """
         Saves PPO learner state (network weights, policy/value optimizer states, training step).
         """
         checkpoint = {
             "agent_network": self.agent_network.state_dict(),
-            "policy_optimizer": self.policy_optimizer.state_dict(),
-            "value_optimizer": self.value_optimizer.state_dict(),
-            "policy_scheduler": self.policy_scheduler.state_dict(),
-            "value_scheduler": self.value_scheduler.state_dict(),
+            "optimizers": {k: v.state_dict() for k, v in self.optimizers.items()},
+            "lr_schedulers": {k: v.state_dict() for k, v in self.lr_schedulers.items()},
             "training_step": self.training_step,
         }
         torch.save(checkpoint, path)
@@ -355,10 +335,25 @@ class PPOLearner(UniversalLearner):
         """
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         self.agent_network.load_state_dict(checkpoint["agent_network"])
-        self.policy_optimizer.load_state_dict(checkpoint["policy_optimizer"])
-        self.value_optimizer.load_state_dict(checkpoint["value_optimizer"])
-        self.policy_scheduler.load_state_dict(checkpoint["policy_scheduler"])
-        self.value_scheduler.load_state_dict(checkpoint["value_scheduler"])
+
+        if "optimizers" in checkpoint:
+            for k, v in self.optimizers.items():
+                if k in checkpoint["optimizers"]:
+                    v.load_state_dict(checkpoint["optimizers"][k])
+        # Backward compatibility
+        elif "policy_optimizer" in checkpoint and "value_optimizer" in checkpoint:
+            self.optimizers["policy"].load_state_dict(checkpoint["policy_optimizer"])
+            self.optimizers["value"].load_state_dict(checkpoint["value_optimizer"])
+
+        if "lr_schedulers" in checkpoint:
+            for k, v in self.lr_schedulers.items():
+                if k in checkpoint["lr_schedulers"]:
+                    v.load_state_dict(checkpoint["lr_schedulers"][k])
+        # Backward compatibility
+        elif "policy_scheduler" in checkpoint and "value_scheduler" in checkpoint:
+            self.lr_schedulers["policy"].load_state_dict(checkpoint["policy_scheduler"])
+            self.lr_schedulers["value"].load_state_dict(checkpoint["value_scheduler"])
+
         self.training_step = checkpoint.get("training_step", 0)
 
     # PPO keeps a custom optimization loop (dual optimizers, KL early stopping).

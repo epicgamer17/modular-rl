@@ -60,21 +60,17 @@ class PPOEpochIterator:
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         batch = self.replay_buffer.sample()
-        batch = {
-            k: v.to(self.device) if torch.is_tensor(v) else v
-            for k, v in batch.items()
-        }
         num_samples = batch["observations"].shape[0]
-        minibatch_size = max(1, num_samples // self.num_minibatches)
+        minibatch_size = (num_samples + self.num_minibatches - 1) // self.num_minibatches
 
         for _ in range(self.num_epochs):
-            indices = torch.randperm(num_samples, device=self.device)
+            indices = torch.randperm(num_samples, device="cpu")
             for start in range(0, num_samples, minibatch_size):
                 end = start + minibatch_size
                 batch_indices = indices[start:end]
                 sub_batch = {
                     k: (
-                        v[batch_indices]
+                        v[batch_indices].to(self.device)
                         if torch.is_tensor(v) and v.shape[0] == num_samples
                         else v
                     )

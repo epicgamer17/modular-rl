@@ -42,6 +42,7 @@ class MuZeroLearner(UniversalLearner):
         player_id_mapping: Dict[str, int],
     ):
         from agents.learners.callbacks import MetricsCallback, ResetNoiseCallback
+
         super().__init__(
             config=config,
             agent_network=agent_network,
@@ -77,14 +78,14 @@ class MuZeroLearner(UniversalLearner):
         )
 
         if config.optimizer == Adam:
-            self.optimizer = config.optimizer(
+            self.optimizers["default"] = config.optimizer(
                 params=agent_network.parameters(),
                 lr=config.learning_rate,
                 eps=config.adam_epsilon,
                 weight_decay=config.weight_decay,
             )
         elif config.optimizer == SGD:
-            self.optimizer = config.optimizer(
+            self.optimizers["default"] = config.optimizer(
                 params=agent_network.parameters(),
                 lr=config.learning_rate,
                 momentum=config.momentum,
@@ -93,7 +94,9 @@ class MuZeroLearner(UniversalLearner):
         else:
             raise ValueError(f"Unsupported optimizer: {config.optimizer}")
 
-        self.lr_scheduler = get_lr_scheduler(self.optimizer, config)
+        self.lr_schedulers["default"] = get_lr_scheduler(
+            self.optimizers["default"], config
+        )
 
         # 4. Initialize Loss Pipeline
         modules = [
@@ -147,7 +150,6 @@ class MuZeroLearner(UniversalLearner):
             )
 
         from agents.learners.callbacks import PriorityUpdaterCallback
-        self.callbacks.callbacks.append(PriorityUpdaterCallback(self.replay_buffer))
 
         # PER beta schedule
         from utils.schedule import create_schedule
@@ -158,6 +160,10 @@ class MuZeroLearner(UniversalLearner):
             and self.config.per_beta_schedule is not None
         ):
             self.schedules["per_beta"] = create_schedule(self.config.per_beta_schedule)
+
+        self.callbacks.callbacks.append(
+            PriorityUpdaterCallback(self.replay_buffer, self.schedules["per_beta"])
+        )
 
     def step(self, stats=None) -> Any:
         """Bridges the old trainer call pattern: checks buffer, builds iterator, delegates."""
@@ -188,7 +194,7 @@ class MuZeroLearner(UniversalLearner):
         self, unroll_observations: torch.Tensor
     ) -> torch.Tensor:
         """Build detached target embeddings for EfficientZero consistency loss."""
-        real_obs = self._preprocess_observation(unroll_observations)
+        real_obs = unroll_observations.to(self.device, dtype=torch.float32)
         batch_size, unroll_len = real_obs.shape[:2]
         flat_obs = real_obs.flatten(0, 1)
 
@@ -226,7 +232,9 @@ class MuZeroLearner(UniversalLearner):
         Returns:
             StepResult with scalar loss, loss breakdown dict, and PER priorities.
         """
-        batch["observations"] = self._preprocess_observation(batch["observations"])
+        batch["observations"] = batch["observations"].to(
+            self.device, dtype=torch.float32
+        )
         targets = self._prepare_targets(batch)
         if self.config.consistency_loss_factor > 0:
             targets["consistency_targets"] = self._prepare_consistency_targets(

@@ -299,7 +299,7 @@ def test_ppo_learner_finish_trajectory():
         )
 
     # Finish trajectory
-    learner.finish_trajectory(last_value=0.0)
+    learner.replay_buffer.finish_trajectory(last_value=0.0)
 
     # Check advantages and returns were computed
     advantages = learner.replay_buffer.buffers["advantages"][:5]
@@ -347,7 +347,7 @@ def test_ppo_learner_step():
             next_observations=np.random.randn(4),
         )
 
-    learner.finish_trajectory(last_value=0.0)
+    learner.replay_buffer.finish_trajectory(last_value=0.0)
 
     # Run training step
     loss_stats = learner.step()
