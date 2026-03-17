@@ -3,7 +3,7 @@ import time
 from typing import Optional, List, Dict, Any, Tuple
 
 from agents.trainers.base_trainer import BaseTrainer
-from agents.learners.rainbow_learner import RainbowLearner
+from agents.learners.base import UniversalLearner
 
 from agents.action_selectors.factory import SelectorFactory
 from agents.workers.actors import get_actor_class
@@ -11,6 +11,12 @@ from modules.agent_nets.modular import ModularAgentNetwork
 from replay_buffers.transition import TransitionBatch, Transition
 from stats.stats import StatTracker, PlotType
 from utils.schedule import create_schedule
+from agents.learners.target_builders import DQNTargetBuilder
+from torch.optim.sgd import SGD
+from torch.optim.adam import Adam
+from losses.losses import C51Loss, StandardDQNLoss
+from replay_buffers.buffer_factories import create_dqn_buffer
+from agents.learners.batch_iterators import RepeatSampleIterator
 
 
 class RainbowTrainer(BaseTrainer):
@@ -46,6 +52,24 @@ class RainbowTrainer(BaseTrainer):
             self.agent_network.initialize(config.kernel_initializer)
 
         self.agent_network.to(device)
+
+        if config.optimizer == Adam:
+            self.optimizer = config.optimizer(
+                params=self.agent_network.parameters(),
+                lr=config.learning_rate,
+                eps=config.adam_epsilon,
+                weight_decay=config.weight_decay,
+            )
+        elif config.optimizer == SGD:
+            self.optimizer = config.optimizer(
+                params=self.agent_network.parameters(),
+                lr=config.learning_rate,
+                momentum=config.momentum,
+                weight_decay=config.weight_decay,
+            )
+        else:
+            raise ValueError(f"Unsupported optimizer: {config.optimizer}")
+
         # Initialize target network
         from modules.utils import get_clean_state_dict
 
@@ -70,9 +94,73 @@ class RainbowTrainer(BaseTrainer):
         # 3. Create support for distributional RL (C51)
         # Note: RainbowNetwork.initial_inference now handles calculating expected value from support
         # So we don't need to pass support explicitly to the selector in the old way
+        # 9. Callbacks
+        from agents.learners.callbacks import (
+            TargetNetworkSyncCallback,
+            ResetNoiseCallback,
+            PriorityUpdaterCallback,
+            EpsilonGreedySchedulerCallback,
+        )
+        from modules.utils import get_lr_scheduler
+
+        # 3. Initialize LR Scheduler
+        self.lr_scheduler = get_lr_scheduler(self.optimizer, config)
+
+        # 4. Initialize Action Selector for loss calculation (greedy for Double DQN)
+        from agents.action_selectors.selectors import ArgmaxSelector
+
+        self.training_selector = ArgmaxSelector()
+
+        # 5. Initialize architecture-agnostic TD loss module
+        from losses.losses import LossPipeline
+
+        if config.atom_size > 1:
+            self.td_loss_module = C51Loss(
+                config=config,
+                device=device,
+                action_selector=self.training_selector,
+            )
+        else:
+            self.td_loss_module = StandardDQNLoss(
+                config=config,
+                device=device,
+                action_selector=self.training_selector,
+            )
+        self.loss_pipeline = LossPipeline([self.td_loss_module])
+
+        # 6. Initialize Target Builder
+        self.target_builder = DQNTargetBuilder(
+            config, device, self.target_agent_network
+        )
+        if config.atom_size > 1:
+            self.loss_pipeline.validate_dependencies(
+                network_output_keys={"q_logits"},
+                target_keys={"q_logits", "actions"},
+            )
+        else:
+            self.loss_pipeline.validate_dependencies(
+                network_output_keys={"q_values"},
+                target_keys={"q_values", "actions"},
+            )
+        self.buffer = create_dqn_buffer(
+            observation_dimensions=self.obs_dim,
+            max_size=config.replay_buffer_size,
+            num_actions=self.num_actions,
+            batch_size=config.minibatch_size,
+            observation_dtype=self.obs_dtype,
+            config=config,
+        )
+
+        self.schedules: Dict[str, Any] = {}
+        if (
+            hasattr(config, "per_beta_schedule")
+            and config.per_beta_schedule is not None
+        ):
+            self.schedules["per_beta"] = create_schedule(config.per_beta_schedule)
+        self.schedules["epsilon"] = create_schedule(config.epsilon_schedule)
 
         # 4. Initialize Learner
-        self.learner = RainbowLearner(
+        self.learner = UniversalLearner(
             config=config,
             agent_network=self.agent_network,
             target_agent_network=self.target_agent_network,
@@ -80,8 +168,19 @@ class RainbowTrainer(BaseTrainer):
             num_actions=self.num_actions,
             observation_dimensions=self.obs_dim,
             observation_dtype=self.obs_dtype,
+            target_builder=self.target_builder,
+            loss_pipeline=self.loss_pipeline,
+            optimizer=self.optimizer,
+            lr_scheduler=self.lr_scheduler,
+            callbacks=[
+                TargetNetworkSyncCallback(
+                    target_agent_network=self.target_agent_network
+                ),
+                ResetNoiseCallback(),
+                PriorityUpdaterCallback(self.buffer, self.schedules["per_beta"]),
+                EpsilonGreedySchedulerCallback(self.schedules["epsilon"]),
+            ],
         )
-        self.buffer = self.learner.replay_buffer
 
         # 5. Initialize Executor
         from agents.executors.factory import create_executor
@@ -113,6 +212,12 @@ class RainbowTrainer(BaseTrainer):
                 mode=config.compilation.mode, fullgraph=config.compilation.fullgraph
             )
 
+    @property
+    def current_epsilon(self) -> float:
+        if "epsilon" in self.schedules:
+            return self.schedules["epsilon"].get_value()
+        return 0.0
+
     def train(self) -> None:
         """
         Main training loop.
@@ -132,7 +237,7 @@ class RainbowTrainer(BaseTrainer):
             if self.training_step % 100 == 0 and self.training_step > 0:
                 print(
                     f"Step {self.training_step}, "
-                    f"Epsilon: {self.learner.current_epsilon:.4f}, "
+                    f"Epsilon: {self.current_epsilon:.4f}, "
                     f"Buffer: {self.buffer.size}"
                 )
 
@@ -143,13 +248,10 @@ class RainbowTrainer(BaseTrainer):
 
     def train_step(self) -> None:
         """Single training step for Rainbow: update epsilon, collect, and optimize."""
-        # 1. Update epsilon schedule
-        self._update_epsilon()
-
         # 2. Broadcast weights and epsilon to workers
         self.executor.update_weights(
             self.agent_network.state_dict(),
-            params={"epsilon": self.learner.current_epsilon},
+            params={"epsilon": self.current_epsilon},
         )
 
         # 3. Wait for data to be collected
@@ -165,13 +267,15 @@ class RainbowTrainer(BaseTrainer):
         # 5. Learning step
         if self.buffer.size >= self.config.min_replay_buffer_size:
             for _ in range(self.config.num_minibatches):
-                loss_stats = self.learner.step(self.stats)
+                iterator = RepeatSampleIterator(
+                    self.buffer, self.config.training_iterations
+                )
+                loss_stats = self.learner.step(iterator, self.stats)
                 if loss_stats:
                     for key, val in loss_stats.items():
                         self.stats.append(key, val)
 
             self.training_step += 1
-
 
             # 8. Periodic checkpointing
             if self.training_step % self.checkpoint_interval == 0:
@@ -180,21 +284,6 @@ class RainbowTrainer(BaseTrainer):
             # 9. Periodic testing
             if self.training_step % self.test_interval == 0:
                 self.trigger_test(self.agent_network.state_dict(), self.training_step)
-
-    def _update_epsilon(self) -> None:
-        """
-        Updates epsilon according to the configured schedule.
-        """
-        if hasattr(self, "epsilon_schedule") and self.epsilon_schedule is not None:
-            self.epsilon_schedule.step()
-            current_epsilon = self.epsilon_schedule.get_value()
-
-            # Sync the new epsilon to the action selector
-            if hasattr(self.action_selector, "epsilon"):
-                self.action_selector.epsilon = current_epsilon
-
-            # Log it to verify it's working
-            self.stats.append("epsilon", current_epsilon)
 
     def _save_checkpoint(self) -> None:
         """Saves Rainbow checkpoint."""
