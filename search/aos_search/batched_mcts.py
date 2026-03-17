@@ -932,7 +932,6 @@ def _backpropagate(
             torch.tensor(1.0, device=device),
         )
         action_long = actions_at_d.long()
-        child_long = path_nodes[batch_idx, d + 1].long()
         acting_player = tree.to_play[batch_idx, parent_long].long()
 
         # Standard: children_rewards holds instantaneous edge rewards
@@ -980,4 +979,7 @@ def _backpropagate(
         root_nodes = path_nodes[:, 0].long()
         root_v = tree.node_values[batch_idx, root_nodes]  # [B]
         # Valid mask is always True for root nodes that participated in the search
-        min_max_stats.update(root_v.unsqueeze(-1), valid_mask=torch.ones_like(root_v, dtype=torch.bool).unsqueeze(-1))
+        min_max_stats.update(
+            root_v.unsqueeze(-1),
+            valid_mask=torch.ones_like(root_v, dtype=torch.bool).unsqueeze(-1),
+        )

@@ -78,7 +78,7 @@ class ModularSearch:
                 AverageDiscountedReturnBackpropagator()
             )
         else:
-            _bootstrap = getattr(config, "bootstrap_method", "parent_value")
+            _bootstrap = config.bootstrap_method
             self.root_selection_strategy: SelectionStrategy = TopScoreSelection(
                 UCBScoring(bootstrap_method=_bootstrap)
             )
@@ -88,14 +88,26 @@ class ModularSearch:
             self.chance_selection_strategy: SelectionStrategy = TopScoreSelection(
                 DeterministicChanceScoring()
             )
-            
-            from search.search_py.root_policies import BestActionRootPolicy, VisitFrequencyPolicy
+
+            from search.search_py.root_policies import (
+                BestActionRootPolicy,
+                VisitFrequencyPolicy,
+            )
+
             if self.config.policy_extraction == "minimax":
-                self.root_target_policy: RootPolicyStrategy = BestActionRootPolicy(config, device, num_actions)
-                self.root_exploratory_policy: RootPolicyStrategy = BestActionRootPolicy(config, device, num_actions)
+                self.root_target_policy: RootPolicyStrategy = BestActionRootPolicy(
+                    config, device, num_actions
+                )
+                self.root_exploratory_policy: RootPolicyStrategy = BestActionRootPolicy(
+                    config, device, num_actions
+                )
             else:
-                self.root_target_policy: RootPolicyStrategy = VisitFrequencyPolicy(config, device, num_actions)
-                self.root_exploratory_policy: RootPolicyStrategy = VisitFrequencyPolicy(config, device, num_actions)
+                self.root_target_policy: RootPolicyStrategy = VisitFrequencyPolicy(
+                    config, device, num_actions
+                )
+                self.root_exploratory_policy: RootPolicyStrategy = VisitFrequencyPolicy(
+                    config, device, num_actions
+                )
 
             self.prior_injectors: List[PriorInjector] = [
                 ActionTargetInjector(),
@@ -105,13 +117,21 @@ class ModularSearch:
             self.internal_searchset: SearchSet = SelectAll()
             self.pruning_method: PruningMethod = NoPruning()
             self.internal_pruning_method: PruningMethod = NoPruning()
-            
-            from search.search_py.backpropogation import MinimaxBackpropagator, AverageDiscountedReturnBackpropagator
-            if hasattr(self.config, "backprop_method") and self.config.backprop_method == "minimax":
+
+            from search.search_py.backpropogation import (
+                MinimaxBackpropagator,
+                AverageDiscountedReturnBackpropagator,
+            )
+
+            if (
+                hasattr(self.config, "backprop_method")
+                and self.config.backprop_method == "minimax"
+            ):
                 self.backpropagator: Backpropagator = MinimaxBackpropagator()
             else:
-                self.backpropagator: Backpropagator = AverageDiscountedReturnBackpropagator()
-
+                self.backpropagator: Backpropagator = (
+                    AverageDiscountedReturnBackpropagator()
+                )
 
     def _dist_for_batch_index(self, policy_dist, index: int):
         # Optimization: If the distribution is already a single-batch distribution, return it.
@@ -156,7 +176,9 @@ class ModularSearch:
             list(info.keys())
         )
         player_raw = info["player"]
-        to_play: int = int(player_raw.item() if torch.is_tensor(player_raw) else player_raw)
+        to_play: int = int(
+            player_raw.item() if torch.is_tensor(player_raw) else player_raw
+        )
         self._set_node_configs()
         root = DecisionNode(0.0)
 
@@ -350,16 +372,24 @@ class ModularSearch:
             # Assume it's already a list or a dict-of-tensors
             batched_info = batch_info
 
-        # If it's a dict of tensors (AO-style), we might need to unbatch it for modular_search's 
+        # If it's a dict of tensors (AO-style), we might need to unbatch it for modular_search's
         # Python-heavy loop (modular_search is not as vectorized as aos_search).
         # We'll just assume it's a list for now or unbatch it if it's a dict.
         if isinstance(batched_info, dict):
-            B = batched_obs.shape[0] if torch.is_tensor(batched_obs) else len(batched_obs)
+            B = (
+                batched_obs.shape[0]
+                if torch.is_tensor(batched_obs)
+                else len(batched_obs)
+            )
             # Standardize back to a list of dicts for Python MCTS loops
             # This is slow but modular_search is slow anyway.
             batched_info = [
                 {
-                    k: v[i].item() if torch.is_tensor(v[i]) and v[i].numel() == 1 else v[i]
+                    k: (
+                        v[i].item()
+                        if torch.is_tensor(v[i]) and v[i].numel() == 1
+                        else v[i]
+                    )
                     for k, v in batched_info.items()
                 }
                 for i in range(B)
@@ -844,7 +874,7 @@ class ModularSearch:
                     break
 
                 if (
-                    getattr(self.config, "max_search_depth", None) is not None
+                    self.config.max_search_depth is not None
                     and (len(search_path) - 1) >= self.config.max_search_depth
                 ):
                     break
@@ -1583,7 +1613,7 @@ class ModularSearch:
                 reward = res["reward"]
                 value = res["value"]
 
-                if getattr(self.config, "support_range", None) is not None:
+                if self.config.support_range is not None:
                     if reward.numel() > 1:
                         reward = support_to_scalar(
                             reward, self.config.support_range
@@ -1624,7 +1654,7 @@ class ModularSearch:
 
             elif node.is_chance:
                 value = res["value"]
-                if getattr(self.config, "support_range", None) is not None:
+                if self.config.support_range is not None:
                     if value.numel() > 1:
                         value = support_to_scalar(
                             value, self.config.support_range
