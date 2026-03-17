@@ -11,6 +11,7 @@ from torch.optim.adam import Adam
 from torch.optim.sgd import SGD
 
 from agents.learners.base import UniversalLearner, StepResult
+from agents.learners.batch_iterators import SingleBatchIterator
 from agents.learners.callbacks import MetricsCallback
 from losses.losses import (
     ChanceQLoss,
@@ -144,9 +145,31 @@ class MuZeroLearner(UniversalLearner):
                 target_keys=set(dummy_targets.keys()),
             )
 
-    @property
-    def training_iterations(self) -> int:
-        return 1
+        # PER beta schedule
+        from utils.schedule import create_schedule
+
+        self.schedules: Dict[str, Any] = {}
+        if (
+            hasattr(self.config, "per_beta_schedule")
+            and self.config.per_beta_schedule is not None
+        ):
+            self.schedules["per_beta"] = create_schedule(self.config.per_beta_schedule)
+
+    def step(self, stats=None) -> Any:
+        """Bridges the old trainer call pattern: checks buffer, builds iterator, delegates."""
+        if self.replay_buffer.size < self.config.min_replay_buffer_size:
+            return None
+
+        iterator = SingleBatchIterator(self.replay_buffer)
+        result = super().step(batch_iterator=iterator, stats=stats)
+
+        # Step PER beta schedule
+        for name, schedule in self.schedules.items():
+            schedule.step()
+            if name == "per_beta":
+                self.replay_buffer.set_beta(schedule.get_value())
+
+        return result
 
     def _build_context(self, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         return {
@@ -214,12 +237,6 @@ class MuZeroLearner(UniversalLearner):
         weights = targets["weights"].float()
         gradient_scales = self._gradient_scales()
         context = self._build_context(targets)
-
-        # print("Predictions: ", predictions)
-        # print("Targets: ", targets)
-        # print("Context: ", context)
-        # print("Weights: ", weights)
-        # print("Gradient Scales: ", gradient_scales)
 
         loss_mean, loss_dict, priorities = self.loss_pipeline.run(
             predictions=learning_out,

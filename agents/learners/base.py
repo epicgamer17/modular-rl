@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, fields
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Optional, Tuple, TYPE_CHECKING
 import time
 
 import numpy as np
 import torch
-from torch import nn
 from torch.nn.utils import clip_grad_norm_
 
-from utils.schedule import create_schedule, Schedule
-from replay_buffers.modular_buffer import ModularReplayBuffer
 from modules.agent_nets.modular import ModularAgentNetwork
 
 if TYPE_CHECKING:
@@ -31,8 +28,14 @@ class StepResult:
     meta: Dict[str, Any] = field(default_factory=dict)
 
 
+class EarlyStopIteration(Exception):
+    """Raised by callbacks to break the batch iteration loop early."""
+
+    pass
+
+
 class Callback(ABC):
-    """Learner callback interface."""
+    """Learner callback interface with event hooks."""
 
     def on_step_end(
         self,
@@ -43,6 +46,27 @@ class Callback(ABC):
         stats=None,
         **kwargs,
     ) -> None:
+        """Fired after each sub-batch optimization (forward + backward + step)."""
+        pass  # pragma: no cover
+
+    def on_backward_end(
+        self,
+        learner: UniversalLearner,
+        step_result: StepResult,
+        stats=None,
+    ) -> None:
+        """Fired after loss.backward() but before optimizer.step().
+
+        Raise EarlyStopIteration to break the batch iteration loop.
+        """
+        pass  # pragma: no cover
+
+    def on_training_step_end(
+        self,
+        learner: UniversalLearner,
+        stats=None,
+    ) -> None:
+        """Fired after the full training step (all iterations complete)."""
         pass  # pragma: no cover
 
 
@@ -71,11 +95,43 @@ class CallbackList:
                 **kwargs,
             )
 
+    def on_backward_end(
+        self,
+        learner: UniversalLearner,
+        step_result: StepResult,
+        stats=None,
+    ) -> None:
+        for callback in self.callbacks:
+            callback.on_backward_end(
+                learner=learner,
+                step_result=step_result,
+                stats=stats,
+            )
+
+    def on_training_step_end(
+        self,
+        learner: UniversalLearner,
+        stats=None,
+    ) -> None:
+        for callback in self.callbacks:
+            callback.on_training_step_end(learner=learner, stats=stats)
+
 
 class UniversalLearner:
     """
-    Concrete learner that orchestrates the optimization loop.
-    Decouples algorithm logic via TargetBuilder and LossPipeline components.
+    Algorithm-agnostic learner that orchestrates the optimization loop.
+
+    Acts as a pure data-processing pipe: it does not own a replay buffer,
+    does not know about batch sizes, and does not sample data. The caller
+    (trainer/orchestrator) provides a batch_iterator — any iterable that
+    yields batch dicts. The learner processes each batch through:
+    forward → targets → loss → backward → step.
+
+    Algorithm-specific behaviour is injected via:
+    - TargetBuilder (DQN Bellman targets vs. passthrough)
+    - LossPipeline (which loss modules to run)
+    - Callbacks (target network sync, KL early stopping, noise reset)
+    - The batch_iterator itself (single batch vs. PPO multi-epoch)
     """
 
     def __init__(
@@ -89,7 +145,6 @@ class UniversalLearner:
         target_builder: Optional[BaseTargetBuilder] = None,
         loss_pipeline: Optional[LossPipeline] = None,
         optimizer: Optional[torch.optim.Optimizer] = None,
-        replay_buffer: Optional[ModularReplayBuffer] = None,
         lr_scheduler: Optional[Any] = None,
         callbacks: Optional[List[Callback]] = None,
     ):
@@ -103,30 +158,14 @@ class UniversalLearner:
         self.target_builder = target_builder
         self.loss_pipeline = loss_pipeline
         self.optimizer = optimizer
-        self.replay_buffer = replay_buffer
         self.lr_scheduler = lr_scheduler
 
         self.training_step = 0
         self.callbacks = CallbackList(callbacks)
-        self.schedules: Dict[str, Schedule] = {}
-        self._init_schedules()
-
-    def _init_schedules(self):
-        if (
-            hasattr(self.config, "per_beta_schedule")
-            and self.config.per_beta_schedule is not None
-        ):
-            self.schedules["per_beta"] = create_schedule(self.config.per_beta_schedule)
-
-        if (
-            hasattr(self.config, "epsilon_schedule")
-            and self.config.epsilon_schedule is not None
-        ):
-            self.schedules["epsilon"] = create_schedule(self.config.epsilon_schedule)
 
     def _preprocess_observation(self, states: Any) -> torch.Tensor:
-        """
-        Converts states to torch tensors on the correct device.
+        """Converts states to torch tensors on the correct device.
+
         Adds batch dimension if input is a single observation.
         """
         if torch.is_tensor(states):
@@ -145,99 +184,110 @@ class UniversalLearner:
 
         return prepared_state
 
-    def step(self, stats=None) -> Optional[Dict[str, Any]]:
-        """Performs one learner update cycle."""
-        if self.replay_buffer.size < self.min_buffer_size:
-            return None
+    def step(
+        self, batch_iterator: Iterable[Dict[str, Any]], stats=None
+    ) -> Optional[Dict[str, Any]]:
+        """Processes all batches from the iterator through the optimization loop.
 
+        The learner is blind to where the data comes from. For DQN/Imitation,
+        the iterator yields exactly one batch. For PPO, it yields shuffled
+        mini-batches across multiple epochs. The learner just processes until
+        the iterator is exhausted or a callback raises EarlyStopIteration.
+
+        Args:
+            batch_iterator: Any iterable yielding batch dicts.
+            stats: Optional stat tracker for logging metrics.
+
+        Returns:
+            Dictionary of loss statistics from the last processed batch,
+            or None if no batches were processed.
+        """
         start_time = time.time()
         last_result: Optional[StepResult] = None
+        batches_processed = 0
 
-        for _ in range(self.training_iterations):
-            batch = self.replay_buffer.sample()
+        try:
+            for batch in batch_iterator:
+                # 1. Gradient Clearing
+                self.optimizer.zero_grad(set_to_none=True)
 
-            # 1. Gradient Clearing
-            self.optimizer.zero_grad(set_to_none=True)
+                # 2. Forward + Targets + Loss
+                result = self.compute_step_result(batch=batch, stats=stats)
 
-            # 2. Compute Step Result (orchestrates forward, targets, and loss)
-            result = self.compute_step_result(batch=batch, stats=stats)
+                # 3. Backward
+                result.loss.backward()
 
-            # 3. Backward
-            result.loss.backward()
-
-            # 4. Gradient Clipping
-            if self.clipnorm > 0:
-                clip_grad_norm_(self.agent_network.parameters(), self.clipnorm)
-
-            # 5. Weight Update
-            self.optimizer.step()
-
-            # 6. LR Scheduler Step
-            if self.lr_scheduler is not None:
-                self.lr_scheduler.step()
-
-            self.after_optimizer_step(batch=batch, step_result=result, stats=stats)
-
-            # 7. Priority Updates for PER
-            if result.priorities is not None:
-                priorities = result.priorities
-                self.replay_buffer.update_priorities(
-                    batch["indices"], priorities, ids=batch.get("ids")
+                # 4. Fire on_backward_end (e.g. PPO KL early stopping)
+                self.callbacks.on_backward_end(
+                    learner=self, step_result=result, stats=stats
                 )
 
-            last_result = result
+                # 5. Gradient Clipping
+                if self.clipnorm > 0:
+                    clip_grad_norm_(self.agent_network.parameters(), self.clipnorm)
 
-        self._step_schedules()
+                # 6. Weight Update
+                self.optimizer.step()
+
+                # 7. LR Scheduler Step
+                if self.lr_scheduler is not None:
+                    self.lr_scheduler.step()
+
+                # 8. Fire on_step_end (e.g. noisy net reset, metrics)
+                self.callbacks.on_step_end(
+                    learner=self,
+                    predictions=result.predictions,
+                    targets=result.targets,
+                    loss_dict=result.loss_dict,
+                    stats=stats,
+                    batch=batch,
+                    meta=result.meta,
+                )
+
+                last_result = result
+                batches_processed += 1
+
+        except EarlyStopIteration:
+            pass  # Callback requested early stop (e.g. PPO KL divergence)
+
         self.training_step += 1
 
-        if stats is not None:
+        # Fire on_training_step_end (e.g. target network sync)
+        self.callbacks.on_training_step_end(learner=self, stats=stats)
+
+        if stats is not None and batches_processed > 0:
             duration = time.time() - start_time
             if duration > 0:
-                fps = (self.config.minibatch_size * self.training_iterations) / duration
-                stats.append("learner_fps", fps)
+                stats.append("learner_fps", batches_processed / duration)
 
         self._maybe_clear_mps_cache()
 
         if last_result is None:
             return None
 
-        self.callbacks.on_step_end(
-            learner=self,
-            predictions=last_result.predictions,
-            targets=last_result.targets,
-            loss_dict=last_result.loss_dict,
-            stats=stats,
-            batch=batch,
-            meta=last_result.meta,
-        )
         return self._prepare_stats(
             last_result.loss_dict, float(last_result.loss.item())
         )
 
     def compute_step_result(self, batch: Dict[str, Any], stats=None) -> StepResult:
-        """
-        Generic optimization step:
+        """Pure data-processing pipe: forward → targets → loss.
+
         1. Forward Pass (Predictions)
-        2. Build Targets
+        2. Build Targets (via TargetBuilder or passthrough)
         3. Run Loss Pipeline
         """
         # 1. Predictions
-        # The agent_network is expected to handle internal preprocessing if needed.
         predictions = self.agent_network.learner_inference(batch)
 
         # 2. Targets
-        # The target_builder computes what the predictions should have ideally been.
         if self.target_builder is not None:
             targets = self.target_builder.build_targets(
                 batch, predictions, self.agent_network
             )
         else:
-            # Passthrough Targets: The buffer processors already populated the batch
-            # with the required target keys (e.g., 'value_targets', 'target_policies').
             targets = batch
 
-        # 3. Contextual and PER data
-        # We pass the raw batch as context to the loss pipeline for masks, etc.
+        # 3. Context and PER weights
         context = batch
         weights = batch.get("weights")
         if weights is not None and torch.is_tensor(weights):
@@ -249,19 +299,23 @@ class UniversalLearner:
             targets=targets,
             context=context,
             weights=weights,
-            # gradient_scales defaults to None, let pipeline detect unroll depth
             gradient_scales=None,
         )
 
-        # Prepare for StepResult
-        preds_dict = predictions._asdict()
-        targs_dict = targets
+        # Prepare detached copies for callbacks/logging safety
+        if hasattr(predictions, "_asdict"):
+            preds_dict = predictions._asdict()
+        elif isinstance(predictions, dict):
+            preds_dict = predictions
+        else:
+            preds_dict = vars(predictions)
+
+        targs_dict = targets if isinstance(targets, dict) else {}
 
         return StepResult(
             loss=loss,
             loss_dict=loss_dict,
             priorities=priorities,
-            # Detach for callbacks/logging safety
             predictions={
                 k: v.detach().cpu() if torch.is_tensor(v) else v
                 for k, v in preds_dict.items()
@@ -273,53 +327,32 @@ class UniversalLearner:
         )
 
     @property
-    def min_buffer_size(self) -> int:
-        return self.config.min_replay_buffer_size
-
-    @property
-    def training_iterations(self) -> int:
-        return self.config.training_iterations
-
-    @property
     def clipnorm(self) -> float:
+        """Maximum gradient norm for clipping. 0 means no clipping."""
         return self.config.clipnorm
 
-    def _step_schedules(self) -> None:
-        for name, schedule in self.schedules.items():
-            schedule.step()
-            if name == "per_beta":
-                self.replay_buffer.set_beta(schedule.get_value())
-
     def save_checkpoint(self, path: str):
-        """
-        Saves learner state (network weights, optimizer state, training step).
-        """
+        """Saves learner state (network weights, optimizer state, training step)."""
         checkpoint = {
             "agent_network": self.agent_network.state_dict(),
             "training_step": self.training_step,
         }
-        if hasattr(self, "optimizer"):
+        if self.optimizer is not None:
             checkpoint["optimizer"] = self.optimizer.state_dict()
-        if hasattr(self, "lr_scheduler") and self.lr_scheduler is not None:
+        if self.lr_scheduler is not None:
             checkpoint["lr_scheduler"] = self.lr_scheduler.state_dict()
 
         torch.save(checkpoint, path)
 
     def load_checkpoint(self, path: str):
-        """
-        Loads learner state from path.
-        """
+        """Loads learner state from path."""
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         self.agent_network.load_state_dict(checkpoint["agent_network"])
         self.training_step = checkpoint.get("training_step", 0)
 
-        if "optimizer" in checkpoint and hasattr(self, "optimizer"):
+        if "optimizer" in checkpoint and self.optimizer is not None:
             self.optimizer.load_state_dict(checkpoint["optimizer"])
-        if (
-            "lr_scheduler" in checkpoint
-            and hasattr(self, "lr_scheduler")
-            and self.lr_scheduler is not None
-        ):
+        if "lr_scheduler" in checkpoint and self.lr_scheduler is not None:
             self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
 
     def _maybe_clear_mps_cache(self) -> None:
@@ -337,17 +370,8 @@ class UniversalLearner:
         stats["loss"] = total_loss
         return stats
 
-    def after_optimizer_step(
-        self, batch: Dict[str, Any], step_result: StepResult, stats=None
-    ) -> None:
-        """Optional hook for subclasses or logging. Automatically resets Noisy layers if present."""
-        # Reset online network noise
-        if hasattr(self.agent_network, "reset_noise"):
-            self.agent_network.reset_noise()
-
     def preprocess(self, observation: Any) -> torch.Tensor:
-        """
-        Preprocesses observation for network input.
+        """Preprocesses observation for network input.
 
         Args:
             observation: Raw observation.

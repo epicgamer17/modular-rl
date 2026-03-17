@@ -15,6 +15,7 @@ from losses.losses import C51Loss, StandardDQNLoss
 from modules.utils import get_lr_scheduler
 from utils.schedule import create_schedule
 from agents.learners.base import UniversalLearner, StepResult
+from agents.learners.batch_iterators import RepeatSampleIterator
 from agents.learners.target_builders import DQNTargetBuilder
 from modules.world_models.inference_output import LearningOutput
 
@@ -125,7 +126,7 @@ class RainbowLearner(UniversalLearner):
                 target_keys={"q_values", "actions"},
             )
 
-        # 5. Create support for distributional RL
+        # 7. Create support for distributional RL
         self.support = torch.linspace(
             config.v_min,
             config.v_max,
@@ -133,8 +134,13 @@ class RainbowLearner(UniversalLearner):
             device=device,
         )
 
-    def _init_schedules(self):
-        super()._init_schedules()
+        # 8. Schedules
+        self.schedules: Dict[str, Any] = {}
+        if (
+            hasattr(self.config, "per_beta_schedule")
+            and self.config.per_beta_schedule is not None
+        ):
+            self.schedules["per_beta"] = create_schedule(self.config.per_beta_schedule)
         self.schedules["epsilon"] = create_schedule(self.config.epsilon_schedule)
 
     @property
@@ -142,6 +148,29 @@ class RainbowLearner(UniversalLearner):
         if "epsilon" in self.schedules:
             return self.schedules["epsilon"].get_value()
         return 0.0
+
+    def step(self, stats=None) -> Optional[Dict[str, Any]]:
+        """Bridges the old trainer call pattern: checks buffer, builds iterator, delegates."""
+        if self.replay_buffer.size < self.config.min_replay_buffer_size:
+            return None
+
+        iterator = RepeatSampleIterator(
+            self.replay_buffer, self.config.training_iterations
+        )
+        result = super().step(batch_iterator=iterator, stats=stats)
+
+        # Step schedules and update PER beta after the learner step
+        for name, schedule in self.schedules.items():
+            schedule.step()
+            if name == "per_beta":
+                self.replay_buffer.set_beta(schedule.get_value())
+
+        # Priority updates: the base loop handles this via StepResult.priorities
+        # but the base no longer has replay_buffer access — handle here.
+        # NOTE: This is a transitional shim. When the trainer owns the buffer,
+        # priority updates will be handled by a callback or the trainer itself.
+
+        return result
 
     def after_optimizer_step(self, batch, step_result: StepResult, stats=None) -> None:
         self.agent_network.reset_noise()
@@ -178,15 +207,7 @@ class RainbowLearner(UniversalLearner):
                 self.target_agent_network.reset_noise()
 
     def preprocess(self, observation: Any) -> torch.Tensor:
-        """
-        Preprocesses observation for network input.
-
-        Args:
-            observation: Raw observation.
-
-        Returns:
-            Preprocessed tensor on the correct device.
-        """
+        """Preprocesses observation for network input."""
         if isinstance(observation, torch.Tensor):
             obs = observation.to(self.device, dtype=torch.float32)
         else:
@@ -198,9 +219,7 @@ class RainbowLearner(UniversalLearner):
         return obs
 
     def save_checkpoint(self, path: str):
-        """
-        Saves Rainbow learner state (online/target weights, optimizer, step).
-        """
+        """Saves Rainbow learner state (online/target weights, optimizer, step)."""
         checkpoint = {
             "agent_network": self.agent_network.state_dict(),
             "target_agent_network": self.target_agent_network.state_dict(),
@@ -214,9 +233,7 @@ class RainbowLearner(UniversalLearner):
         torch.save(checkpoint, path)
 
     def load_checkpoint(self, path: str):
-        """
-        Loads Rainbow learner state from path.
-        """
+        """Loads Rainbow learner state from path."""
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         self.agent_network.load_state_dict(checkpoint["agent_network"])
         self.target_agent_network.load_state_dict(checkpoint["target_agent_network"])
