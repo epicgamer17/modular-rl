@@ -112,6 +112,8 @@ class MinimalPPOConfig:
         self.kernel_initializer = None
         self.multi_process = False
         self.num_workers = 1
+        self.executor_type = "local"
+        self.min_replay_buffer_size = 1
         self.activation = nn.ReLU()
         self.noisy_sigma = 0.0
         self.norm_type = "none"
@@ -133,6 +135,14 @@ class MinimalPPOConfig:
         self.actor = MinimalActorConfig()
         self.critic = MinimalCriticConfig()
 
+        from dataclasses import dataclass
+        @dataclass
+        class CompilationConfig:
+            enabled: bool = False
+            mode: str = "default"
+            fullgraph: bool = False
+        self.compilation = CompilationConfig()
+
 
 def test_ppo_inference():
     """Test that PPOTrainer select_test_action works with numpy inputs."""
@@ -150,16 +160,34 @@ def test_ppo_inference():
         name="ppo_smoke_test",
     )
 
-    print("Running trainer.test(1)...")
-    # This calls select_test_action internally, which should handle numpy conversion
-    results = trainer.test(1)
+    print("Running local test loop...")
+    # Manually run a trial since trainer.test() is removed
+    env = make_cartpole()
+    state, info = env.reset()
+    done = False
+    episode_reward = 0
+    while not done:
+        with torch.inference_mode():
+            obs_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+            # Use policy_source directly for testing
+            result = trainer.policy_source.get_inference(obs=obs_tensor, info=info)
+            action, _ = trainer.action_selector.select_action(result=result, info=info, exploration=False)
+            action_val = action.item()
+        state, reward, terminated, truncated, info = env.step(action_val)
+        episode_reward += reward
+        done = terminated or truncated
+    
+    results = {"score": episode_reward}
 
     # Explicitly test select_test_action with numpy array to be sure
     import numpy as np
-
+    
     obs = np.random.randn(4)  # CartPole shape
-    print("Testing explicit select_test_action with numpy array...")
-    action = trainer.select_test_action(obs, {}, None)
+    print("Testing explicit inference with numpy array...")
+    with torch.inference_mode():
+        obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
+        result = trainer.policy_source.get_inference(obs=obs_tensor, info={})
+        action, _ = trainer.action_selector.select_action(result=result, info={}, exploration=False)
 
     assert results is not None, "Test results should not be None"
     assert "score" in results, "Test results should contain score"
@@ -219,15 +247,17 @@ def test_ppo_learner_store():
 
     # Store some transitions
     for i in range(10):
-        learner.store(
-            observation=np.random.randn(4),
-            action=np.random.randint(0, 2),
-            value=np.random.randn(),
-            log_probability=np.random.randn(),
-            reward=np.random.randn(),
+        learner.replay_buffer.store(
+            observations=np.random.randn(4),
+            actions=np.random.randint(0, 2),
+            values=np.random.randn(),
+            log_probabilities=np.random.randn(),
+            rewards=np.random.randn(),
+            dones=False,
+            next_observations=np.random.randn(4),
         )
 
-    assert learner.pointer == 10, f"Expected pointer=10, got {learner.pointer}"
+    assert learner.replay_buffer.size == 10, f"Expected size=10, got {learner.replay_buffer.size}"
     print("✓ test_ppo_learner_store passed")
 
 
@@ -258,20 +288,22 @@ def test_ppo_learner_finish_trajectory():
 
     # Store transitions
     for i in range(5):
-        learner.store(
-            observation=np.random.randn(4),
-            action=np.random.randint(0, 2),
-            value=1.0,  # Constant value for testing
-            log_probability=-0.5,
-            reward=1.0,  # Constant reward
+        learner.replay_buffer.store(
+            observations=np.random.randn(4),
+            actions=np.random.randint(0, 2),
+            values=1.0,  # Constant value for testing
+            log_probabilities=-0.5,
+            rewards=1.0,  # Constant reward
+            dones=False,
+            next_observations=np.random.randn(4),
         )
 
     # Finish trajectory
     learner.finish_trajectory(last_value=0.0)
 
     # Check advantages and returns were computed
-    advantages = learner.advantage_buffer[:5]
-    returns = learner.return_buffer[:5]
+    advantages = learner.replay_buffer.buffers["advantages"][:5]
+    returns = learner.replay_buffer.buffers["returns"][:5]
 
     assert not torch.all(advantages == 0), "Advantages should be computed"
     assert not torch.all(returns == 0), "Returns should be computed"
@@ -303,14 +335,16 @@ def test_ppo_learner_step():
         observation_dtype=np.float32,
     )
 
-    # Store enough transitions for a batch
-    for i in range(100):
-        learner.store(
-            observation=np.random.randn(4),
-            action=np.random.randint(0, 2),
-            value=np.random.randn(),
-            log_probability=-0.5,
-            reward=np.random.randn(),
+    # Store enough transitions for a batch (batch_size=max_size=200)
+    for i in range(200):
+        learner.replay_buffer.store(
+            observations=np.random.randn(4),
+            actions=np.random.randint(0, 2),
+            values=np.random.randn(),
+            log_probabilities=-0.5,
+            rewards=np.random.randn(),
+            dones=False,
+            next_observations=np.random.randn(4),
         )
 
     learner.finish_trajectory(last_value=0.0)
@@ -319,8 +353,9 @@ def test_ppo_learner_step():
     loss_stats = learner.step()
 
     assert loss_stats is not None, "Loss stats should be returned"
-    assert "policy_loss" in loss_stats, "Policy loss should be tracked"
-    assert "value_loss" in loss_stats, "Value loss should be tracked"
+    # Check for either PPOPolicyLoss or policy_loss (new vs old style)
+    assert any(k in loss_stats for k in ["policy_loss", "PPOPolicyLoss"]), f"Policy loss missing: {loss_stats.keys()}"
+    assert any(k in loss_stats for k in ["value_loss", "PPOValueLoss"]), f"Value loss missing: {loss_stats.keys()}"
     assert "kl_divergence" in loss_stats, "KL divergence should be tracked"
     print("✓ test_ppo_learner_step passed")
 

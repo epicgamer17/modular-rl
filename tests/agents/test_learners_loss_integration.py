@@ -3,14 +3,16 @@ import torch
 import torch.nn as nn
 from unittest.mock import MagicMock
 from agents.learners.ppo_learner import PPOLearner
-from agents.learners.rainbow_learner import RainbowLearner
 from agents.learners.muzero_learner import MuZeroLearner
-from agents.learners.imitation_learner import ImitationLearner
+from agents.learners.base import UniversalLearner
+from agents.learners.target_builders import DQNTargetBuilder
 from configs.agents.ppo import PPOConfig
 from configs.agents.rainbow_dqn import RainbowConfig
 from configs.agents.muzero import MuZeroConfig
 from configs.agents.supervised import SupervisedConfig
 from configs.games.cartpole import CartPoleConfig
+from losses.losses import C51Loss, ImitationLoss, LossPipeline, StandardDQNLoss
+from modules.agent_nets.modular import ModularAgentNetwork
 from modules.world_models.inference_output import LearningOutput, MuZeroNetworkState
 
 pytestmark = pytest.mark.integration
@@ -136,15 +138,25 @@ def rainbow_setup(make_rainbow_config_dict, cartpole_game_config, device):
     agent_network = SimpleNet(4, 10)
     target_network = SimpleNet(4, 10)
 
-    learner = RainbowLearner(
+    target_builder = DQNTargetBuilder(config, device, target_network)
+    loss_pipeline = LossPipeline([StandardDQNLoss(config=config, device=device)])
+    loss_pipeline.validate_dependencies(
+        network_output_keys={"q_values"},
+        target_keys={"q_values", "actions"},
+    )
+
+    learner = UniversalLearner(
         config=config,
         agent_network=agent_network,
-        target_agent_network=target_network,
         device=device,
         num_actions=10,
         observation_dimensions=(4,),
         observation_dtype=torch.float32,
+        target_builder=target_builder,
+        loss_pipeline=loss_pipeline,
+        optimizer=MagicMock(),
     )
+    learner.target_agent_network = target_network
     return learner
 
 
@@ -220,26 +232,35 @@ def test_muzero_learner_loss_integration(muzero_setup):
 
 @pytest.fixture
 def imitation_setup(make_supervised_config_dict, device):
-    config_dict = make_supervised_config_dict()
-    config_dict["replay_buffer_size"] = 100
-    config_dict["minibatch_size"] = 2
-    config_dict["optimizer"] = torch.optim.Adam
-    config_dict["learning_rate"] = 1e-3
-    config_dict["adam_epsilon"] = 1e-8
-    config_dict["weight_decay"] = 0.0
-    config_dict["lr_schedule"] = "constant"
-    config_dict["loss_function"] = torch.nn.CrossEntropyLoss(reduction="none")
+    config_dict = make_supervised_config_dict(
+        sl_minibatch_size=2,
+        sl_min_replay_buffer_size=0,
+        sl_training_iterations=1,
+    )
 
     config = SupervisedConfig(config_dict)
-    agent_network = SimpleNet(4, 10)
+    agent_network = ModularAgentNetwork(
+        config=config,
+        num_actions=10,
+        input_shape=(4,),
+    )
 
-    learner = ImitationLearner(
+    loss_pipeline = LossPipeline([ImitationLoss(config, device, num_actions=10)])
+    loss_pipeline.validate_dependencies(
+        network_output_keys={"policies"},
+        target_keys={"target_policies"},
+    )
+
+    learner = UniversalLearner(
         config=config,
         agent_network=agent_network,
         device=device,
         num_actions=10,
         observation_dimensions=(4,),
         observation_dtype=torch.float32,
+        target_builder=None,
+        loss_pipeline=loss_pipeline,
+        optimizer=MagicMock(),
     )
     return learner
 
@@ -255,4 +276,4 @@ def test_imitation_learner_loss_integration(imitation_setup):
     step_result = learner.compute_step_result(batch)
 
     assert isinstance(step_result.loss, torch.Tensor)
-    assert "imitation_loss" in step_result.loss_dict
+    assert "ImitationLoss" in step_result.loss_dict

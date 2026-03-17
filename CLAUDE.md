@@ -155,7 +155,7 @@ class StepResult:
 ```
 Cannot loop over network modules. Calls `learner_inference(batch)`, unpacks `LearningOutput`, routes raw tensors to `LossPipeline`.
 
-Algorithm-specific learners: `RainbowLearner`, `MuZeroLearner`, `PPOLearner`, `NFSPLearner`, `SupervisedLearner` — all extend `UniversalLearner`.
+Algorithm-specific learners/wrappers: `MuZeroLearner`, `PPOLearner`. DQN-style and supervised learning are now assembled by trainers using `UniversalLearner` + `TargetBuilder` + `LossPipeline` + callbacks (e.g. `TargetNetworkSyncCallback`).
 
 ### `LossPipeline`
 ```python
