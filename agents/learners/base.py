@@ -233,26 +233,17 @@ class UniversalLearner:
         )
 
         # Prepare detached copies for callbacks/logging safety
-        if hasattr(predictions, "_asdict"):
-            preds_dict = predictions._asdict()
-        elif isinstance(predictions, dict):
-            preds_dict = predictions
-        else:
-            preds_dict = vars(predictions)
-
-        targs_dict = targets if isinstance(targets, dict) else {}
-
         return StepResult(
             loss=loss,
             loss_dict=loss_dict,
             priorities=priorities,
             predictions={
                 k: v.detach().cpu() if torch.is_tensor(v) else v
-                for k, v in preds_dict.items()
+                for k, v in predictions.items()
             },
             targets={
                 k: v.detach().cpu() if torch.is_tensor(v) else v
-                for k, v in targs_dict.items()
+                for k, v in targets.items()
             },
         )
 

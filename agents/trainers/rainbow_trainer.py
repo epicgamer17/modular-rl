@@ -276,7 +276,7 @@ class RainbowTrainer(BaseTrainer):
         if self.buffer.size >= self.config.min_replay_buffer_size:
             for _ in range(self.config.num_minibatches):
                 iterator = RepeatSampleIterator(
-                    self.buffer, self.config.training_iterations
+                    self.buffer, self.config.training_iterations, self.device
                 )
                 loss_stats = self.learner.step(iterator, self.stats)
                 if loss_stats:

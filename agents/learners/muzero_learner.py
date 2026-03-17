@@ -170,7 +170,7 @@ class MuZeroLearner(UniversalLearner):
         if self.replay_buffer.size < self.config.min_replay_buffer_size:
             return None
 
-        iterator = SingleBatchIterator(self.replay_buffer)
+        iterator = SingleBatchIterator(self.replay_buffer, self.device)
         result = super().step(batch_iterator=iterator, stats=stats)
 
         # Step PER beta schedule
@@ -260,7 +260,7 @@ class MuZeroLearner(UniversalLearner):
 
         detached_predictions = {
             key: value.detach() if torch.is_tensor(value) else value
-            for key, value in learning_out._asdict().items()
+            for key, value in learning_out.items()
         }
         detached_targets = {
             key: value.detach() if torch.is_tensor(value) else value

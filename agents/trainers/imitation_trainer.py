@@ -138,7 +138,7 @@ class ImitationTrainer(BaseTrainer):
         # 3) Learner updates
         if self.buffer.size >= self.config.min_replay_buffer_size:
             for _ in range(self.config.num_minibatches):
-                iterator = RepeatSampleIterator(self.buffer, self.config.training_iterations)
+                iterator = RepeatSampleIterator(self.buffer, self.config.training_iterations, self.device)
                 loss_stats = self.learner.step(batch_iterator=iterator, stats=self.stats)
                 if loss_stats:
                     for key, val in loss_stats.items():

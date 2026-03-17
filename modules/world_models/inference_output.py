@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import NamedTuple, Optional, Any
 import torch
 from torch import Tensor
@@ -190,10 +191,13 @@ class InferenceOutput(NamedTuple):
     # Removed policy_logits as Actor uses Distribution directly.
 
 
-class LearningOutput(NamedTuple):
+@dataclass
+class LearningOutput:
     """
     The strict contract for data yielded to the Learner.
     Contains raw logits for mathematically stable loss computation.
+
+    Supports both dot-access and dict-like access for compatibility.
     """
 
     values: Optional[torch.Tensor] = None  # [B, T+1, ...] Logits or Values
@@ -216,3 +220,31 @@ class LearningOutput(NamedTuple):
     chance_encoder_embeddings: Optional[torch.Tensor] = (
         None  # [B, T+1, num_chance] (Stochastic MuZero)
     )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Returns a dictionary copy of the fields that are not None."""
+        return {k: v for k, v in vars(self).items() if v is not None}
+
+    def items(self):
+        """Dict-like items() method for iterating over fields."""
+        return self.to_dict().items()
+
+    def keys(self):
+        """Dict-like keys() method."""
+        return self.to_dict().keys()
+
+    def __iter__(self):
+        """Allows iteration over keys."""
+        return iter(self.to_dict())
+
+    def __contains__(self, key):
+        """Dict-like 'in' operator."""
+        return key in self.to_dict()
+
+    def __getitem__(self, key: str) -> Any:
+        """Dict-like key access."""
+        return getattr(self, key)
+
+    def _asdict(self) -> dict[str, Any]:
+        """NamedTuple compatibility."""
+        return self.to_dict()

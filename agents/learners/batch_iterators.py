@@ -17,11 +17,15 @@ from replay_buffers.modular_buffer import ModularReplayBuffer
 class SingleBatchIterator:
     """Yields exactly one batch sampled from the replay buffer."""
 
-    def __init__(self, replay_buffer: ModularReplayBuffer):
+    def __init__(self, replay_buffer: ModularReplayBuffer, device: torch.device):
         self.replay_buffer = replay_buffer
+        self.device = device
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
-        yield self.replay_buffer.sample()
+        batch = self.replay_buffer.sample()
+        yield {
+            k: v.to(self.device) if torch.is_tensor(v) else v for k, v in batch.items()
+        }
 
 
 class RepeatSampleIterator:
@@ -30,13 +34,20 @@ class RepeatSampleIterator:
     Used when config.training_iterations > 1 (e.g. Rainbow DQN).
     """
 
-    def __init__(self, replay_buffer: ModularReplayBuffer, num_iterations: int):
+    def __init__(
+        self, replay_buffer: ModularReplayBuffer, num_iterations: int, device: torch.device
+    ):
         self.replay_buffer = replay_buffer
         self.num_iterations = num_iterations
+        self.device = device
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         for _ in range(self.num_iterations):
-            yield self.replay_buffer.sample()
+            batch = self.replay_buffer.sample()
+            yield {
+                k: v.to(self.device) if torch.is_tensor(v) else v
+                for k, v in batch.items()
+            }
 
 
 class PPOEpochIterator:

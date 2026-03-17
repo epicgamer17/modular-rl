@@ -285,7 +285,7 @@ class NFSPLearner:
                 self.rl_buffer.set_beta(beta)
 
             rl_iter = RepeatSampleIterator(
-                self.rl_buffer, self.rl_learner.config.training_iterations
+                self.rl_buffer, self.rl_learner.config.training_iterations, self.device
             )
             rl_metrics = self.rl_learner.step(batch_iterator=rl_iter, stats=stats)
         else:
@@ -296,7 +296,7 @@ class NFSPLearner:
         # 2. SL Step (supervised/imitation)
         if self.sl_replay_buffer.size >= self.sl_learner.config.min_replay_buffer_size:
             sl_iter = RepeatSampleIterator(
-                self.sl_buffer, self.sl_learner.config.training_iterations
+                self.sl_buffer, self.sl_learner.config.training_iterations, self.device
             )
             sl_metrics = self.sl_learner.step(batch_iterator=sl_iter, stats=stats)
         else:
