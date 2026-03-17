@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, Any, Iterable
 
 import torch
 
@@ -95,6 +95,91 @@ class MetricsCallback(Callback):
             entropy.mean().item() if entropy.numel() > 0 else 0.0,
         )
 
+class TargetNetworkSyncCallback(Callback):
+    """Syncs target network weights at the end of each training step."""
+
+    def on_training_step_end(
+        self,
+        learner,
+        stats=None,
+    ) -> None:
+        if not hasattr(learner, "target_agent_network") or learner.target_agent_network is None:
+            return
+
+        from modules.utils import get_clean_state_dict
+
+        with torch.no_grad():
+            clean_state = get_clean_state_dict(learner.agent_network)
+            if getattr(learner.config, "soft_update", False):
+                target_state = learner.target_agent_network.state_dict()
+                ema_beta = getattr(learner.config, "ema_beta", 0.99)
+                for k, v in clean_state.items():
+                    if k in target_state:
+                        if target_state[k].is_floating_point():
+                            target_state[k].mul_(ema_beta).add_(
+                                v.detach(), alpha=1.0 - ema_beta
+                            )
+                        else:
+                            target_state[k].copy_(v.detach())
+            else:
+                # Hard update
+                learner.target_agent_network.load_state_dict(clean_state, strict=False)
+
+            # Resample target noise ONLY after a weight sync to maintain stable C51 targets
+            if hasattr(learner.target_agent_network, "reset_noise") and callable(
+                learner.target_agent_network.reset_noise
+            ):
+                learner.target_agent_network.reset_noise()
+
+
+class ResetNoiseCallback(Callback):
+    """Resets noisy network parameters after every optimizer step."""
+
+    def on_optimizer_step_end(
+        self,
+        learner,
+    ) -> None:
+        if hasattr(learner.agent_network, "reset_noise") and callable(
+            learner.agent_network.reset_noise
+        ):
+            learner.agent_network.reset_noise()
+
+
+class ImitationMetricsCallback(Callback):
+    """Collects and reports policy metrics for ImitationLearner."""
+
+    def __init__(self):
+        self._policy_total = None
+        self._policy_count = 0
+
+    def on_step_begin(
+        self,
+        learner,
+        iterator: Iterable[Dict[str, Any]],
+    ) -> None:
+        self._policy_total = torch.zeros(learner.num_actions, device=learner.device)
+        self._policy_count = 0
+
+    def on_backward_end(
+        self,
+        learner,
+        step_result: StepResult,
+        stats=None,
+    ) -> None:
+        if step_result.meta is not None and "policy_mean" in step_result.meta:
+            if self._policy_total is None:
+                self._policy_total = torch.zeros(learner.num_actions, device=learner.device)
+            self._policy_total += step_result.meta["policy_mean"]
+            self._policy_count += 1
+
+    def on_training_step_end(
+        self,
+        learner,
+        stats=None,
+    ) -> None:
+        if stats is not None and self._policy_count > 0:
+            stats.set("sl_policy", self._policy_total / self._policy_count)
+
 class PPOEarlyStoppingCallback(Callback):
     """Early stops the optimization loop if KL divergence exceeds target_kl."""
 
@@ -114,3 +199,30 @@ class PPOEarlyStoppingCallback(Callback):
             if stats is not None:
                 stats.append("ppo_early_stop", 1.0)
             raise EarlyStopIteration(f"KL divergence {kl:.4f} > 1.5 * {self.target_kl}")
+
+class PriorityUpdaterCallback(Callback):
+    """Updates Prioritized Experience Replay (PER) buffer priorities."""
+
+    def __init__(self, replay_buffer):
+        self.replay_buffer = replay_buffer
+
+    def on_step_end(
+        self,
+        learner,
+        predictions: Dict[str, torch.Tensor],
+        targets: Dict[str, torch.Tensor],
+        loss_dict: Dict[str, float],
+        stats=None,
+        **kwargs,
+    ) -> None:
+        batch = kwargs.get("batch")
+        step_result = kwargs.get("meta", {}).get("step_result")  # We will pass step_result in meta
+
+        # If step_result wasn't explicitly passed in meta, we can try to fall back, 
+        # but the cleanest way is for UniversalLearner to pass result.priorities directly.
+        # Actually, let's just look for priorities in kwargs since UniversalLearner can pass it.
+        priorities = kwargs.get("priorities")
+
+        if priorities is not None and batch is not None and "indices" in batch:
+            if hasattr(self.replay_buffer, "update_priorities"):
+                self.replay_buffer.update_priorities(batch["indices"], priorities)

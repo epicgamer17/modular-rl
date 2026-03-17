@@ -95,6 +95,9 @@ class ImitationLearner(UniversalLearner):
             network_output_keys={"policies"},
             target_keys={"target_policies"},
         )
+        
+        from agents.learners.callbacks import ImitationMetricsCallback
+        self.callbacks.callbacks.append(ImitationMetricsCallback())
 
     def store(
         self,
@@ -117,12 +120,16 @@ class ImitationLearner(UniversalLearner):
         )
 
     def step(self, stats=None) -> Optional[Dict[str, float]]:
-        self._policy_total = torch.zeros(self.num_actions, device=self.device)
-        self._policy_count = 0
-        out = super().step(stats=stats)
-        if stats is not None and self._policy_count > 0:
-            stats.set("sl_policy", self._policy_total / self._policy_count)
-        return out
+        """Bridges the old trainer call pattern: checks buffer, builds iterator, delegates."""
+        if self.replay_buffer.size < self.config.min_minibatch_size if hasattr(self.config, "min_minibatch_size") else self.config.minibatch_size:
+             # Just use minibatch_size as the check for imitation learner if not explicitly set
+             if self.replay_buffer.size < self.config.minibatch_size:
+                 return None
+
+        from agents.learners.batch_iterators import SingleBatchIterator
+        iterator = SingleBatchIterator(self.replay_buffer)
+        
+        return super().step(batch_iterator=iterator, stats=stats)
 
     def compute_step_result(self, batch, stats=None) -> StepResult:
         observations = batch["observations"].to(self.device)
@@ -149,11 +156,6 @@ class ImitationLearner(UniversalLearner):
             priorities=priorities,
             meta={"policy_mean": batch_policy_mean},
         )
-
-    def after_optimizer_step(self, batch, step_result: StepResult, stats=None) -> None:
-        self.agent_network.reset_noise()
-        self._policy_total += step_result.meta["policy_mean"]
-        self._policy_count += 1
 
     def preprocess(self, observation: Any) -> torch.Tensor:
         """

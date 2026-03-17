@@ -37,16 +37,12 @@ class EarlyStopIteration(Exception):
 class Callback(ABC):
     """Learner callback interface with event hooks."""
 
-    def on_step_end(
+    def on_step_begin(
         self,
         learner: UniversalLearner,
-        predictions: Dict[str, torch.Tensor],
-        targets: Dict[str, torch.Tensor],
-        loss_dict: Dict[str, float],
-        stats=None,
-        **kwargs,
+        iterator: Iterable[Dict[str, Any]],
     ) -> None:
-        """Fired after each sub-batch optimization (forward + backward + step)."""
+        """Fired at the very beginning of the learner step, before fetching batches."""
         pass  # pragma: no cover
 
     def on_backward_end(
@@ -59,6 +55,25 @@ class Callback(ABC):
 
         Raise EarlyStopIteration to break the batch iteration loop.
         """
+        pass  # pragma: no cover
+
+    def on_optimizer_step_end(
+        self,
+        learner: UniversalLearner,
+    ) -> None:
+        """Fired exactly after optimizer.step() and optional lr_scheduler.step()."""
+        pass  # pragma: no cover
+
+    def on_step_end(
+        self,
+        learner: UniversalLearner,
+        predictions: Dict[str, torch.Tensor],
+        targets: Dict[str, torch.Tensor],
+        loss_dict: Dict[str, float],
+        stats=None,
+        **kwargs,
+    ) -> None:
+        """Fired after each sub-batch optimization (forward + backward + step)."""
         pass  # pragma: no cover
 
     def on_training_step_end(
@@ -75,6 +90,34 @@ class CallbackList:
 
     def __init__(self, callbacks: Optional[List[Callback]] = None):
         self.callbacks = callbacks or []
+
+    def on_step_begin(
+        self,
+        learner: UniversalLearner,
+        iterator: Iterable[Dict[str, Any]],
+    ) -> None:
+        for callback in self.callbacks:
+            callback.on_step_begin(learner=learner, iterator=iterator)
+
+    def on_backward_end(
+        self,
+        learner: UniversalLearner,
+        step_result: StepResult,
+        stats=None,
+    ) -> None:
+        for callback in self.callbacks:
+            callback.on_backward_end(
+                learner=learner,
+                step_result=step_result,
+                stats=stats,
+            )
+
+    def on_optimizer_step_end(
+        self,
+        learner: UniversalLearner,
+    ) -> None:
+        for callback in self.callbacks:
+            callback.on_optimizer_step_end(learner=learner)
 
     def on_step_end(
         self,
@@ -93,19 +136,6 @@ class CallbackList:
                 loss_dict=loss_dict,
                 stats=stats,
                 **kwargs,
-            )
-
-    def on_backward_end(
-        self,
-        learner: UniversalLearner,
-        step_result: StepResult,
-        stats=None,
-    ) -> None:
-        for callback in self.callbacks:
-            callback.on_backward_end(
-                learner=learner,
-                step_result=step_result,
-                stats=stats,
             )
 
     def on_training_step_end(
@@ -206,6 +236,8 @@ class UniversalLearner:
         last_result: Optional[StepResult] = None
         batches_processed = 0
 
+        self.callbacks.on_step_begin(learner=self, iterator=batch_iterator)
+
         try:
             for batch in batch_iterator:
                 # 1. Gradient Clearing
@@ -217,7 +249,7 @@ class UniversalLearner:
                 # 3. Backward
                 result.loss.backward()
 
-                # 4. Fire on_backward_end (e.g. PPO KL early stopping)
+                # 4. Fire on_backward_end (e.g. PPO KL early stopping, metrics)
                 self.callbacks.on_backward_end(
                     learner=self, step_result=result, stats=stats
                 )
@@ -233,12 +265,16 @@ class UniversalLearner:
                 if self.lr_scheduler is not None:
                     self.lr_scheduler.step()
 
-                # 8. Fire on_step_end (e.g. noisy net reset, metrics)
+                # 8. Fire on_optimizer_step_end (e.g. noisy net reset)
+                self.callbacks.on_optimizer_step_end(learner=self)
+
+                # 9. Fire on_step_end
                 self.callbacks.on_step_end(
                     learner=self,
                     predictions=result.predictions,
                     targets=result.targets,
                     loss_dict=result.loss_dict,
+                    priorities=result.priorities,
                     stats=stats,
                     batch=batch,
                     meta=result.meta,

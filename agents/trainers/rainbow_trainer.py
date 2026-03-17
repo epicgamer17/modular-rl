@@ -172,9 +172,6 @@ class RainbowTrainer(BaseTrainer):
 
             self.training_step += 1
 
-            # 6. Update target network
-            if self.training_step % self.config.transfer_interval == 0:
-                self.learner.update_target_network()
 
             # 8. Periodic checkpointing
             if self.training_step % self.checkpoint_interval == 0:

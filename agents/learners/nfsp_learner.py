@@ -153,9 +153,6 @@ class NFSPLearner:
         self.training_step += 1
         return metrics if metrics else None
 
-    def update_target_network(self) -> None:
-        """Updates the RL target network."""
-        self.rl_learner.update_target_network()
 
     def preprocess(self, observation: Any) -> torch.Tensor:
         """Delegates preprocessing to RL learner."""

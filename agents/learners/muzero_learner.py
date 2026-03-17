@@ -41,6 +41,7 @@ class MuZeroLearner(UniversalLearner):
         observation_dtype,
         player_id_mapping: Dict[str, int],
     ):
+        from agents.learners.callbacks import MetricsCallback, ResetNoiseCallback
         super().__init__(
             config=config,
             agent_network=agent_network,
@@ -48,7 +49,7 @@ class MuZeroLearner(UniversalLearner):
             num_actions=num_actions,
             observation_dimensions=observation_dimensions,
             observation_dtype=observation_dtype,
-            callbacks=[MetricsCallback()],
+            callbacks=[MetricsCallback(), ResetNoiseCallback()],
         )
 
         self.replay_buffer = create_muzero_buffer(
@@ -144,6 +145,9 @@ class MuZeroLearner(UniversalLearner):
                 network_output_keys=dummy_pred_keys,
                 target_keys=set(dummy_targets.keys()),
             )
+
+        from agents.learners.callbacks import PriorityUpdaterCallback
+        self.callbacks.callbacks.append(PriorityUpdaterCallback(self.replay_buffer))
 
         # PER beta schedule
         from utils.schedule import create_schedule

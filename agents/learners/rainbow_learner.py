@@ -48,16 +48,6 @@ class RainbowLearner(UniversalLearner):
             observation_dimensions: Shape of observations.
             observation_dtype: Dtype for observations.
         """
-        super().__init__(
-            config=config,
-            agent_network=agent_network,
-            device=device,
-            num_actions=num_actions,
-            observation_dimensions=observation_dimensions,
-            observation_dtype=observation_dtype,
-        )
-        self.target_agent_network = target_agent_network
-
         # 1. Initialize Replay Buffer
         self.replay_buffer = create_dqn_buffer(
             observation_dimensions=observation_dimensions,
@@ -111,6 +101,8 @@ class RainbowLearner(UniversalLearner):
             )
         self.loss_pipeline = LossPipeline([self.td_loss_module])
 
+        self.target_agent_network = target_agent_network
+
         # 6. Initialize Target Builder
         self.target_builder = DQNTargetBuilder(
             config, device, self.target_agent_network
@@ -134,14 +126,42 @@ class RainbowLearner(UniversalLearner):
             device=device,
         )
 
-        # 8. Schedules
         self.schedules: Dict[str, Any] = {}
         if (
-            hasattr(self.config, "per_beta_schedule")
-            and self.config.per_beta_schedule is not None
+            hasattr(config, "per_beta_schedule")
+            and config.per_beta_schedule is not None
         ):
-            self.schedules["per_beta"] = create_schedule(self.config.per_beta_schedule)
-        self.schedules["epsilon"] = create_schedule(self.config.epsilon_schedule)
+            self.schedules["per_beta"] = create_schedule(config.per_beta_schedule)
+        self.schedules["epsilon"] = create_schedule(config.epsilon_schedule)
+
+        # 8. Initialize base class which creates self.callbacks
+        super().__init__(
+            config=config,
+            agent_network=agent_network,
+            device=device,
+            num_actions=num_actions,
+            observation_dimensions=observation_dimensions,
+            observation_dtype=observation_dtype,
+            target_builder=self.target_builder,
+            loss_pipeline=self.loss_pipeline,
+            optimizer=self.optimizer,
+            lr_scheduler=getattr(self, "lr_scheduler", None),
+        )
+
+        # 9. Callbacks
+        from agents.learners.callbacks import (
+            TargetNetworkSyncCallback,
+            ResetNoiseCallback,
+            PriorityUpdaterCallback,
+        )
+
+        self.callbacks.callbacks.extend(
+            [
+                TargetNetworkSyncCallback(),
+                ResetNoiseCallback(),
+                PriorityUpdaterCallback(self.replay_buffer),
+            ]
+        )
 
     @property
     def current_epsilon(self) -> float:
@@ -171,40 +191,6 @@ class RainbowLearner(UniversalLearner):
         # priority updates will be handled by a callback or the trainer itself.
 
         return result
-
-    def after_optimizer_step(self, batch, step_result: StepResult, stats=None) -> None:
-        self.agent_network.reset_noise()
-
-    def update_target_network(self) -> None:
-        """
-        Updates the target network weights.
-        Uses soft update (EMA) if config.soft_update is True, else hard copy.
-        """
-        from modules.utils import get_clean_state_dict
-
-        with torch.no_grad():
-            clean_state = get_clean_state_dict(self.agent_network)
-            if self.config.soft_update:
-                target_state = self.target_agent_network.state_dict()
-                for k, v in clean_state.items():
-                    if k in target_state:
-                        # Soft update: target = beta * target + (1 - beta) * online
-                        # Ensure we only update floating point tensors (like weights)
-                        if target_state[k].is_floating_point():
-                            target_state[k].mul_(self.config.ema_beta).add_(
-                                v.detach(), alpha=1.0 - self.config.ema_beta
-                            )
-                        else:
-                            target_state[k].copy_(v.detach())
-            else:
-                # Hard update
-                self.target_agent_network.load_state_dict(clean_state, strict=False)
-            # Resample target noise ONLY after a weight sync to maintain stable C51 targets
-
-            if hasattr(self.target_agent_network, "reset_noise") and callable(
-                self.target_agent_network.reset_noise
-            ):
-                self.target_agent_network.reset_noise()
 
     def preprocess(self, observation: Any) -> torch.Tensor:
         """Preprocesses observation for network input."""

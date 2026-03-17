@@ -254,9 +254,6 @@ class NFSPTrainer(BaseTrainer):
                 last_log_time = time.time()
                 self.stats.drain_queue()
 
-            # 5. Update Target Networks (periodically)
-            if self.training_step % self.config.rl_configs[0].transfer_interval == 0:
-                self._update_target_networks()
 
             # 6. Periodic checkpointing
             if self.training_step % self.checkpoint_interval == 0:
@@ -469,13 +466,6 @@ class NFSPTrainer(BaseTrainer):
                     for key, val in loss_stats.items():
                         self.stats.append(f"{player_id}_{key}", val)
 
-    def _update_target_networks(self):
-        """Update target networks."""
-        if self.shared_networks:
-            self.learner.update_target_network()
-        else:
-            for learner in self.learners.values():
-                learner.update_target_network()
 
     def test_exploitability(self, num_trials: int = 10) -> Dict[str, float]:
         """
