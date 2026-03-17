@@ -343,6 +343,9 @@ class BaseTrainer:
         self.stats.add_plot_types(
             "episode_length", PlotType.ROLLING_AVG, rolling_window=100
         )
+        self.stats.add_plot_types(
+            "learner_fps", PlotType.ROLLING_AVG, rolling_window=100
+        )
 
         # Test vs agents
         for agent in self.test_agents:
@@ -351,7 +354,3 @@ class BaseTrainer:
                 PlotType.BEST_FIT_LINE,
                 PlotType.VARIATION_FILL,
             )
-
-    def select_test_action(self, state, info, env) -> Any:
-        """Override in child classes to specify how to select an action during testing."""
-        raise NotImplementedError
