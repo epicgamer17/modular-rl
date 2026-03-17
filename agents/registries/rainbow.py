@@ -42,6 +42,7 @@ def build_rainbow(
             gamma=config.discount_factor,
             n_step=config.n_step,
             bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
+            device=device,
         )
     else:
         target_builder = TemporalDifferenceBuilder(

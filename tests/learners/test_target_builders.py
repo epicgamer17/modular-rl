@@ -91,6 +91,7 @@ def test_dqn_target_builder_c51(rainbow_config):
         gamma=rainbow_config.discount_factor,
         n_step=rainbow_config.n_step,
         bootstrap_on_truncated=getattr(rainbow_config, "bootstrap_on_truncated", False),
+        device=device,
     )
 
     # support is [0.0, 1.0, 2.0]

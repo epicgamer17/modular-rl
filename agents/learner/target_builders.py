@@ -112,6 +112,7 @@ class TDCategoricalProjectionBuilder(BaseTargetBuilder):
         gamma: float = 0.99,
         n_step: int = 1,
         bootstrap_on_truncated: bool = False,
+        device: Optional[torch.device] = None,
     ):
         self.target_network = target_network
         self.v_min = v_min
@@ -120,9 +121,10 @@ class TDCategoricalProjectionBuilder(BaseTargetBuilder):
         self.gamma = gamma
         self.n_step = n_step
         self.bootstrap_on_truncated = bootstrap_on_truncated
+        self.device = device
 
-        # Create support once (it will be moved to device in build_targets if needed)
-        self.support = torch.linspace(v_min, v_max, atom_size)
+        # Create support once
+        self.support = torch.linspace(v_min, v_max, atom_size, device=device)
 
     def build_targets(
         self,
@@ -138,10 +140,6 @@ class TDCategoricalProjectionBuilder(BaseTargetBuilder):
 
         terminal_mask = terminated if self.bootstrap_on_truncated else dones
         batch_size = rewards.shape[0]
-
-        # Ensure support is on the correct device
-        if self.support.device != rewards.device:
-            self.support = self.support.to(rewards.device)
 
         with torch.inference_mode():
             # Online next q logits for action selection

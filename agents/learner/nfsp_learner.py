@@ -113,6 +113,7 @@ class NFSPLearner:
                 bootstrap_on_truncated=getattr(
                     rl_config, "bootstrap_on_truncated", False
                 ),
+                device=device,
             )
         else:
             rl_target_builder = TemporalDifferenceBuilder(
