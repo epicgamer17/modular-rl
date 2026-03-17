@@ -8,7 +8,6 @@ from agents.learners.target_builders import (
     DQNTargetBuilder,
     PPOTargetBuilder,
     MuZeroTargetBuilder,
-    TargetOutput,
     BaseTargetBuilder,
 )
 from modules.world_models.inference_output import LearningOutput
@@ -20,24 +19,6 @@ def test_base_target_builder_instantiation():
     """Verify BaseTargetBuilder cannot be instantiated directly."""
     with pytest.raises(TypeError):
         BaseTargetBuilder(MagicMock(), torch.device("cpu"))
-
-
-def test_target_output_defaults():
-    """Verify TargetOutput dataclass defaults."""
-    output = TargetOutput()
-    assert output.q_values is None
-    assert output.advantages is None
-    assert output.returns is None
-    assert output.old_log_probs is None
-    assert output.actions is None
-    assert output.consistency_targets is None
-    assert output.q_logits is None
-    assert output.values is None
-    assert output.chance_values is None
-    assert output.to_plays is None
-    assert output.has_valid_action_mask is None
-    assert output.has_valid_obs_mask is None
-    assert output.dones is None
 
 
 def test_dqn_target_builder_standard(rainbow_config):
@@ -59,26 +40,12 @@ def test_dqn_target_builder_standard(rainbow_config):
     }
     
     # Target Builder expects B dimension (it handles T dimension internally if needed)
-    # But learner_inference on online network might return [B, T=1, Actions]
     predictions = LearningOutput(
         q_values=torch.tensor([[10.0, 20.0], [30.0, 40.0]]),
     )
     
     # Monitor network call
     network = MagicMock()
-    network.learner_inference.return_value = LearningOutput(
-        q_values=torch.tensor([[[0.0, 10.0], [0.0, 10.0]]]) # [B=1, T=2, Actions] -> argmax dim=-1 -> [1, 1]
-    )
-
-    # Target network return
-    builder.target_network.learner_inference.return_value = LearningOutput(
-        q_values=torch.tensor([[[100.0, 200.0], [300.0, 400.0]]]) # [B=1, T=2, Actions]
-    )
-
-    # Fix: DQNTargetBuilder.build_targets calculates batch_size from rewards.
-    # The mocks above are slightly wrong in shape if batch_size=2.
-    # learner_inference usually returns [B, T, Actions]
-    
     network.learner_inference.return_value = LearningOutput(
         q_values=torch.tensor([[[0.0, 10.0]], [[0.0, 10.0]]]) # [B=2, T=1, Actions]
     )
@@ -88,14 +55,15 @@ def test_dqn_target_builder_standard(rainbow_config):
 
     targets = builder.build_targets(batch, predictions, network)
 
-    assert isinstance(targets, TargetOutput)
+    assert isinstance(targets, dict)
     # Online max action is 1 for both.
     # Target values at index 1: 200.0, 400.0
     # target_q[0] = 1.0 + 0.9 * 200.0 = 181.0
     # target_q[1] = 0.0 + 0.9 * 0.0 = 0.0
 
     expected_q = torch.tensor([181.0, 0.0])
-    assert torch.allclose(targets.q_values, expected_q)
+    assert torch.allclose(targets["q_values"], expected_q)
+    assert "actions" in targets
 
 
 def test_dqn_target_builder_c51(rainbow_config):
@@ -135,10 +103,11 @@ def test_dqn_target_builder_c51(rainbow_config):
 
     targets = builder.build_targets(batch, predictions, network)
 
+    assert isinstance(targets, dict)
     # Tz = 0.5 + 1.0 * [0.0, 1.0, 2.0] = [0.5, 1.5, 2.5] -> clamp [0.5, 1.5, 2.0]
     # b = 1.5, l = 1, u = 2, dist_l = 0.5, dist_u = 0.5
     expected_probs = torch.tensor([[0.0, 0.5, 0.5]])
-    assert torch.allclose(targets.q_logits, expected_probs, atol=1e-3)
+    assert torch.allclose(targets["q_logits"], expected_probs, atol=1e-3)
 
 
 def test_ppo_target_builder_gae(ppo_config):
@@ -165,9 +134,10 @@ def test_ppo_target_builder_gae(ppo_config):
 
     targets = builder.build_targets(batch, predictions, MagicMock())
 
-    assert torch.allclose(targets.advantages, batch["advantages"])
-    assert torch.allclose(targets.returns, batch["returns"])
-    assert torch.allclose(targets.old_log_probs, batch["log_probabilities"])
+    assert isinstance(targets, dict)
+    assert torch.allclose(targets["advantages"], batch["advantages"])
+    assert torch.allclose(targets["returns"], batch["returns"])
+    assert torch.allclose(targets["old_log_probs"], batch["log_probabilities"])
 
 
 def test_ppo_target_builder_precomputed(ppo_config):
@@ -182,9 +152,10 @@ def test_ppo_target_builder_precomputed(ppo_config):
         "actions": torch.tensor([0]),
     }
     targets = builder.build_targets(batch, LearningOutput(), MagicMock())
-    assert targets.advantages[0] == 1.0
-    assert targets.returns[0] == 2.0
-    assert targets.old_log_probs[0] == -0.1
+    assert isinstance(targets, dict)
+    assert targets["advantages"][0] == 1.0
+    assert targets["returns"][0] == 2.0
+    assert targets["old_log_probs"][0] == -0.1
 
 
 def test_dqn_target_builder_truncated(rainbow_config):
@@ -205,12 +176,6 @@ def test_dqn_target_builder_truncated(rainbow_config):
         "actions": torch.tensor([0, 0]),
     }
     
-    # For bootstrap_on_truncated, the code looks at terminated_mask (calculated from terminated key)
-    # Wait, in DQNTargetBuilder it uses terminal_mask = batch["dones"].to(...)
-    # and if bootstrap_on_truncated is True, it does NOT use terminal_mask to zero out target?
-    # No, it uses it: target_q = (rewards + discount * (~terminal_mask) * max_next_q)
-    # The truncation logic is often handled by WRITING ONLY rewards to terminal states.
-    
     batch["terminated"] = torch.tensor([True, False])
 
     network = MagicMock()
@@ -228,7 +193,8 @@ def test_dqn_target_builder_truncated(rainbow_config):
 
     targets = builder.build_targets(batch, predictions, network)
 
+    assert isinstance(targets, dict)
     # Sample 0: Terminated=True -> target = reward = 1.0
     # Sample 1: Terminated=False -> target = reward + gamma * max_next_q = 1.0 + 0.9 * 100.0 = 91.0
     expected_q = torch.tensor([1.0, 91.0])
-    assert torch.allclose(targets.q_values, expected_q)
+    assert torch.allclose(targets["q_values"], expected_q)

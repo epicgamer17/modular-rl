@@ -11,7 +11,6 @@ from losses.losses import (
     RewardLoss,
     ConsistencyLoss,
 )
-from agents.learners.target_builders import TargetOutput
 from modules.world_models.inference_output import LearningOutput
 from types import SimpleNamespace
 
@@ -50,15 +49,15 @@ def test_vectorized_loss_masking():
         latents=torch.randn((batch_size, t_plus_1, 64), device=device),
     )
 
-    targets = TargetOutput(
-        values=torch.ones((batch_size, t_plus_1), device=device) * 1.0,
-        returns=torch.ones((batch_size, t_plus_1), device=device) * 1.0,
-        policies=F.softmax(
+    targets = {
+        "values": torch.ones((batch_size, t_plus_1), device=device) * 1.0,
+        "returns": torch.ones((batch_size, t_plus_1), device=device) * 1.0,
+        "policies": F.softmax(
             torch.randn((batch_size, t_plus_1, num_actions), device=device), dim=-1
         ),
-        rewards=torch.ones((batch_size, unroll_steps), device=device) * 1.0,
-        consistency_targets=torch.randn((batch_size, t_plus_1, 64), device=device),
-    )
+        "rewards": torch.ones((batch_size, unroll_steps), device=device) * 1.0,
+        "consistency_targets": torch.randn((batch_size, t_plus_1, 64), device=device),
+    }
 
     # 2. Setup Masks
     # Batch 0: Full sequence valid

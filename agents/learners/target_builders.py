@@ -10,42 +10,19 @@ from modules.world_models.inference_output import LearningOutput
 from replay_buffers.utils import discounted_cumulative_sums
 
 
-@dataclass
-class TargetOutput:
-    """
-    Container for all possible target fields used by loss modules.
-    Fields default to None if not computed by a specific builder.
-    """
-
-    q_values: Optional[Tensor] = None
-    q_logits: Optional[Tensor] = None
-    value_targets: Optional[Tensor] = None
-    advantages: Optional[Tensor] = None
-    old_log_probs: Optional[Tensor] = None
-    policies: Optional[Tensor] = None
-    rewards: Optional[Tensor] = None
-    chance_codes: Optional[Tensor] = None
-    consistency_targets: Optional[Tensor] = None
-    values: Optional[Tensor] = None
-    chance_values: Optional[Tensor] = None
-    to_plays: Optional[Tensor] = None
-    has_valid_action_mask: Optional[Tensor] = None
-    has_valid_obs_mask: Optional[Tensor] = None
-    dones: Optional[Tensor] = None
-    actions: Optional[Tensor] = None
-    returns: Optional[Tensor] = None
-    target_policies: Optional[Tensor] = None
-
-
 class BaseTargetBuilder(ABC):
     """
     Abstract base class for Reinforcement Learning target calculation modules.
     """
 
+    def __init__(self, config: Any, device: torch.device):
+        self.config = config
+        self.device = device
+
     @abstractmethod
     def build_targets(
         self, batch: Dict[str, Tensor], predictions: LearningOutput, network: nn.Module
-    ) -> TargetOutput:
+    ) -> Dict[str, Tensor]:
         """
         Build target tensors for the loss calculation.
 
@@ -55,7 +32,7 @@ class BaseTargetBuilder(ABC):
             network: The neural network module (may be used for target network calls).
 
         Returns:
-            TargetOutput containing the computed targets.
+            Dictionary containing the computed target tensors.
         """
         pass  # pragma: no cover
 
@@ -83,7 +60,7 @@ class DQNTargetBuilder(BaseTargetBuilder):
 
     def build_targets(
         self, batch: Dict[str, Tensor], predictions: LearningOutput, network: nn.Module
-    ) -> TargetOutput:
+    ) -> Dict[str, Tensor]:
         rewards = batch["rewards"].to(self.device).float()
         dones = batch["dones"].to(self.device).bool()
         terminated = batch.get("terminated", dones).to(self.device).bool()
@@ -138,10 +115,10 @@ class DQNTargetBuilder(BaseTargetBuilder):
             ]
 
             target_q = (rewards + discount * (~terminal_mask) * max_next_q).detach()
-            return TargetOutput(
-                q_values=target_q,
-                actions=batch["actions"].to(self.device),
-            )
+            return {
+                "q_values": target_q,
+                "actions": batch["actions"].to(self.device),
+            }
         else:
             # 2. Get online network predictions for next state logits (C51 action selection)
             with torch.inference_mode():
@@ -181,10 +158,11 @@ class DQNTargetBuilder(BaseTargetBuilder):
                 rewards, terminal_mask, chosen_target_next_probs
             ).detach()
 
-            return TargetOutput(
-                q_logits=q_logits,
-                actions=batch["actions"].to(self.device),
-            )
+            return {
+                "q_logits": q_logits,
+                "actions": batch["actions"].to(self.device),
+            }
+
 
     def _project_target_distribution(
         self, rewards: Tensor, terminal_mask: Tensor, next_probs: Tensor
@@ -218,24 +196,24 @@ class DQNTargetBuilder(BaseTargetBuilder):
 
 class MuZeroTargetBuilder(BaseTargetBuilder):
     """
-    Adapter logic to map pre-computed MCTS targets from batch to TargetOutput.
+    Adapter logic to map pre-computed MCTS targets from batch to dictionary.
     """
 
     def build_targets(
         self, batch: Dict[str, Tensor], predictions: LearningOutput, network: nn.Module
-    ) -> TargetOutput:
-        return TargetOutput(
-            values=batch.get("target_values"),
-            policies=batch.get("target_policies"),
-            rewards=batch.get("target_rewards"),
-            has_valid_action_mask=batch.get("has_valid_action_mask"),
-            has_valid_obs_mask=batch.get("has_valid_obs_mask"),
-            dones=batch.get("dones"),
-            chance_codes=batch.get("chance_codes"),
-            consistency_targets=batch.get("consistency_targets"),
-            actions=batch.get("actions"),
-            target_policies=batch.get("target_policies"),
-        )
+    ) -> Dict[str, Tensor]:
+        return {
+            "values": batch.get("target_values"),
+            "policies": batch.get("target_policies"),
+            "rewards": batch.get("target_rewards"),
+            "has_valid_action_mask": batch.get("has_valid_action_mask"),
+            "has_valid_obs_mask": batch.get("has_valid_obs_mask"),
+            "dones": batch.get("dones"),
+            "chance_codes": batch.get("chance_codes"),
+            "consistency_targets": batch.get("consistency_targets"),
+            "actions": batch.get("actions"),
+            "target_policies": batch.get("target_policies"),
+        }
 
 
 class PPOTargetBuilder(BaseTargetBuilder):
@@ -250,17 +228,17 @@ class PPOTargetBuilder(BaseTargetBuilder):
 
     def build_targets(
         self, batch: Dict[str, Tensor], predictions: LearningOutput, network: nn.Module
-    ) -> TargetOutput:
+    ) -> Dict[str, Tensor]:
         """
         Maps pre-computed advantages and returns from the batch.
         """
-        return TargetOutput(
-            advantages=batch["advantages"].to(self.device),
-            value_targets=batch["returns"].to(self.device),
-            returns=batch["returns"].to(self.device),
-            old_log_probs=batch.get("log_probabilities").to(self.device),
-            actions=batch["actions"].to(self.device),
-        )
+        return {
+            "advantages": batch["advantages"].to(self.device),
+            "value_targets": batch["returns"].to(self.device),
+            "returns": batch["returns"].to(self.device),
+            "old_log_probs": batch.get("log_probabilities").to(self.device),
+            "actions": batch["actions"].to(self.device),
+        }
 
 
 class TargetBuilderPipeline(BaseTargetBuilder):
@@ -273,13 +251,11 @@ class TargetBuilderPipeline(BaseTargetBuilder):
 
     def build_targets(
         self, batch: Dict[str, Tensor], predictions: LearningOutput, network: nn.Module
-    ) -> TargetOutput:
-        combined = TargetOutput()
+    ) -> Dict[str, Tensor]:
+        combined = {}
         for builder in self.builders:
             output = builder.build_targets(batch, predictions, network)
-            for field_name, value in output.__dict__.items():
-                if value is not None:
-                    setattr(combined, field_name, value)
+            combined.update({k: v for k, v in output.items() if v is not None})
         return combined
 
 
@@ -291,5 +267,5 @@ class ImitationTargetBuilder(BaseTargetBuilder):
 
     def build_targets(
         self, batch: Dict[str, Tensor], predictions: LearningOutput, network: nn.Module
-    ) -> TargetOutput:
-        return TargetOutput(target_policies=batch.get("target_policies"))
+    ) -> Dict[str, Tensor]:
+        return {"target_policies": batch.get("target_policies")}

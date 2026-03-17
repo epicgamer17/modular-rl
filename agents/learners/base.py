@@ -250,7 +250,7 @@ class UniversalLearner:
 
         # Prepare for StepResult
         preds_dict = predictions._asdict()
-        targs_dict = vars(targets)
+        targs_dict = targets
 
         return StepResult(
             loss=loss,

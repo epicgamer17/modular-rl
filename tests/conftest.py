@@ -9,7 +9,7 @@ from configs.agents.rainbow_dqn import RainbowConfig
 from configs.agents.nfsp import NFSPDQNConfig
 from configs.agents.supervised import SupervisedConfig
 from configs.games.cartpole import CartPoleConfig
-from agents.learners.target_builders import BaseTargetBuilder, TargetOutput
+from agents.learners.target_builders import BaseTargetBuilder
 
 
 # --- BASE DICTIONARIES ---
@@ -273,8 +273,8 @@ class DummyTargetBuilder(BaseTargetBuilder):
     """
 
     def build_targets(self, batch, predictions, network):
-        """Returns an empty TargetOutput."""
-        return TargetOutput()
+        """Returns an empty dictionary."""
+        return {}
 
 
 @pytest.fixture

@@ -50,7 +50,7 @@ class MuZeroLearner(UniversalLearner):
             observation_dtype=observation_dtype,
             callbacks=[MetricsCallback()],
         )
-        self.target_builder = MuZeroTargetBuilder()
+        self.target_builder = MuZeroTargetBuilder(config, device)
 
         self.replay_buffer = create_muzero_buffer(
             observation_dimensions=observation_dimensions,
