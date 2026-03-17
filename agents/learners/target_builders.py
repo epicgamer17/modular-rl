@@ -194,3 +194,31 @@ class DQNTargetBuilder(BaseTargetBuilder):
         return projected
 
 
+class TargetBuilderPipeline(BaseTargetBuilder):
+    """
+    Target builder that delegates target building to a pipeline of builders.
+    All builders sequentially update the target dictionary.
+    """
+
+    def __init__(self, builders: List[BaseTargetBuilder]):
+        # Pipeline doesn't need its own config/device, it relies on the underlying builders
+        self.builders = builders
+
+    def build_targets(
+        self, batch: Dict[str, Tensor], predictions: LearningOutput, network: nn.Module
+    ) -> Dict[str, Tensor]:
+        """
+        Build targets by calling all builders in the pipeline.
+
+        Args:
+            batch: Dictionary of tensors from the replay buffer.
+            predictions: Current network predictions.
+            network: The neural network module.
+
+        Returns:
+            Dictionary containing the merged computed target tensors.
+        """
+        targets = {}
+        for builder in self.builders:
+            targets.update(builder.build_targets(batch, predictions, network))
+        return targets

@@ -118,14 +118,6 @@ class RainbowLearner(UniversalLearner):
                 target_keys={"q_values", "actions"},
             )
 
-        # 7. Create support for distributional RL
-        self.support = torch.linspace(
-            config.v_min,
-            config.v_max,
-            config.atom_size,
-            device=device,
-        )
-
         self.schedules: Dict[str, Any] = {}
         if (
             hasattr(config, "per_beta_schedule")

@@ -34,7 +34,11 @@ class MetricsCallback(Callback):
             )
 
     def _track_latent_visualization(
-        self, predictions: Dict[str, torch.Tensor], targets: Dict[str, torch.Tensor], stats, method: str
+        self,
+        predictions: Dict[str, torch.Tensor],
+        targets: Dict[str, torch.Tensor],
+        stats,
+        method: str,
     ) -> None:
         latent_states = predictions.get("latent_states")
         actions = targets.get("actions")
@@ -95,6 +99,7 @@ class MetricsCallback(Callback):
             entropy.mean().item() if entropy.numel() > 0 else 0.0,
         )
 
+
 class TargetNetworkSyncCallback(Callback):
     """Syncs target network weights at the end of each training step."""
 
@@ -103,7 +108,15 @@ class TargetNetworkSyncCallback(Callback):
         learner,
         stats=None,
     ) -> None:
-        if not hasattr(learner, "target_agent_network") or learner.target_agent_network is None:
+        assert learner.target_agent_network is not None
+
+        transfer_interval = learner.config.transfer_interval
+        if transfer_interval is None or transfer_interval == 0:
+            should_sync = True
+        else:
+            should_sync = learner.training_step % transfer_interval == 0
+
+        if not should_sync:
             return
 
         from modules.utils import get_clean_state_dict
@@ -114,22 +127,16 @@ class TargetNetworkSyncCallback(Callback):
                 target_state = learner.target_agent_network.state_dict()
                 ema_beta = getattr(learner.config, "ema_beta", 0.99)
                 for k, v in clean_state.items():
-                    if k in target_state:
-                        if target_state[k].is_floating_point():
-                            target_state[k].mul_(ema_beta).add_(
-                                v.detach(), alpha=1.0 - ema_beta
-                            )
-                        else:
-                            target_state[k].copy_(v.detach())
+                    if k not in target_state:
+                        continue
+                    if target_state[k].is_floating_point():
+                        target_state[k].mul_(ema_beta).add_(
+                            v.detach(), alpha=1.0 - ema_beta
+                        )
+                    else:
+                        target_state[k].copy_(v.detach())
             else:
-                # Hard update
                 learner.target_agent_network.load_state_dict(clean_state, strict=False)
-
-            # Resample target noise ONLY after a weight sync to maintain stable C51 targets
-            if hasattr(learner.target_agent_network, "reset_noise") and callable(
-                learner.target_agent_network.reset_noise
-            ):
-                learner.target_agent_network.reset_noise()
 
 
 class ResetNoiseCallback(Callback):
@@ -168,7 +175,9 @@ class ImitationMetricsCallback(Callback):
     ) -> None:
         if step_result.meta is not None and "policy_mean" in step_result.meta:
             if self._policy_total is None:
-                self._policy_total = torch.zeros(learner.num_actions, device=learner.device)
+                self._policy_total = torch.zeros(
+                    learner.num_actions, device=learner.device
+                )
             self._policy_total += step_result.meta["policy_mean"]
             self._policy_count += 1
 
@@ -179,6 +188,7 @@ class ImitationMetricsCallback(Callback):
     ) -> None:
         if stats is not None and self._policy_count > 0:
             stats.set("sl_policy", self._policy_total / self._policy_count)
+
 
 class PPOEarlyStoppingCallback(Callback):
     """Early stops the optimization loop if KL divergence exceeds target_kl."""
@@ -200,6 +210,7 @@ class PPOEarlyStoppingCallback(Callback):
                 stats.append("ppo_early_stop", 1.0)
             raise EarlyStopIteration(f"KL divergence {kl:.4f} > 1.5 * {self.target_kl}")
 
+
 class PriorityUpdaterCallback(Callback):
     """Updates Prioritized Experience Replay (PER) buffer priorities."""
 
@@ -216,13 +227,18 @@ class PriorityUpdaterCallback(Callback):
         **kwargs,
     ) -> None:
         batch = kwargs.get("batch")
-        step_result = kwargs.get("meta", {}).get("step_result")  # We will pass step_result in meta
+        step_result = kwargs.get("meta", {}).get(
+            "step_result"
+        )  # We will pass step_result in meta
 
-        # If step_result wasn't explicitly passed in meta, we can try to fall back, 
+        # If step_result wasn't explicitly passed in meta, we can try to fall back,
         # but the cleanest way is for UniversalLearner to pass result.priorities directly.
         # Actually, let's just look for priorities in kwargs since UniversalLearner can pass it.
         priorities = kwargs.get("priorities")
 
         if priorities is not None and batch is not None and "indices" in batch:
             if hasattr(self.replay_buffer, "update_priorities"):
-                self.replay_buffer.update_priorities(batch["indices"], priorities)
+                ids = batch.get("ids")
+                self.replay_buffer.update_priorities(
+                    batch["indices"], priorities, ids=ids
+                )
