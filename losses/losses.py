@@ -15,6 +15,11 @@ from losses.representations import (
     ExponentialBucketsRepresentation,
     ClassificationRepresentation,
 )
+from losses.priority_computers import (
+    PriorityComputer,
+    SpecificLossPriority,
+    ErrorPriority,
+)
 
 
 class LossModule(ABC):
@@ -952,8 +957,14 @@ class LossPipeline:
     Validated at initialization to ensure all required keys are present.
     """
 
-    def __init__(self, modules: list[LossModule]):
-        self.modules = modules
+    def __init__(
+        self,
+        modules: List[LossModule],
+        priority_computer: Optional[PriorityComputer] = None,
+    ):
+        super().__init__()
+        self.loss_modules = nn.ModuleList(modules)
+        self.priority_computer = priority_computer
 
     def validate_dependencies(
         self, network_output_keys: set[str], target_keys: set[str]
@@ -962,7 +973,7 @@ class LossPipeline:
         Verify that the provided keys satisfy all module requirements.
         Raises ValueError with detailed error message on failure.
         """
-        for module in self.modules:
+        for module in self.loss_modules:
             missing_preds = module.required_predictions - network_output_keys
             missing_targets = module.required_targets - target_keys
 
@@ -1003,8 +1014,8 @@ class LossPipeline:
         from modules.utils import scale_gradient
 
         # Parameters from first module
-        config = self.modules[0].config
-        device = self.modules[0].device
+        config = self.loss_modules[0].config
+        device = self.loss_modules[0].device
 
         # Convert NamedTuples/dataclasses to dicts if necessary
         if isinstance(predictions, dict):
@@ -1038,19 +1049,14 @@ class LossPipeline:
 
         total_loss_dict = {
             module.optimizer_name: torch.tensor(0.0, device=device)
-            for module in self.modules
+            for module in self.loss_modules
         }
-        loss_dict = {module.name: 0.0 for module in self.modules}
-
-        # Calculate priorities at root (k=0)
-        priorities = self._calculate_priorities(predictions, targets, context, config, device)
+        loss_dict = {module.name: 0.0 for module in self.loss_modules}
+        elementwise_losses = {}
 
         # --- Vectorized Loss Pass ---
-        # gradient_scales: [1, T]
-        # weights: [B]
-        
-        for module in self.modules:
-            # Compute unreduced elementwise loss: [B, T] or [B, T, atoms]
+        for module in self.loss_modules:
+            # Compute unreduced elementwise loss: [B, T, ...]
             loss_bt = module.compute_loss(predictions, targets, context)
 
             # Apply mask [B, T]
@@ -1074,9 +1080,10 @@ class LossPipeline:
             # Accumulate for logging (unweighted)
             loss_dict[module.name] += loss_bt.detach().sum().item()
 
-        # Average the total loss by batch size
+        # Average the total loss and logging losses by batch size
+        minibatch_size = config.minibatch_size
         for opt_name in total_loss_dict:
-            total_loss_dict[opt_name] = total_loss_dict[opt_name] / config.minibatch_size
+            total_loss_dict[opt_name] = total_loss_dict[opt_name] / minibatch_size
 
         # Average the total loss by batch size
         for opt_name in total_loss_dict:
@@ -1101,21 +1108,11 @@ class LossPipeline:
             elif isinstance(value, (int, float)):
                 loss_dict[key] = float(value)
 
+        # 4. Final Priority Computation (Standalone Strategy)
+        priorities = None
+        if self.priority_computer is not None:
+            priorities = self.priority_computer(
+                predictions, targets, elementwise_losses
+            )
+
         return total_loss_dict, loss_dict, priorities
-
-    def _calculate_priorities(
-        self,
-        predictions: dict,
-        targets: dict,
-        context: dict,
-        config,
-        device,
-    ) -> torch.Tensor:
-        """Calculate PER priorities for the current batch (typically k=0)."""
-
-        for module in self.modules:
-            priority = module.compute_priority(predictions, targets, context)
-            if priority is not None:
-                return priority
-        
-        return torch.zeros(config.minibatch_size, device=device)
