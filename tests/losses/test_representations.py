@@ -1,10 +1,11 @@
 import pytest
 import torch
 import torch.nn.functional as F
-from losses.losses import (
+from losses.representations import (
     ScalarRepresentation,
     TwoHotRepresentation,
     CategoricalRepresentation,
+    ClassificationRepresentation,
     get_representation,
 )
 
@@ -25,8 +26,8 @@ def test_scalar_representation():
 
 
 def test_two_hot_representation():
-    support_range = 300
-    repr = TwoHotRepresentation(support_range=support_range)
+    vmin, vmax, bins = -300.0, 300.0, 601
+    repr = TwoHotRepresentation(vmin=vmin, vmax=vmax, bins=bins)
     assert repr.num_classes == 601
 
     # Test to_representation (scalar -> distribution)
@@ -36,16 +37,14 @@ def test_two_hot_representation():
     assert torch.allclose(dist.sum(dim=-1), torch.ones(2))
 
     # Test to_scalar (logits -> scalar)
-    # If we pass the distribution as logits (large values for the two-hot bins)
-    # to_scalar should recover something close to the original targets
     logits = dist * 100.0  # Large logits to make softmax close to one-hot
     recovered = repr.to_scalar(logits)
     assert torch.allclose(recovered, targets, atol=1e-2)
 
 
-def test_categorical_representation():
+def test_classification_representation():
     num_classes = 10
-    repr = CategoricalRepresentation(num_classes=num_classes)
+    repr = ClassificationRepresentation(num_classes=num_classes)
     assert repr.num_classes == 10
 
     # Test to_representation (index -> one-hot)
@@ -69,12 +68,12 @@ def test_get_representation_factory():
     repr = get_representation(num_classes=1)
     assert isinstance(repr, ScalarRepresentation)
 
-    # Categorical
+    # Classification
     repr = get_representation(num_classes=5)
-    assert isinstance(repr, CategoricalRepresentation)
+    assert isinstance(repr, ClassificationRepresentation)
     assert repr.num_classes == 5
 
     # Two-Hot
-    repr = get_representation(support_range=300)
+    repr = get_representation(vmin=-300, vmax=300, bins=601)
     assert isinstance(repr, TwoHotRepresentation)
     assert repr.num_classes == 601
