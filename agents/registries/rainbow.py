@@ -11,20 +11,17 @@ from agents.action_selectors.selectors import ArgmaxSelector
 
 def build_rainbow_loss_pipeline(config, agent_network, device):
     selector = ArgmaxSelector()
-    representation = agent_network.components["q_head"].strategy.representation
     td_loss_module = (
         C51Loss(
             config=config,
             device=device,
             action_selector=selector,
-            representation=representation,
         )
         if getattr(config, "atom_size", 1) > 1
         else StandardDQNLoss(
             config=config,
             device=device,
             action_selector=selector,
-            representation=representation,
         )
     )
     return LossPipeline([td_loss_module])
@@ -37,12 +34,44 @@ def build_rainbow(
     # 1. Losses
     loss_pipeline = build_rainbow_loss_pipeline(config, agent_network, device)
 
-    # 2. Optimizers
-    opt = create_optimizer(agent_network.parameters(), config)
-    optimizers = {"default": opt}
-    lr_schedulers = {"default": get_lr_scheduler(opt, config)}
+    # 2. Setup Optimizers and Schedulers
+    from torch.optim.adam import Adam
+    from torch.optim.sgd import SGD
 
-    # 3. Target Builder
+    optimizers = {}
+    lr_schedulers = {}
+
+    def create_opt(params, sub_config_parent):
+        opt_cls = getattr(sub_config_parent, "optimizer", Adam)
+        if opt_cls == Adam:
+            return Adam(
+                params=params,
+                lr=config.learning_rate,
+                eps=getattr(config, "adam_epsilon", 1e-8),
+                weight_decay=getattr(config, "weight_decay", 0.0),
+            )
+        elif opt_cls == SGD:
+            return SGD(
+                params=params,
+                lr=config.learning_rate,
+                momentum=getattr(config, "momentum", 0.0),
+                weight_decay=getattr(config, "weight_decay", 0.0),
+            )
+        else:
+            return opt_cls(params, lr=config.learning_rate)
+
+    opt = create_opt(agent_network.parameters(), config)
+    optimizers["default"] = opt
+    lr_schedulers["default"] = get_lr_scheduler(opt, config)
+
+    # 3. Callbacks
+    callbacks = []
+    if getattr(config, "use_noisy_net", False):
+        from agents.learner.callbacks import ResetNoiseCallback
+        callbacks.append(ResetNoiseCallback())
+
+    # 4. Target Builder
+    # factory.py logic for target_builder
     target_builder = TemporalDifferenceBuilder(
         target_network=agent_network.target_network,
         gamma=config.discount_factor,
@@ -55,5 +84,6 @@ def build_rainbow(
         "optimizers": optimizers,
         "lr_schedulers": lr_schedulers,
         "target_builder": target_builder,
+        "callbacks": callbacks,
         "observation_dtype": torch.uint8,
     }

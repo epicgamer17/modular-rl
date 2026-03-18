@@ -12,9 +12,6 @@ def build_supervised_loss_pipeline(config, agent_network, device):
                 config,
                 device,
                 agent_network.num_actions,
-                representation=agent_network.components[
-                    "policy_head"
-                ].strategy.representation,
             )
         ]
     )
@@ -27,10 +24,35 @@ def build_supervised(
     # 1. Losses
     loss_pipeline = build_supervised_loss_pipeline(config, agent_network, device)
 
-    # 2. Optimizers
-    opt = create_optimizer(agent_network.parameters(), config)
-    optimizers = {"default": opt}
-    lr_schedulers = {"default": get_lr_scheduler(opt, config)}
+    # 2. Setup Optimizers and Schedulers
+    from torch.optim.adam import Adam
+    from torch.optim.sgd import SGD
+
+    optimizers = {}
+    lr_schedulers = {}
+
+    def create_opt(params, sub_config_parent):
+        opt_cls = getattr(sub_config_parent, "optimizer", Adam)
+        if opt_cls == Adam:
+            return Adam(
+                params=params,
+                lr=config.learning_rate,
+                eps=getattr(config, "adam_epsilon", 1e-8),
+                weight_decay=getattr(config, "weight_decay", 0.0),
+            )
+        elif opt_cls == SGD:
+            return SGD(
+                params=params,
+                lr=config.learning_rate,
+                momentum=getattr(config, "momentum", 0.0),
+                weight_decay=getattr(config, "weight_decay", 0.0),
+            )
+        else:
+            return opt_cls(params, lr=config.learning_rate)
+
+    opt = create_opt(agent_network.parameters(), config)
+    optimizers["default"] = opt
+    lr_schedulers["default"] = get_lr_scheduler(opt, config)
 
     return {
         "loss_pipeline": loss_pipeline,

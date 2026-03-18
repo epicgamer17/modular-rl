@@ -34,6 +34,7 @@ class BaseHead(nn.Module):
         # 2. Final Output Layer
         self.output_layer = None
         if self.strategy is not None:
+            assert self.strategy.num_bins is not None
             self.output_layer = build_dense(
                 in_features=self.flat_dim,
                 out_features=self.strategy.num_bins,

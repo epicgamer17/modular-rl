@@ -2,8 +2,10 @@ import torch
 from typing import Any, Dict, List, Tuple
 from agents.registries.base import register_agent
 from losses.losses import LossPipeline, PPOPolicyLoss, PPOValueLoss
-from modules.utils import create_optimizer, get_lr_scheduler
+from modules.utils import get_lr_scheduler
 from agents.learner.callbacks import PPOEarlyStoppingCallback
+from torch.optim.adam import Adam
+from torch.optim.sgd import SGD
 
 
 def build_ppo_loss_pipeline(config, agent_network, device):
@@ -17,9 +19,6 @@ def build_ppo_loss_pipeline(config, agent_network, device):
                 policy_strategy=getattr(
                     agent_network.components["policy_head"], "strategy", None
                 ),
-                representation=agent_network.components[
-                    "policy_head"
-                ].strategy.representation,
                 optimizer_name="policy",
             ),
             PPOValueLoss(
@@ -32,9 +31,6 @@ def build_ppo_loss_pipeline(config, agent_network, device):
                 value_strategy=getattr(
                     agent_network.components["value_head"], "strategy", None
                 ),
-                representation=agent_network.components[
-                    "value_head"
-                ].strategy.representation,
                 optimizer_name="value",
             ),
         ]
@@ -50,15 +46,34 @@ def build_ppo(config: Any, agent_network: Any, device: torch.device) -> Dict[str
     optimizers = {}
     lr_schedulers = {}
 
-    optimizers["policy"] = create_optimizer(
+    def create_opt(params, sub_config_parent):
+        # Determine which attribute to look at (actor/critic/default)
+        opt_cls = getattr(sub_config_parent, "optimizer", Adam)
+
+        if opt_cls == Adam:
+            return Adam(
+                params=params,
+                lr=config.learning_rate,
+                eps=getattr(config, "adam_epsilon", 1e-8),
+                weight_decay=getattr(config, "weight_decay", 0.0),
+            )
+        elif opt_cls == SGD:
+            return SGD(
+                params=params,
+                lr=config.learning_rate,
+                momentum=getattr(config, "momentum", 0.0),
+                weight_decay=getattr(config, "weight_decay", 0.0),
+            )
+        else:
+            return opt_cls(params, lr=config.learning_rate)
+
+    optimizers["policy"] = create_opt(
         agent_network.components["policy_head"].parameters(),
-        config,
-        sub_config_parent=getattr(config, "actor", config),
+        getattr(config, "actor", config),
     )
-    optimizers["value"] = create_optimizer(
+    optimizers["value"] = create_opt(
         agent_network.components["value_head"].parameters(),
-        config,
-        sub_config_parent=getattr(config, "critic", config),
+        getattr(config, "critic", config),
     )
 
     lr_schedulers["policy"] = get_lr_scheduler(optimizers["policy"], config)

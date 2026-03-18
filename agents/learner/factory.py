@@ -15,13 +15,14 @@ import torch
 from torch import nn
 
 from agents.learner.base import UniversalLearner
-from agents.learner.target_builders import BaseTargetBuilder
+from agents.learner.target_builders import TemporalDifferenceBuilder
 from agents.learner.callbacks import (
     PriorityUpdaterCallback,
     WeightBroadcastCallback,
     PPOEarlyStoppingCallback,
     TargetNetworkSyncCallback,
     ResetNoiseCallback,
+    EpsilonGreedySchedulerCallback,
 )
 from losses.losses import (
     LossPipeline,
@@ -44,14 +45,11 @@ from modules.utils import get_lr_scheduler
 if TYPE_CHECKING:
     from modules.agent_nets.modular import ModularAgentNetwork
 
-from agents.registries.base import AGENT_REGISTRY, register_agent
-
 
 def build_loss_pipeline(
     config: Any, agent_network: ModularAgentNetwork, device: torch.device
 ) -> LossPipeline:
     """
-    DEPRECATED: Use the registry-based build_universal_learner instead.
     Configures the loss pipeline based on the agent configuration.
 
     Args:
@@ -64,23 +62,27 @@ def build_loss_pipeline(
     """
     agent_type = config.agent_type
 
-    # This logic is now moved to algorithm-specific builders.
-    # We provide a temporary fallback or redirection if needed.
-    from agents.registries.ppo import build_ppo_loss_pipeline
-    from agents.registries.muzero import build_muzero_loss_pipeline
-    from agents.registries.rainbow import build_rainbow_loss_pipeline
-    from agents.registries.supervised import build_supervised_loss_pipeline
-
     if agent_type == "muzero":
+        from agents.registries.muzero import build_muzero_loss_pipeline
+
         return build_muzero_loss_pipeline(config, agent_network, device)
+
     elif agent_type == "ppo":
+        from agents.registries.ppo import build_ppo_loss_pipeline
+
         return build_ppo_loss_pipeline(config, agent_network, device)
+
     elif agent_type == "rainbow":
+        from agents.registries.rainbow import build_rainbow_loss_pipeline
+
         return build_rainbow_loss_pipeline(config, agent_network, device)
+
     elif agent_type == "supervised":
+        from agents.registries.supervised import build_supervised_loss_pipeline
+
         return build_supervised_loss_pipeline(config, agent_network, device)
 
-    return LossPipeline([])
+    raise ValueError(f"Unknown agent type: {agent_type}")
 
 
 def build_universal_learner(
@@ -88,12 +90,15 @@ def build_universal_learner(
     agent_network: ModularAgentNetwork,
     device: torch.device,
     priority_update_fn: Optional[Callable] = None,
+    set_beta_fn: Optional[Callable] = None,
+    per_beta_schedule: Optional[Any] = None,
+    epsilon_schedule: Optional[Any] = None,
     weight_broadcast_fn: Optional[Callable] = None,
+    extra_callbacks: Optional[List[Callback]] = None,
 ) -> UniversalLearner:
     """
     Establishes a clean factory interface for assembling a UniversalLearner.
     Wires together the network, device, loss pipeline, and all necessary callbacks.
-    Uses the AGENT_REGISTRY to find algorithm-specific builders.
 
     Args:
         config: The agent configuration object.
@@ -105,40 +110,16 @@ def build_universal_learner(
     Returns:
         Constructed UniversalLearner instance.
     """
-    # 1. Deduce agent type
-    agent_type = config.agent_type
 
-    # 2. Lazy imports to avoid circular dependencies and ensure registration
-    if agent_type == "ppo":
-        import agents.registries.ppo  # noqa: F401
-    elif agent_type == "muzero":
-        import agents.registries.muzero  # noqa: F401
-    elif agent_type == "rainbow":
-        import agents.registries.rainbow  # noqa: F401
-    elif agent_type == "supervised":
-        import agents.registries.supervised  # noqa: F401
+    callbacks = []
+    optimizers = {}
+    lr_schedulers = {}
+    observation_dtype = torch.float32
 
-    # 3. Get builder from registry
-    assert (
-        agent_type in AGENT_REGISTRY
-    ), f"Agent type '{agent_type}' not found in AGENT_REGISTRY. Registered: {list(AGENT_REGISTRY.keys())}"
-    builder_fn = AGENT_REGISTRY[agent_type]
-
-    # 4. Call algorithm-specific builder
-    # The builder is responsible for setup of losses, optimizers, and algo-specific callbacks.
-    builder_output = builder_fn(config, agent_network, device)
-
-    # Unpack builder output (supporting flexibility in what builders return)
-    # Recommended return: (loss_pipeline, optimizers, lr_schedulers, callbacks, target_builder, observation_dtype)
-    loss_pipeline = builder_output["loss_pipeline"]
-    optimizers = builder_output["optimizers"]
-    lr_schedulers = builder_output["lr_schedulers"]
-    callbacks = builder_output.get("callbacks", [])
-    target_builder = builder_output.get("target_builder", None)
-    observation_dtype = builder_output.get("observation_dtype", torch.float32)
-
-    # 5. Add standard infrastructure callbacks
     if priority_update_fn:
+        # We assume if a priority_update_fn is provided, it's a method of a buffer that also has set_beta
+        # This is a bit of a leap, but in this framework buffers that support PER follow this pattern.
+        # If not, it will fail-fast as requested.
         set_beta_fn = getattr(priority_update_fn.__self__, "set_beta", None)
         from utils.schedule import create_schedule
 
@@ -156,7 +137,92 @@ def build_universal_learner(
     if weight_broadcast_fn:
         callbacks.append(WeightBroadcastCallback(weight_broadcast_fn))
 
-    # 6. Construct and return UniversalLearner
+    # Deduce agent type
+    agent_type = getattr(config, "agent_type", None)
+    if agent_type is None:
+        if hasattr(config, "clip_param"):
+            agent_type = "ppo"
+        elif hasattr(config, "unroll_steps"):
+            agent_type = "muzero"
+    target_builder = None
+    observation_dtype = torch.float32
+
+    # 1. Delegate core component creation to registries
+    if agent_type == "muzero":
+        from agents.registries.muzero import build_muzero
+
+        muzero_components = build_muzero(config, agent_network, device)
+        optimizers = muzero_components["optimizers"]
+        lr_schedulers = muzero_components["lr_schedulers"]
+        callbacks.extend(muzero_components["callbacks"])
+        target_builder = muzero_components["target_builder"]
+        observation_dtype = muzero_components.get("observation_dtype", torch.float32)
+    elif agent_type == "ppo":
+        from agents.registries.ppo import build_ppo
+
+        ppo_components = build_ppo(config, agent_network, device)
+        optimizers = ppo_components["optimizers"]
+        lr_schedulers = ppo_components["lr_schedulers"]
+        callbacks.extend(ppo_components["callbacks"])
+        target_builder = ppo_components.get("target_builder")
+    elif agent_type == "rainbow":
+        from agents.registries.rainbow import build_rainbow
+
+        rainbow_components = build_rainbow(config, agent_network, device)
+        optimizers = rainbow_components["optimizers"]
+        lr_schedulers = rainbow_components["lr_schedulers"]
+        callbacks.extend(rainbow_components.get("callbacks", []))
+        target_builder = rainbow_components["target_builder"]
+        observation_dtype = rainbow_components.get("observation_dtype", torch.uint8)
+    elif agent_type == "supervised":
+        from agents.registries.supervised import build_supervised
+
+        supervised_components = build_supervised(config, agent_network, device)
+        optimizers = supervised_components["optimizers"]
+        lr_schedulers = supervised_components["lr_schedulers"]
+        callbacks.extend(supervised_components.get("callbacks", []))
+        observation_dtype = supervised_components.get(
+            "observation_dtype", torch.float32
+        )
+
+    # 2. Setup generic algorithmic callbacks
+    # Target Network Sync
+    if (
+        hasattr(agent_network, "target_network")
+        and agent_network.target_network is not None
+    ):
+        sync_interval = getattr(
+            config,
+            "transfer_interval",
+            getattr(config, "target_network_update_freq", 100),
+        )
+        callbacks.append(
+            TargetNetworkSyncCallback(
+                target_network=agent_network.target_network,
+                sync_interval=sync_interval,
+                soft_update=getattr(config, "soft_update", False),
+                ema_beta=getattr(config, "ema_beta", 0.99),
+            )
+        )
+
+    # Priority Updates (PER)
+    if priority_update_fn is not None:
+        callbacks.append(
+            PriorityUpdaterCallback(
+                priority_update_fn=priority_update_fn,
+                set_beta_fn=set_beta_fn,
+                per_beta_schedule=per_beta_schedule,
+            )
+        )
+
+    # Epsilon Scheduling
+    if epsilon_schedule is not None:
+        callbacks.append(EpsilonGreedySchedulerCallback(epsilon_schedule))
+
+    # Weight Broadcasting
+    if weight_broadcast_fn is not None:
+        callbacks.append(WeightBroadcastCallback(weight_broadcast_fn))
+
     return UniversalLearner(
         config=config,
         agent_network=agent_network,
@@ -164,7 +230,7 @@ def build_universal_learner(
         num_actions=agent_network.num_actions,
         observation_dimensions=agent_network.input_shape,
         observation_dtype=observation_dtype,
-        loss_pipeline=loss_pipeline,
+        loss_pipeline=build_loss_pipeline(config, agent_network, device),
         optimizer=optimizers,
         lr_scheduler=lr_schedulers,
         callbacks=callbacks,

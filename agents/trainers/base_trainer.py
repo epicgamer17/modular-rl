@@ -259,6 +259,10 @@ class BaseTrainer:
         os.makedirs(graph_dir, exist_ok=True)
         self.stats.plot_graphs(dir=graph_dir)
 
+        gc.collect()
+        abs_path = os.path.abspath(step_dir)
+        print(f"Saved checkpoint at step {self.training_step} to {abs_path}")
+
     def _record_learner_metrics(self, metric_bundle: Optional[Dict[str, Any]]) -> None:
         if not metric_bundle:
             return
@@ -288,10 +292,6 @@ class BaseTrainer:
                     self.stats.set(key, subvalue, subkey=subkey)
             else:
                 self.stats.append(key, value)
-
-        gc.collect()
-        abs_path = os.path.abspath(step_dir)
-        print(f"Saved checkpoint at step {self.training_step} to {abs_path}")
 
     @classmethod
     def load_from_checkpoint(

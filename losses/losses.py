@@ -13,7 +13,7 @@ from losses.representations import (
     TwoHotRepresentation,
     CategoricalRepresentation,
     ExponentialBucketsRepresentation,
-    ClassificationRepresentation
+    ClassificationRepresentation,
 )
 
 
@@ -309,9 +309,7 @@ class ValueLoss(LossModule):
 
         # Targets are usually stored as scalars in replay, but may have sequence/batch dims
         target_scalar = (
-            target_values_k.squeeze(-1)
-            if target_values_k.ndim > 1
-            else target_values_k
+            target_values_k.squeeze(-1) if target_values_k.ndim > 1 else target_values_k
         )
 
         return torch.abs(target_scalar - pred_scalar).detach()
@@ -473,14 +471,25 @@ class ToPlayLoss(LossModule):
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         to_plays_k = predictions["to_plays"]
         target_to_plays_k = targets["to_plays"]
+        
+        # Use representation to project mathematical scalar target (player index) -> target distribution
+        target_rep_k = self.representation.to_representation(target_to_plays_k).detach()
 
         # To-Play Loss: (B,)
         to_play_loss = (
             self.config.to_play_loss_factor
             * self.config.to_play_loss_function(
-                to_plays_k, target_to_plays_k, reduction="none"
+                to_plays_k, target_rep_k, reduction="none"
             )
         )
+
+        # Logging
+        metrics = context.setdefault("metrics", {})
+        from utils.telemetry import append_metric
+        # Mean entropy of the predicted distributions
+        probs = torch.softmax(to_plays_k, dim=-1)
+        entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1)
+        append_metric(metrics, "to_play_entropy", entropy.mean().item())
 
         return to_play_loss
 
@@ -535,19 +544,31 @@ class RelativeToPlayLoss(LossModule):
 
         target_delta_p_k = (p_k - p_prev) % num_players
 
+        # Use representation to project ΔP_k index -> target distribution
+        target_rep_k = self.representation.to_representation(target_delta_p_k).detach()
+ 
         # Loss calculation
         loss = self.config.to_play_loss_factor * self.config.to_play_loss_function(
-            delta_p_logits_k, target_delta_p_k, reduction="none"
+            delta_p_logits_k, target_rep_k, reduction="none"
         )
-
+ 
         return loss
 
 
 class ConsistencyLoss(LossModule):
     """Consistency loss module (EfficientZero style)."""
 
-    def __init__(self, config, device, agent_network, representation: Optional[BaseRepresentation] = None, optimizer_name: str = "default"):
-        super().__init__(config, device, representation=representation, optimizer_name=optimizer_name)
+    def __init__(
+        self,
+        config,
+        device,
+        agent_network,
+        representation: Optional[BaseRepresentation] = None,
+        optimizer_name: str = "default",
+    ):
+        super().__init__(
+            config, device, representation=representation, optimizer_name=optimizer_name
+        )
         self.agent_network = agent_network
 
     @property
@@ -593,8 +614,16 @@ class ConsistencyLoss(LossModule):
 class ChanceQLoss(LossModule):
     """Q-value loss for chance nodes (stochastic MuZero)."""
 
-    def __init__(self, config, device, representation: Optional[BaseRepresentation] = None, optimizer_name: str = "default"):
-        super().__init__(config, device, representation=representation, optimizer_name=optimizer_name)
+    def __init__(
+        self,
+        config,
+        device,
+        representation: Optional[BaseRepresentation] = None,
+        optimizer_name: str = "default",
+    ):
+        super().__init__(
+            config, device, representation=representation, optimizer_name=optimizer_name
+        )
 
     @property
     def required_predictions(self) -> set[str]:
@@ -622,7 +651,9 @@ class ChanceQLoss(LossModule):
         target_chance_values_k = context.get("target_values_next")
 
         # Use representation to project mathematical scalar target -> distribution/scaled-scalar
-        target_rep_k = self.representation.to_representation(target_chance_values_k).detach()
+        target_rep_k = self.representation.to_representation(
+            target_chance_values_k
+        ).detach()
         predicted_chance_values_k = chance_values_k
 
         # For Regression (Scalar) heads, squeeze (B, 1) -> (B,) for matching standard loss shapes
@@ -854,9 +885,11 @@ class PPOPolicyLoss(LossModule):
 
         with torch.no_grad():
             approx_kl = (old_log_probs - log_probs).mean()
-            if "approx_kl" not in context:
-                context["approx_kl"] = []
-            context["approx_kl"].append(approx_kl.item())
+            metrics = context.setdefault("metrics", {})
+            from utils.telemetry import append_metric
+
+            append_metric(metrics, "approx_kl", approx_kl.item())
+            append_metric(metrics, "ppo_entropy", entropy.mean().item())
 
         return loss
 

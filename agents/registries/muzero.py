@@ -12,8 +12,10 @@ from losses.losses import (
     SigmaLoss,
     VQVAECommitmentLoss,
 )
-from modules.utils import create_optimizer, get_lr_scheduler
-from agents.learner.callbacks import ResetNoiseCallback
+from agents.learner.callbacks import (
+    ResetNoiseCallback,
+)
+from modules.utils import get_lr_scheduler
 from agents.learner.target_builders import (
     TargetBuilderPipeline,
     TrajectoryGradientScaleBuilder,
@@ -22,49 +24,20 @@ from agents.learner.target_builders import (
 
 
 def build_muzero_loss_pipeline(config, agent_network, device):
-    world_model = agent_network.components["world_model"]
     modules = [
-        ValueLoss(
-            config,
-            device,
-            representation=agent_network.components["value_head"].strategy.representation,
-        ),
-        PolicyLoss(
-            config,
-            device,
-            representation=agent_network.components["policy_head"].strategy.representation,
-        ),
-        RewardLoss(
-            config,
-            device,
-            representation=world_model.reward_head.strategy.representation,
-        ),
+        ValueLoss(config, device),
+        PolicyLoss(config, device),
+        RewardLoss(config, device),
     ]
     if getattr(config.game, "num_players", 1) > 1:
-        modules.append(
-            ToPlayLoss(
-                config,
-                device,
-                representation=world_model.to_play_head.strategy.representation,
-            )
-        )
+        modules.append(ToPlayLoss(config, device))
     if getattr(config, "consistency_loss_factor", 0) > 0:
         modules.append(ConsistencyLoss(config, device, agent_network))
     if getattr(config, "stochastic", False):
         modules.extend(
             [
-                ChanceQLoss(
-                    config,
-                    device,
-                    representation=agent_network.components[
-                        "afterstate_value_head"
-                    ].strategy.representation,
-                ),
-                SigmaLoss(
-                    config,
-                    device,
-                    representation=world_model.sigma_head.strategy.representation,
-                ),
+                ChanceQLoss(config, device),
+                SigmaLoss(config, device),
                 VQVAECommitmentLoss(config, device),
             ]
         )
@@ -78,10 +51,36 @@ def build_muzero(
     # 1. Losses
     loss_pipeline = build_muzero_loss_pipeline(config, agent_network, device)
 
-    # 2. Optimizers
-    opt = create_optimizer(agent_network.parameters(), config)
-    optimizers = {"default": opt}
-    lr_schedulers = {"default": get_lr_scheduler(opt, config)}
+    # 2. Setup Optimizers and Schedulers
+    # Factory create_opt logic for non-PPO:
+    from torch.optim.adam import Adam
+    from torch.optim.sgd import SGD
+
+    optimizers = {}
+    lr_schedulers = {}
+
+    def create_opt(params, sub_config_parent):
+        opt_cls = getattr(sub_config_parent, "optimizer", Adam)
+        if opt_cls == Adam:
+            return Adam(
+                params=params,
+                lr=config.learning_rate,
+                eps=getattr(config, "adam_epsilon", 1e-8),
+                weight_decay=getattr(config, "weight_decay", 0.0),
+            )
+        elif opt_cls == SGD:
+            return SGD(
+                params=params,
+                lr=config.learning_rate,
+                momentum=getattr(config, "momentum", 0.0),
+                weight_decay=getattr(config, "weight_decay", 0.0),
+            )
+        else:
+            return opt_cls(params, lr=config.learning_rate)
+
+    opt = create_opt(agent_network.parameters(), config)
+    optimizers["default"] = opt
+    lr_schedulers["default"] = get_lr_scheduler(opt, config)
 
     # 3. Callbacks
     callbacks = []
