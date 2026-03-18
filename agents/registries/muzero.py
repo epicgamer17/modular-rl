@@ -11,6 +11,7 @@ from losses.losses import (
     ChanceQLoss,
     SigmaLoss,
     VQVAECommitmentLoss,
+    SpecificLossPriority,
 )
 from agents.learner.callbacks import (
     ResetNoiseCallback,
@@ -41,7 +42,8 @@ def build_muzero_loss_pipeline(config, agent_network, device):
                 VQVAECommitmentLoss(config, device),
             ]
         )
-    return LossPipeline(modules)
+    priority_computer = SpecificLossPriority(loss_name="ValueLoss")
+    return LossPipeline(modules, priority_computer=priority_computer)
 
 
 @register_agent("muzero")

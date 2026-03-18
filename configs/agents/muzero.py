@@ -185,6 +185,7 @@ class MuZeroConfig(
         # Training
         self.games_per_generation: int = self.parse_field("games_per_generation", 100)
         self.value_loss_factor: float = self.parse_field("value_loss_factor", 1.0)
+        self.reward_loss_factor: float = self.parse_field("reward_loss_factor", 1.0)
         self.to_play_loss_factor: float = self.parse_field("to_play_loss_factor", 1.0)
         self.train_value_iterations: int = self.parse_field("train_value_iterations", 1)
         self.train_policy_iterations: int = self.parse_field(
