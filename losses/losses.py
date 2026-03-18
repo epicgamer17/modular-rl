@@ -99,18 +99,6 @@ class LossModule(ABC):
         """
         pass  # pragma: no cover
 
-    def compute_priority(
-        self,
-        predictions: dict,
-        targets: dict,
-        context: dict,
-    ) -> Optional[torch.Tensor]:
-        """
-        Calculates PER priorities (usually at root k=0).
-        Returns None if this specific loss module does not drive priorities.
-        """
-        return None  # pragma: no cover
-
 
 # ============================================================================
 # OLD DQN-STYLE LOSSES (Updated to work with unified interface)
@@ -149,26 +137,13 @@ class StandardDQNLoss(LossModule):
             selected_q = q_values.gather(-1, actions.unsqueeze(-1)).squeeze(-1)
         else:
             # Single-step case: [B, A]
-            selected_q = q_values[torch.arange(q_values.shape[0], device=self.device), actions]
+            selected_q = q_values[
+                torch.arange(q_values.shape[0], device=self.device), actions
+            ]
 
         targets_val = self.representation.format_target(targets)
         # Return elementwise loss (B, T) or (B,)
         return self.config.loss_function(selected_q, targets_val, reduction="none")
-
-    def compute_priority(self, predictions, targets, context):
-        q_values = predictions["q_values"]
-        actions = targets["actions"].to(self.device).long()
-
-        # If sequence data, extract first step (k=0) for priorities
-        if q_values.ndim == 3:
-            q_values = q_values[:, 0]
-            actions = actions[:, 0]
-            target_q = targets["values"][:, 0]
-        else:
-            target_q = targets["values"]
-
-        pred_q = q_values[torch.arange(q_values.shape[0], device=self.device), actions]
-        return torch.abs(target_q - pred_q).detach()
 
 
 class C51Loss(LossModule):
@@ -205,23 +180,20 @@ class C51Loss(LossModule):
         # Extract chosen logits: [B, T, Atoms] or [B, Atoms]
         if online_q_logits.ndim == 4:
             # [B, T, Actions, Atoms]
-            actions_unsqueezed = actions.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, online_q_logits.shape[-1])
+            actions_unsqueezed = (
+                actions.unsqueeze(-1)
+                .unsqueeze(-1)
+                .expand(-1, -1, -1, online_q_logits.shape[-1])
+            )
             chosen_logits = online_q_logits.gather(-2, actions_unsqueezed).squeeze(-2)
         else:
             # [B, Actions, Atoms]
-            chosen_logits = online_q_logits[torch.arange(online_q_logits.shape[0], device=self.device), actions]
+            chosen_logits = online_q_logits[
+                torch.arange(online_q_logits.shape[0], device=self.device), actions
+            ]
 
         log_probs = F.log_softmax(chosen_logits, dim=-1)
         return -(target_dist * log_probs).sum(dim=-1)
-
-    def compute_priority(self, predictions, targets, context):
-        """Rainbow uses the cross-entropy (KL divergence) of the distributions for PER."""
-        # Use root step (k=0) if sequence data provided
-        if predictions["q_logits"].ndim == 4:
-            root_preds = {k: v[:, 0] for k, v in predictions.items() if torch.is_tensor(v)}
-            root_targets = {k: v[:, 0] for k, v in targets.items() if torch.is_tensor(v)}
-            return self.compute_loss(root_preds, root_targets, context).detach()
-        return self.compute_loss(predictions, targets, context).detach()
 
 
 # ============================================================================
@@ -282,7 +254,9 @@ class ValueLoss(LossModule):
         ), f"Shape mismatch in ValueLoss: {predicted_values.shape} vs {target_rep.shape}"
 
         # Value Loss calculation
-        value_loss = self.config.value_loss_function(predicted_values, target_rep, reduction="none")
+        value_loss = self.config.value_loss_function(
+            predicted_values, target_rep, reduction="none"
+        )
 
         # If the loss is elementwise (B, T, atoms), sum it up
         if value_loss.ndim == target_rep.ndim + 1:
@@ -294,34 +268,27 @@ class ValueLoss(LossModule):
         viz_interval = getattr(self.config, "latent_viz_interval", 0)
         if viz_interval > 0 and context.get("training_step", 0) % viz_interval == 0:
             from utils.telemetry import add_latent_visualization_metric
+
             s0 = predictions.get("latents")
             if s0 is not None:
                 # If sequence, take root
-                if s0.ndim == 3: s0 = s0[:, 0]
+                if s0.ndim == 3:
+                    s0 = s0[:, 0]
                 actions = targets.get("actions")
                 if actions is not None:
-                    if actions.ndim == 2: actions = actions[:, 0]
+                    if actions.ndim == 2:
+                        actions = actions[:, 0]
                     metrics = context.setdefault("metrics", {})
                     add_latent_visualization_metric(
-                        metrics, "latent_root", s0.detach().cpu(),
+                        metrics,
+                        "latent_root",
+                        s0.detach().cpu(),
                         labels=actions.detach().cpu(),
                         method=getattr(self.config, "latent_viz_method", "pca"),
                     )
 
         return value_loss
 
-    def compute_priority(self, predictions, targets, context):
-        values = predictions["values"]
-        target_values = targets["values"]
-
-        # If sequence data, extract first step (k=0) for priorities
-        if values.ndim == 3:
-            values = values[:, 0]
-            target_values = target_values[:, 0]
-
-        pred_scalar = self.representation.to_scalar(values)
-        target_scalar = target_values.squeeze(-1) if target_values.ndim > 1 else target_values
-        return torch.abs(target_scalar - pred_scalar).detach()
 
 
 class PolicyLoss(LossModule):
@@ -408,7 +375,9 @@ class RewardLoss(LossModule):
         """MuZero-style: Returns elementwise_loss of shape (B, T)"""
         rewards = predictions["rewards"]
         # targets["rewards"]: [B, K]
-        target_rep = self.representation.format_target(targets, target_key="rewards").detach()
+        target_rep = self.representation.format_target(
+            targets, target_key="rewards"
+        ).detach()
 
         predicted_rewards = rewards
         if isinstance(self.representation, ScalarRepresentation):
@@ -419,7 +388,9 @@ class RewardLoss(LossModule):
         ), f"Shape mismatch in RewardLoss: {predicted_rewards.shape} vs {target_rep.shape}"
 
         # Reward Loss calculation: [B, K]
-        reward_loss_seq = self.config.reward_loss_function(predicted_rewards, target_rep, reduction="none")
+        reward_loss_seq = self.config.reward_loss_function(
+            predicted_rewards, target_rep, reduction="none"
+        )
 
         # If the loss is elementwise (B, K, atoms), sum it up
         if reward_loss_seq.ndim == target_rep.ndim + 1:
@@ -428,9 +399,11 @@ class RewardLoss(LossModule):
         # Pad to [B, T] where T = K+1
         # We assume predictions["values"] or context["is_same_game"] reflects T
         T = context["is_same_game"].shape[1]
-        full_loss = torch.zeros((reward_loss_seq.shape[0], T), device=reward_loss_seq.device)
+        full_loss = torch.zeros(
+            (reward_loss_seq.shape[0], T), device=reward_loss_seq.device
+        )
         full_loss[:, 1:] = reward_loss_seq
-        
+
         return self.config.reward_loss_factor * full_loss
 
 
@@ -485,9 +458,10 @@ class ToPlayLoss(LossModule):
         if to_play_loss.ndim == 2:
             to_play_loss[:, 0] = 0.0
 
-        # Logging (Mean entropy of the first valid step)
+        # Logging
         metrics = context.setdefault("metrics", {})
         from utils.telemetry import append_metric
+
         probs = torch.softmax(to_plays, dim=-1)
         entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1)
         append_metric(metrics, "to_play_entropy", entropy.mean().item())
@@ -546,7 +520,7 @@ class RelativeToPlayLoss(LossModule):
         loss = self.config.to_play_loss_factor * self.config.to_play_loss_function(
             delta_p_logits[:, 1:], target_rep, reduction="none"
         )
-        
+
         # Padding to [B, T]
         full_loss = torch.zeros_like(p_seq)
         full_loss[:, 1:] = loss
@@ -591,7 +565,7 @@ class ConsistencyLoss(LossModule):
         """MuZero-style: Returns elementwise_loss of shape (B, T)"""
         latent_states = predictions["latents"]
         target_features = targets["consistency_targets"]
-        
+
         # Flatten [B, T, D] to [B*T, D] for projection
         original_shape = latent_states.shape
         if latent_states.ndim == 3:
@@ -609,7 +583,9 @@ class ConsistencyLoss(LossModule):
 
         # Reshape back to [B, T]
         if len(original_shape) == 3:
-            consistency_loss = consistency_loss.view(original_shape[0], original_shape[1])
+            consistency_loss = consistency_loss.view(
+                original_shape[0], original_shape[1]
+            )
             # Consistency usually only for k > 0
             consistency_loss[:, 0] = 0.0
 
@@ -658,7 +634,7 @@ class ChanceQLoss(LossModule):
         # targets["values"]: [B, T] (where T = K+1)
         # target_v_next: [B, K] (values at k=1..K)
         target_v_next = targets["values"][:, 1:]
-        
+
         target_rep = self.representation.to_representation(target_v_next).detach()
         # chance_values already has size K (unroll steps)
         predicted_chance_values = chance_values
@@ -666,12 +642,14 @@ class ChanceQLoss(LossModule):
         if isinstance(self.representation, ScalarRepresentation):
             predicted_chance_values = predicted_chance_values.squeeze(-1)
 
-        q_loss_seq = self.config.value_loss_function(predicted_chance_values, target_rep, reduction="none")
+        q_loss_seq = self.config.value_loss_function(
+            predicted_chance_values, target_rep, reduction="none"
+        )
         if q_loss_seq.ndim == target_rep.ndim + 1:
             q_loss_seq = q_loss_seq.sum(dim=-1)
 
         q_loss = self.config.value_loss_factor * q_loss_seq
-        
+
         # Pad to [B, T] by prepending zero for k=0
         full_loss = torch.zeros_like(targets["values"])
         full_loss[:, 1:] = q_loss
@@ -720,7 +698,9 @@ class SigmaLoss(LossModule):
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B, T)"""
         if not self.config.stochastic:
-            return torch.zeros_like(targets["chance_codes"], dtype=torch.float32).squeeze(-1)
+            return torch.zeros_like(
+                targets["chance_codes"], dtype=torch.float32
+            ).squeeze(-1)
 
         chance_logits = predictions["chance_logits"]
         # target_codes: [B, T]. k=0 is invalid/padding.
@@ -729,10 +709,16 @@ class SigmaLoss(LossModule):
         
         if self.config.sigma_loss == F.cross_entropy:
             # cross_entropy(input[B, C, K], target[B, K])
-            loss_seq = F.cross_entropy(chance_logits.transpose(1, 2), target_codes_seq, reduction="none")
+            loss_seq = F.cross_entropy(
+                chance_logits.transpose(1, 2), target_codes_seq, reduction="none"
+            )
         else:
-            one_hot = F.one_hot(target_codes_seq, num_classes=chance_logits.shape[-1]).float()
-            loss_seq = self.config.sigma_loss(chance_logits, one_hot.detach(), reduction="none")
+            one_hot = F.one_hot(
+                target_codes_seq, num_classes=chance_logits.shape[-1]
+            ).float()
+            loss_seq = self.config.sigma_loss(
+                chance_logits, one_hot.detach(), reduction="none"
+            )
             if loss_seq.ndim == target_codes_seq.ndim + 1:
                 loss_seq = loss_seq.sum(dim=-1)
 
@@ -743,7 +729,10 @@ class SigmaLoss(LossModule):
 
         # Logging
         metrics = context.setdefault("metrics", {})
-        entropy = (-torch.softmax(chance_logits, dim=-1) * torch.log_softmax(chance_logits, dim=-1)).sum(dim=-1)
+        entropy = (
+            -torch.softmax(chance_logits, dim=-1)
+            * torch.log_softmax(chance_logits, dim=-1)
+        ).sum(dim=-1)
         append_metric(metrics, "chance_entropy", entropy.mean().item())
 
         return full_loss
@@ -786,7 +775,9 @@ class VQVAECommitmentLoss(LossModule):
     ) -> torch.Tensor:
         """MuZero-style: Returns elementwise_loss of shape (B, T)"""
         if not self.config.stochastic or self.config.use_true_chance_codes:
-            return torch.zeros_like(targets["chance_codes"], dtype=torch.float32).squeeze(-1)
+            return torch.zeros_like(
+                targets["chance_codes"], dtype=torch.float32
+            ).squeeze(-1)
 
         chance_enc_embeddings = predictions["chance_encoder_embeddings"]
         # chance_enc_embeddings has size K
