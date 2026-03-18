@@ -11,16 +11,22 @@ from agents.action_selectors.selectors import ArgmaxSelector
 
 def build_rainbow_loss_pipeline(config, agent_network, device):
     selector = ArgmaxSelector()
+    representation = None
+    if agent_network is not None and hasattr(agent_network, "components") and "q_head" in agent_network.components:
+        representation = agent_network.components["q_head"].strategy.representation
+
     td_loss_module = (
         C51Loss(
             config=config,
             device=device,
+            representation=representation,
             action_selector=selector,
         )
         if getattr(config, "atom_size", 1) > 1
         else StandardDQNLoss(
             config=config,
             device=device,
+            representation=representation,
             action_selector=selector,
         )
     )

@@ -130,8 +130,9 @@ class CategoricalRepresentation(DiscreteValuedRepresentation):
         Projects shifted atom probabilities back onto the fixed support grid.
         """
         if "next_q_logits" not in targets:
-            return super().format_target(targets)
-
+            raise ValueError(
+                "CategoricalRepresentation requires 'next_q_logits' in targets."
+            )
         # 1. Extraction from Ingredients
         next_q_logits = targets["next_q_logits"]  # [B, Actions, Atoms]
         next_actions = targets["next_actions"].long()  # [B]
@@ -145,46 +146,39 @@ class CategoricalRepresentation(DiscreteValuedRepresentation):
         discount = gamma**n_step
 
         # 2. Extract chosen next distribution: [B, Atoms]
-        # next_q_logits: [B, Actions, Atoms] -> [B, Atoms]
         chosen_logits = next_q_logits[
             torch.arange(batch_size, device=device), next_actions
         ]
         next_probs = torch.softmax(chosen_logits, dim=-1)
 
-        # 3. Bellman Projection: mapping shifted atoms back to support grid
-        # self.support is [Atoms]
+        # 3. Bellman Projection
         support = self.support.to(device)
 
         # Shifted support: Tz = r + discount * (1 - done) * z
-        # Shape: [B, Atoms]
         Tz = rewards.view(-1, 1) + discount * (1.0 - dones).view(-1, 1) * support.view(
             1, -1
         )
+        # Clamp Tz to [vmin, vmax] so b is strictly in [0, bins - 1]
         Tz = Tz.clamp(self.vmin, self.vmax)
 
-        # Map to bin indices
+        # True mathematical bounds
         b = (Tz - self.vmin) / self.delta_z
-        l = b.floor().long().clamp(0, self.bins - 1)
-        u = b.ceil().long().clamp(0, self.bins - 1)
+        l = b.floor().long()
+        u = l + 1
 
-        # Project probabilities onto indices l and u
-        projected_dist = torch.zeros((batch_size, self.bins), device=device)
-
-        # Linear interpolation weighting
-        # If l == u (b is an integer), (u - b) is 0. We add a small logic to ensure it gets 1.0.
-        # Standard C51 indexing:
-        # m_l = next_probs * (u - b)
-        # m_u = next_probs * (b - l)
-
+        # Conserve mass: (u - b) + (b - l) always equals 1
         p_l = next_probs * (u.float() - b)
         p_u = next_probs * (b - l.float())
 
-        # When l == u, both p_l and p_u are 0. We should assign 1.0 to p_l.
-        is_integer = (l == u).float()
-        p_l += is_integer * next_probs
+        # Safe indexing for scattering
+        # (if b = bins-1, u=bins, so we clamp it back to bins-1 for the array index)
+        l_idx = l.clamp(0, self.bins - 1)
+        u_idx = u.clamp(0, self.bins - 1)
 
-        projected_dist.scatter_add_(1, l, p_l)
-        projected_dist.scatter_add_(1, u, p_u)
+        # Project probabilities
+        projected_dist = torch.zeros((batch_size, self.bins), device=device)
+        projected_dist.scatter_add_(1, l_idx, p_l)
+        projected_dist.scatter_add_(1, u_idx, p_u)
 
         return projected_dist
 
@@ -242,7 +236,12 @@ def get_representation(
 ) -> BaseRepresentation:
     if vmin is not None and vmax is not None and bins is not None:
         if mode == "exponential":
+            print("Using ExponentialBucketsRepresentation")
             return ExponentialBucketsRepresentation(vmin, vmax, bins)
+        elif mode == "categorical":
+            print("Using CategoricalRepresentation")
+            return CategoricalRepresentation(vmin, vmax, bins)
+        print("Using TwoHotRepresentation")
         return TwoHotRepresentation(vmin, vmax, bins)
 
     if support_range is not None:

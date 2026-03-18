@@ -46,6 +46,9 @@ class LossModule(ABC):
         num_classes = getattr(self.config, "num_classes", None)
 
         if vmin is not None and vmax is not None and bins is not None and bins > 1:
+            # Force categorical mode if this is a C51Loss
+            if self.__class__.__name__ == "C51Loss" and mode == "linear":
+                mode = "categorical"
             return get_representation(vmin=vmin, vmax=vmax, bins=bins, mode=mode)
         if support_range is not None:
             return get_representation(support_range=support_range)
@@ -163,6 +166,8 @@ class C51Loss(LossModule):
         action_selector: Optional[object] = None,
         optimizer_name: str = "default",
     ):
+        assert representation is not None, "C51Loss requires a representation."
+
         super().__init__(config, device, representation, optimizer_name=optimizer_name)
         self.action_selector = action_selector
 
@@ -172,7 +177,7 @@ class C51Loss(LossModule):
 
     @property
     def required_targets(self) -> set[str]:
-        return {"values", "actions"}
+        return {"actions", "next_q_logits", "next_actions", "rewards", "dones"}
 
     def compute_loss(
         self, predictions: dict, targets: dict, context: dict, k: int = 0
@@ -466,7 +471,7 @@ class ToPlayLoss(LossModule):
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         to_plays_k = predictions["to_plays"]
         target_to_plays_k = targets["to_plays"]
-        
+
         # Use representation to project mathematical scalar target (player index) -> target distribution
         target_rep_k = self.representation.format_target(targets).detach()
 
@@ -481,6 +486,7 @@ class ToPlayLoss(LossModule):
         # Logging
         metrics = context.setdefault("metrics", {})
         from utils.telemetry import append_metric
+
         # Mean entropy of the predicted distributions
         probs = torch.softmax(to_plays_k, dim=-1)
         entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1)
@@ -541,12 +547,12 @@ class RelativeToPlayLoss(LossModule):
 
         # Use representation to project ΔP_k index -> target distribution
         target_rep_k = self.representation.to_representation(target_delta_p_k).detach()
- 
+
         # Loss calculation
         loss = self.config.to_play_loss_factor * self.config.to_play_loss_function(
             delta_p_logits_k, target_rep_k, reduction="none"
         )
- 
+
         return loss
 
 
