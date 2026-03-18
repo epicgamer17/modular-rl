@@ -11,7 +11,7 @@ from agents.action_selectors.selectors import (
     EpsilonGreedySelector,
     NFSPSelector,
 )
-from agents.learners.nfsp_learner import NFSPLearner
+from agents.learner.nfsp_learner import NFSPLearner
 from agents.executors.local_executor import LocalExecutor
 from agents.executors.torch_mp_executor import TorchMPExecutor
 from agents.trainers.base_trainer import BaseTrainer
@@ -274,7 +274,9 @@ class NFSPTrainer(BaseTrainer):
         )
 
         # Executor
-        self.executor = TorchMPExecutor() if self.config.multi_process else LocalExecutor()
+        self.executor = (
+            TorchMPExecutor() if self.config.multi_process else LocalExecutor()
+        )
         self.actor_cls = _pick_nfsp_actor(env)
         worker_args = (
             self.config.game.make_env,
@@ -335,9 +337,7 @@ class NFSPTrainer(BaseTrainer):
             return
 
         player_rewards = (
-            self._compute_player_rewards(sequence)
-            if self.num_players > 1
-            else None
+            self._compute_player_rewards(sequence) if self.num_players > 1 else None
         )
 
         for i in range(len(sequence.action_history)):
@@ -402,8 +402,12 @@ class NFSPTrainer(BaseTrainer):
                 policy_used=policy_used,
             )
 
-    def _compute_player_rewards(self, sequence: Sequence) -> Dict[int, Dict[int, float]]:
-        player_rewards: Dict[int, Dict[int, float]] = {pid: {} for pid in self.player_ids}
+    def _compute_player_rewards(
+        self, sequence: Sequence
+    ) -> Dict[int, Dict[int, float]]:
+        player_rewards: Dict[int, Dict[int, float]] = {
+            pid: {} for pid in self.player_ids
+        }
         last_action_idx: Dict[int, int] = {}
 
         for i in range(len(sequence.action_history)):
@@ -422,7 +426,9 @@ class NFSPTrainer(BaseTrainer):
             for pid, r in all_rewards.items():
                 if pid in last_action_idx:
                     idx = last_action_idx[pid]
-                    player_rewards[pid][idx] = player_rewards[pid].get(idx, 0.0) + float(r)
+                    player_rewards[pid][idx] = player_rewards[pid].get(
+                        idx, 0.0
+                    ) + float(r)
 
             last_action_idx[acting_player] = i
 

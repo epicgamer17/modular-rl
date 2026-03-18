@@ -3,7 +3,7 @@ import time
 from typing import Optional, List, Dict, Any, Tuple
 
 from agents.trainers.base_trainer import BaseTrainer
-from agents.learners.base import UniversalLearner
+from agents.learner.base import UniversalLearner
 
 from agents.action_selectors.factory import SelectorFactory
 from agents.workers.actors import get_actor_class
@@ -11,7 +11,7 @@ from modules.agent_nets.modular import ModularAgentNetwork
 from replay_buffers.transition import TransitionBatch, Transition
 from stats.stats import StatTracker, PlotType
 from utils.schedule import create_schedule
-from agents.learners.target_builders import (
+from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
     TDCategoricalProjectionBuilder,
 )
@@ -19,7 +19,7 @@ from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
 from losses.losses import C51Loss, StandardDQNLoss
 from replay_buffers.buffer_factories import create_dqn_buffer
-from agents.learners.batch_iterators import RepeatSampleIterator
+from agents.learner.batch_iterators import RepeatSampleIterator
 
 
 class RainbowTrainer(BaseTrainer):
@@ -98,7 +98,7 @@ class RainbowTrainer(BaseTrainer):
         # Note: RainbowNetwork.initial_inference now handles calculating expected value from support
         # So we don't need to pass support explicitly to the selector in the old way
         # 9. Callbacks
-        from agents.learners.callbacks import (
+        from agents.learner.callbacks import (
             TargetNetworkSyncCallback,
             ResetNoiseCallback,
             PriorityUpdaterCallback,

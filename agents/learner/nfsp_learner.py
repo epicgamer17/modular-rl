@@ -9,14 +9,14 @@ from typing import Any, Dict, Iterator, Tuple
 import torch
 import torch.nn as nn
 
-from agents.learners.base import UniversalLearner
-from agents.learners.batch_iterators import RepeatSampleIterator
-from agents.learners.callbacks import (
+from agents.learner.base import UniversalLearner
+from agents.learner.batch_iterators import RepeatSampleIterator
+from agents.learner.callbacks import (
     PriorityUpdaterCallback,
     ResetNoiseCallback,
     TargetNetworkSyncCallback,
 )
-from agents.learners.target_builders import (
+from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
     TDCategoricalProjectionBuilder,
 )

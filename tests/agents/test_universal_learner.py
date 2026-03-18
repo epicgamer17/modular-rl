@@ -4,9 +4,9 @@ import torch
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from agents.learners.base import UniversalLearner
-from agents.learners.callbacks import Callback, EarlyStopIteration
-from agents.learners.target_builders import BaseTargetBuilder
+from agents.learner.base import UniversalLearner
+from agents.learner.callbacks import Callback, EarlyStopIteration
+from agents.learner.target_builders import BaseTargetBuilder
 from losses.losses import LossPipeline
 from modules.world_models.inference_output import LearningOutput
 
@@ -92,7 +92,7 @@ def test_universal_learner_step_calls_optimizer_and_callbacks():
         clipnorm=config.clipnorm,
     )
 
-    with patch("agents.learners.base.clip_grad_norm_") as mock_clip:
+    with patch("agents.learner.base.clip_grad_norm_") as mock_clip:
         stats = list(learner.step(batch_iterator=batch_iterator))
 
     optimizer.zero_grad.assert_called_once_with(set_to_none=True)

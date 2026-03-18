@@ -3,33 +3,37 @@ from typing import Any, Dict, List, Tuple
 from agents.registries.base import register_agent
 from losses.losses import LossPipeline, PPOPolicyLoss, PPOValueLoss
 from modules.utils import create_optimizer, get_lr_scheduler
-from agents.learners.callbacks import PPOEarlyStoppingCallback
+from agents.learner.callbacks import PPOEarlyStoppingCallback
+
 
 def build_ppo_loss_pipeline(config, agent_network, device):
-    return LossPipeline([
-        PPOPolicyLoss(
-            config=config,
-            device=device,
-            clip_param=config.clip_param,
-            entropy_coefficient=config.entropy_coefficient,
-            policy_strategy=getattr(
-                agent_network.components["policy_head"], "strategy", None
+    return LossPipeline(
+        [
+            PPOPolicyLoss(
+                config=config,
+                device=device,
+                clip_param=config.clip_param,
+                entropy_coefficient=config.entropy_coefficient,
+                policy_strategy=getattr(
+                    agent_network.components["policy_head"], "strategy", None
+                ),
+                optimizer_name="policy",
             ),
-            optimizer_name="policy",
-        ),
-        PPOValueLoss(
-            config=config,
-            device=device,
-            critic_coefficient=config.critic_coefficient,
-            atom_size=getattr(config, "atom_size", 1),
-            v_min=getattr(config, "v_min", None),
-            v_max=getattr(config, "v_max", None),
-            value_strategy=getattr(
-                agent_network.components["value_head"], "strategy", None
+            PPOValueLoss(
+                config=config,
+                device=device,
+                critic_coefficient=config.critic_coefficient,
+                atom_size=getattr(config, "atom_size", 1),
+                v_min=getattr(config, "v_min", None),
+                v_max=getattr(config, "v_max", None),
+                value_strategy=getattr(
+                    agent_network.components["value_head"], "strategy", None
+                ),
+                optimizer_name="value",
             ),
-            optimizer_name="value",
-        ),
-    ])
+        ]
+    )
+
 
 @register_agent("ppo")
 def build_ppo(config: Any, agent_network: Any, device: torch.device) -> Dict[str, Any]:
@@ -39,7 +43,7 @@ def build_ppo(config: Any, agent_network: Any, device: torch.device) -> Dict[str
     # 2. Optimizers & Schedulers
     optimizers = {}
     lr_schedulers = {}
-    
+
     optimizers["policy"] = create_optimizer(
         agent_network.components["policy_head"].parameters(),
         config,
@@ -50,7 +54,7 @@ def build_ppo(config: Any, agent_network: Any, device: torch.device) -> Dict[str
         config,
         sub_config_parent=getattr(config, "critic", config),
     )
-    
+
     lr_schedulers["policy"] = get_lr_scheduler(optimizers["policy"], config)
     lr_schedulers["value"] = get_lr_scheduler(optimizers["value"], config)
 

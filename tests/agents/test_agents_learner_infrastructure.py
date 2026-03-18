@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from agents.learners.callbacks import LatentMetricsCallback
+from agents.learner.callbacks import LatentMetricsCallback
 from utils.telemetry import finalize_metrics
 from losses.losses import SigmaLoss
 

@@ -4,7 +4,7 @@ import torch.nn as nn
 from unittest.mock import MagicMock
 import numpy as np
 
-from agents.learners.target_builders import (
+from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
     TDCategoricalProjectionBuilder,
     LatentConsistencyBuilder,

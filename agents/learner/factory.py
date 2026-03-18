@@ -14,9 +14,9 @@ from typing import (
 import torch
 from torch import nn
 
-from agents.learners.base import UniversalLearner
-from agents.learners.target_builders import BaseTargetBuilder
-from agents.learners.callbacks import (
+from agents.learner.base import UniversalLearner
+from agents.learner.target_builders import BaseTargetBuilder
+from agents.learner.callbacks import (
     PriorityUpdaterCallback,
     WeightBroadcastCallback,
     PPOEarlyStoppingCallback,

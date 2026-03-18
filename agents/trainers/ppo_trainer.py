@@ -86,7 +86,7 @@ class PPOTrainer(BaseTrainer):
         self.executor = create_executor(config)
 
         # 5. Initialize Learner via Factory
-        from agents.learners.factory import build_universal_learner
+        from agents.learner.factory import build_universal_learner
 
         self.learner = build_universal_learner(
             config=config,
@@ -253,7 +253,7 @@ class PPOTrainer(BaseTrainer):
                 self.stats.append("episode_length", float(l))
 
         # 3. Learning step
-        from agents.learners.batch_iterators import PPOEpochIterator
+        from agents.learner.batch_iterators import PPOEpochIterator
 
         iterator = PPOEpochIterator(
             replay_buffer=self.replay_buffer,

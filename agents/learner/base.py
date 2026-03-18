@@ -19,11 +19,11 @@ from torch.nn.utils import clip_grad_norm_
 from modules.agent_nets.modular import ModularAgentNetwork
 
 if TYPE_CHECKING:
-    from agents.learners.target_builders import BaseTargetBuilder
+    from agents.learner.target_builders import BaseTargetBuilder
     from losses.losses import LossPipeline
-    from agents.learners.callbacks import Callback
+    from agents.learner.callbacks import Callback
 
-from agents.learners.callbacks import (
+from agents.learner.callbacks import (
     CallbackList,
     EarlyStopIteration,
     MPSCacheClearCallback,

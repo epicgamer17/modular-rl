@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Tuple
 from agents.registries.base import register_agent
 from losses.losses import LossPipeline, StandardDQNLoss, C51Loss
 from modules.utils import create_optimizer, get_lr_scheduler
-from agents.learners.target_builders import (
+from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
     TDCategoricalProjectionBuilder,
 )

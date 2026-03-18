@@ -13,7 +13,7 @@ matplotlib.use("Agg")
 import numpy as np
 import torch
 
-from agents.learners.batch_iterators import RepeatSampleIterator
+from agents.learner.batch_iterators import RepeatSampleIterator
 from agents.trainers.rainbow_trainer import RainbowTrainer
 from configs.agents.rainbow_dqn import RainbowConfig
 from configs.games.cartpole import CartPoleConfig
@@ -145,7 +145,9 @@ def test_rainbow_trainer_scalar_dqn_learner_step(make_rainbow_config_dict):
     )
 
     _populate_cartpole_like_transitions(trainer.buffer, trainer.num_actions, n=10)
-    iterator = RepeatSampleIterator(trainer.buffer, trainer.config.training_iterations, trainer.device)
+    iterator = RepeatSampleIterator(
+        trainer.buffer, trainer.config.training_iterations, trainer.device
+    )
     loss_stats = list(trainer.learner.step(batch_iterator=iterator))
 
     assert loss_stats
@@ -167,7 +169,9 @@ def test_rainbow_trainer_c51_learner_step(make_rainbow_config_dict):
     )
 
     _populate_cartpole_like_transitions(trainer.buffer, trainer.num_actions, n=10)
-    iterator = RepeatSampleIterator(trainer.buffer, trainer.config.training_iterations, trainer.device)
+    iterator = RepeatSampleIterator(
+        trainer.buffer, trainer.config.training_iterations, trainer.device
+    )
     loss_stats = list(trainer.learner.step(batch_iterator=iterator))
 
     assert loss_stats

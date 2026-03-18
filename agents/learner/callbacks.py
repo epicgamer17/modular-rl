@@ -10,7 +10,7 @@ from utils.telemetry import (
 )
 
 if TYPE_CHECKING:
-    from agents.learners.base import StepResult, UniversalLearner
+    from agents.learner.base import StepResult, UniversalLearner
     from modules.agent_nets.modular import ModularAgentNetwork
 from abc import ABC, abstractmethod
 
@@ -128,8 +128,6 @@ class CallbackList:
             callback.on_training_step_end(learner=learner, metrics=metrics)
 
 
-
-
 class TargetNetworkSyncCallback(Callback):
     """Syncs target network weights at the end of each training step."""
 
@@ -183,9 +181,6 @@ class ResetNoiseCallback(Callback):
         learner.agent_network.reset_noise()
 
 
-
-
-
 class PPOEarlyStoppingCallback(Callback):
     """Early stops the optimization loop if KL divergence exceeds target_kl."""
 
@@ -207,7 +202,9 @@ class PPOEarlyStoppingCallback(Callback):
         )
         kl = step_result.loss_dict[self.key]
         if kl > 1.5 * self.target_kl:
-            append_metric(step_result.meta.setdefault("metrics", {}), "ppo_early_stop", 1.0)
+            append_metric(
+                step_result.meta.setdefault("metrics", {}), "ppo_early_stop", 1.0
+            )
             raise EarlyStopIteration(f"KL divergence {kl:.4f} > 1.5 * {self.target_kl}")
 
 
@@ -306,6 +303,10 @@ class MPSCacheClearCallback(Callback):
             return
 
         device = learner.device
-        is_mps = device.type == "mps" if isinstance(device, torch.device) else device == "mps"
+        is_mps = (
+            device.type == "mps"
+            if isinstance(device, torch.device)
+            else device == "mps"
+        )
         if is_mps and learner.training_step % self.interval == 0:
             torch.mps.empty_cache()

@@ -2,7 +2,8 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
+from torch import Tensor
 from modules.world_models.inference_output import InferenceOutput
 from utils.telemetry import append_metric
 
@@ -77,7 +78,13 @@ class LossModule(ABC):
 
 
 class StandardDQNLoss(LossModule):
-    def __init__(self, config, device, action_selector: Optional[object] = None, optimizer_name: str = "default"):
+    def __init__(
+        self,
+        config,
+        device,
+        action_selector: Optional[object] = None,
+        optimizer_name: str = "default",
+    ):
         super().__init__(config, device, optimizer_name=optimizer_name)
         self.action_selector = action_selector
 
@@ -114,7 +121,13 @@ class StandardDQNLoss(LossModule):
 
 
 class C51Loss(LossModule):
-    def __init__(self, config, device, action_selector: Optional[object] = None, optimizer_name: str = "default"):
+    def __init__(
+        self,
+        config,
+        device,
+        action_selector: Optional[object] = None,
+        optimizer_name: str = "default",
+    ):
         super().__init__(config, device, optimizer_name=optimizer_name)
         self.action_selector = action_selector
         self.support = torch.linspace(
@@ -274,7 +287,7 @@ class ValueLoss(LossModule):
                 # Wait, 'latent_states' is the name in modular.py outputs.
                 # LossPipeline.run _extract_step_data uses 'latent_states' -> k if 'latent_states' has K+1.
                 # Actually, modular.py learner_inference returns 'latent_states'.
-                
+
                 # Check for actions root
                 actions = targets.get("actions")
                 if actions is not None:
@@ -718,7 +731,11 @@ class SigmaLoss(LossModule):
             "chance_entropy",
             entropy.mean().item() if entropy.numel() > 0 else 0.0,
         )
-        valid_codes = target_codes_k[mask] if mask.shape == target_codes_k.shape else target_codes_k
+        valid_codes = (
+            target_codes_k[mask]
+            if mask.shape == target_codes_k.shape
+            else target_codes_k
+        )
         append_metric(metrics, "num_codes", int(torch.unique(valid_codes).numel()))
 
         return sigma_loss
@@ -894,7 +911,9 @@ class PPOValueLoss(LossModule):
 
 
 class ImitationLoss(LossModule):
-    def __init__(self, config, device, num_actions: int, optimizer_name: str = "default"):
+    def __init__(
+        self, config, device, num_actions: int, optimizer_name: str = "default"
+    ):
         super().__init__(config, device, optimizer_name=optimizer_name)
         self.num_actions = num_actions
         self.loss_function = getattr(
@@ -1019,7 +1038,7 @@ class LossPipeline:
                 if torch.is_tensor(val):
                     B = val.shape[0]
                     break
-        
+
         if B == 0:
             # Fallback (should not happen if inputs are valid)
             B = config.minibatch_size
@@ -1030,7 +1049,10 @@ class LossPipeline:
         if gradient_scales is None:
             gradient_scales = torch.ones((1, 1), device=device)
 
-        total_loss_dict = {module.optimizer_name: torch.tensor(0.0, device=device) for module in self.modules}
+        total_loss_dict = {
+            module.optimizer_name: torch.tensor(0.0, device=device)
+            for module in self.modules
+        }
         loss_dict = {module.name: 0.0 for module in self.modules}
         priorities = torch.zeros(B, device=device)
 
@@ -1090,7 +1112,7 @@ class LossPipeline:
 
             # --- 3. Apply gradient scaling and PER weights ---
             scale_k = gradient_scales[:, k].item()
-            
+
             for opt_name, step_loss in step_losses.items():
                 scaled_loss_k = scale_gradient(step_loss, scale_k)
                 weighted_scaled_loss_k = scaled_loss_k * weights
@@ -1100,7 +1122,9 @@ class LossPipeline:
 
         # Average the total loss by batch size
         for opt_name in total_loss_dict:
-            total_loss_dict[opt_name] = total_loss_dict[opt_name] / config.minibatch_size
+            total_loss_dict[opt_name] = (
+                total_loss_dict[opt_name] / config.minibatch_size
+            )
 
         # Average accumulated losses for logging
         for key in loss_dict:
@@ -1110,7 +1134,11 @@ class LossPipeline:
         for key, value in context.items():
             if key == "full_targets" or key == "target_values_next":
                 continue
-            if isinstance(value, list) and len(value) > 0 and isinstance(value[0], (int, float)):
+            if (
+                isinstance(value, list)
+                and len(value) > 0
+                and isinstance(value[0], (int, float))
+            ):
                 loss_dict[key] = float(np.mean(value))
             elif isinstance(value, (int, float)):
                 loss_dict[key] = float(value)

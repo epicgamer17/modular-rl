@@ -2,8 +2,8 @@ import torch
 import pytest
 from unittest.mock import MagicMock
 from types import SimpleNamespace
-from agents.learners.base import UniversalLearner, StepResult
-from agents.learners.callbacks import EarlyStopIteration
+from agents.learner.base import UniversalLearner, StepResult
+from agents.learner.callbacks import EarlyStopIteration
 
 pytestmark = pytest.mark.unit
 

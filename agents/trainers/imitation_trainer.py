@@ -6,9 +6,9 @@ from typing import List, Optional
 import torch
 
 from agents.action_selectors.factory import SelectorFactory
-from agents.learners.base import UniversalLearner
-from agents.learners.batch_iterators import RepeatSampleIterator
-from agents.learners.callbacks import ResetNoiseCallback
+from agents.learner.base import UniversalLearner
+from agents.learner.batch_iterators import RepeatSampleIterator
+from agents.learner.callbacks import ResetNoiseCallback
 from agents.trainers.base_trainer import BaseTrainer
 from agents.workers.actors import get_actor_class
 from losses.losses import ImitationLoss, LossPipeline

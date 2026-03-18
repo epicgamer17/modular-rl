@@ -13,12 +13,13 @@ from losses.losses import (
     VQVAECommitmentLoss,
 )
 from modules.utils import create_optimizer, get_lr_scheduler
-from agents.learners.callbacks import ResetNoiseCallback
-from agents.learners.target_builders import (
+from agents.learner.callbacks import ResetNoiseCallback
+from agents.learner.target_builders import (
     TargetBuilderPipeline,
     TrajectoryGradientScaleBuilder,
     LatentConsistencyBuilder,
 )
+
 
 def build_muzero_loss_pipeline(config, agent_network, device):
     modules = [
@@ -40,8 +41,11 @@ def build_muzero_loss_pipeline(config, agent_network, device):
         )
     return LossPipeline(modules)
 
+
 @register_agent("muzero")
-def build_muzero(config: Any, agent_network: Any, device: torch.device) -> Dict[str, Any]:
+def build_muzero(
+    config: Any, agent_network: Any, device: torch.device
+) -> Dict[str, Any]:
     # 1. Losses
     loss_pipeline = build_muzero_loss_pipeline(config, agent_network, device)
 

@@ -1,4 +1,5 @@
 import pytest
+
 pytestmark = pytest.mark.unit
 
 import importlib
@@ -12,7 +13,7 @@ def test_trainer_import_smoke(monkeypatch):
 
     modules = [
         "agents.executors.factory",
-        "agents.learners.muzero_learner",
+        "agents.learner.muzero_learner",
         "agents.workers",
         "modules.agent_nets.modular",
         "stats.stats",

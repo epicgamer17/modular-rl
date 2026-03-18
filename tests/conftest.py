@@ -9,7 +9,7 @@ from configs.agents.rainbow_dqn import RainbowConfig
 from configs.agents.nfsp import NFSPDQNConfig
 from configs.agents.supervised import SupervisedConfig
 from configs.games.cartpole import CartPoleConfig
-from agents.learners.target_builders import BaseTargetBuilder
+from agents.learner.target_builders import BaseTargetBuilder
 
 
 # --- BASE DICTIONARIES ---

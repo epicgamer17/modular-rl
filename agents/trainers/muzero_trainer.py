@@ -2,8 +2,8 @@ import torch
 import time
 from typing import Optional, List, Dict, Any
 from agents.trainers.base_trainer import BaseTrainer
-from agents.learners.factory import build_universal_learner
-from agents.learners.batch_iterators import SingleBatchIterator
+from agents.learner.factory import build_universal_learner
+from agents.learner.batch_iterators import SingleBatchIterator
 from replay_buffers.buffer_factories import create_muzero_buffer
 from agents.action_selectors.selectors import CategoricalSelector
 from agents.action_selectors.decorators import TemperatureSelector
