@@ -4,6 +4,14 @@ from torch import nn, Tensor
 import torch.nn.functional as F
 from modules.utils import support_to_scalar, scalar_to_support
 from modules.distributions import Deterministic
+from losses.representations import (
+    BaseRepresentation,
+    ScalarRepresentation,
+    TwoHotRepresentation,
+    CategoricalRepresentation,
+    ClassificationRepresentation,
+    ExponentialBucketsRepresentation,
+)
 
 
 class OutputStrategy(nn.Module, ABC):
@@ -35,6 +43,12 @@ class OutputStrategy(nn.Module, ABC):
         """Used by Value/Reward Heads to get the actual scalar number."""
         pass  # pragma: no cover
 
+    @property
+    @abstractmethod
+    def representation(self) -> BaseRepresentation:
+        """Returns the corresponding BaseRepresentation for this strategy."""
+        pass  # pragma: no cover
+
     @abstractmethod
     def scalar_to_target(self, scalar: Tensor) -> Tensor:
         """Converts a ground-truth scalar to a target format (distribution/scalar)."""
@@ -50,6 +64,10 @@ class ScalarStrategy(OutputStrategy):
     @property
     def num_bins(self) -> int:
         return self._output_size
+
+    @property
+    def representation(self) -> BaseRepresentation:
+        return ScalarRepresentation()
 
     def compute_loss(self, predictions: Tensor, targets: Tensor) -> Tensor:
         return F.mse_loss(predictions, targets, reduction="none")
@@ -78,6 +96,10 @@ class Categorical(OutputStrategy):
     @property
     def num_bins(self) -> int:
         return self._num_classes
+
+    @property
+    def representation(self) -> BaseRepresentation:
+        return ClassificationRepresentation(self._num_classes)
 
     def compute_loss(self, predictions: Tensor, targets: Tensor) -> Tensor:
         # Targets are expected to be one-hot or indices?
@@ -123,6 +145,14 @@ class MuZeroSupport(OutputStrategy):
     def num_bins(self) -> int:
         return 2 * self.support_range + 1
 
+    @property
+    def representation(self) -> BaseRepresentation:
+        return TwoHotRepresentation(
+            vmin=float(-self.support_range),
+            vmax=float(self.support_range),
+            bins=2 * self.support_range + 1,
+        )
+
     def compute_loss(self, predictions: Tensor, targets: Tensor) -> Tensor:
         # MuZero uses cross entropy between projected support and logits
         return F.cross_entropy(predictions, targets, reduction="none")
@@ -154,6 +184,12 @@ class C51Support(OutputStrategy):
     @property
     def num_bins(self) -> int:
         return self._num_atoms
+
+    @property
+    def representation(self) -> BaseRepresentation:
+        return CategoricalRepresentation(
+            vmin=self.v_min, vmax=self.v_max, bins=self._num_atoms
+        )
 
     def compute_loss(self, predictions: Tensor, targets: Tensor) -> Tensor:
         # C51 typically uses KL Divergence, but CrossEntropy is mathematically equivalent

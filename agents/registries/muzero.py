@@ -22,20 +22,49 @@ from agents.learner.target_builders import (
 
 
 def build_muzero_loss_pipeline(config, agent_network, device):
+    world_model = agent_network.components["world_model"]
     modules = [
-        ValueLoss(config, device),
-        PolicyLoss(config, device),
-        RewardLoss(config, device),
+        ValueLoss(
+            config,
+            device,
+            representation=agent_network.components["value_head"].strategy.representation,
+        ),
+        PolicyLoss(
+            config,
+            device,
+            representation=agent_network.components["policy_head"].strategy.representation,
+        ),
+        RewardLoss(
+            config,
+            device,
+            representation=world_model.reward_head.strategy.representation,
+        ),
     ]
     if getattr(config.game, "num_players", 1) > 1:
-        modules.append(ToPlayLoss(config, device))
+        modules.append(
+            ToPlayLoss(
+                config,
+                device,
+                representation=world_model.to_play_head.strategy.representation,
+            )
+        )
     if getattr(config, "consistency_loss_factor", 0) > 0:
         modules.append(ConsistencyLoss(config, device, agent_network))
     if getattr(config, "stochastic", False):
         modules.extend(
             [
-                ChanceQLoss(config, device),
-                SigmaLoss(config, device),
+                ChanceQLoss(
+                    config,
+                    device,
+                    representation=agent_network.components[
+                        "afterstate_value_head"
+                    ].strategy.representation,
+                ),
+                SigmaLoss(
+                    config,
+                    device,
+                    representation=world_model.sigma_head.strategy.representation,
+                ),
                 VQVAECommitmentLoss(config, device),
             ]
         )

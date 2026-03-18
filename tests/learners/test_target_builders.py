@@ -6,7 +6,6 @@ import numpy as np
 
 from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
-    TDCategoricalProjectionBuilder,
     LatentConsistencyBuilder,
     TrajectoryGradientScaleBuilder,
     BaseTargetBuilder,
@@ -72,59 +71,6 @@ def test_dqn_target_builder_standard(rainbow_config):
     assert torch.allclose(targets["q_values"], expected_q)
     assert "actions" in targets
 
-
-def test_dqn_target_builder_c51(rainbow_config):
-    """Test C51 distributional Bellman target calculation."""
-    torch.manual_seed(42)
-    device = torch.device("cpu")
-    rainbow_config.atom_size = 3
-    rainbow_config.v_min = 0.0
-    rainbow_config.v_max = 2.0
-    rainbow_config.discount_factor = 1.0
-    rainbow_config.n_step = 1
-
-    builder = TDCategoricalProjectionBuilder(
-        target_network=MagicMock(),
-        v_min=rainbow_config.v_min,
-        v_max=rainbow_config.v_max,
-        atom_size=rainbow_config.atom_size,
-        gamma=rainbow_config.discount_factor,
-        n_step=rainbow_config.n_step,
-        bootstrap_on_truncated=getattr(rainbow_config, "bootstrap_on_truncated", False),
-        device=device,
-    )
-
-    # support is [0.0, 1.0, 2.0]
-    batch = {
-        "next_observations": torch.randn((1, 4)),
-        "rewards": torch.tensor([0.5]),
-        "dones": torch.tensor([False]),
-        "actions": torch.tensor([0]),
-    }
-
-    # Online next q logits: forces max action index 0
-    network = MagicMock()
-    network.learner_inference.return_value = {
-        "q_logits": torch.tensor([[[10.0, 0.0, 0.0]]])
-    }
-    # target next distribution: all mass at support index 1 (value=1.0)
-    builder.target_network.learner_inference.return_value = {
-        "q_logits": torch.tensor(
-            [[[0.0, 10.0, 0.0], [0.0, 0.0, 0.0]]]
-        )  # [B=1, T=1, Actions, Atoms]
-    }
-
-    predictions = {
-        "q_logits": torch.randn((1, 2, 3)),
-    }
-
-    targets = builder.build_targets(batch, predictions, network)
-
-    assert isinstance(targets, dict)
-    # Tz = 0.5 + 1.0 * [0.0, 1.0, 2.0] = [0.5, 1.5, 2.5] -> clamp [0.5, 1.5, 2.0]
-    # b = 1.5, l = 1, u = 2, dist_l = 0.5, dist_u = 0.5
-    expected_probs = torch.tensor([[0.0, 0.5, 0.5]])
-    assert torch.allclose(targets["q_logits"], expected_probs, atol=1e-3)
 
 
 def test_dqn_target_builder_truncated(rainbow_config):

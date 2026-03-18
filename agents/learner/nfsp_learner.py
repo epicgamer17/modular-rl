@@ -18,7 +18,6 @@ from agents.learner.callbacks import (
 )
 from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
-    TDCategoricalProjectionBuilder,
 )
 from losses.losses import C51Loss, ImitationLoss, LossPipeline, StandardDQNLoss
 from modules.utils import get_lr_scheduler
@@ -102,28 +101,12 @@ class NFSPLearner:
             raise ValueError(f"Unsupported optimizer: {rl_config.optimizer}")
 
         rl_scheduler = get_lr_scheduler(rl_optimizer, rl_config)
-        if rl_config.atom_size > 1:
-            rl_target_builder = TDCategoricalProjectionBuilder(
-                target_network=best_response_target_agent_network,
-                v_min=rl_config.v_min,
-                v_max=rl_config.v_max,
-                atom_size=rl_config.atom_size,
-                gamma=rl_config.discount_factor,
-                n_step=rl_config.n_step,
-                bootstrap_on_truncated=getattr(
-                    rl_config, "bootstrap_on_truncated", False
-                ),
-                device=device,
-            )
-        else:
-            rl_target_builder = TemporalDifferenceBuilder(
-                target_network=best_response_target_agent_network,
-                gamma=rl_config.discount_factor,
-                n_step=rl_config.n_step,
-                bootstrap_on_truncated=getattr(
-                    rl_config, "bootstrap_on_truncated", False
-                ),
-            )
+        rl_target_builder = TemporalDifferenceBuilder(
+            target_network=best_response_target_agent_network,
+            gamma=rl_config.discount_factor,
+            n_step=rl_config.n_step,
+            bootstrap_on_truncated=getattr(rl_config, "bootstrap_on_truncated", False),
+        )
 
         from agents.action_selectors.selectors import ArgmaxSelector
 
@@ -137,16 +120,10 @@ class NFSPLearner:
         )
         rl_loss_pipeline = LossPipeline([td_loss_module])
 
-        if rl_config.atom_size > 1:
-            rl_loss_pipeline.validate_dependencies(
-                network_output_keys={"q_logits"},
-                target_keys={"q_logits", "actions"},
-            )
-        else:
-            rl_loss_pipeline.validate_dependencies(
-                network_output_keys={"q_values"},
-                target_keys={"q_values", "actions"},
-            )
+        rl_loss_pipeline.validate_dependencies(
+            network_output_keys={"q_logits", "q_values"},
+            target_keys={"q_values", "actions"},
+        )
 
         self.rl_learner = UniversalLearner(
             config=rl_config,

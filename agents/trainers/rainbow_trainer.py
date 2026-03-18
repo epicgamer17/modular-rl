@@ -13,7 +13,6 @@ from stats.stats import StatTracker, PlotType
 from utils.schedule import create_schedule
 from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
-    TDCategoricalProjectionBuilder,
 )
 from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
@@ -132,33 +131,16 @@ class RainbowTrainer(BaseTrainer):
         self.loss_pipeline = LossPipeline([self.td_loss_module])
 
         # 6. Initialize Target Builder
-        if config.atom_size > 1:
-            self.target_builder = TDCategoricalProjectionBuilder(
-                target_network=self.target_agent_network,
-                v_min=config.v_min,
-                v_max=config.v_max,
-                atom_size=config.atom_size,
-                gamma=config.discount_factor,
-                n_step=config.n_step,
-                bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
-            )
-        else:
-            self.target_builder = TemporalDifferenceBuilder(
-                target_network=self.target_agent_network,
-                gamma=config.discount_factor,
-                n_step=config.n_step,
-                bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
-            )
-        if config.atom_size > 1:
-            self.loss_pipeline.validate_dependencies(
-                network_output_keys={"q_logits"},
-                target_keys={"q_logits", "actions"},
-            )
-        else:
-            self.loss_pipeline.validate_dependencies(
-                network_output_keys={"q_values"},
-                target_keys={"q_values", "actions"},
-            )
+        self.target_builder = TemporalDifferenceBuilder(
+            target_network=self.target_agent_network,
+            gamma=config.discount_factor,
+            n_step=config.n_step,
+            bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
+        )
+        self.loss_pipeline.validate_dependencies(
+            network_output_keys={"q_logits", "q_values"},
+            target_keys={"q_values", "actions"},
+        )
         self.buffer = create_dqn_buffer(
             observation_dimensions=self.obs_dim,
             max_size=config.replay_buffer_size,

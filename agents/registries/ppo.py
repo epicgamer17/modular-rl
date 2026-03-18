@@ -17,6 +17,9 @@ def build_ppo_loss_pipeline(config, agent_network, device):
                 policy_strategy=getattr(
                     agent_network.components["policy_head"], "strategy", None
                 ),
+                representation=agent_network.components[
+                    "policy_head"
+                ].strategy.representation,
                 optimizer_name="policy",
             ),
             PPOValueLoss(
@@ -29,6 +32,9 @@ def build_ppo_loss_pipeline(config, agent_network, device):
                 value_strategy=getattr(
                     agent_network.components["value_head"], "strategy", None
                 ),
+                representation=agent_network.components[
+                    "value_head"
+                ].strategy.representation,
                 optimizer_name="value",
             ),
         ]

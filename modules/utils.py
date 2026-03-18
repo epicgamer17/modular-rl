@@ -73,47 +73,37 @@ def get_lr_scheduler(optimizer: optim.Optimizer, config: "Config"):
     return ScheduleLRScheduler(optimizer, schedule)
 
 
-def create_optimizer(
-    params: Iterable[torch.nn.Parameter],
-    config: "Config",
-    sub_config_parent: Optional["Config"] = None,
-) -> optim.Optimizer:
-    """
-    Creates an optimizer based on the config.
+from torch.optim import Adam, SGD
 
-    Args:
-        params: The parameters to optimize.
-        config: The main configuration object.
-        sub_config_parent: Optional sub-configuration object (e.g., actor/critic config).
 
-    Returns:
-        A torch optimizer instance.
-    """
-    from torch.optim.adam import Adam
-    from torch.optim.sgd import SGD
-
-    # Use sub_config_parent if provided, otherwise default to main config
+def create_optimizer(params, config, sub_config_parent=None):
     parent = sub_config_parent if sub_config_parent is not None else config
 
-    opt_cls = parent.optimizer
-    lr = parent.learning_rate
+    # Safely get optimizer class and LR, falling back to main config
+    opt_cls = getattr(parent, "optimizer", getattr(config, "optimizer", Adam))
+    lr = getattr(parent, "learning_rate", getattr(config, "learning_rate", 1e-3))
 
     if opt_cls == Adam:
         return Adam(
             params=params,
             lr=lr,
-            eps=parent.adam_epsilon,
-            weight_decay=parent.weight_decay,
+            # Fall back to root config if parent lacks the attribute
+            eps=getattr(parent, "adam_epsilon", getattr(config, "adam_epsilon", 1e-8)),
+            weight_decay=getattr(
+                parent, "weight_decay", getattr(config, "weight_decay", 0.0)
+            ),
         )
     elif opt_cls == SGD:
         return SGD(
             params=params,
             lr=lr,
-            momentum=parent.momentum,
-            weight_decay=parent.weight_decay,
+            momentum=getattr(parent, "momentum", getattr(config, "momentum", 0.0)),
+            weight_decay=getattr(
+                parent, "weight_decay", getattr(config, "weight_decay", 0.0)
+            ),
         )
     else:
-        return opt_cls(params, lr=lr)
+        raise ValueError(f"Unsupported optimizer class: {opt_cls}")
 
 
 def support_to_scalar(

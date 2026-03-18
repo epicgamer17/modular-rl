@@ -1066,9 +1066,10 @@ class NStepUnrollProcessor(OutputProcessor):
         target_actions = torch.zeros(
             (batch_size, self.unroll_steps), dtype=torch.int64, device=device
         )
+        # REMOVED ONE-HOT: Output as raw integer actions/states
         target_to_plays = torch.zeros(
-            (batch_size, self.unroll_steps + 1, self.num_players),
-            dtype=torch.float32,
+            (batch_size, self.unroll_steps + 1),
+            dtype=torch.int64,
             device=device,
         )
         target_chances = torch.zeros(
@@ -1084,12 +1085,12 @@ class NStepUnrollProcessor(OutputProcessor):
             target_policies[is_consistent, u] = raw_policies[is_consistent, u]
             target_policies[~is_consistent, u] = 1.0 / self.num_actions
 
+            # Pass the clean raw integer value directly
             tp_indices = torch.clamp(raw_to_plays[:, u].long(), 0, self.num_players - 1)
-            target_to_plays[range(batch_size), u, tp_indices] = 1.0
+            target_to_plays[:, u] = tp_indices
             target_to_plays[~is_consistent, u] = 0
 
             target_dones[is_consistent, u] = raw_dones[is_consistent, u]
-            # If not consistent (different game or padding), treat as done
             target_dones[~is_consistent, u] = True
 
             target_chances[is_consistent, u, 0] = (

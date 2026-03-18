@@ -6,7 +6,18 @@ from modules.utils import create_optimizer, get_lr_scheduler
 
 
 def build_supervised_loss_pipeline(config, agent_network, device):
-    return LossPipeline([ImitationLoss(config, device, agent_network.num_actions)])
+    return LossPipeline(
+        [
+            ImitationLoss(
+                config,
+                device,
+                agent_network.num_actions,
+                representation=agent_network.components[
+                    "policy_head"
+                ].strategy.representation,
+            )
+        ]
+    )
 
 
 @register_agent("supervised")
