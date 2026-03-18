@@ -27,12 +27,12 @@ class BaseRepresentation(ABC):
         """Converts mathematically pure targets into the target distribution expected by the loss metric."""
         pass
 
-    def format_target(self, targets: Dict[str, Tensor]) -> Tensor:
+    def format_target(self, targets: Dict[str, Tensor], target_key: str = "values") -> Tensor:
         """
         Converts raw target ingredients from the TargetBuilder into the final target representation.
         Default implementation handles simple scalar values.
         """
-        return self.to_representation(targets["values"])
+        return self.to_representation(targets[target_key])
 
 
 class ScalarRepresentation(BaseRepresentation):
@@ -92,11 +92,12 @@ class DiscreteValuedRepresentation(BaseRepresentation):
         p_u = b - l.float()
         p_l = 1.0 - p_u
 
-        batch_shape = x.shape
-        flat_l = l.view(-1, 1).clamp(0, self.bins - 1)
-        flat_u = u.view(-1, 1).clamp(0, self.bins - 1)
-        flat_p_l = p_l.view(-1, 1)
-        flat_p_u = p_u.view(-1, 1)
+        # Vectorized scatter works on flattened dimensions
+        initial_shape = x.shape
+        flat_l = l.reshape(-1, 1).clamp(0, self.bins - 1)
+        flat_u = u.reshape(-1, 1).clamp(0, self.bins - 1)
+        flat_p_l = p_l.reshape(-1, 1)
+        flat_p_u = p_u.reshape(-1, 1)
 
         num_elements = flat_l.shape[0]
         projected = torch.zeros((num_elements, self.bins), device=device, dtype=dtype)
@@ -104,14 +105,14 @@ class DiscreteValuedRepresentation(BaseRepresentation):
         projected.scatter_add_(1, flat_l, flat_p_l)
         projected.scatter_add_(1, flat_u, flat_p_u)
 
-        return projected.view(*batch_shape, self.bins)
+        return projected.view(*initial_shape, self.bins)
 
-    def format_target(self, targets: Dict[str, Tensor]) -> Tensor:
+    def format_target(self, targets: Dict[str, Tensor], target_key: str = "values") -> Tensor:
         """Handle ingredient-based targets or fallback to scalar."""
-        if "values" in targets:
-            return self.to_representation(targets["values"])
+        if target_key in targets:
+            return self.to_representation(targets[target_key])
         raise ValueError(
-            f"{self.__class__.__name__} received a targets dict without 'values' or algorithm-specific ingredients."
+            f"{self.__class__.__name__} received a targets dict without '{target_key}' ingredient."
         )
 
 
@@ -124,63 +125,64 @@ class CategoricalRepresentation(DiscreteValuedRepresentation):
     def __init__(self, vmin: float, vmax: float, bins: int):
         super().__init__(vmin, vmax, bins)
 
-    def format_target(self, targets: Dict[str, Tensor]) -> Tensor:
+    def format_target(self, targets: Dict[str, Tensor], target_key: str = "values") -> Tensor:
         """
         The Baker: Implements the C51 Bellman Projection.
         Projects shifted atom probabilities back onto the fixed support grid.
+        Supports both (B,) and (B, T) inputs.
         """
         if "next_q_logits" not in targets:
-            raise ValueError(
-                "CategoricalRepresentation requires 'next_q_logits' in targets."
-            )
+            # Fallback to simple projection if Bellman ingredients are missing
+            return super().format_target(targets, target_key)
+
         # 1. Extraction from Ingredients
-        next_q_logits = targets["next_q_logits"]  # [B, Actions, Atoms]
-        next_actions = targets["next_actions"].long()  # [B]
-        rewards = targets["rewards"]  # [B]
-        dones = targets["dones"]  # [B] (Terminal mask)
+        next_q_logits = targets["next_q_logits"]  # [B, Actions, Atoms] or [B, T, Actions, Atoms]
+        next_actions = targets["next_actions"].long()  # [B] or [B, T]
+        rewards = targets["rewards"]  # [B] or [B, T]
+        dones = targets["dones"]  # [B] or [B, T]
         gamma = targets.get("gamma", 0.99)
         n_step = targets.get("n_step", 1)
 
         device = rewards.device
-        batch_size = rewards.shape[0]
         discount = gamma**n_step
 
-        # 2. Extract chosen next distribution: [B, Atoms]
-        chosen_logits = next_q_logits[
-            torch.arange(batch_size, device=device), next_actions
-        ]
+        # Preserve original shape to restore at the end
+        original_shape = rewards.shape
+        batch_size = rewards.numel()
+
+        # Flatten to [N, Actions, Atoms], [N], etc.
+        next_q_logits = next_q_logits.reshape(-1, next_q_logits.shape[-2], next_q_logits.shape[-1])
+        next_actions = next_actions.reshape(-1)
+        rewards = rewards.reshape(-1)
+        dones = dones.reshape(-1)
+
+        # 2. Extract chosen next distribution: [N, Atoms]
+        chosen_logits = next_q_logits[torch.arange(batch_size, device=device), next_actions]
         next_probs = torch.softmax(chosen_logits, dim=-1)
 
         # 3. Bellman Projection
         support = self.support.to(device)
 
         # Shifted support: Tz = r + discount * (1 - done) * z
-        Tz = rewards.view(-1, 1) + discount * (1.0 - dones).view(-1, 1) * support.view(
-            1, -1
-        )
-        # Clamp Tz to [vmin, vmax] so b is strictly in [0, bins - 1]
+        Tz = rewards.view(-1, 1) + discount * (1.0 - dones).view(-1, 1) * support.view(1, -1)
         Tz = Tz.clamp(self.vmin, self.vmax)
 
-        # True mathematical bounds
         b = (Tz - self.vmin) / self.delta_z
         l = b.floor().long()
         u = l + 1
 
-        # Conserve mass: (u - b) + (b - l) always equals 1
         p_l = next_probs * (u.float() - b)
         p_u = next_probs * (b - l.float())
 
-        # Safe indexing for scattering
-        # (if b = bins-1, u=bins, so we clamp it back to bins-1 for the array index)
         l_idx = l.clamp(0, self.bins - 1)
         u_idx = u.clamp(0, self.bins - 1)
 
-        # Project probabilities
         projected_dist = torch.zeros((batch_size, self.bins), device=device)
         projected_dist.scatter_add_(1, l_idx, p_l)
         projected_dist.scatter_add_(1, u_idx, p_u)
 
-        return projected_dist
+        return projected_dist.view(*original_shape, self.bins)
+
 
 
 class ExponentialBucketsRepresentation(BaseRepresentation):
