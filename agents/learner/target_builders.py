@@ -92,7 +92,13 @@ class TemporalDifferenceBuilder(BaseTargetBuilder):
 
         target_q = (rewards + discount * (~terminal_mask) * max_next_q).detach()
         return {
-            "q_values": target_q,
+            "values": target_q,
+            "rewards": rewards,
+            "dones": terminal_mask.float(),
+            "next_q_logits": target_out["q_logits"],
+            "next_actions": next_actions,
+            "gamma": self.gamma,
+            "n_step": self.n_step,
             "actions": batch["actions"],
         }
 

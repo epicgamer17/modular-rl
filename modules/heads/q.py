@@ -194,11 +194,6 @@ class DuelingQHead(BaseHead):
         # Aggregation: Q = V + (A - mean(A))
         a_mean = a.mean(dim=1, keepdim=True)
         q = v + a - a_mean
-
-        # Output is (B, actions, atoms)
-        # If atoms=1, we might want (B, actions) but for consistency let's keep dimensions until final squeeze?
-        # RainbowNetwork currently expects:
-        # if atom_size == 1: squeeze(-1)
-        # elze: softmax
-
+        if self.strategy.num_bins == 1:
+            q = q.squeeze(-1)
         return q

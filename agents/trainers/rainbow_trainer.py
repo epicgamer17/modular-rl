@@ -19,6 +19,7 @@ from torch.optim.adam import Adam
 from losses.losses import C51Loss, StandardDQNLoss
 from replay_buffers.buffer_factories import create_dqn_buffer
 from agents.learner.batch_iterators import RepeatSampleIterator
+from agents.learner.factory import build_universal_learner
 
 
 class RainbowTrainer(BaseTrainer):
@@ -139,7 +140,16 @@ class RainbowTrainer(BaseTrainer):
         )
         self.loss_pipeline.validate_dependencies(
             network_output_keys={"q_logits", "q_values"},
-            target_keys={"q_values", "actions"},
+            target_keys={
+                "values",
+                "rewards",
+                "dones",
+                "next_q_logits",
+                "next_actions",
+                "gamma",
+                "n_step",
+                "actions",
+            },
         )
         self.buffer = create_dqn_buffer(
             observation_dimensions=self.obs_dim,
@@ -154,35 +164,16 @@ class RainbowTrainer(BaseTrainer):
         per_beta_schedule_config = getattr(config, "per_beta_schedule", None)
         self.schedules["per_beta"] = create_schedule(per_beta_schedule_config)
         self.schedules["epsilon"] = create_schedule(config.epsilon_schedule)
-
-        # 4. Initialize Learner
-        self.learner = UniversalLearner(
+        # 4. Initialize Learner (using factory)
+        self.learner = build_universal_learner(
             config=config,
             agent_network=self.agent_network,
             device=device,
-            num_actions=self.num_actions,
-            observation_dimensions=self.obs_dim,
-            observation_dtype=self.obs_dtype,
-            target_builder=self.target_builder,
-            loss_pipeline=self.loss_pipeline,
-            optimizer=self.optimizer,
-            lr_scheduler=self.lr_scheduler,
-            clipnorm=config.clipnorm,
-            callbacks=[
-                TargetNetworkSyncCallback(
-                    target_network=self.target_agent_network,
-                    sync_interval=config.transfer_interval,
-                    soft_update=getattr(config, "soft_update", False),
-                    ema_beta=getattr(config, "ema_beta", 0.99),
-                ),
-                ResetNoiseCallback(),
-                PriorityUpdaterCallback(
-                    priority_update_fn=self.buffer.update_priorities,
-                    set_beta_fn=self.buffer.set_beta,
-                    per_beta_schedule=self.schedules.get("per_beta"),
-                ),
-                EpsilonGreedySchedulerCallback(self.schedules["epsilon"]),
-            ],
+            target_agent_network=self.target_agent_network,
+            priority_update_fn=self.buffer.update_priorities,
+            set_beta_fn=self.buffer.set_beta,
+            per_beta_schedule=self.schedules["per_beta"],
+            epsilon_schedule=self.schedules["epsilon"],
         )
 
         # 5. Initialize Executor

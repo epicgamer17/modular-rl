@@ -1,5 +1,5 @@
 import torch
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 from agents.registries.base import register_agent
 from losses.losses import LossPipeline, StandardDQNLoss, C51Loss
 from modules.utils import create_optimizer, get_lr_scheduler
@@ -29,7 +29,10 @@ def build_rainbow_loss_pipeline(config, agent_network, device):
 
 @register_agent("rainbow")
 def build_rainbow(
-    config: Any, agent_network: Any, device: torch.device
+    config: Any,
+    agent_network: Any,
+    device: torch.device,
+    target_agent_network: Optional[torch.nn.Module] = None,
 ) -> Dict[str, Any]:
     # 1. Losses
     loss_pipeline = build_rainbow_loss_pipeline(config, agent_network, device)
@@ -65,15 +68,34 @@ def build_rainbow(
     lr_schedulers["default"] = get_lr_scheduler(opt, config)
 
     # 3. Callbacks
+    from agents.learner.callbacks import TargetNetworkSyncCallback, ResetNoiseCallback
+
     callbacks = []
     if getattr(config, "use_noisy_net", False):
-        from agents.learner.callbacks import ResetNoiseCallback
         callbacks.append(ResetNoiseCallback())
+
+    if target_agent_network is not None:
+        sync_interval = getattr(
+            config,
+            "transfer_interval",
+            getattr(config, "target_network_update_freq", 100),
+        )
+        callbacks.append(
+            TargetNetworkSyncCallback(
+                target_network=target_agent_network,
+                sync_interval=sync_interval,
+                soft_update=getattr(config, "soft_update", False),
+                ema_beta=getattr(config, "ema_beta", 0.99),
+            )
+        )
 
     # 4. Target Builder
     # factory.py logic for target_builder
+    assert (
+        target_agent_network is not None
+    ), "Rainbow requires a target_agent_network for TD target building."
     target_builder = TemporalDifferenceBuilder(
-        target_network=agent_network.target_network,
+        target_network=target_agent_network,
         gamma=config.discount_factor,
         n_step=config.n_step,
         bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),

@@ -89,6 +89,7 @@ def build_universal_learner(
     config: Any,
     agent_network: ModularAgentNetwork,
     device: torch.device,
+    target_agent_network: Optional[nn.Module] = None,
     priority_update_fn: Optional[Callable] = None,
     set_beta_fn: Optional[Callable] = None,
     per_beta_schedule: Optional[Any] = None,
@@ -104,6 +105,7 @@ def build_universal_learner(
         config: The agent configuration object.
         agent_network: The modular agent network instance.
         device: Torch device (cpu/cuda/mps).
+        target_agent_network: Optional target network for TD-based algorithms.
         priority_update_fn: Optional callable to update PER priorities.
         weight_broadcast_fn: Optional callable to broadcast weights to workers.
 
@@ -168,7 +170,9 @@ def build_universal_learner(
     elif agent_type == "rainbow":
         from agents.registries.rainbow import build_rainbow
 
-        rainbow_components = build_rainbow(config, agent_network, device)
+        rainbow_components = build_rainbow(
+            config, agent_network, device, target_agent_network=target_agent_network
+        )
         optimizers = rainbow_components["optimizers"]
         lr_schedulers = rainbow_components["lr_schedulers"]
         callbacks.extend(rainbow_components.get("callbacks", []))
@@ -186,34 +190,8 @@ def build_universal_learner(
         )
 
     # 2. Setup generic algorithmic callbacks
-    # Target Network Sync
-    if (
-        hasattr(agent_network, "target_network")
-        and agent_network.target_network is not None
-    ):
-        sync_interval = getattr(
-            config,
-            "transfer_interval",
-            getattr(config, "target_network_update_freq", 100),
-        )
-        callbacks.append(
-            TargetNetworkSyncCallback(
-                target_network=agent_network.target_network,
-                sync_interval=sync_interval,
-                soft_update=getattr(config, "soft_update", False),
-                ema_beta=getattr(config, "ema_beta", 0.99),
-            )
-        )
-
-    # Priority Updates (PER)
-    if priority_update_fn is not None:
-        callbacks.append(
-            PriorityUpdaterCallback(
-                priority_update_fn=priority_update_fn,
-                set_beta_fn=set_beta_fn,
-                per_beta_schedule=per_beta_schedule,
-            )
-        )
+    # Priority Updates (PER) are already handled above if priority_update_fn was provided.
+    # Target Network Sync is handled by specific registries (like Rainbow) that require it.
 
     # Epsilon Scheduling
     if epsilon_schedule is not None:

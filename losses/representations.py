@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Dict
 import torch
 from torch import Tensor
 import torch.nn.functional as F
@@ -26,6 +26,13 @@ class BaseRepresentation(ABC):
     def to_representation(self, scalar_targets: Tensor) -> Tensor:
         """Converts mathematically pure targets into the target distribution expected by the loss metric."""
         pass
+
+    def format_target(self, targets: Dict[str, Tensor]) -> Tensor:
+        """
+        Converts raw target ingredients from the TargetBuilder into the final target representation.
+        Default implementation handles simple scalar values.
+        """
+        return self.to_representation(targets["values"])
 
 
 class ScalarRepresentation(BaseRepresentation):
@@ -74,6 +81,9 @@ class DiscreteValuedRepresentation(BaseRepresentation):
         device = scalar_targets.device
         dtype = scalar_targets.dtype
 
+        # Ensure support is on the correct device for calculations
+        self.support = self.support.to(device)
+
         x = scalar_targets.clamp(self.vmin, self.vmax)
         b = (x - self.vmin) / self.delta_z
         l = b.floor().long()
@@ -83,8 +93,8 @@ class DiscreteValuedRepresentation(BaseRepresentation):
         p_l = 1.0 - p_u
 
         batch_shape = x.shape
-        flat_l = l.view(-1, 1)
-        flat_u = u.view(-1, 1)
+        flat_l = l.view(-1, 1).clamp(0, self.bins - 1)
+        flat_u = u.view(-1, 1).clamp(0, self.bins - 1)
         flat_p_l = p_l.view(-1, 1)
         flat_p_u = p_u.view(-1, 1)
 
@@ -96,6 +106,14 @@ class DiscreteValuedRepresentation(BaseRepresentation):
 
         return projected.view(*batch_shape, self.bins)
 
+    def format_target(self, targets: Dict[str, Tensor]) -> Tensor:
+        """Handle ingredient-based targets or fallback to scalar."""
+        if "values" in targets:
+            return self.to_representation(targets["values"])
+        raise ValueError(
+            f"{self.__class__.__name__} received a targets dict without 'values' or algorithm-specific ingredients."
+        )
+
 
 class TwoHotRepresentation(DiscreteValuedRepresentation):
     def __init__(self, vmin: float, vmax: float, bins: int):
@@ -105,6 +123,70 @@ class TwoHotRepresentation(DiscreteValuedRepresentation):
 class CategoricalRepresentation(DiscreteValuedRepresentation):
     def __init__(self, vmin: float, vmax: float, bins: int):
         super().__init__(vmin, vmax, bins)
+
+    def format_target(self, targets: Dict[str, Tensor]) -> Tensor:
+        """
+        The Baker: Implements the C51 Bellman Projection.
+        Projects shifted atom probabilities back onto the fixed support grid.
+        """
+        if "next_q_logits" not in targets:
+            return super().format_target(targets)
+
+        # 1. Extraction from Ingredients
+        next_q_logits = targets["next_q_logits"]  # [B, Actions, Atoms]
+        next_actions = targets["next_actions"].long()  # [B]
+        rewards = targets["rewards"]  # [B]
+        dones = targets["dones"]  # [B] (Terminal mask)
+        gamma = targets.get("gamma", 0.99)
+        n_step = targets.get("n_step", 1)
+
+        device = rewards.device
+        batch_size = rewards.shape[0]
+        discount = gamma**n_step
+
+        # 2. Extract chosen next distribution: [B, Atoms]
+        # next_q_logits: [B, Actions, Atoms] -> [B, Atoms]
+        chosen_logits = next_q_logits[
+            torch.arange(batch_size, device=device), next_actions
+        ]
+        next_probs = torch.softmax(chosen_logits, dim=-1)
+
+        # 3. Bellman Projection: mapping shifted atoms back to support grid
+        # self.support is [Atoms]
+        support = self.support.to(device)
+
+        # Shifted support: Tz = r + discount * (1 - done) * z
+        # Shape: [B, Atoms]
+        Tz = rewards.view(-1, 1) + discount * (1.0 - dones).view(-1, 1) * support.view(
+            1, -1
+        )
+        Tz = Tz.clamp(self.vmin, self.vmax)
+
+        # Map to bin indices
+        b = (Tz - self.vmin) / self.delta_z
+        l = b.floor().long().clamp(0, self.bins - 1)
+        u = b.ceil().long().clamp(0, self.bins - 1)
+
+        # Project probabilities onto indices l and u
+        projected_dist = torch.zeros((batch_size, self.bins), device=device)
+
+        # Linear interpolation weighting
+        # If l == u (b is an integer), (u - b) is 0. We add a small logic to ensure it gets 1.0.
+        # Standard C51 indexing:
+        # m_l = next_probs * (u - b)
+        # m_u = next_probs * (b - l)
+
+        p_l = next_probs * (u.float() - b)
+        p_u = next_probs * (b - l.float())
+
+        # When l == u, both p_l and p_u are 0. We should assign 1.0 to p_l.
+        is_integer = (l == u).float()
+        p_l += is_integer * next_probs
+
+        projected_dist.scatter_add_(1, l, p_l)
+        projected_dist.scatter_add_(1, u, p_u)
+
+        return projected_dist
 
 
 class ExponentialBucketsRepresentation(BaseRepresentation):

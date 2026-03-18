@@ -128,7 +128,7 @@ class StandardDQNLoss(LossModule):
 
     @property
     def required_targets(self) -> set[str]:
-        return {"q_values", "actions"}
+        return {"values", "actions"}
 
     def compute_loss(
         self, predictions: dict, targets: dict, context: dict, k: int = 0
@@ -139,7 +139,7 @@ class StandardDQNLoss(LossModule):
             torch.arange(batch_size, device=self.device), actions
         ]
 
-        targets_val = targets["q_values"]
+        targets_val = self.representation.format_target(targets)
         # Return elementwise loss (B,)
         return self.config.loss_function(selected_q, targets_val, reduction="none")
 
@@ -149,7 +149,7 @@ class StandardDQNLoss(LossModule):
 
         # Q-value of the chosen action
         pred_q = q_values[torch.arange(q_values.shape[0], device=self.device), actions]
-        target_q = targets["q_values"]
+        target_q = targets["values"]
 
         return torch.abs(target_q - pred_q).detach()
 
@@ -172,7 +172,7 @@ class C51Loss(LossModule):
 
     @property
     def required_targets(self) -> set[str]:
-        return {"q_values", "actions"}
+        return {"values", "actions"}
 
     def compute_loss(
         self, predictions: dict, targets: dict, context: dict, k: int = 0
@@ -182,8 +182,7 @@ class C51Loss(LossModule):
         batch_size = actions.shape[0]
 
         # Use representation to project purely mathematical scalar target -> distribution
-        target_q_values = targets["q_values"]
-        target_dist = self.representation.to_representation(target_q_values).detach()
+        target_dist = self.representation.format_target(targets).detach()
 
         chosen_logits = online_q_logits[
             torch.arange(batch_size, device=self.device), actions
@@ -193,12 +192,8 @@ class C51Loss(LossModule):
         return -(target_dist * log_probs).sum(dim=-1)
 
     def compute_priority(self, predictions, targets, context, k=0):
-        q_values = self.representation.to_scalar(predictions["q_logits"])
-        actions = targets["actions"].long()
-        pred_q = q_values[torch.arange(q_values.shape[0], device=self.device), actions]
-        target_q = targets["q_values"]
-
-        return torch.abs(target_q - pred_q).detach()
+        """Rainbow uses the cross-entropy (KL divergence) of the distributions for PER."""
+        return self.compute_loss(predictions, targets, context, k).detach()
 
 
 # ============================================================================
@@ -251,7 +246,7 @@ class ValueLoss(LossModule):
         target_values_k = targets["values"]
 
         # Use representation to project purely mathematical scalar target -> distribution/scaled-scalar
-        target_rep_k = self.representation.to_representation(target_values_k).detach()
+        target_rep_k = self.representation.format_target(targets).detach()
         predicted_values_k = values_k
 
         # For Regression (Scalar) heads, squeeze (B, 1) -> (B,) for matching standard loss shapes
@@ -410,7 +405,7 @@ class RewardLoss(LossModule):
         target_rewards_k = targets["rewards"]
 
         # Use representation to project mathematical scalar target -> distribution/scaled-scalar
-        target_rep_k = self.representation.to_representation(target_rewards_k).detach()
+        target_rep_k = self.representation.format_target(targets).detach()
         predicted_rewards_k = rewards_k
 
         # For Regression (Scalar) heads, squeeze (B, 1) -> (B,) for matching standard loss shapes
@@ -473,7 +468,7 @@ class ToPlayLoss(LossModule):
         target_to_plays_k = targets["to_plays"]
         
         # Use representation to project mathematical scalar target (player index) -> target distribution
-        target_rep_k = self.representation.to_representation(target_to_plays_k).detach()
+        target_rep_k = self.representation.format_target(targets).detach()
 
         # To-Play Loss: (B,)
         to_play_loss = (
