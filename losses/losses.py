@@ -1,26 +1,11 @@
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Tuple, Union, List
+from typing import Any, Dict, Optional, Tuple, Union
 from torch import Tensor
 from modules.world_models.inference_output import InferenceOutput
 from utils.telemetry import append_metric
-from losses.representations import (
-    BaseRepresentation,
-    get_representation,
-    ScalarRepresentation,
-    TwoHotRepresentation,
-    CategoricalRepresentation,
-    ExponentialBucketsRepresentation,
-    ClassificationRepresentation,
-)
-from losses.priority_computers import (
-    PriorityComputer,
-    SpecificLossPriority,
-    ErrorPriority,
-)
 
 
 class LossModule(ABC):
@@ -29,38 +14,11 @@ class LossModule(ABC):
     Works for both single-step (DQN, C51) and sequence (MuZero) losses.
     """
 
-    def __init__(
-        self,
-        config,
-        device,
-        representation: Optional[BaseRepresentation] = None,
-        optimizer_name: str = "default",
-    ):
+    def __init__(self, config, device, optimizer_name: str = "default"):
         self.config = config
         self.device = device
         self.optimizer_name = optimizer_name
         self.name = self.__class__.__name__
-        self.representation = representation or self._build_default_representation()
-
-    def _build_default_representation(self) -> BaseRepresentation:
-        """Fallback to build representation directly from config if not provided explicitly."""
-        support_range = getattr(self.config, "support_range", None)
-        vmin = getattr(self.config, "v_min", None)
-        vmax = getattr(self.config, "v_max", None)
-        bins = getattr(self.config, "atom_size", None)
-        mode = getattr(self.config, "representation_mode", "linear")
-        num_classes = getattr(self.config, "num_classes", None)
-
-        if vmin is not None and vmax is not None and bins is not None and bins > 1:
-            # Force categorical mode if this is a C51Loss
-            if self.__class__.__name__ == "C51Loss" and mode == "linear":
-                mode = "categorical"
-            return get_representation(vmin=vmin, vmax=vmax, bins=bins, mode=mode)
-        if support_range is not None:
-            return get_representation(support_range=support_range)
-        if num_classes is not None and num_classes > 1:
-            return ClassificationRepresentation(num_classes)
-        return ScalarRepresentation()
 
     @property
     @abstractmethod
@@ -100,6 +58,19 @@ class LossModule(ABC):
         """
         pass  # pragma: no cover
 
+    def compute_priority(
+        self,
+        predictions: dict,
+        targets: dict,
+        context: dict,
+        k: int = 0,
+    ) -> Optional[torch.Tensor]:
+        """
+        Calculates PER priorities.
+        Returns None if this specific loss module does not drive priorities.
+        """
+        return None  # pragma: no cover
+
 
 # ============================================================================
 # OLD DQN-STYLE LOSSES (Updated to work with unified interface)
@@ -111,11 +82,10 @@ class StandardDQNLoss(LossModule):
         self,
         config,
         device,
-        representation: Optional[BaseRepresentation] = None,
         action_selector: Optional[object] = None,
         optimizer_name: str = "default",
     ):
-        super().__init__(config, device, representation, optimizer_name=optimizer_name)
+        super().__init__(config, device, optimizer_name=optimizer_name)
         self.action_selector = action_selector
 
     @property
@@ -124,7 +94,7 @@ class StandardDQNLoss(LossModule):
 
     @property
     def required_targets(self) -> set[str]:
-        return {"values", "actions"}
+        return {"q_values", "actions"}
 
     def compute_loss(
         self, predictions: dict, targets: dict, context: dict, k: int = 0
@@ -135,9 +105,19 @@ class StandardDQNLoss(LossModule):
             torch.arange(batch_size, device=self.device), actions
         ]
 
-        targets_val = self.representation.format_target(targets)
+        targets_val = targets["q_values"]
         # Return elementwise loss (B,)
         return self.config.loss_function(selected_q, targets_val, reduction="none")
+
+    def compute_priority(self, predictions, targets, context, k=0):
+        q_values = predictions["q_values"]
+        actions = targets["actions"].long()
+
+        # Q-value of the chosen action
+        pred_q = q_values[torch.arange(q_values.shape[0], device=self.device), actions]
+        target_q = targets["q_values"]
+
+        return torch.abs(target_q - pred_q).detach()
 
 
 class C51Loss(LossModule):
@@ -145,14 +125,17 @@ class C51Loss(LossModule):
         self,
         config,
         device,
-        representation: Optional[BaseRepresentation] = None,
         action_selector: Optional[object] = None,
         optimizer_name: str = "default",
     ):
-        assert representation is not None, "C51Loss requires a representation."
-
-        super().__init__(config, device, representation, optimizer_name=optimizer_name)
+        super().__init__(config, device, optimizer_name=optimizer_name)
         self.action_selector = action_selector
+        self.support = torch.linspace(
+            self.config.v_min,
+            self.config.v_max,
+            self.config.atom_size,
+            device=self.device,
+        )
 
     @property
     def required_predictions(self) -> set[str]:
@@ -160,24 +143,68 @@ class C51Loss(LossModule):
 
     @property
     def required_targets(self) -> set[str]:
-        return {"actions", "next_q_logits", "next_actions", "rewards", "dones"}
+        return {"q_logits", "actions"}
+
+    def _project_target_distribution(
+        self,
+        rewards: torch.Tensor,
+        terminal_mask: torch.Tensor,
+        next_probs: torch.Tensor,
+    ) -> torch.Tensor:
+        batch_size = rewards.shape[0]
+        discount = self.config.discount_factor**self.config.n_step
+        delta_z = (self.config.v_max - self.config.v_min) / (self.config.atom_size - 1)
+
+        # Compute the projected support: Tz = r + gamma * z
+        tz = (
+            rewards.view(-1, 1)
+            + discount * (~terminal_mask.bool()).view(-1, 1) * self.support.view(1, -1)
+        ).clamp(self.config.v_min, self.config.v_max)
+
+        # Map back to index space: b = (Tz - v_min) / delta_z
+        b = (tz - self.config.v_min) / delta_z
+        l = b.floor().long()
+        u = b.ceil().long()
+
+        dist_l = u.float() - b
+        dist_u = b - l.float()
+
+        mask_equal = l == u
+        dist_l[mask_equal] = 1.0
+        dist_u[mask_equal] = 0.0
+
+        projected = torch.zeros((batch_size, self.config.atom_size), device=self.device)
+        projected.scatter_add_(1, l, next_probs * dist_l)
+        projected.scatter_add_(1, u, next_probs * dist_u)
+
+        return projected
 
     def compute_loss(
         self, predictions: dict, targets: dict, context: dict, k: int = 0
     ) -> torch.Tensor:
         online_q_logits = predictions["q_logits"]
+
         actions = targets["actions"].to(self.device).long()
         batch_size = actions.shape[0]
-
-        # Use representation to project purely mathematical scalar target -> distribution
-        target_dist = self.representation.format_target(targets).detach()
-
+        target_q_logits = targets["q_logits"]
         chosen_logits = online_q_logits[
             torch.arange(batch_size, device=self.device), actions
         ]
         log_probs = F.log_softmax(chosen_logits, dim=-1)
+        # Return elementwise loss (B,)
+        return -(target_q_logits * log_probs).sum(dim=-1)
 
-        return -(target_dist * log_probs).sum(dim=-1)
+    def compute_priority(self, predictions, targets, context, k=0):
+        # Predict Expected Q
+        probs = torch.softmax(predictions["q_logits"], dim=-1)
+        q_values = (probs * self.support).sum(dim=-1)
+        actions = targets["actions"].long()
+        pred_q = q_values[torch.arange(q_values.shape[0], device=self.device), actions]
+
+        # Target Expected Q
+        target_q = (targets["q_logits"] * self.support).sum(dim=-1)
+
+        return torch.abs(target_q - pred_q).detach()
 
 
 # ============================================================================
@@ -188,14 +215,8 @@ class C51Loss(LossModule):
 class ValueLoss(LossModule):
     """Value prediction loss module."""
 
-    def __init__(
-        self,
-        config,
-        device,
-        representation: Optional[BaseRepresentation] = None,
-        optimizer_name: str = "default",
-    ):
-        super().__init__(config, device, representation, optimizer_name=optimizer_name)
+    def __init__(self, config, device, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
 
     @property
     def required_predictions(self) -> set[str]:
@@ -229,24 +250,26 @@ class ValueLoss(LossModule):
         values_k = predictions["values"]
         target_values_k = targets["values"]
 
-        # Use representation to project purely mathematical scalar target -> distribution/scaled-scalar
-        target_rep_k = self.representation.format_target(targets).detach()
-        predicted_values_k = values_k
+        # Convert to support if needed
+        if self.config.support_range is not None:
+            from modules.utils import scalar_to_support
 
-        # For Regression (Scalar) heads, squeeze (B, 1) -> (B,) for matching standard loss shapes
-        if isinstance(self.representation, ScalarRepresentation):
-            predicted_values_k = values_k.squeeze(-1)
+            target_values_k = scalar_to_support(
+                target_values_k, self.config.support_range
+            ).to(self.device)
+            predicted_values_k = values_k
+        else:
+            # Squeeze to match target shape
+            predicted_values_k = values_k.squeeze(-1)  # Convert (B, 1) -> (B,)
 
         assert (
-            predicted_values_k.shape == target_rep_k.shape
-        ), f"Shape mismatch in ValueLoss: {predicted_values_k.shape} vs {target_rep_k.shape}"
+            predicted_values_k.shape == target_values_k.shape
+        ), f"{predicted_values_k.shape} = {target_values_k.shape}"
 
-        # Value Loss calculation
+        # Value Loss: (B,)
         value_loss_k = self.config.value_loss_function(
-            predicted_values_k, target_rep_k, reduction="none"
+            predicted_values_k, target_values_k, reduction="none"
         )
-
-        # If the loss is elementwise (B, atoms), sum it up
         if value_loss_k.ndim > 1:
             value_loss_k = value_loss_k.sum(dim=-1)
 
@@ -279,18 +302,37 @@ class ValueLoss(LossModule):
 
         return value_loss
 
+    def compute_priority(self, predictions, targets, context, k=0):
+        from modules.utils import support_to_scalar
+
+        values_k = predictions["values"]
+        target_values_k = targets["values"]
+
+        if self.config.support_range is not None:
+            # Predictions are 21-atom distributions; convert to scalar for comparison.
+            # Targets are stored as raw scalars in the replay buffer (not distributions).
+            pred_scalar = support_to_scalar(values_k, self.config.support_range)
+            target_scalar = (
+                target_values_k.squeeze(-1)
+                if target_values_k.ndim > 1
+                else target_values_k
+            )
+        else:
+            pred_scalar = values_k.squeeze(-1)
+            target_scalar = (
+                target_values_k.squeeze(-1)
+                if target_values_k.ndim > 1
+                else target_values_k
+            )
+
+        return torch.abs(target_scalar - pred_scalar).detach()
+
 
 class PolicyLoss(LossModule):
     """Policy prediction loss module."""
 
-    def __init__(
-        self,
-        config,
-        device,
-        representation: Optional[BaseRepresentation] = None,
-        optimizer_name: str = "default",
-    ):
-        super().__init__(config, device, representation, optimizer_name=optimizer_name)
+    def __init__(self, config, device, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
 
     @property
     def required_predictions(self) -> set[str]:
@@ -339,14 +381,8 @@ class PolicyLoss(LossModule):
 class RewardLoss(LossModule):
     """Reward prediction loss module."""
 
-    def __init__(
-        self,
-        config,
-        device,
-        representation: Optional[BaseRepresentation] = None,
-        optimizer_name: str = "default",
-    ):
-        super().__init__(config, device, representation, optimizer_name=optimizer_name)
+    def __init__(self, config, device, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
 
     @property
     def required_predictions(self) -> set[str]:
@@ -374,44 +410,38 @@ class RewardLoss(LossModule):
         rewards_k = predictions["rewards"]
         target_rewards_k = targets["rewards"]
 
-        # Use representation to project mathematical scalar target -> distribution/scaled-scalar
-        target_rep_k = self.representation.format_target(targets).detach()
-        predicted_rewards_k = rewards_k
+        # Convert to support if needed
+        if self.config.support_range is not None:
+            from modules.utils import scalar_to_support
 
-        # For Regression (Scalar) heads, squeeze (B, 1) -> (B,) for matching standard loss shapes
-        if isinstance(self.representation, ScalarRepresentation):
-            predicted_rewards_k = rewards_k.squeeze(-1)
+            target_rewards_k = scalar_to_support(
+                target_rewards_k, self.config.support_range
+            ).to(self.device)
+            predicted_rewards_k = rewards_k
+        else:
+            predicted_rewards_k = rewards_k.squeeze(-1)  # Convert (B, 1) -> (B,)
 
         assert (
-            predicted_rewards_k.shape == target_rep_k.shape
-        ), f"Shape mismatch in RewardLoss: {predicted_rewards_k.shape} vs {target_rep_k.shape}"
+            predicted_rewards_k.shape == target_rewards_k.shape
+        ), f"{predicted_rewards_k.shape} = {target_rewards_k.shape}"
 
-        # Reward Loss calculation
+        # Reward Loss: (B,)
         reward_loss_k = self.config.reward_loss_function(
-            predicted_rewards_k, target_rep_k, reduction="none"
+            predicted_rewards_k, target_rewards_k, reduction="none"
         )
-
-        # If the loss is elementwise (B, atoms), sum it up
         if reward_loss_k.ndim > 1:
             reward_loss_k = reward_loss_k.sum(dim=-1)
 
-        return reward_loss_k
+        reward_loss = reward_loss_k
+
+        return reward_loss
 
 
 class ToPlayLoss(LossModule):
     """To-play (turn indicator) prediction loss module."""
 
-    def __init__(
-        self,
-        config,
-        device,
-        representation: Optional[BaseRepresentation] = None,
-        optimizer_name: str = "default",
-    ):
-        super().__init__(config, device, representation, optimizer_name=optimizer_name)
-        assert isinstance(
-            representation, ClassificationRepresentation
-        ), f"ToPlayLoss requires a ClassificationRepresentation, got {type(representation)}"
+    def __init__(self, config, device, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
 
     @property
     def required_predictions(self) -> set[str]:
@@ -440,25 +470,13 @@ class ToPlayLoss(LossModule):
         to_plays_k = predictions["to_plays"]
         target_to_plays_k = targets["to_plays"]
 
-        # Use representation to project mathematical scalar target (player index) -> target distribution
-        target_rep_k = self.representation.format_target(targets).detach()
-        assert to_plays_k.shape == target_rep_k.shape
         # To-Play Loss: (B,)
         to_play_loss = (
             self.config.to_play_loss_factor
             * self.config.to_play_loss_function(
-                to_plays_k, target_rep_k, reduction="none"
+                to_plays_k, target_to_plays_k, reduction="none"
             )
         )
-
-        # Logging
-        metrics = context.setdefault("metrics", {})
-        from utils.telemetry import append_metric
-
-        # Mean entropy of the predicted distributions
-        probs = torch.softmax(to_plays_k, dim=-1)
-        entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1)
-        append_metric(metrics, "to_play_entropy", entropy.mean().item())
 
         return to_play_loss
 
@@ -513,12 +531,9 @@ class RelativeToPlayLoss(LossModule):
 
         target_delta_p_k = (p_k - p_prev) % num_players
 
-        # Use representation to project ΔP_k index -> target distribution
-        target_rep_k = self.representation.to_representation(target_delta_p_k).detach()
-
         # Loss calculation
         loss = self.config.to_play_loss_factor * self.config.to_play_loss_function(
-            delta_p_logits_k, target_rep_k, reduction="none"
+            delta_p_logits_k, target_delta_p_k, reduction="none"
         )
 
         return loss
@@ -527,17 +542,8 @@ class RelativeToPlayLoss(LossModule):
 class ConsistencyLoss(LossModule):
     """Consistency loss module (EfficientZero style)."""
 
-    def __init__(
-        self,
-        config,
-        device,
-        agent_network,
-        representation: Optional[BaseRepresentation] = None,
-        optimizer_name: str = "default",
-    ):
-        super().__init__(
-            config, device, representation=representation, optimizer_name=optimizer_name
-        )
+    def __init__(self, config, device, agent_network, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
         self.agent_network = agent_network
 
     @property
@@ -583,16 +589,8 @@ class ConsistencyLoss(LossModule):
 class ChanceQLoss(LossModule):
     """Q-value loss for chance nodes (stochastic MuZero)."""
 
-    def __init__(
-        self,
-        config,
-        device,
-        representation: Optional[BaseRepresentation] = None,
-        optimizer_name: str = "default",
-    ):
-        super().__init__(
-            config, device, representation=representation, optimizer_name=optimizer_name
-        )
+    def __init__(self, config, device, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
 
     @property
     def required_predictions(self) -> set[str]:
@@ -619,23 +617,26 @@ class ChanceQLoss(LossModule):
         # Target is derived from replay values at k+1, not a separate learner target head.
         target_chance_values_k = context.get("target_values_next")
 
-        # Use representation to project mathematical scalar target -> distribution/scaled-scalar
-        target_rep_k = self.representation.to_representation(
-            target_chance_values_k
-        ).detach()
-        predicted_chance_values_k = chance_values_k
+        # Convert to support if needed
+        if self.config.support_range is not None:
+            from modules.utils import scalar_to_support
 
-        # For Regression (Scalar) heads, squeeze (B, 1) -> (B,) for matching standard loss shapes
-        if isinstance(self.representation, ScalarRepresentation):
-            predicted_chance_values_k = chance_values_k.squeeze(-1)
+            target_chance_values_k = scalar_to_support(
+                target_chance_values_k, self.config.support_range
+            ).to(self.device)
+            predicted_chance_values_k = chance_values_k
+        else:
+            predicted_chance_values_k = chance_values_k.squeeze(
+                -1
+            )  # Convert (B, 1) -> (B,)
 
         assert (
-            predicted_chance_values_k.shape == target_rep_k.shape
-        ), f"Shape mismatch in ChanceQLoss: {predicted_chance_values_k.shape} vs {target_rep_k.shape}"
+            predicted_chance_values_k.shape == target_chance_values_k.shape
+        ), f"{predicted_chance_values_k.shape} = {target_chance_values_k.shape}"
 
         q_loss_k = self.config.value_loss_function(
             predicted_chance_values_k,
-            target_rep_k,
+            target_chance_values_k,
             reduction="none",
         )
         if q_loss_k.ndim > 1:
@@ -667,14 +668,8 @@ class ChanceQLoss(LossModule):
 class SigmaLoss(LossModule):
     """Sigma (chance code prediction) loss for stochastic MuZero."""
 
-    def __init__(
-        self,
-        config,
-        device,
-        representation: Optional[BaseRepresentation] = None,
-        optimizer_name: str = "default",
-    ):
-        super().__init__(config, device, representation, optimizer_name=optimizer_name)
+    def __init__(self, config, device, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
 
     @property
     def required_predictions(self) -> set[str]:
@@ -749,14 +744,8 @@ class SigmaLoss(LossModule):
 class VQVAECommitmentLoss(LossModule):
     """VQ-VAE commitment cost for encoder (stochastic MuZero)."""
 
-    def __init__(
-        self,
-        config,
-        device,
-        representation: Optional[BaseRepresentation] = None,
-        optimizer_name: str = "default",
-    ):
-        super().__init__(config, device, representation, optimizer_name=optimizer_name)
+    def __init__(self, config, device, optimizer_name: str = "default"):
+        super().__init__(config, device, optimizer_name=optimizer_name)
 
     @property
     def required_predictions(self) -> set[str]:
@@ -809,12 +798,9 @@ class PPOPolicyLoss(LossModule):
         clip_param: float,
         entropy_coefficient: float,
         policy_strategy: Optional[object] = None,
-        representation: Optional[BaseRepresentation] = None,
         optimizer_name: str = "default",
     ):
-        super().__init__(
-            config, device, representation=representation, optimizer_name=optimizer_name
-        )
+        super().__init__(config, device, optimizer_name=optimizer_name)
         self.clip_param = clip_param
         self.entropy_coefficient = entropy_coefficient
         self.policy_strategy = policy_strategy
@@ -854,11 +840,9 @@ class PPOPolicyLoss(LossModule):
 
         with torch.no_grad():
             approx_kl = (old_log_probs - log_probs).mean()
-            metrics = context.setdefault("metrics", {})
-            from utils.telemetry import append_metric
-
-            append_metric(metrics, "approx_kl", approx_kl.item())
-            append_metric(metrics, "ppo_entropy", entropy.mean().item())
+            if "approx_kl" not in context:
+                context["approx_kl"] = []
+            context["approx_kl"].append(approx_kl.item())
 
         return loss
 
@@ -873,12 +857,9 @@ class PPOValueLoss(LossModule):
         v_min: Optional[float] = None,
         v_max: Optional[float] = None,
         value_strategy: Optional[object] = None,
-        representation: Optional[BaseRepresentation] = None,
         optimizer_name: str = "default",
     ):
-        super().__init__(
-            config, device, representation=representation, optimizer_name=optimizer_name
-        )
+        super().__init__(config, device, optimizer_name=optimizer_name)
         self.critic_coefficient = critic_coefficient
         self.atom_size = atom_size
         self.v_min = v_min
@@ -897,7 +878,27 @@ class PPOValueLoss(LossModule):
         if self.value_strategy is not None:
             return self.value_strategy.to_expected_value(value_logits)
 
-        return self.representation.to_scalar(value_logits)
+        if value_logits.ndim == 1:
+            return value_logits
+
+        if value_logits.shape[-1] == 1:
+            return value_logits.squeeze(-1)
+
+        if self.atom_size > 1 and self.v_min is not None and self.v_max is not None:
+            support = torch.linspace(
+                self.v_min,
+                self.v_max,
+                value_logits.shape[-1],
+                device=value_logits.device,
+                dtype=value_logits.dtype,
+            )
+            probs = torch.softmax(value_logits, dim=-1)
+            return (probs * support).sum(dim=-1)
+
+        raise ValueError(
+            "PPOValueLoss received multi-logit values without distributional bounds "
+            "(v_min/v_max)."
+        )
 
     def compute_loss(
         self, predictions: dict, targets: dict, context: dict, k: int = 0
@@ -911,17 +912,9 @@ class PPOValueLoss(LossModule):
 
 class ImitationLoss(LossModule):
     def __init__(
-        self,
-        config,
-        device,
-        num_actions: int,
-        optimizer_name: str = "default",
-        representation: Optional[BaseRepresentation] = None,
+        self, config, device, num_actions: int, optimizer_name: str = "default"
     ):
-        representation = representation or get_representation(num_classes=num_actions)
-        super().__init__(
-            config, device, representation=representation, optimizer_name=optimizer_name
-        )
+        super().__init__(config, device, optimizer_name=optimizer_name)
         self.num_actions = num_actions
         self.loss_function = getattr(
             config, "loss_function", torch.nn.CrossEntropyLoss(reduction="none")
@@ -941,8 +934,13 @@ class ImitationLoss(LossModule):
         policy_logits = predictions["policies"]
         target_policies = targets["target_policies"]
 
-        # Use representation to project purely mathematical targets (e.g. class indices) to expected distribution
-        target_rep = self.representation.to_representation(target_policies).detach()
+        if target_policies.dim() == 1:
+            # Handle class indices
+            targets_onehot = torch.zeros(
+                target_policies.shape[0], self.num_actions, device=self.device
+            )
+            targets_onehot.scatter_(1, target_policies.unsqueeze(1).long(), 1.0)
+            target_policies = targets_onehot
 
         # Record policy mean for monitoring
         probs = torch.softmax(policy_logits, dim=-1)
@@ -950,7 +948,7 @@ class ImitationLoss(LossModule):
         append_metric(metrics, "sl_policy", probs.mean(dim=0).detach().cpu())
 
         # Return elementwise loss (B,)
-        loss = self.loss_function(policy_logits, target_rep)
+        loss = self.loss_function(policy_logits, target_policies)
         if loss.dim() > 1:
             loss = loss.sum(dim=-1)
         return loss
@@ -967,14 +965,8 @@ class LossPipeline:
     Validated at initialization to ensure all required keys are present.
     """
 
-    def __init__(
-        self,
-        modules: List[LossModule],
-        priority_computer: Optional[PriorityComputer] = None,
-    ):
-        super().__init__()
-        self.loss_modules = modules
-        self.priority_computer = priority_computer
+    def __init__(self, modules: list[LossModule]):
+        self.modules = modules
 
     def validate_dependencies(
         self, network_output_keys: set[str], target_keys: set[str]
@@ -983,7 +975,7 @@ class LossPipeline:
         Verify that the provided keys satisfy all module requirements.
         Raises ValueError with detailed error message on failure.
         """
-        for module in self.loss_modules:
+        for module in self.modules:
             missing_preds = module.required_predictions - network_output_keys
             missing_targets = module.required_targets - target_keys
 
@@ -1021,11 +1013,11 @@ class LossPipeline:
             loss_dict: Dictionary of accumulated losses for logging
             priorities: Priority tensor of shape (B,) for PER
         """
-        from modules.utils import scale_gradient
+        from modules.utils import support_to_scalar, scale_gradient
 
         # Parameters from first module
-        config = self.loss_modules[0].config
-        device = self.loss_modules[0].device
+        config = self.modules[0].config
+        device = self.modules[0].device
 
         # Convert NamedTuples/dataclasses to dicts if necessary
         if isinstance(predictions, dict):
@@ -1059,9 +1051,9 @@ class LossPipeline:
 
         total_loss_dict = {
             module.optimizer_name: torch.tensor(0.0, device=device)
-            for module in self.loss_modules
+            for module in self.modules
         }
-        loss_dict = {module.name: 0.0 for module in self.loss_modules}
+        loss_dict = {module.name: 0.0 for module in self.modules}
         priorities = torch.zeros(B, device=device)
 
         # Determine unroll steps from gradient_scales (1, K+1)
@@ -1070,12 +1062,18 @@ class LossPipeline:
         expected_steps = unroll_steps + 1
 
         context["full_targets"] = targets
-        # print("targets", targets)
+
         for k in range(expected_steps):
             # Extract predictions and targets for step k
             preds_k = self._extract_step_data(predictions, k, expected_steps)
             targets_k = self._extract_step_data(targets, k, expected_steps)
-            # print(f"targets_k {k}", targets_k)
+
+            # --- 1. Priority Update (Only for k=0) ---
+            if k == 0:
+                priorities = self._calculate_priorities(
+                    preds_k, targets_k, context, config, device
+                )
+
             # --- 2. Compute losses for this step ---
             step_losses = {
                 opt_name: torch.zeros(B, device=device)
@@ -1091,8 +1089,8 @@ class LossPipeline:
                 and k + 1 < targets["values"].shape[1]
             ):
                 context["target_values_next"] = targets["values"][:, k + 1]
-            elementwise_losses = {}
-            for module in self.loss_modules:
+
+            for module in self.modules:
                 if not module.should_compute(k, context):
                     continue
 
@@ -1108,17 +1106,9 @@ class LossPipeline:
 
                 # Accumulate for this step for the specific optimizer
                 step_losses[module.optimizer_name] += loss_k
-                elementwise_losses[module.name] = loss_k
+
                 # Accumulate for logging (unweighted)
                 loss_dict[module.name] += loss_k.sum().item()
-
-            if k == 0:
-                # 4. Priority Computation (Standalone Strategy)
-                priorities = None
-                if self.priority_computer is not None:
-                    priorities = self.priority_computer(
-                        preds_k, targets_k, elementwise_losses
-                    )
 
             # --- 3. Apply gradient scaling and PER weights ---
             scale_k = gradient_scales[:, k].item()
@@ -1155,6 +1145,29 @@ class LossPipeline:
 
         return total_loss_dict, loss_dict, priorities
 
+    def _calculate_priorities(
+        self,
+        preds_k: dict,
+        targets_k: dict,
+        context: dict,
+        config,
+        device,
+    ) -> torch.Tensor:
+        """Calculate PER priorities for the current batch (k=0)."""
+
+        # Delegate priority calculation to the loss modules.
+        # The first module that returns a priority tensor defines the PER priorities.
+        for module in self.modules:
+            priority = module.compute_priority(preds_k, targets_k, context, k=0)
+            if priority is not None:
+                return priority
+
+        # raise ValueError(
+        #     "No active LossModule provided a priority calculation. "
+        #     "Ensure the primary module (e.g., ValueLoss, StandardDQNLoss, or C51Loss) "
+        #     "implements compute_priority()."
+        # )
+
     def _extract_step_data(
         self, tensor_dict: dict, k: int, expected_steps: int
     ) -> dict:
@@ -1177,4 +1190,5 @@ class LossPipeline:
             else:
                 # Non-sequence data: (B, ...)
                 step_data[key] = tensor
+
         return step_data

@@ -11,7 +11,6 @@ from losses.losses import (
     ChanceQLoss,
     SigmaLoss,
     VQVAECommitmentLoss,
-    SpecificLossPriority,
 )
 from agents.learner.callbacks import (
     ResetNoiseCallback,
@@ -23,27 +22,15 @@ from agents.learner.target_builders import (
     LatentConsistencyBuilder,
 )
 
-from losses.representations import ClassificationRepresentation
-
 
 def build_muzero_loss_pipeline(config, agent_network, device):
     modules = [
         ValueLoss(config, device),
-        PolicyLoss(
-            config,
-            device,
-            ClassificationRepresentation(num_classes=config.game.num_actions),
-        ),
+        PolicyLoss(config, device),
         RewardLoss(config, device),
     ]
     if getattr(config.game, "num_players", 1) > 1:
-        modules.append(
-            ToPlayLoss(
-                config,
-                device,
-                ClassificationRepresentation(num_classes=config.game.num_players),
-            )
-        )
+        modules.append(ToPlayLoss(config, device))
     if getattr(config, "consistency_loss_factor", 0) > 0:
         modules.append(ConsistencyLoss(config, device, agent_network))
     if getattr(config, "stochastic", False):
@@ -54,8 +41,7 @@ def build_muzero_loss_pipeline(config, agent_network, device):
                 VQVAECommitmentLoss(config, device),
             ]
         )
-    priority_computer = SpecificLossPriority(loss_name="ValueLoss")
-    return LossPipeline(modules, priority_computer=priority_computer)
+    return LossPipeline(modules)
 
 
 @register_agent("muzero")
