@@ -227,6 +227,13 @@ class ClassificationRepresentation(BaseRepresentation):
     def to_representation(self, scalar_targets: Tensor) -> Tensor:
         return F.one_hot(scalar_targets.long(), num_classes=self._num_classes).float()
 
+    def format_target(self, targets: Dict[str, Tensor], target_key: str = "values") -> Tensor:
+        """If the target is already a distribution, return it directly."""
+        target = targets[target_key]
+        if target.ndim > 1 and target.shape[-1] == self._num_classes:
+            return target
+        return self.to_representation(target)
+
 
 def get_representation(
     num_classes: int = 1,
