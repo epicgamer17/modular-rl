@@ -23,15 +23,27 @@ from agents.learner.target_builders import (
     LatentConsistencyBuilder,
 )
 
+from losses.representations import ClassificationRepresentation
+
 
 def build_muzero_loss_pipeline(config, agent_network, device):
     modules = [
         ValueLoss(config, device),
-        PolicyLoss(config, device),
+        PolicyLoss(
+            config,
+            device,
+            ClassificationRepresentation(num_classes=config.game.num_actions),
+        ),
         RewardLoss(config, device),
     ]
     if getattr(config.game, "num_players", 1) > 1:
-        modules.append(ToPlayLoss(config, device))
+        modules.append(
+            ToPlayLoss(
+                config,
+                device,
+                ClassificationRepresentation(num_classes=config.game.num_players),
+            )
+        )
     if getattr(config, "consistency_loss_factor", 0) > 0:
         modules.append(ConsistencyLoss(config, device, agent_network))
     if getattr(config, "stochastic", False):

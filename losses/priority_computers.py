@@ -29,10 +29,6 @@ class SpecificLossPriority:
         assert (
             loss is not None
         ), f"PriorityComputer: Loss '{self.loss_name}' not found. Available: {list(elementwise_losses.keys())}"
-
-        # [B, T] -> [B] (slice step 0)
-        if loss.ndim == 2:
-            return loss[:, 0].detach()
         return loss.detach()
 
 
