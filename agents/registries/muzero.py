@@ -24,22 +24,52 @@ from agents.learner.target_builders import (
 )
 
 
+from agents.learner.losses.representations import IdentityRepresentation
+
+
 def build_muzero_loss_pipeline(config, agent_network, device):
+    # Extract representations from heads
+    val_rep = agent_network.components["value_head"].strategy.representation
+    pol_rep = agent_network.components["policy_head"].strategy.representation
+    rew_rep = agent_network.components[
+        "world_model"
+    ].reward_head.strategy.representation
+    tp_rep = agent_network.components[
+        "world_model"
+    ].to_play_head.strategy.representation
     modules = [
-        ValueLoss(config, device),
-        PolicyLoss(config, device),
-        RewardLoss(config, device),
+        ValueLoss(config, device, representation=val_rep),
+        PolicyLoss(config, device, representation=pol_rep),
+        RewardLoss(config, device, representation=rew_rep),
     ]
-    if getattr(config.game, "num_players", 1) > 1:
-        modules.append(ToPlayLoss(config, device))
-    if getattr(config, "consistency_loss_factor", 0) > 0:
-        modules.append(ConsistencyLoss(config, device, agent_network))
-    if getattr(config, "stochastic", False):
+    if config.game.num_players > 1:
+        modules.append(
+            ToPlayLoss(config, device, representation=tp_rep)
+        )
+    if config.consistency_loss_factor > 0:
+        modules.append(
+            ConsistencyLoss(
+                config,
+                device,
+                representation=IdentityRepresentation(),
+                agent_network=agent_network,
+            )
+        )
+    if config.stochastic:
+        as_val_rep = agent_network.components[
+            "afterstate_value_head"
+        ].strategy.representation
+        sigma_rep = agent_network.components[
+            "world_model"
+        ].sigma_head.strategy.representation
+
         modules.extend(
             [
-                ChanceQLoss(config, device),
-                SigmaLoss(config, device),
-                VQVAECommitmentLoss(config, device),
+                ChanceQLoss(config, device, representation=as_val_rep),
+                SigmaLoss(config, device, representation=sigma_rep),
+                VQVAECommitmentLoss(
+                    config, device, representation=IdentityRepresentation()
+                ),
             ]
         )
     return LossPipeline(modules)
@@ -61,20 +91,20 @@ def build_muzero(
     lr_schedulers = {}
 
     def create_opt(params, sub_config_parent):
-        opt_cls = getattr(sub_config_parent, "optimizer", Adam)
+        opt_cls = sub_config_parent.optimizer
         if opt_cls == Adam:
             return Adam(
                 params=params,
                 lr=config.learning_rate,
-                eps=getattr(config, "adam_epsilon", 1e-8),
-                weight_decay=getattr(config, "weight_decay", 0.0),
+                eps=config.adam_epsilon,
+                weight_decay=config.weight_decay,
             )
         elif opt_cls == SGD:
             return SGD(
                 params=params,
                 lr=config.learning_rate,
-                momentum=getattr(config, "momentum", 0.0),
-                weight_decay=getattr(config, "weight_decay", 0.0),
+                momentum=config.momentum,
+                weight_decay=config.weight_decay,
             )
         else:
             return opt_cls(params, lr=config.learning_rate)

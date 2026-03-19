@@ -379,28 +379,65 @@ class ModularAgentNetwork(BaseAgentNetwork):
             stochastic_chance_values = None
             chance_encoder_embeddings = None
 
+            # --- PAD TRANSITION OUTPUTS (Rewards/Chance) ---
+            # MuZero predicts rewards for transitions (k=1..K). 
+            # We pad index 0 with zeros to satisfy the Universal [B, K+1, ...] contract.
+            dummy_reward = torch.zeros(
+                B, 1, *physics_output.rewards.shape[2:],
+                device=self.device,
+                dtype=physics_output.rewards.dtype
+            )
+            padded_rewards = torch.cat([dummy_reward, physics_output.rewards], dim=1)
+
             if (
                 getattr(self.config, "stochastic", False)
                 and physics_output.latents_afterstates is not None
             ):
                 latents_afterstates = physics_output.latents_afterstates
                 stacked_backbone_features = physics_output.afterstate_backbone_features
-                B_as, T_plus_1_as = stacked_backbone_features.shape[:2]
-                flat_backbone = stacked_backbone_features.view(
-                    B_as * T_plus_1_as, *stacked_backbone_features.shape[2:]
+                B_as, T_as = stacked_backbone_features.shape[:2] # T_as is K
+                flat_backbone = stacked_backbone_features.reshape(
+                    B_as * T_as, *stacked_backbone_features.shape[2:]
                 )
 
                 raw_chance_values, _ = self.components["afterstate_value_head"](
                     flat_backbone
                 )
-                stochastic_chance_values = raw_chance_values.view(B_as, T_plus_1_as, -1)
+                # Stochastic Values: [B, K, atoms] -> [B, K+1, atoms]
+                stochastic_chance_values = raw_chance_values.view(B_as, T_as, -1)
+                dummy_chance_values = torch.zeros(
+                    B_as, 1, *stochastic_chance_values.shape[2:],
+                    device=self.device,
+                    dtype=stochastic_chance_values.dtype
+                )
+                stochastic_chance_values = torch.cat([dummy_chance_values, stochastic_chance_values], dim=1)
+
+                # Stochastic Chance Logits: [B, K, num_chance] -> [B, K+1, num_chance]
                 stochastic_chance_logits = physics_output.chance_logits
+                dummy_chance_logits = torch.zeros(
+                    B_as, 1, *stochastic_chance_logits.shape[2:],
+                    device=self.device,
+                    dtype=stochastic_chance_logits.dtype
+                )
+                stochastic_chance_logits = torch.cat(
+                    [dummy_chance_logits, stochastic_chance_logits], dim=1
+                )
+
+                # Stochastic Chance Encoder Embeddings: [B, K, dim] -> [B, K+1, dim]
                 chance_encoder_embeddings = physics_output.chance_encoder_embeddings
+                dummy_chance_embeddings = torch.zeros(
+                    B_as, 1, *chance_encoder_embeddings.shape[2:],
+                    device=self.device,
+                    dtype=chance_encoder_embeddings.dtype
+                )
+                chance_encoder_embeddings = torch.cat(
+                    [dummy_chance_embeddings, chance_encoder_embeddings], dim=1
+                )
 
             output = LearningOutput(
                 values=raw_values,
                 policies=raw_policies,
-                rewards=physics_output.rewards,
+                rewards=padded_rewards,
                 to_plays=physics_output.to_plays,
                 latents=stacked_latents,
                 latents_afterstates=latents_afterstates,

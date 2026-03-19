@@ -9,11 +9,16 @@ from torch.optim.sgd import SGD
 
 
 def build_ppo_loss_pipeline(config, agent_network, device):
+    # Extract representation from heads directly
+    pol_rep = agent_network.components["policy_head"].strategy.representation
+    val_rep = agent_network.components["value_head"].strategy.representation
+
     return LossPipeline(
         [
             PPOPolicyLoss(
                 config=config,
                 device=device,
+                representation=pol_rep,
                 clip_param=config.clip_param,
                 entropy_coefficient=config.entropy_coefficient,
                 policy_strategy=getattr(
@@ -24,6 +29,7 @@ def build_ppo_loss_pipeline(config, agent_network, device):
             PPOValueLoss(
                 config=config,
                 device=device,
+                representation=val_rep,
                 critic_coefficient=config.critic_coefficient,
                 atom_size=getattr(config, "atom_size", 1),
                 v_min=getattr(config, "v_min", None),

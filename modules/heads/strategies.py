@@ -258,6 +258,10 @@ class GaussianStrategy(OutputStrategy):
     def num_bins(self) -> int:
         return 2 * self.action_dim
 
+    @property
+    def representation(self) -> BaseRepresentation:
+        return ScalarRepresentation()
+
     def compute_loss(self, predictions: Tensor, targets: Tensor) -> Tensor:
         # predictions are (mean, log_std)
         # targets are continuous values

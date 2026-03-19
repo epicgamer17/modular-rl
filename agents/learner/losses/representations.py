@@ -27,12 +27,12 @@ class BaseRepresentation(ABC):
         """Converts mathematically pure targets into the target distribution expected by the loss metric."""
         pass
 
-    def format_target(self, targets: Dict[str, Tensor]) -> Tensor:
+    def format_target(self, targets: Dict[str, Tensor], target_key: str = "values") -> Tensor:
         """
         Converts raw target ingredients from the TargetBuilder into the final target representation.
         Default implementation handles simple scalar values.
         """
-        return self.to_representation(targets["values"])
+        return self.to_representation(targets[target_key])
 
 
 class ScalarRepresentation(BaseRepresentation):
@@ -115,12 +115,12 @@ class DiscreteValuedRepresentation(BaseRepresentation):
         # 3. Unflatten back to [B, T, bins]
         return projected.view(*orig_shape, self.bins)
 
-    def format_target(self, targets: Dict[str, Tensor]) -> Tensor:
+    def format_target(self, targets: Dict[str, Tensor], target_key: str = "values") -> Tensor:
         """Handle ingredient-based targets or fallback to scalar."""
-        if "values" in targets:
-            return self.to_representation(targets["values"])
+        if target_key in targets:
+            return self.to_representation(targets[target_key])
         raise ValueError(
-            f"{self.__class__.__name__} received a targets dict without 'values' or algorithm-specific ingredients."
+            f"{self.__class__.__name__} received a targets dict without '{target_key}' or algorithm-specific ingredients."
         )
 
 
@@ -133,7 +133,9 @@ class CategoricalRepresentation(DiscreteValuedRepresentation):
     def __init__(self, vmin: float, vmax: float, bins: int):
         super().__init__(vmin, vmax, bins)
 
-    def format_target(self, targets: Dict[str, Tensor]) -> Tensor:
+    def format_target(
+        self, targets: Dict[str, Tensor], target_key: str = "next_q_logits"
+    ) -> Tensor:
         """
         The Baker: Implements the C51 Bellman Projection.
         Projects shifted atom probabilities back onto the fixed support grid.
@@ -259,6 +261,25 @@ class ClassificationRepresentation(BaseRepresentation):
         return self.to_representation(target)
 
 
+class IdentityRepresentation(BaseRepresentation):
+    """
+    Identity representation that returns targets exactly as stored.
+    Useful for PPO (log_probs, advantages) or single-variable scalar regression.
+    """
+    @property
+    def num_classes(self) -> int:
+        return 1
+
+    def to_scalar(self, logits: Tensor) -> Tensor:
+        return logits
+
+    def to_representation(self, scalar_targets: Tensor) -> Tensor:
+        return scalar_targets
+
+    def format_target(self, targets: Dict[str, Tensor], target_key: str = "values") -> Tensor:
+        return targets.get(target_key, targets.get("values"))
+
+
 def get_representation(
     num_classes: int = 1,
     support_range: Optional[int] = None,
@@ -266,7 +287,11 @@ def get_representation(
     vmax: Optional[float] = None,
     bins: Optional[int] = None,
     mode: str = "linear",
+    identity: bool = False,
 ) -> BaseRepresentation:
+    if identity:
+        return IdentityRepresentation()
+
     if vmin is not None and vmax is not None and bins is not None:
         if mode == "exponential":
             print("Using ExponentialBucketsRepresentation")

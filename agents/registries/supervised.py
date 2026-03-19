@@ -6,12 +6,15 @@ from modules.utils import create_optimizer, get_lr_scheduler
 
 
 def build_supervised_loss_pipeline(config, agent_network, device):
+    # Extract representation from policy head strategy
+    pol_rep = agent_network.components["policy_head"].strategy.representation
+    
     return LossPipeline(
         [
             ImitationLoss(
                 config,
                 device,
-                agent_network.num_actions,
+                representation=pol_rep,
             )
         ]
     )
