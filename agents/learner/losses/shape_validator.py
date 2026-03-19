@@ -16,10 +16,14 @@ class ShapeValidator:
         self.K = getattr(config, "unroll_steps", 0)
         self.T = self.K + 1
         self.num_actions = getattr(config.game, "num_actions", 0)
-        
+
         # Support/Atoms for distributional RL
         self.atom_size = getattr(config, "atom_size", 1)
-        if self.atom_size == 1 and hasattr(config, "support_range") and config.support_range is not None:
+        if (
+            self.atom_size == 1
+            and hasattr(config, "support_range")
+            and config.support_range is not None
+        ):
             # MuZero style support
             self.atom_size = (config.support_range * 2) + 1
 
@@ -35,71 +39,81 @@ class ShapeValidator:
 
         for key, tensor in targets.items():
             if torch.is_tensor(tensor):
-                self._check_shape(key, tensor, is_prediction=False)
+                self._check_shape_strict(key, tensor, is_prediction=False)
 
     def _check_shape(self, key: str, tensor: torch.Tensor, is_prediction: bool) -> None:
+        """Flexible validation for predictions (supports T=1 omission)."""
         shape = list(tensor.shape)
         prefix = f"[{'Prediction' if is_prediction else 'Target'}] '{key}'"
 
         # 1. Batch Size (Dimension 0)
         assert (
             shape[0] == self.B
-        ), f"{prefix} batch size mismatch: expected {self.B}, got {shape[0]}"
+        ), f"{prefix} batch size mismatch: expected {self.B}, got {shape[0]} | full shape: {shape}"
 
         # 2. Sequence Length and Content (Dimension 1+)
-        # PPO: T=1, often omitted. MuZero: T > 1, usually present.
-        has_sequence_dim = len(shape) >= 2 and shape[1] in [self.T, self.T - 1]
-        is_single_step = (self.T == 1)
+        # PPO: T=1, often omitted in predictions.
+        has_sequence_dim = len(shape) >= 2 and shape[1] == self.T
+        is_single_step = self.T == 1
 
         if key == "policies":
-            # Expected (B, T, A) or (B, A)
             if has_sequence_dim:
-                assert shape[1] == self.T, f"{prefix} sequence length mismatch: expected {self.T}, got {shape[1]}"
-                assert shape[2] == self.num_actions, f"{prefix} action dim mismatch: expected {self.num_actions}, got {shape[2]}"
+                assert (
+                    shape[2] == self.num_actions
+                ), f"{prefix} action dim mismatch: expected {self.num_actions}, got {shape[2]} | full shape: {shape}"
             elif is_single_step:
-                assert shape[1] == self.num_actions, f"{prefix} action dim mismatch: expected {self.num_actions}, got {shape[1]}"
+                assert (
+                    shape[1] == self.num_actions
+                ), f"{prefix} action dim mismatch: expected {self.num_actions}, got {shape[1]} | full shape: {shape}"
             else:
-                raise AssertionError(f"{prefix} shape {shape} invalid for T={self.T}, num_actions={self.num_actions}")
+                raise AssertionError(
+                    f"{prefix} shape {shape} invalid for T={self.T}, num_actions={self.num_actions} | full shape: {shape}"
+                )
+        else:
+            # For other prediction keys, we allow flexibility for now
+            pass
 
-        elif key in ["values", "q_values", "q_logits", "chance_values"]:
-            # Expected (B, T, Atoms) or (B, T) or (B, Atoms) or (B,)
-            if has_sequence_dim:
-                # (B, T) or (B, T, Atoms)
-                if len(shape) == 3:
-                     assert shape[2] in [1, self.atom_size], f"{prefix} atom dim mismatch: expected 1 or {self.atom_size}, got {shape[2]}"
-            elif is_single_step:
-                # (B,) or (B, Atoms)
-                if len(shape) == 2:
-                     assert shape[1] in [1, self.num_actions, self.atom_size], f"{prefix} second dim mismatch for single-step {key}"
-            else:
-                # Targets might include bootstrap step (T+1)
-                if not is_prediction and shape[1] == self.T + 1:
-                    pass
-                else:
-                    raise AssertionError(f"{prefix} shape {shape} invalid for T={self.T}")
+    def _check_shape_strict(
+        self, key: str, tensor: torch.Tensor, is_prediction: bool
+    ) -> None:
+        """Strict validation for Universal T: always expects [B, T, ...]."""
+        shape = list(tensor.shape)
+        prefix = f"[{'Prediction' if is_prediction else 'Target'}] '{key}'"
 
-        elif key == "rewards":
-            # Rewards are often (B, K) where K = T-1
-            if has_sequence_dim:
-                assert shape[1] in [self.T, self.T - 1], f"{prefix} sequence length mismatch: expected {self.T} or {self.T-1}, got {shape[1]}"
-            elif is_single_step:
-                # (B,) or (B, 1)
-                pass
-            else:
-                 raise AssertionError(f"{prefix} shape {shape} invalid for T={self.T}")
+        # --- EXCEPTION: Gradient Scales ---
+        if key == "gradient_scales":
+            assert (
+                shape[0] == 1
+            ), f"{prefix} batch size must be 1 for broadcasting, got {shape[0]} | full shape: {shape}"
+            assert (
+                len(shape) >= 2 and shape[1] == self.T
+            ), f"{prefix} sequence length mismatch: expected {self.T}, got {shape[1] if len(shape) > 1 else 'None'} | full shape: {shape}"
+            return  # Skip the standard batch checks
+        # ----------------------------------
 
-        elif key == "actions":
-            # (B, T) or (B, T, 1) or (B, 1) or (B,)
-            if has_sequence_dim:
-                assert shape[1] in [self.T, self.T - 1], f"{prefix} sequence length mismatch"
-            elif is_single_step:
-                pass
-            else:
-                raise AssertionError(f"{prefix} shape {shape} invalid for T={self.T}")
+        # 1. Batch Size (Dimension 0)
+        assert (
+            shape[0] == self.B
+        ), f"{prefix} batch size mismatch: expected {self.B}, got {shape[0]} | full shape: {shape}"
 
-        elif key == "latents" or key == "latent_states":
-            # (B, T, D) or (B, D)
-            if has_sequence_dim:
-                assert shape[1] == self.T, f"{prefix} sequence length mismatch: expected {self.T}, got {shape[1]}"
-            elif is_single_step:
-                pass
+        # 2. Sequence Length (Dimension 1)
+        assert (
+            len(shape) >= 2
+        ), f"{prefix} must have at least 2 dimensions [B, T, ...], got {shape} | full shape: {shape}"
+        assert (
+            shape[1] == self.T
+        ), f"{prefix} sequence length mismatch: expected {self.T}, got {shape[1]} | full shape: {shape}"
+
+        # 3. Content specific checks
+        if key == "policies":
+            assert (
+                shape[2] == self.num_actions
+            ), f"{prefix} action dim mismatch: expected {self.num_actions}, got {shape[2]} | full shape: {shape}"
+        elif key in ["values", "returns"]:
+            # Could be [B, T, 1] or [B, T, atoms]
+            pass
+        elif key.endswith("_mask") or key == "masks":
+            # Semantic masks (value_mask, reward_mask, policy_mask, q_mask) must be exactly [B, T]
+            assert (
+                len(shape) == 2
+            ), f"{prefix} mask must be exactly 2D [B, T], got {shape} | full shape: {shape}"

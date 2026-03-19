@@ -20,6 +20,7 @@ from agents.learner.target_builders import (
     TargetBuilderPipeline,
     TrajectoryGradientScaleBuilder,
     LatentConsistencyBuilder,
+    MuZeroTargetBuilder,
 )
 
 
@@ -88,7 +89,10 @@ def build_muzero(
         callbacks.append(ResetNoiseCallback())
 
     # 4. Target Builder
-    builders = [TrajectoryGradientScaleBuilder(unroll_steps=config.unroll_steps)]
+    builders = [
+        TrajectoryGradientScaleBuilder(unroll_steps=config.unroll_steps),
+        MuZeroTargetBuilder(unroll_steps=config.unroll_steps),
+    ]
     if getattr(config, "consistency_loss_factor", 0) > 0:
         builders.append(LatentConsistencyBuilder())
 

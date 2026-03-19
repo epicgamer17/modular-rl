@@ -14,10 +14,17 @@ class LossModule(ABC):
     Works for both single-step (DQN, C51) and sequence (MuZero) losses.
     """
 
-    def __init__(self, config, device, optimizer_name: str = "default"):
+    def __init__(
+        self,
+        config,
+        device,
+        optimizer_name: str = "default",
+        mask_key: str = "value_mask",
+    ):
         self.config = config
         self.device = device
         self.optimizer_name = optimizer_name
+        self.mask_key = mask_key
         self.name = self.__class__.__name__
 
     @property
@@ -36,11 +43,14 @@ class LossModule(ABC):
         """Determine if this loss should be computed at step k."""
         return True
 
-    def get_mask(self, k: int, context: dict) -> torch.Tensor:
+    def get_mask(self, k: int, targets_k: dict) -> torch.Tensor:
         """Get the mask to apply for this loss at step k."""
-        if "has_valid_obs_mask" in context:
-            return context["has_valid_obs_mask"][:, k]
-        return torch.ones(self.config.minibatch_size, device=self.device)
+        mask = targets_k.get(self.mask_key)
+        if mask is None:
+            raise KeyError(
+                f"Missing required mask '{self.mask_key}' for {self.__class__.__name__} at step {k}"
+            )
+        return mask
 
     @abstractmethod
     def compute_loss(
@@ -84,8 +94,11 @@ class StandardDQNLoss(LossModule):
         device,
         action_selector: Optional[object] = None,
         optimizer_name: str = "default",
+        mask_key: str = "value_mask",
     ):
-        super().__init__(config, device, optimizer_name=optimizer_name)
+        super().__init__(
+            config, device, optimizer_name=optimizer_name, mask_key=mask_key
+        )
         self.action_selector = action_selector
 
     @property
@@ -127,8 +140,11 @@ class C51Loss(LossModule):
         device,
         action_selector: Optional[object] = None,
         optimizer_name: str = "default",
+        mask_key: str = "value_mask",
     ):
-        super().__init__(config, device, optimizer_name=optimizer_name)
+        super().__init__(
+            config, device, optimizer_name=optimizer_name, mask_key=mask_key
+        )
         self.action_selector = action_selector
         self.support = torch.linspace(
             self.config.v_min,
@@ -215,8 +231,16 @@ class C51Loss(LossModule):
 class ValueLoss(LossModule):
     """Value prediction loss module."""
 
-    def __init__(self, config, device, optimizer_name: str = "default"):
-        super().__init__(config, device, optimizer_name=optimizer_name)
+    def __init__(
+        self,
+        config,
+        device,
+        optimizer_name: str = "default",
+        mask_key: str = "value_mask",
+    ):
+        super().__init__(
+            config, device, optimizer_name=optimizer_name, mask_key=mask_key
+        )
 
     @property
     def required_predictions(self) -> set[str]:
@@ -235,9 +259,8 @@ class ValueLoss(LossModule):
     def should_compute(self, k: int, context: dict) -> bool:
         return True  # Compute at all steps
 
-    def get_mask(self, k: int, context: dict) -> torch.Tensor:
-        # Value loss is computed for all steps in the same game, even after terminal
-        return context["is_same_game"][:, k]
+    def get_mask(self, k: int, targets_k: dict) -> torch.Tensor:
+        return super().get_mask(k, targets_k)
 
     def compute_loss(
         self,
@@ -249,6 +272,9 @@ class ValueLoss(LossModule):
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         values_k = predictions["values"]
         target_values_k = targets["values"]
+        assert (
+            values_k.shape[0] == target_values_k.shape[0]
+        ), f"ValueLoss batch size mismatch: preds {values_k.shape} vs targets {target_values_k.shape}"
 
         # Convert to support if needed
         if self.config.support_range is not None:
@@ -262,9 +288,9 @@ class ValueLoss(LossModule):
             # Squeeze to match target shape
             predicted_values_k = values_k.squeeze(-1)  # Convert (B, 1) -> (B,)
 
-        assert (
-            predicted_values_k.shape == target_values_k.shape
-        ), f"{predicted_values_k.shape} = {target_values_k.shape}"
+            assert (
+                predicted_values_k.shape == target_values_k.shape
+            ), f"ValueLoss supports mismatch after conversion: preds {predicted_values_k.shape} vs targets {target_values_k.shape}"
 
         # Value Loss: (B,)
         value_loss_k = self.config.value_loss_function(
@@ -331,8 +357,16 @@ class ValueLoss(LossModule):
 class PolicyLoss(LossModule):
     """Policy prediction loss module."""
 
-    def __init__(self, config, device, optimizer_name: str = "default"):
-        super().__init__(config, device, optimizer_name=optimizer_name)
+    def __init__(
+        self,
+        config,
+        device,
+        optimizer_name: str = "default",
+        mask_key: str = "policy_mask",
+    ):
+        super().__init__(
+            config, device, optimizer_name=optimizer_name, mask_key=mask_key
+        )
 
     @property
     def required_predictions(self) -> set[str]:
@@ -345,9 +379,8 @@ class PolicyLoss(LossModule):
     def should_compute(self, k: int, context: dict) -> bool:
         return True  # Compute at all steps
 
-    def get_mask(self, k: int, context: dict) -> torch.Tensor:
-        # IMPORTANT: Policy Loss uses Policy Mask (excludes terminal)
-        return context["has_valid_action_mask"][:, k]
+    def get_mask(self, k: int, targets_k: dict) -> torch.Tensor:
+        return super().get_mask(k, targets_k)
 
     def compute_loss(
         self,
@@ -359,6 +392,9 @@ class PolicyLoss(LossModule):
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         policies_k = predictions["policies"]
         target_policies_k = targets["policies"]
+        assert (
+            policies_k.shape == target_policies_k.shape
+        ), f"PolicyLoss shape mismatch: preds {policies_k.shape} vs targets {target_policies_k.shape}"
 
         if self.config.policy_loss_function == F.kl_div:
             # KL Div expects log-probabilities as input, but the network outputs logits
@@ -381,8 +417,16 @@ class PolicyLoss(LossModule):
 class RewardLoss(LossModule):
     """Reward prediction loss module."""
 
-    def __init__(self, config, device, optimizer_name: str = "default"):
-        super().__init__(config, device, optimizer_name=optimizer_name)
+    def __init__(
+        self,
+        config,
+        device,
+        optimizer_name: str = "default",
+        mask_key: str = "reward_mask",
+    ):
+        super().__init__(
+            config, device, optimizer_name=optimizer_name, mask_key=mask_key
+        )
 
     @property
     def required_predictions(self) -> set[str]:
@@ -395,9 +439,8 @@ class RewardLoss(LossModule):
     def should_compute(self, k: int, context: dict) -> bool:
         return k > 0  # Only for k > 0
 
-    def get_mask(self, k: int, context: dict) -> torch.Tensor:
-        # Reward loss is computed for all steps in the same game, even after terminal
-        return context["is_same_game"][:, k]
+    def get_mask(self, k: int, targets_k: dict) -> torch.Tensor:
+        return super().get_mask(k, targets_k)
 
     def compute_loss(
         self,
@@ -410,27 +453,52 @@ class RewardLoss(LossModule):
         rewards_k = predictions["rewards"]
         target_rewards_k = targets["rewards"]
 
+        # Assertions before any potential squeezing
+        assert (
+            rewards_k.shape[0] == target_rewards_k.shape[0]
+        ), f"RewardLoss batch size mismatch: preds {rewards_k.shape} vs targets {target_rewards_k.shape}"
+
         # Convert to support if needed
         if self.config.support_range is not None:
             from modules.utils import scalar_to_support
 
+            # Predictions are already distributions (B, N_atoms)
+            predicted_rewards_k = rewards_k
+            # Targets are scalars (B,) or (B, 1), convert to distributions (B, N_atoms)
             target_rewards_k = scalar_to_support(
                 target_rewards_k, self.config.support_range
             ).to(self.device)
-            predicted_rewards_k = rewards_k
+
+            assert (
+                predicted_rewards_k.shape == target_rewards_k.shape
+            ), f"RewardLoss support mismatch after conversion: preds {predicted_rewards_k.shape} vs targets {target_rewards_k.shape}"
+
+            # Reward Loss: (B,)
+            reward_loss_k = self.config.reward_loss_function(
+                predicted_rewards_k, target_rewards_k, reduction="none"
+            )
+            if reward_loss_k.ndim > 1:
+                reward_loss_k = reward_loss_k.sum(dim=-1)
         else:
-            predicted_rewards_k = rewards_k.squeeze(-1)  # Convert (B, 1) -> (B,)
+            # Standard Scalar MSE
+            # Ensure both are (B,)
+            predicted_rewards_k = (
+                rewards_k.squeeze(-1) if rewards_k.ndim > 1 else rewards_k
+            )
+            target_rewards_k = (
+                target_rewards_k.squeeze(-1)
+                if target_rewards_k.ndim > 1
+                else target_rewards_k
+            )
 
-        assert (
-            predicted_rewards_k.shape == target_rewards_k.shape
-        ), f"{predicted_rewards_k.shape} = {target_rewards_k.shape}"
+            assert (
+                predicted_rewards_k.shape == target_rewards_k.shape
+            ), f"RewardLoss scalar mismatch after squeezing: preds {predicted_rewards_k.shape} vs targets {target_rewards_k.shape}"
 
-        # Reward Loss: (B,)
-        reward_loss_k = self.config.reward_loss_function(
-            predicted_rewards_k, target_rewards_k, reduction="none"
-        )
-        if reward_loss_k.ndim > 1:
-            reward_loss_k = reward_loss_k.sum(dim=-1)
+            # Reward Loss: (B,)
+            reward_loss_k = self.config.reward_loss_function(
+                predicted_rewards_k, target_rewards_k, reduction="none"
+            )
 
         reward_loss = reward_loss_k
 
@@ -440,8 +508,16 @@ class RewardLoss(LossModule):
 class ToPlayLoss(LossModule):
     """To-play (turn indicator) prediction loss module."""
 
-    def __init__(self, config, device, optimizer_name: str = "default"):
-        super().__init__(config, device, optimizer_name=optimizer_name)
+    def __init__(
+        self,
+        config,
+        device,
+        optimizer_name: str = "default",
+        mask_key: str = "to_play_mask",
+    ):
+        super().__init__(
+            config, device, optimizer_name=optimizer_name, mask_key=mask_key
+        )
 
     @property
     def required_predictions(self) -> set[str]:
@@ -456,8 +532,7 @@ class ToPlayLoss(LossModule):
         return k > 0 and self.config.game.num_players != 1
 
     def get_mask(self, k: int, context: dict) -> torch.Tensor:
-        # To-play exists for the terminal state too
-        return context["has_valid_obs_mask"][:, k]
+        return super().get_mask(k, context)
 
     def compute_loss(
         self,
@@ -488,8 +563,16 @@ class RelativeToPlayLoss(LossModule):
     ΔP_k = (P_k - P_{k-1}) mod num_players.
     """
 
-    def __init__(self, config, device, optimizer_name: str = "default"):
-        super().__init__(config, device, optimizer_name=optimizer_name)
+    def __init__(
+        self,
+        config,
+        device,
+        optimizer_name: str = "default",
+        mask_key: str = "to_play_mask",
+    ):
+        super().__init__(
+            config, device, optimizer_name=optimizer_name, mask_key=mask_key
+        )
 
     @property
     def required_predictions(self) -> set[str]:
@@ -510,7 +593,7 @@ class RelativeToPlayLoss(LossModule):
         )
 
     def get_mask(self, k: int, context: dict) -> torch.Tensor:
-        return context["has_valid_obs_mask"][:, k]
+        return super().get_mask(k, context)
 
     def compute_loss(
         self,
@@ -1105,7 +1188,7 @@ class LossPipeline:
 
                 # Apply mask if any
                 if getattr(config, "mask_absorbing", False):
-                    mask_k = module.get_mask(k, context)
+                    mask_k = module.get_mask(k, targets_k)
                     loss_k = loss_k * mask_k
 
                 # Accumulate for this step for the specific optimizer
@@ -1115,7 +1198,7 @@ class LossPipeline:
                 loss_dict[module.name] += loss_k.sum().item()
 
             # --- 3. Apply gradient scaling and PER weights ---
-            scale_k = gradient_scales[:, k].item()
+            scale_k = gradient_scales[0, k].item()
 
             for opt_name, step_loss in step_losses.items():
                 scaled_loss_k = scale_gradient(step_loss, scale_k)

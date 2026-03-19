@@ -53,6 +53,11 @@ class BaseTrainer:
         self._tester_launched = False
         self._tester_step = 0
 
+        print("Observation dimensions: ", self.obs_dim)
+        print("Observation dtype: ", self.obs_dtype)
+        print("Number of actions: ", self.num_actions)
+        print("Number of players: ", self.num_players)
+
     def setup(self):
         """Initializes stats and any other setup required before training."""
         self._setup_stats()
@@ -319,7 +324,9 @@ class BaseTrainer:
         trainer.training_step = training_step
 
         # 3. Load learner state from checkpoint
-        learner_state = torch.load(weights_path, map_location=device, weights_only=False)
+        learner_state = torch.load(
+            weights_path, map_location=device, weights_only=False
+        )
         trainer.learner.load_state_dict(learner_state)
 
         # 4. Load Stats

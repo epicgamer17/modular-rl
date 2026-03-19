@@ -49,11 +49,11 @@ def test_shape_validator_ppo_valid(ppo_config):
         "values": torch.randn(B),
     }
     targets = {
-        "policies": torch.randn(B, A),
-        "values": torch.randn(B),
+        "policies": torch.randn(B, 1, A),
+        "values": torch.randn(B, 1),
     }
 
-    # Should not raise
+    # Should not raise (Predictions are flexible, targets are strict)
     validator.validate(predictions, targets)
 
 
@@ -92,10 +92,10 @@ def test_shape_validator_transition_data(muzero_config):
 
     validator = ShapeValidator(muzero_config)
     B = muzero_config.minibatch_size
-    T_minus_1 = muzero_config.unroll_steps
+    T = muzero_config.unroll_steps + 1
 
     targets = {
-        "rewards": torch.randn(B, T_minus_1),
+        "rewards": torch.randn(B, T),
     }
 
     # Should not raise

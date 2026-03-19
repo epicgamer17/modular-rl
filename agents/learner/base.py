@@ -16,12 +16,12 @@ from typing import (
 import torch
 from torch.nn.utils import clip_grad_norm_
 
-from modules.agent_nets.modular import ModularAgentNetwork
 
 if TYPE_CHECKING:
     from agents.learner.target_builders import BaseTargetBuilder
     from agents.learner.losses.losses import LossPipeline
     from agents.learner.callbacks import Callback
+    from modules.agent_nets.modular import ModularAgentNetwork
 
 from agents.learner.callbacks import (
     CallbackList,
@@ -196,13 +196,33 @@ class UniversalLearner:
         predictions = self.agent_network.learner_inference(batch)
         batch["training_step"] = self.training_step
 
-        # 2. Targets
-        targets = batch.copy()
+        # 2. Targets (Strict Delegation)
+        # The TargetBuilder is the ONLY source of truth for the LossPipeline.
         if self.target_builder is not None:
-            new_targets = self.target_builder.build_targets(
+            targets = self.target_builder.build_targets(
                 batch, predictions, self.agent_network
             )
-            targets.update(new_targets)
+        else:
+            targets = {}
+
+        # Ensure a "masks" key exists for the LossPipeline (Standardization)
+        # TODO: maybe clean this up, also it seems like muzero is not actually using has_valid_obs_mask or is_same_game mask, i think they may have been removed maybe?
+        if "masks" not in targets:
+            if "has_valid_obs_mask" in targets:
+                targets["masks"] = targets["has_valid_obs_mask"]
+            elif "is_same_game" in targets:
+                targets["masks"] = targets["is_same_game"]
+            else:
+                # Default to all-ones if no mask found
+                B, T = 1, 1
+                for key, tensor in targets.items():
+                    if key != "gradient_scales" and tensor.ndim >= 2:
+                        B, T = tensor.shape[:2]
+                        break  # We found a valid batch tensor (like rewards, actions, values)
+
+                targets["masks"] = torch.ones(
+                    (B, T), device=self.device, dtype=torch.bool
+                )
 
         # 3. Context and PER weights
         context = batch
