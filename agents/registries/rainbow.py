@@ -1,7 +1,8 @@
 import torch
 from typing import Any, Dict, List, Tuple, Optional
 from agents.registries.base import register_agent
-from agents.learner.losses.losses import LossPipeline, StandardDQNLoss, C51Loss, ErrorPriority
+from agents.learner.losses.losses import LossPipeline, StandardDQNLoss, C51Loss
+from agents.learner.losses.priorities import MaxLossPriorityComputer
 from modules.utils import create_optimizer, get_lr_scheduler
 from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
@@ -34,15 +35,9 @@ def build_rainbow_loss_pipeline(config, agent_network, device):
             action_selector=selector,
         )
     )
-    priority_computer = ErrorPriority(
-        prediction_key="q_values", target_key="returns", representation=representation
+    priority_computer = MaxLossPriorityComputer(
+        loss_key="C51Loss" if getattr(config, "atom_size", 1) > 1 else "StandardDQNLoss"
     )
-    if getattr(config, "atom_size", 1) > 1:
-        priority_computer = ErrorPriority(
-            prediction_key="q_logits",
-            target_key="values",
-            representation=representation,
-        )
 
     return LossPipeline([td_loss_module], priority_computer=priority_computer)
 
