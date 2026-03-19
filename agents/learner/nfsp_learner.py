@@ -19,7 +19,7 @@ from agents.learner.callbacks import (
 from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
 )
-from losses.losses import C51Loss, ImitationLoss, LossPipeline, StandardDQNLoss
+from learners.losses.losses import C51Loss, ImitationLoss, LossPipeline, StandardDQNLoss
 from modules.utils import get_lr_scheduler
 from replay_buffers.buffer_factories import create_dqn_buffer, create_nfsp_buffer
 from utils.schedule import create_schedule

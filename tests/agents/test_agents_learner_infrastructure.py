@@ -3,7 +3,7 @@ import torch
 
 from agents.learner.callbacks import LatentMetricsCallback
 from utils.telemetry import finalize_metrics
-from losses.losses import SigmaLoss
+from learners.losses.losses import SigmaLoss
 
 pytestmark = pytest.mark.unit
 

@@ -24,7 +24,7 @@ from agents.learner.callbacks import (
     ResetNoiseCallback,
     EpsilonGreedySchedulerCallback,
 )
-from losses.losses import (
+from learners.losses.losses import (
     LossPipeline,
     ValueLoss,
     PolicyLoss,

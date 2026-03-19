@@ -16,7 +16,7 @@ from agents.learner.target_builders import (
 )
 from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
-from losses.losses import C51Loss, StandardDQNLoss
+from learners.losses.losses import C51Loss, StandardDQNLoss
 from replay_buffers.buffer_factories import create_dqn_buffer
 from agents.learner.batch_iterators import RepeatSampleIterator
 from agents.learner.factory import build_universal_learner

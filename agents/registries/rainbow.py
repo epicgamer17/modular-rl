@@ -1,7 +1,7 @@
 import torch
 from typing import Any, Dict, List, Tuple, Optional
 from agents.registries.base import register_agent
-from losses.losses import LossPipeline, StandardDQNLoss, C51Loss, ErrorPriority
+from learners.losses.losses import LossPipeline, StandardDQNLoss, C51Loss, ErrorPriority
 from modules.utils import create_optimizer, get_lr_scheduler
 from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
@@ -12,7 +12,11 @@ from agents.action_selectors.selectors import ArgmaxSelector
 def build_rainbow_loss_pipeline(config, agent_network, device):
     selector = ArgmaxSelector()
     representation = None
-    if agent_network is not None and hasattr(agent_network, "components") and "q_head" in agent_network.components:
+    if (
+        agent_network is not None
+        and hasattr(agent_network, "components")
+        and "q_head" in agent_network.components
+    ):
         representation = agent_network.components["q_head"].strategy.representation
 
     td_loss_module = (
@@ -30,10 +34,16 @@ def build_rainbow_loss_pipeline(config, agent_network, device):
             action_selector=selector,
         )
     )
-    priority_computer = ErrorPriority(prediction_key="q_values", target_key="returns", representation=representation)
+    priority_computer = ErrorPriority(
+        prediction_key="q_values", target_key="returns", representation=representation
+    )
     if getattr(config, "atom_size", 1) > 1:
-        priority_computer = ErrorPriority(prediction_key="q_logits", target_key="values", representation=representation)
-        
+        priority_computer = ErrorPriority(
+            prediction_key="q_logits",
+            target_key="values",
+            representation=representation,
+        )
+
     return LossPipeline([td_loss_module], priority_computer=priority_computer)
 
 

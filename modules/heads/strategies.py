@@ -4,7 +4,7 @@ from torch import nn, Tensor
 import torch.nn.functional as F
 from modules.utils import support_to_scalar, scalar_to_support
 from modules.distributions import Deterministic
-from losses.representations import (
+from learners.losses.representations import (
     BaseRepresentation,
     ScalarRepresentation,
     TwoHotRepresentation,

@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from agents.learner.base import UniversalLearner
 from agents.learner.callbacks import PPOEarlyStoppingCallback, EarlyStopIteration
-from losses.losses import LossPipeline, PPOPolicyLoss
+from learners.losses.losses import LossPipeline, PPOPolicyLoss
 from modules.agent_nets.modular import ModularAgentNetwork
 
 pytestmark = pytest.mark.unit

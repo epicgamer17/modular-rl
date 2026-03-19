@@ -20,7 +20,7 @@ from modules.agent_nets.modular import ModularAgentNetwork
 
 if TYPE_CHECKING:
     from agents.learner.target_builders import BaseTargetBuilder
-    from losses.losses import LossPipeline
+    from learners.losses.losses import LossPipeline
     from agents.learner.callbacks import Callback
 
 from agents.learner.callbacks import (

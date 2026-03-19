@@ -61,7 +61,7 @@ class ToPlayHead(BaseHead):
                         and MCTS to determine whose turn it is.
         """
         logits, new_state = super().forward(x, state)
-        player_idx = self.strategy.to_expected_value(logits).long()  # (B,)
+        player_idx = torch.argmax(logits, dim=-1)
         return logits, new_state, player_idx
 
 
@@ -101,7 +101,7 @@ class RelativeToPlayHead(ToPlayHead):
         )
 
         # 3. Calculate the shift (ΔP)
-        delta_p = self.strategy.to_expected_value(logits).long()
+        delta_p = torch.argmax(logits, dim=-1)
 
         # 4. Calculate actual next player index: (current + shift) % num_players
         # self.strategy.num_bins is defined in Categorical strategy (initialized in ToPlayHead)
