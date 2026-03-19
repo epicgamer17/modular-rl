@@ -110,8 +110,15 @@ class ShapeValidator:
                 shape[2] == self.num_actions
             ), f"{prefix} action dim mismatch: expected {self.num_actions}, got {shape[2]} | full shape: {shape}"
         elif key in ["values", "returns"]:
-            # Could be [B, T, 1] or [B, T, atoms]
-            pass
+            # Could be scalar [B, T] or distributional [B, T, atoms]
+            if len(shape) == 3:
+                assert (
+                    shape[2] == self.atom_size
+                ), f"{prefix} distributional target mismatch: expected {self.atom_size} atoms, got {shape[2]} | full shape: {shape}"
+            else:
+                assert (
+                    len(shape) == 2
+                ), f"{prefix} scalar target mismatch: expected 2D [B, T], got {shape} | full shape: {shape}"
         elif key.endswith("_mask") or key == "masks":
             # Semantic masks (value_mask, reward_mask, policy_mask, q_mask) must be exactly [B, T]
             assert (

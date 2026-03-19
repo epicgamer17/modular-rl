@@ -46,10 +46,10 @@ class ScalarRepresentation(BaseRepresentation):
         return 1
 
     def to_scalar(self, logits: Tensor) -> Tensor:
-        return logits.squeeze(-1)
+        return logits.reshape(logits.shape[:-1])
 
     def to_representation(self, scalar_targets: Tensor) -> Tensor:
-        return scalar_targets
+        return scalar_targets.reshape(*scalar_targets.shape, 1)
 
 
 class DiscreteValuedRepresentation(BaseRepresentation):
@@ -71,20 +71,29 @@ class DiscreteValuedRepresentation(BaseRepresentation):
         return self.bins
 
     def to_scalar(self, logits: Tensor) -> Tensor:
-        """Expected value over the support."""
-        probs = torch.softmax(logits, dim=-1)
+        """Expected value over the support: [B, T, bins] -> [B, T]"""
+        assert (
+            logits.shape[-1] == self.bins
+        ), f"Expected last dimension to be {self.bins}, got {logits.shape[-1]}"
+        orig_shape = logits.shape
+        flat_logits = logits.reshape(-1, self.bins)
+
+        probs = torch.softmax(flat_logits, dim=-1)
         support = self.support.to(device=logits.device, dtype=logits.dtype)
-        return (probs * support).sum(dim=-1)
+        flat_scalar = (probs * support).sum(dim=-1)
+
+        return flat_scalar.reshape(*orig_shape[:-1])
 
     def to_representation(self, scalar_targets: Tensor) -> Tensor:
-        """Project scalar targets onto discrete support using two-hot encoding."""
+        """Project scalar targets onto discrete support: [B, T] -> [B, T, bins]"""
         device = scalar_targets.device
         dtype = scalar_targets.dtype
+        orig_shape = scalar_targets.shape
 
-        # Ensure support is on the correct device for calculations
-        self.support = self.support.to(device)
+        # 1. Flatten into [N]
+        x = scalar_targets.reshape(-1).clamp(self.vmin, self.vmax)
 
-        x = scalar_targets.clamp(self.vmin, self.vmax)
+        # 2. Process
         b = (x - self.vmin) / self.delta_z
         l = b.floor().long()
         u = b.ceil().long()
@@ -92,19 +101,19 @@ class DiscreteValuedRepresentation(BaseRepresentation):
         p_u = b - l.float()
         p_l = 1.0 - p_u
 
-        batch_shape = x.shape
         flat_l = l.view(-1, 1).clamp(0, self.bins - 1)
         flat_u = u.view(-1, 1).clamp(0, self.bins - 1)
         flat_p_l = p_l.view(-1, 1)
         flat_p_u = p_u.view(-1, 1)
 
-        num_elements = flat_l.shape[0]
+        num_elements = x.shape[0]
         projected = torch.zeros((num_elements, self.bins), device=device, dtype=dtype)
 
         projected.scatter_add_(1, flat_l, flat_p_l)
         projected.scatter_add_(1, flat_u, flat_p_u)
 
-        return projected.view(*batch_shape, self.bins)
+        # 3. Unflatten back to [B, T, bins]
+        return projected.view(*orig_shape, self.bins)
 
     def format_target(self, targets: Dict[str, Tensor]) -> Tensor:
         """Handle ingredient-based targets or fallback to scalar."""
@@ -128,37 +137,43 @@ class CategoricalRepresentation(DiscreteValuedRepresentation):
         """
         The Baker: Implements the C51 Bellman Projection.
         Projects shifted atom probabilities back onto the fixed support grid.
+        Supports [B, T] inputs via Flatten-Process-Unflatten.
         """
         if "next_q_logits" not in targets:
             raise ValueError(
                 "CategoricalRepresentation requires 'next_q_logits' in targets."
             )
-        # 1. Extraction from Ingredients
-        next_q_logits = targets["next_q_logits"]  # [B, Actions, Atoms]
-        next_actions = targets["next_actions"].long()  # [B]
-        rewards = targets["rewards"]  # [B]
-        dones = targets["dones"]  # [B] (Terminal mask)
+
+        # 1. Capture original prefix shape (e.g., [B, T])
+        raw_next_logits = targets["next_q_logits"]
+        assert (
+            raw_next_logits.shape[-1] == self.bins
+        ), f"CategoricalRepresentation expected {self.bins} atoms, got {raw_next_logits.shape[-1]}"
+        orig_prefix = raw_next_logits.shape[:-2]  # Everything before [Actions, Atoms]
+        num_actions = raw_next_logits.shape[-2]
+        atoms = raw_next_logits.shape[-1]
+
+        # 2. Flatten all inputs into [N, ...]
+        next_q_logits = raw_next_logits.reshape(-1, num_actions, atoms)
+        next_actions = targets["next_actions"].reshape(-1).long()
+        rewards = targets["rewards"].reshape(-1)
+        dones = targets["dones"].reshape(-1)
         gamma = targets.get("gamma", 0.99)
         n_step = targets.get("n_step", 1)
 
         device = rewards.device
-        batch_size = rewards.shape[0]
+        N = rewards.shape[0]
         discount = gamma**n_step
 
-        # 2. Extract chosen next distribution: [B, Atoms]
-        chosen_logits = next_q_logits[
-            torch.arange(batch_size, device=device), next_actions
-        ]
+        # 3. Process distributional Bellman math on flattened 2D buffer
+        chosen_logits = next_q_logits[torch.arange(N, device=device), next_actions]
         next_probs = torch.softmax(chosen_logits, dim=-1)
-
-        # 3. Bellman Projection
         support = self.support.to(device)
 
         # Shifted support: Tz = r + discount * (1 - done) * z
         Tz = rewards.view(-1, 1) + discount * (1.0 - dones).view(-1, 1) * support.view(
             1, -1
         )
-        # Clamp Tz to [vmin, vmax] so b is strictly in [0, bins - 1]
         Tz = Tz.clamp(self.vmin, self.vmax)
 
         # True mathematical bounds
@@ -175,12 +190,12 @@ class CategoricalRepresentation(DiscreteValuedRepresentation):
         l_idx = l.clamp(0, self.bins - 1)
         u_idx = u.clamp(0, self.bins - 1)
 
-        # Project probabilities
-        projected_dist = torch.zeros((batch_size, self.bins), device=device)
-        projected_dist.scatter_add_(1, l_idx, p_l)
-        projected_dist.scatter_add_(1, u_idx, p_u)
+        projected_dist_flat = torch.zeros((N, self.bins), device=device)
+        projected_dist_flat.scatter_add_(1, l_idx, p_l)
+        projected_dist_flat.scatter_add_(1, u_idx, p_u)
 
-        return projected_dist
+        # 4. Unflatten back to [B, T, bins]
+        return projected_dist_flat.reshape(*orig_prefix, self.bins)
 
 
 class ExponentialBucketsRepresentation(BaseRepresentation):
@@ -220,12 +235,23 @@ class ClassificationRepresentation(BaseRepresentation):
         return self._num_classes
 
     def to_scalar(self, logits: Tensor) -> Tensor:
-        return torch.argmax(logits, dim=-1).float()
+        assert (
+            logits.shape[-1] == self._num_classes
+        ), f"Expected last dimension to be {self._num_classes}, got {logits.shape[-1]}"
+        orig_shape = logits.shape
+        flat_logits = logits.reshape(-1, self._num_classes)
+        flat_scalar = torch.argmax(flat_logits, dim=-1).float()
+        return flat_scalar.reshape(*orig_shape[:-1])
 
     def to_representation(self, scalar_targets: Tensor) -> Tensor:
-        return F.one_hot(scalar_targets.long(), num_classes=self._num_classes).float()
+        orig_shape = scalar_targets.shape
+        flat_targets = scalar_targets.reshape(-1).long()
+        flat_one_hot = F.one_hot(flat_targets, num_classes=self._num_classes).float()
+        return flat_one_hot.reshape(*orig_shape, self._num_classes)
 
-    def format_target(self, targets: Dict[str, Tensor], target_key: str = "values") -> Tensor:
+    def format_target(
+        self, targets: Dict[str, Tensor], target_key: str = "values"
+    ) -> Tensor:
         """If the target is already a distribution, return it directly."""
         target = targets[target_key]
         if target.ndim > 1 and target.shape[-1] == self._num_classes:

@@ -52,7 +52,7 @@ class SingleStepTargetBuilder(BaseTargetBuilder):
         if "value_mask" not in formatted and len(formatted) > 0:
             # Grab the device and batch size from the first tensor we can find
             B, T = 1, 1
-            for key, tensor in targets.items():
+            for key, tensor in formatted.items():
                 if key != "gradient_scales" and tensor.ndim >= 2:
                     B, T = tensor.shape[:2]
                     break  # We found a valid batch tensor (like rewards, actions, values)
