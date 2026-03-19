@@ -33,45 +33,20 @@ class ShapeValidator:
         """
         Validate the shapes of predictions and targets.
         """
-        for key, tensor in predictions.items():
-            if torch.is_tensor(tensor):
-                self._check_shape(key, tensor, is_prediction=True)
+        self.validate_predictions(predictions)
 
         for key, tensor in targets.items():
             if torch.is_tensor(tensor):
                 self._check_shape_strict(key, tensor, is_prediction=False)
 
-    def _check_shape(self, key: str, tensor: torch.Tensor, is_prediction: bool) -> None:
-        """Flexible validation for predictions (supports T=1 omission)."""
-        shape = list(tensor.shape)
-        prefix = f"[{'Prediction' if is_prediction else 'Target'}] '{key}'"
+    def validate_predictions(self, predictions: Dict[str, torch.Tensor]) -> None:
+        """
+        Validate that all predictions follow the universal [B, T, ...] contract.
+        """
+        for key, tensor in predictions.items():
+            if torch.is_tensor(tensor):
+                self._check_shape_strict(key, tensor, is_prediction=True)
 
-        # 1. Batch Size (Dimension 0)
-        assert (
-            shape[0] == self.B
-        ), f"{prefix} batch size mismatch: expected {self.B}, got {shape[0]} | full shape: {shape}"
-
-        # 2. Sequence Length and Content (Dimension 1+)
-        # PPO: T=1, often omitted in predictions.
-        has_sequence_dim = len(shape) >= 2 and shape[1] == self.T
-        is_single_step = self.T == 1
-
-        if key == "policies":
-            if has_sequence_dim:
-                assert (
-                    shape[2] == self.num_actions
-                ), f"{prefix} action dim mismatch: expected {self.num_actions}, got {shape[2]} | full shape: {shape}"
-            elif is_single_step:
-                assert (
-                    shape[1] == self.num_actions
-                ), f"{prefix} action dim mismatch: expected {self.num_actions}, got {shape[1]} | full shape: {shape}"
-            else:
-                raise AssertionError(
-                    f"{prefix} shape {shape} invalid for T={self.T}, num_actions={self.num_actions} | full shape: {shape}"
-                )
-        else:
-            # For other prediction keys, we allow flexibility for now
-            pass
 
     def _check_shape_strict(
         self, key: str, tensor: torch.Tensor, is_prediction: bool

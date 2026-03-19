@@ -39,16 +39,16 @@ class LossModule(ABC):
         """Set of keys required in the targets dict."""
         pass  # pragma: no cover
 
-    def should_compute(self, k: int, context: dict) -> bool:
-        """Determine if this loss should be computed at step k."""
+    def should_compute(self, predictions: dict, targets: dict, context: dict) -> bool:
+        """Determine if this loss should be computed for the batch."""
         return True
 
-    def get_mask(self, k: int, targets_k: dict) -> torch.Tensor:
-        """Get the mask to apply for this loss at step k."""
-        mask = targets_k.get(self.mask_key)
+    def get_mask(self, targets: dict) -> torch.Tensor:
+        """Get the mask to apply for this loss (B, T)."""
+        mask = targets.get(self.mask_key)
         if mask is None:
             raise KeyError(
-                f"Missing required mask '{self.mask_key}' for {self.__class__.__name__} at step {k}"
+                f"Missing required mask '{self.mask_key}' for {self.__class__.__name__}"
             )
         return mask
 
@@ -58,13 +58,12 @@ class LossModule(ABC):
         predictions: dict,
         targets: dict,
         context: dict,
-        k: int = 0,
     ) -> torch.Tensor:
         """
-        Compute elementwise loss for a single step k.
+        Compute elementwise loss for the entire sequence.
 
         Returns:
-            elementwise_tensor of shape (B,) or (B, atoms)
+            elementwise_tensor of shape (B, T)
         """
         pass  # pragma: no cover
 
@@ -73,11 +72,11 @@ class LossModule(ABC):
         predictions: dict,
         targets: dict,
         context: dict,
-        k: int = 0,
     ) -> Optional[torch.Tensor]:
         """
-        Calculates PER priorities.
-        Returns None if this specific loss module does not drive priorities.
+        Calculates PER priorities for the sequence.
+        Returns:
+            Priority tensor of shape (B,) or None.
         """
         return None  # pragma: no cover
 
@@ -110,27 +109,43 @@ class StandardDQNLoss(LossModule):
         return {"q_values", "actions"}
 
     def compute_loss(
-        self, predictions: dict, targets: dict, context: dict, k: int = 0
+        self, predictions: dict, targets: dict, context: dict
     ) -> torch.Tensor:
-        actions = targets["actions"].long()
-        batch_size = actions.shape[0]
-        selected_q = predictions["q_values"][
-            torch.arange(batch_size, device=self.device), actions
-        ]
-
-        targets_val = targets["q_values"]
-        # Return elementwise loss (B,)
-        return self.config.loss_function(selected_q, targets_val, reduction="none")
-
-    def compute_priority(self, predictions, targets, context, k=0):
         q_values = predictions["q_values"]
         actions = targets["actions"].long()
 
-        # Q-value of the chosen action
-        pred_q = q_values[torch.arange(q_values.shape[0], device=self.device), actions]
-        target_q = targets["q_values"]
+        # 1. Capture and Validate Shapes
+        assert q_values.ndim == 3, f"StandardDQNLoss requires [B, T, Actions] predictions, got {q_values.shape}"
+        assert actions.ndim == 2, f"StandardDQNLoss requires [B, T] action targets, got {actions.shape}"
+        B, T, num_actions = q_values.shape
 
-        return torch.abs(target_q - pred_q).detach()
+        # 2. Flatten for vectorized indexing
+        flat_q = q_values.reshape(-1, num_actions)
+        flat_actions = actions.reshape(-1)
+
+        # [B * T]
+        selected_q = flat_q[torch.arange(B * T, device=self.device), flat_actions]
+        targets_val = targets["q_values"].reshape(-1)
+
+        # 3. Compute and Unflatten
+        assert selected_q.shape == targets_val.shape, f"StandardDQNLoss: shape mismatch between selected_q {selected_q.shape} and targets_val {targets_val.shape}"
+        loss = self.config.loss_function(selected_q, targets_val, reduction="none")
+        return loss.reshape(B, T)
+
+    def compute_priority(self, predictions: dict, targets: dict, context: dict) -> torch.Tensor:
+        q_values = predictions["q_values"]
+        actions = targets["actions"].long()
+        target_q = targets["q_values"]
+        B, T = actions.shape[:2]
+
+        # Q-value of the chosen action [B, T]
+        flat_q = q_values.reshape(-1, q_values.shape[-1])
+        pred_q = flat_q[torch.arange(B * T, device=self.device), actions.reshape(-1)].reshape(B, T)
+
+        # Return max TD-error over the sequence for each batch element [B]
+        assert target_q.shape == pred_q.shape, f"StandardDQNLoss priority: shape mismatch between target_q {target_q.shape} and pred_q {pred_q.shape}"
+        td_error = torch.abs(target_q - pred_q).detach()
+        return td_error.max(dim=1).values
 
 
 class C51Loss(LossModule):
@@ -196,31 +211,49 @@ class C51Loss(LossModule):
         return projected
 
     def compute_loss(
-        self, predictions: dict, targets: dict, context: dict, k: int = 0
+        self, predictions: dict, targets: dict, context: dict
     ) -> torch.Tensor:
         online_q_logits = predictions["q_logits"]
-
-        actions = targets["actions"].to(self.device).long()
-        batch_size = actions.shape[0]
+        actions = targets["actions"].long()
         target_q_logits = targets["q_logits"]
-        chosen_logits = online_q_logits[
-            torch.arange(batch_size, device=self.device), actions
-        ]
-        log_probs = F.log_softmax(chosen_logits, dim=-1)
-        # Return elementwise loss (B,)
-        return -(target_q_logits * log_probs).sum(dim=-1)
 
-    def compute_priority(self, predictions, targets, context, k=0):
+        # 1. Capture and Validate
+        assert online_q_logits.ndim == 4, f"C51Loss requires [B, T, Actions, Atoms], got {online_q_logits.shape}"
+        B, T, num_actions, atoms = online_q_logits.shape
+
+        # 2. Flatten and select
+        flat_logits = online_q_logits.reshape(-1, num_actions, atoms)
+        flat_actions = actions.reshape(-1)
+        
+        # [B * T, Atoms]
+        chosen_logits = flat_logits[torch.arange(B * T, device=self.device), flat_actions]
+        log_probs = F.log_softmax(chosen_logits, dim=-1)
+        
+        # [B * T, Atoms]
+        flat_target_q_logits = target_q_logits.reshape(-1, atoms)
+        
+        # [B * T]
+        assert flat_target_q_logits.shape == log_probs.shape, f"C51Loss: shape mismatch between flat_target_q_logits {flat_target_q_logits.shape} and log_probs {log_probs.shape}"
+        loss = -(flat_target_q_logits * log_probs).sum(dim=-1)
+        return loss.reshape(B, T)
+
+    def compute_priority(self, predictions: dict, targets: dict, context: dict) -> torch.Tensor:
         # Predict Expected Q
         probs = torch.softmax(predictions["q_logits"], dim=-1)
-        q_values = (probs * self.support).sum(dim=-1)
+        support = self.support.to(device=probs.device, dtype=probs.dtype)
+        q_values = (probs * support).sum(dim=-1) # [B, T, Actions]
+        
         actions = targets["actions"].long()
-        pred_q = q_values[torch.arange(q_values.shape[0], device=self.device), actions]
+        B, T = actions.shape[:2]
+        
+        flat_q = q_values.reshape(-1, q_values.shape[-1])
+        pred_q = flat_q[torch.arange(B * T, device=self.device), actions.reshape(-1)].reshape(B, T)
 
-        # Target Expected Q
-        target_q = (targets["q_logits"] * self.support).sum(dim=-1)
+        # Target Expected Q [B, T]
+        target_q = (targets["q_logits"] * support).sum(dim=-1)
+        assert target_q.shape == pred_q.shape, f"C51Loss priority: shape mismatch between target_q {target_q.shape} and pred_q {pred_q.shape}"
 
-        return torch.abs(target_q - pred_q).detach()
+        return torch.abs(target_q - pred_q).detach().max(dim=1).values
 
 
 # ============================================================================
@@ -256,102 +289,79 @@ class ValueLoss(LossModule):
             deps.add("actions")
         return deps
 
-    def should_compute(self, k: int, context: dict) -> bool:
-        return True  # Compute at all steps
-
-    def get_mask(self, k: int, targets_k: dict) -> torch.Tensor:
-        return super().get_mask(k, targets_k)
+    def should_compute(self, predictions: dict, targets: dict, context: dict) -> bool:
+        return True
 
     def compute_loss(
         self,
         predictions: dict,
         targets: dict,
         context: dict,
-        k: int = 0,
     ) -> torch.Tensor:
-        """MuZero-style: Returns elementwise_loss of shape (B,)"""
-        values_k = predictions["values"]
-        target_values_k = targets["values"]
-        assert (
-            values_k.shape[0] == target_values_k.shape[0]
-        ), f"ValueLoss batch size mismatch: preds {values_k.shape} vs targets {target_values_k.shape}"
+        """MuZero-style: Returns elementwise_loss of shape (B, T)"""
+        values = predictions["values"]
+        target_values = targets["values"]
+        
+        # 1. Capture and Validate
+        assert values.ndim >= 2, f"ValueLoss requires [B, T, ...] predictions, got {values.shape}"
+        assert target_values.ndim >= 2, f"ValueLoss requires [B, T, ...] targets, got {target_values.shape}"
+        B, T = target_values.shape[:2]
 
-        # Convert to support if needed
+        # 2. Conversion and Support Logic
         if self.config.support_range is not None:
             from modules.utils import scalar_to_support
-
-            target_values_k = scalar_to_support(
-                target_values_k, self.config.support_range
-            ).to(self.device)
-            predicted_values_k = values_k
+            # [B, T] -> [B, T, atoms]
+            target_values = scalar_to_support(target_values, self.config.support_range).to(self.device)
+            predicted_values = values
         else:
-            # Squeeze to match target shape
-            predicted_values_k = values_k.squeeze(-1)  # Convert (B, 1) -> (B,)
+            # Ensure both are [B, T]
+            predicted_values = values.reshape(B, T)
+            target_values = target_values.reshape(B, T)
 
-            assert (
-                predicted_values_k.shape == target_values_k.shape
-            ), f"ValueLoss supports mismatch after conversion: preds {predicted_values_k.shape} vs targets {target_values_k.shape}"
+        # 3. Compute Vectorized Loss [B, T]
+        assert predicted_values.shape == target_values.shape, f"ValueLoss: shape mismatch between predicted_values {predicted_values.shape} and target_values {target_values.shape}"
+        value_loss = self.config.value_loss_function(predicted_values, target_values, reduction="none")
+        if value_loss.ndim > 2:
+            value_loss = value_loss.sum(dim=-1)
 
-        # Value Loss: (B,)
-        value_loss_k = self.config.value_loss_function(
-            predicted_values_k, target_values_k, reduction="none"
-        )
-        if value_loss_k.ndim > 1:
-            value_loss_k = value_loss_k.sum(dim=-1)
+        # 4. Latent visualization (root only metadata)
+        if getattr(self.config, "latent_viz_interval", 0) > 0:
+            viz_interval = self.config.latent_viz_interval
+            if context.get("training_step", 0) % viz_interval == 0:
+                 from utils.telemetry import add_latent_visualization_metric
+                 # UsePredictions: 'latents' root is expected at index 0
+                 s0 = predictions["latents"][:, 0]
+                 actions = targets.get("actions")
+                 if actions is not None:
+                      metrics = context.setdefault("metrics", {})
+                      add_latent_visualization_metric(
+                          metrics, "latent_root", s0.detach().cpu(),
+                          labels=actions[:, 0].detach().cpu(),
+                          method=getattr(self.config, "latent_viz_method", "pca")
+                      )
 
-        value_loss = self.config.value_loss_factor * value_loss_k
+        return self.config.value_loss_factor * value_loss
 
-        # Root stage (k=0) metrics for latent visualization
-        if k == 0:
-            viz_interval = getattr(self.config, "latent_viz_interval", 0)
-            if viz_interval > 0 and context.get("training_step", 0) % viz_interval == 0:
-                from utils.telemetry import add_latent_visualization_metric
-
-                # extract s0 and a0
-                s0 = predictions["latents"]
-                # In MuZero predictions, 'latents' is (B, D) at k=0 if already extracted by LossPipeline.run
-                # Wait, 'latent_states' is the name in modular.py outputs.
-                # LossPipeline.run _extract_step_data uses 'latent_states' -> k if 'latent_states' has K+1.
-                # Actually, modular.py learner_inference returns 'latent_states'.
-
-                # Check for actions root
-                actions = targets.get("actions")
-                if actions is not None:
-                    metrics = context.setdefault("metrics", {})
-                    add_latent_visualization_metric(
-                        metrics,
-                        "latent_root",
-                        s0.detach().cpu(),
-                        labels=actions.detach().cpu(),
-                        method=getattr(self.config, "latent_viz_method", "pca"),
-                    )
-
-        return value_loss
-
-    def compute_priority(self, predictions, targets, context, k=0):
+    def compute_priority(self, predictions: dict, targets: dict, context: dict) -> torch.Tensor:
         from modules.utils import support_to_scalar
 
-        values_k = predictions["values"]
-        target_values_k = targets["values"]
+        values = predictions["values"]
+        target_values = targets["values"]
+        B, T = target_values.shape[:2]
 
         if self.config.support_range is not None:
-            # Predictions are 21-atom distributions; convert to scalar for comparison.
-            # Targets are stored as raw scalars in the replay buffer (not distributions).
-            pred_scalar = support_to_scalar(values_k, self.config.support_range)
-            target_scalar = (
-                target_values_k.squeeze(-1)
-                if target_values_k.ndim > 1
-                else target_values_k
-            )
+            # Flatten to use support_to_scalar [N, atoms] -> [N]
+            flat_values = values.reshape(-1, values.shape[-1])
+            flat_pred = support_to_scalar(flat_values, self.config.support_range)
+            pred_scalar = flat_pred.reshape(B, T)
+            target_scalar = target_values.reshape(B, T)
         else:
-            pred_scalar = values_k.squeeze(-1)
-            target_scalar = (
-                target_values_k.squeeze(-1)
-                if target_values_k.ndim > 1
-                else target_values_k
-            )
+            pred_scalar = values.reshape(B, T)
+            target_scalar = target_values.reshape(B, T)
 
-        return torch.abs(target_scalar - pred_scalar).detach()
+        # Return max TD-error over the sequence [B]
+        assert target_scalar.shape == pred_scalar.shape, f"ValueLoss priority: shape mismatch between target_scalar {target_scalar.shape} and pred_scalar {pred_scalar.shape}"
+        return torch.abs(target_scalar - pred_scalar).detach().max(dim=1).values
 
 
 class PolicyLoss(LossModule):
@@ -376,40 +386,44 @@ class PolicyLoss(LossModule):
     def required_targets(self) -> set[str]:
         return {"policies"}
 
-    def should_compute(self, k: int, context: dict) -> bool:
-        return True  # Compute at all steps
-
-    def get_mask(self, k: int, targets_k: dict) -> torch.Tensor:
-        return super().get_mask(k, targets_k)
+    def should_compute(self, predictions: dict, targets: dict, context: dict) -> bool:
+        return True
 
     def compute_loss(
         self,
         predictions: dict,
         targets: dict,
         context: dict,
-        k: int = 0,
     ) -> torch.Tensor:
-        """MuZero-style: Returns elementwise_loss of shape (B,)"""
-        policies_k = predictions["policies"]
-        target_policies_k = targets["policies"]
-        assert (
-            policies_k.shape == target_policies_k.shape
-        ), f"PolicyLoss shape mismatch: preds {policies_k.shape} vs targets {target_policies_k.shape}"
+        """MuZero-style: Returns elementwise_loss of shape (B, T)"""
+        policies = predictions["policies"]
+        target_policies = targets["policies"]
+        
+        # 1. Capture and Validate
+        assert policies.shape == target_policies.shape, f"PolicyLoss shape mismatch: preds {policies.shape} vs targets {target_policies.shape}"
+        B, T, num_actions = policies.shape
 
+        # 2. Vectorized Loss calculation [B, T]
         if self.config.policy_loss_function == F.kl_div:
-            # KL Div expects log-probabilities as input, but the network outputs logits
-            # Also, kl_div without 'batchmean' returns [B, A], so we sum over actions
-            log_probs = F.log_softmax(policies_k, dim=-1)
+            log_probs = F.log_softmax(policies, dim=-1)
+            assert log_probs.shape == target_policies.shape, f"PolicyLoss KL: shape mismatch between log_probs {log_probs.shape} and target_policies {target_policies.shape}"
             policy_loss = self.config.policy_loss_function(
-                log_probs, target_policies_k, reduction="none"
+                log_probs, target_policies, reduction="none"
             )
-            if policy_loss.ndim > 1:
+            if policy_loss.ndim > 2:
                 policy_loss = policy_loss.sum(dim=-1)
         else:
-            # Default cross_entropy handles logits internally and returns [B] natively
+            # Flatten to [N, num_actions] because some cross_entropy versions prefer 2D/3D but not 4D?
+            # actually cross_entropy should handle it, but flattening is safest.
+            p_flat = policies.reshape(-1, num_actions)
+            tp_flat = target_policies.reshape(-1, num_actions)
+            assert p_flat.shape == tp_flat.shape, f"PolicyLoss: shape mismatch between flattened policies {p_flat.shape} and target_policies {tp_flat.shape}"
             policy_loss = self.config.policy_loss_function(
-                policies_k, target_policies_k, reduction="none"
+                p_flat, 
+                tp_flat, 
+                reduction="none"
             )
+            policy_loss = policy_loss.reshape(B, T)
 
         return policy_loss
 
@@ -436,71 +450,41 @@ class RewardLoss(LossModule):
     def required_targets(self) -> set[str]:
         return {"rewards"}
 
-    def should_compute(self, k: int, context: dict) -> bool:
-        return k > 0  # Only for k > 0
-
-    def get_mask(self, k: int, targets_k: dict) -> torch.Tensor:
-        return super().get_mask(k, targets_k)
+    def should_compute(self, predictions: dict, targets: dict, context: dict) -> bool:
+        return True
 
     def compute_loss(
         self,
         predictions: dict,
         targets: dict,
         context: dict,
-        k: int = 0,
     ) -> torch.Tensor:
-        """MuZero-style: Returns elementwise_loss of shape (B,)"""
-        rewards_k = predictions["rewards"]
-        target_rewards_k = targets["rewards"]
+        """MuZero-style: Returns elementwise_loss of shape (B, T)"""
+        rewards = predictions["rewards"]
+        target_rewards = targets["rewards"]
 
-        # Assertions before any potential squeezing
-        assert (
-            rewards_k.shape[0] == target_rewards_k.shape[0]
-        ), f"RewardLoss batch size mismatch: preds {rewards_k.shape} vs targets {target_rewards_k.shape}"
+        # 1. Capture and Validate
+        assert rewards.ndim >= 2, f"RewardLoss requires [B, T, ...] predictions, got {rewards.shape}"
+        assert target_rewards.ndim >= 2, f"RewardLoss requires [B, T, ...] targets, got {target_rewards.shape}"
+        B, T = target_rewards.shape[:2]
 
-        # Convert to support if needed
+        # 2. Conversion and Support Logic
         if self.config.support_range is not None:
             from modules.utils import scalar_to_support
-
-            # Predictions are already distributions (B, N_atoms)
-            predicted_rewards_k = rewards_k
-            # Targets are scalars (B,) or (B, 1), convert to distributions (B, N_atoms)
-            target_rewards_k = scalar_to_support(
-                target_rewards_k, self.config.support_range
-            ).to(self.device)
-
-            assert (
-                predicted_rewards_k.shape == target_rewards_k.shape
-            ), f"RewardLoss support mismatch after conversion: preds {predicted_rewards_k.shape} vs targets {target_rewards_k.shape}"
-
-            # Reward Loss: (B,)
-            reward_loss_k = self.config.reward_loss_function(
-                predicted_rewards_k, target_rewards_k, reduction="none"
-            )
-            if reward_loss_k.ndim > 1:
-                reward_loss_k = reward_loss_k.sum(dim=-1)
+            # Predictions: [B, T, atoms], Targets: [B, T, atoms]
+            target_dist = scalar_to_support(target_rewards, self.config.support_range).to(self.device)
+            assert rewards.shape == target_dist.shape, f"RewardLoss Support: shape mismatch between rewards {rewards.shape} and target_dist {target_dist.shape}"
+            reward_loss = self.config.reward_loss_function(rewards, target_dist, reduction="none")
+            if reward_loss.ndim > 2:
+                reward_loss = reward_loss.sum(dim=-1)
         else:
-            # Standard Scalar MSE
-            # Ensure both are (B,)
-            predicted_rewards_k = (
-                rewards_k.squeeze(-1) if rewards_k.ndim > 1 else rewards_k
+            # Standard Scalar MSE: Both [B, T]
+            preds_r = rewards.reshape(B, T)
+            target_r = target_rewards.reshape(B, T)
+            assert preds_r.shape == target_r.shape, f"RewardLoss Scalar: shape mismatch between rewards {preds_r.shape} and target_rewards {target_r.shape}"
+            reward_loss = self.config.reward_loss_function(
+                preds_r, target_r, reduction="none"
             )
-            target_rewards_k = (
-                target_rewards_k.squeeze(-1)
-                if target_rewards_k.ndim > 1
-                else target_rewards_k
-            )
-
-            assert (
-                predicted_rewards_k.shape == target_rewards_k.shape
-            ), f"RewardLoss scalar mismatch after squeezing: preds {predicted_rewards_k.shape} vs targets {target_rewards_k.shape}"
-
-            # Reward Loss: (B,)
-            reward_loss_k = self.config.reward_loss_function(
-                predicted_rewards_k, target_rewards_k, reduction="none"
-            )
-
-        reward_loss = reward_loss_k
 
         return reward_loss
 
@@ -527,33 +511,39 @@ class ToPlayLoss(LossModule):
     def required_targets(self) -> set[str]:
         return {"to_plays"}
 
-    def should_compute(self, k: int, context: dict) -> bool:
-        # Only compute for multi-player games and k > 0
-        return k > 0 and self.config.game.num_players != 1
-
-    def get_mask(self, k: int, context: dict) -> torch.Tensor:
-        return super().get_mask(k, context)
+    def should_compute(self, predictions: dict, targets: dict, context: dict) -> bool:
+        # Only compute for multi-player games
+        return self.config.game.num_players != 1
 
     def compute_loss(
         self,
         predictions: dict,
         targets: dict,
         context: dict,
-        k: int = 0,
     ) -> torch.Tensor:
-        """MuZero-style: Returns elementwise_loss of shape (B,)"""
-        to_plays_k = predictions["to_plays"]
-        target_to_plays_k = targets["to_plays"]
+        """MuZero-style: Returns elementwise_loss of shape (B, T)"""
+        to_plays = predictions["to_plays"]
+        target_to_plays = targets["to_plays"]
 
-        # To-Play Loss: (B,)
-        to_play_loss = (
-            self.config.to_play_loss_factor
-            * self.config.to_play_loss_function(
-                to_plays_k, target_to_plays_k, reduction="none"
-            )
-        )
+        # 1. Capture and Validate
+        assert to_plays.ndim == 3, f"ToPlayLoss requires [B, T, num_players], got {to_plays.shape}"
+        assert target_to_plays.ndim == 2, f"ToPlayLoss requires [B, T] targets, got {target_to_plays.shape}"
+        B, T = target_to_plays.shape
 
-        return to_play_loss
+        # 2. Compute Vectorized Cross Entropy [B, T]
+        # Flatten to use standard functional interface
+        num_players = self.config.game.num_players
+        p_flat = to_plays.reshape(-1, num_players)
+        tp_flat = target_to_plays.reshape(-1)
+        # For cross entropy, labels [N] match logits [N, C] prefix
+        assert p_flat.shape[0] == tp_flat.shape[0], f"ToPlayLoss: count mismatch between predictions {p_flat.shape[0]} and targets {tp_flat.shape[0]}"
+        to_play_loss = self.config.to_play_loss_function(
+            p_flat,
+            tp_flat.long(),
+            reduction="none"
+        ).reshape(B, T)
+
+        return self.config.to_play_loss_factor * to_play_loss
 
 
 class RelativeToPlayLoss(LossModule):
@@ -583,36 +573,55 @@ class RelativeToPlayLoss(LossModule):
         # Needs to_plays to calculate delta
         return {"to_plays"}
 
-    def should_compute(self, k: int, context: dict) -> bool:
-        # Only compute for multi-player games and k > 0 (needs k-1)
-        return (
-            k > 0
-            and self.config.game.num_players > 1
-            and "full_targets" in context
-            and "to_plays" in context["full_targets"]
-        )
-
-    def get_mask(self, k: int, context: dict) -> torch.Tensor:
-        return super().get_mask(k, context)
+    def should_compute(self, predictions: dict, targets: dict, context: dict) -> bool:
+        return self.config.game.num_players > 1
 
     def compute_loss(
         self,
         predictions: dict,
         targets: dict,
         context: dict,
-        k: int = 0,
     ) -> torch.Tensor:
-        """MuZero-style: Returns elementwise_loss of shape (B,)"""
-        # predictions["to_plays"] contains ΔP logits for step k (shape (B, num_players))
-        delta_p_logits_k = predictions["to_plays"]
-
-        # Calculate target ΔP_k = (P_k - P_{k-1}) mod N
-        full_targets = context["full_targets"]
-        p_k = full_targets["to_plays"][:, k]
-        p_prev = full_targets["to_plays"][:, k - 1]
+        """MuZero-style: Returns elementwise_loss of shape (B, T)"""
+        # predictions["to_plays"] contains ΔP logits for seq (B, T, num_players)
+        # Note: In MuZero, ΔP is usually predicted for k=1..T-1.
+        delta_p_logits = predictions["to_plays"]
+        full_to_plays = targets["to_plays"]
+        
+        # 1. Capture and Validate
+        assert delta_p_logits.ndim == 3, f"RelativeToPlayLoss requires [B, T, num_players], got {delta_p_logits.shape}"
+        assert full_to_plays.ndim == 2, f"RelativeToPlayLoss requires [B, T] to_plays, got {full_to_plays.shape}"
+        B, T = full_to_plays.shape
         num_players = self.config.game.num_players
 
-        target_delta_p_k = (p_k - p_prev) % num_players
+        # 2. Calculate ΔP targets: [B, T-1]
+        p_prev = full_to_plays[:, :-1]
+        p_curr = full_to_plays[:, 1:]
+        target_delta_p = (p_curr - p_prev) % num_players
+        
+        # 3. Align and Compute Vectorized Cross Entropy
+        # ΔP for k=1 corresponds to predictions index k=1 (if root is k=0)
+        # Actually MuZero predicts p_k from s_k. s_k is produced by step(s_{k-1}, a_{k-1}).
+        # So delta_p_logits[:, 1] is the prediction for ΔP_1 = (P1 - P0).
+        
+        # Zero-pad or slice to match T?
+        # Standard approach: only compute for indices where we have a prev player.
+        # [B, T-1]
+        preds_p = delta_p_logits[:, 1:].reshape(-1, num_players)
+        targets_p = target_delta_p.reshape(-1)
+        assert preds_p.shape[0] == targets_p.shape[0], f"RelativeToPlayLoss: count mismatch between predictions {preds_p.shape[0]} and targets {targets_p.shape[0]}"
+        loss_flat = self.config.to_play_loss_function(
+            preds_p,
+            targets_p.long(),
+            reduction="none"
+        )
+        
+        # Reshape and pad first index (k=0) with 0.0 to maintain [B, T] shape
+        loss_seq = loss_flat.reshape(B, T-1)
+        zero_pad = torch.zeros((B, 1), device=self.device)
+        total_loss = torch.cat([zero_pad, loss_seq], dim=1)
+        
+        return self.config.to_play_loss_factor * total_loss
 
         # Loss calculation
         loss = self.config.to_play_loss_factor * self.config.to_play_loss_function(
@@ -625,8 +634,8 @@ class RelativeToPlayLoss(LossModule):
 class ConsistencyLoss(LossModule):
     """Consistency loss module (EfficientZero style)."""
 
-    def __init__(self, config, device, agent_network, optimizer_name: str = "default"):
-        super().__init__(config, device, optimizer_name=optimizer_name)
+    def __init__(self, config, device, agent_network, optimizer_name: str = "default", mask_key: str = "policy_mask"):
+        super().__init__(config, device, optimizer_name=optimizer_name, mask_key=mask_key)
         self.agent_network = agent_network
 
     @property
@@ -637,36 +646,38 @@ class ConsistencyLoss(LossModule):
     def required_targets(self) -> set[str]:
         return {"consistency_targets"}
 
-    def should_compute(self, k: int, context: dict) -> bool:
-        return k > 0  # Only for k > 0
-
-    def get_mask(self, k: int, context: dict) -> torch.Tensor:
-        # Consistency valid if policy is valid (step is not terminal)
-        return context["has_valid_action_mask"][:, k]
+    def should_compute(self, predictions: dict, targets: dict, context: dict) -> bool:
+        return True
 
     def compute_loss(
         self,
         predictions: dict,
         targets: dict,
         context: dict,
-        k: int = 0,
     ) -> torch.Tensor:
-        """MuZero-style: Returns elementwise_loss of shape (B,)"""
-        latent_states_k = predictions["latents"]
-        target_features_k = targets["consistency_targets"]
-        if isinstance(latent_states_k, dict):
-            latent_states_k = latent_states_k["dynamics"]
+        """MuZero-style: Returns elementwise_loss of shape (B, T)"""
+        latent_states = predictions["latents"]
+        target_features = targets["consistency_targets"]
+        
+        # 1. Capture and Validate
+        assert latent_states.ndim >= 3, f"ConsistencyLoss requires [B, T, D], got {latent_states.shape}"
+        assert target_features.ndim >= 2, f"ConsistencyLoss requires [B, T, D], got {target_features.shape}"
+        B, T = target_features.shape[:2]
 
-        # Process the predicted latent (Prediction)
-        # We project, then predict (SimSiam style predictor head)
-        proj_preds = self.agent_network.project(latent_states_k, grad=True)
+        if isinstance(latent_states, dict):
+            latent_states = latent_states["dynamics"]
+
+        # 2. Process Vectorized projection on flattened batch-time
+        flat_latents = latent_states.reshape(-1, latent_states.shape[-1])
+        proj_preds = self.agent_network.project(flat_latents, grad=True)
         f2 = F.normalize(proj_preds, p=2.0, dim=-1, eps=1e-5)
 
-        # Compare against learner-precomputed target features.
-        current_consistency = -(target_features_k * f2).sum(dim=1)
-        consistency_loss = self.config.consistency_loss_factor * current_consistency
-
-        return consistency_loss
+        # 3. Compute Vectorized Similarity Loss [B, T]
+        flat_targets = target_features.reshape(-1, target_features.shape[-1])
+        assert flat_targets.shape == f2.shape, f"ConsistencyLoss: shape mismatch between targets {flat_targets.shape} and predictions {f2.shape}"
+        flat_consistency = -(flat_targets * f2).sum(dim=1)
+        
+        return self.config.consistency_loss_factor * flat_consistency.reshape(B, T)
 
 
 class ChanceQLoss(LossModule):
@@ -684,68 +695,51 @@ class ChanceQLoss(LossModule):
         # Uses target_values_next which is targets["values"][:, k]
         return {"values"}
 
-    def should_compute(self, k: int, context: dict) -> bool:
-        return self.config.stochastic and k > 0
+    def should_compute(self, predictions: dict, targets: dict, context: dict) -> bool:
+        return self.config.stochastic
 
     def compute_loss(
         self,
         predictions: dict,
         targets: dict,
         context: dict,
-        k: int = 0,
     ) -> torch.Tensor:
-        """MuZero-style: Returns elementwise_loss of shape (B,)"""
-        # Note: chance values are indexed at k-1 in the stochastic arrays
-        chance_values_k = predictions["chance_values"]
-        # Target is derived from replay values at k+1, not a separate learner target head.
-        target_chance_values_k = context.get("target_values_next")
+        """MuZero-style: Returns elementwise_loss of shape (B, T)"""
+        chance_values = predictions["chance_values"]
+        # In vectorized mode, LossPipeline should provide target_values_next as [B, T]
+        target_chance_values = context.get("target_values_next")
+        
+        # 1. Capture and Validate
+        assert chance_values.ndim >= 2, f"ChanceQLoss requires [B, T, ...] predictions, got {chance_values.shape}"
+        assert target_chance_values is not None, "ChanceQLoss requires 'target_values_next' in context"
+        B, T = target_chance_values.shape[:2]
 
-        # Convert to support if needed
+        # 2. Conversion and Support Logic
         if self.config.support_range is not None:
             from modules.utils import scalar_to_support
-
-            target_chance_values_k = scalar_to_support(
-                target_chance_values_k, self.config.support_range
-            ).to(self.device)
-            predicted_chance_values_k = chance_values_k
+            # [B, T] -> [B, T, atoms]
+            target_dist = scalar_to_support(target_chance_values, self.config.support_range).to(self.device)
+            predicted_chance_values = chance_values
         else:
-            predicted_chance_values_k = chance_values_k.squeeze(
-                -1
-            )  # Convert (B, 1) -> (B,)
+            predicted_chance_values = chance_values.reshape(B, T)
+            target_dist = target_chance_values.reshape(B, T)
 
-        assert (
-            predicted_chance_values_k.shape == target_chance_values_k.shape
-        ), f"{predicted_chance_values_k.shape} = {target_chance_values_k.shape}"
+        # 3. Compute Vectorized Loss [B, T]
+        assert predicted_chance_values.shape == target_dist.shape, f"ChanceQLoss: shape mismatch between predictions {predicted_chance_values.shape} and targets {target_dist.shape}"
+        q_loss = self.config.value_loss_function(predicted_chance_values, target_dist, reduction="none")
+        if q_loss.ndim > 2:
+            q_loss = q_loss.sum(dim=-1)
 
-        q_loss_k = self.config.value_loss_function(
-            predicted_chance_values_k,
-            target_chance_values_k,
-            reduction="none",
-        )
-        if q_loss_k.ndim > 1:
-            q_loss_k = q_loss_k.sum(dim=-1)
-
-        q_loss = self.config.value_loss_factor * q_loss_k
-
-        # If using supports, track the entropy of the predicted distribution
+        # 4. Entropy metrics for full sequence
         if self.config.support_range is not None:
             metrics = context.setdefault("metrics", {})
-            probs = torch.softmax(predicted_chance_values_k, dim=-1)
-            entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1)
-            mask = self.get_mask(k, context).bool()
-            if entropy.shape == mask.shape:
-                entropy = entropy[mask]
-            append_metric(
-                metrics,
-                "chance_q_entropy",
-                entropy.mean().item() if entropy.numel() > 0 else 0.0,
-            )
+            probs = torch.softmax(predicted_chance_values, dim=-1)
+            entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1) # [B, T]
+            mask = self.get_mask(targets).bool()
+            valid_entropy = entropy[mask]
+            append_metric(metrics, "chance_q_entropy", valid_entropy.mean().item() if valid_entropy.numel() > 0 else 0.0)
 
-        return q_loss
-
-    def get_mask(self, k: int, context: dict) -> torch.Tensor:
-        # Chance Q target is value from next step. Compute if both are in same game.
-        return context["is_same_game"][:, k]
+        return self.config.value_loss_factor * q_loss
 
 
 class SigmaLoss(LossModule):
@@ -762,66 +756,54 @@ class SigmaLoss(LossModule):
     def required_targets(self) -> set[str]:
         return {"chance_codes"}
 
-    def should_compute(self, k: int, context: dict) -> bool:
-        return self.config.stochastic and k > 0
-
-    def get_mask(self, k: int, context: dict) -> torch.Tensor:
-        # no chance nodes from terminal -> absorbing
-        return context["has_valid_action_mask"][:, k]
+    def should_compute(self, predictions: dict, targets: dict, context: dict) -> bool:
+        return self.config.stochastic
 
     def compute_loss(
         self,
         predictions: dict,
         targets: dict,
         context: dict,
-        k: int = 0,
     ) -> torch.Tensor:
-        """MuZero-style: Returns elementwise_loss of shape (B,)"""
-        # Note: indexed at k-1 in the stochastic arrays
-        # predictions["chance_logits"] is the sigma head output (logits over chance codes)
-        latent_code_probabilities_k = predictions["chance_logits"]
-        target_codes_k = targets["chance_codes"].squeeze(-1).long()
-        # Default config uses cross entropy (logits + class index). Keep one-hot fallback
-        # for custom losses expecting distribution targets.
+        """MuZero-style: Returns elementwise_loss of shape (B, T)"""
+        chance_logits = predictions["chance_logits"]
+        target_codes = targets["chance_codes"].reshape(-1).long() # Flatten for indexing
+
+        # 1. Capture and Validate
+        assert chance_logits.ndim == 3, f"SigmaLoss requires [B, T, codebook_size], got {chance_logits.shape}"
+        B, T, codebook_size = chance_logits.shape
+
+        # 2. Compute Vectorized Loss [B, T]
         if self.config.sigma_loss == F.cross_entropy:
-            sigma_loss = self.config.sigma_loss(
-                latent_code_probabilities_k, target_codes_k, reduction="none"
+            p_flat = chance_logits.reshape(-1, codebook_size)
+            assert p_flat.shape[0] == target_codes.shape[0], f"SigmaLoss CrossEntropy: count mismatch between predictions {p_flat.shape[0]} and targets {target_codes.shape[0]}"
+            sigma_loss_flat = self.config.sigma_loss(
+                p_flat, target_codes, reduction="none"
             )
         else:
-            chance_encoder_onehot_k_plus_1 = F.one_hot(
-                target_codes_k, num_classes=latent_code_probabilities_k.shape[-1]
-            ).float()
-            sigma_loss = self.config.sigma_loss(
-                latent_code_probabilities_k,
-                chance_encoder_onehot_k_plus_1.detach(),
-                reduction="none",
+            target_onehot = F.one_hot(target_codes, num_classes=codebook_size).float()
+            p_flat = chance_logits.reshape(-1, codebook_size)
+            assert p_flat.shape == target_onehot.shape, f"SigmaLoss MSE/Other: shape mismatch between predictions {p_flat.shape} and target_onehot {target_onehot.shape}"
+            sigma_loss_flat = self.config.sigma_loss(
+                p_flat, target_onehot.detach(), reduction="none"
             )
 
+        # 3. Metrics for full sequence
         metrics = context.setdefault("metrics", {})
-        probs = torch.softmax(latent_code_probabilities_k, dim=-1)
-        mask = self.get_mask(k, context).bool()
-        valid_probs = probs[mask] if mask.shape[0] == probs.shape[0] else probs
+        probs = torch.softmax(chance_logits, dim=-1)
+        mask = self.get_mask(targets).bool() # [B, T]
+        valid_probs = probs[mask]
         if valid_probs.shape[0] > 0:
-            mean_probs = valid_probs.mean(dim=0)
-        else:
-            mean_probs = torch.zeros(probs.shape[-1], device=probs.device)
-        append_metric(metrics, "chance_probs", mean_probs)
-        entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1)
-        if entropy.shape == mask.shape:
-            entropy = entropy[mask]
-        append_metric(
-            metrics,
-            "chance_entropy",
-            entropy.mean().item() if entropy.numel() > 0 else 0.0,
-        )
-        valid_codes = (
-            target_codes_k[mask]
-            if mask.shape == target_codes_k.shape
-            else target_codes_k
-        )
+            append_metric(metrics, "chance_probs", valid_probs.mean(dim=0))
+        
+        entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1) # [B, T]
+        valid_entropy = entropy[mask]
+        append_metric(metrics, "chance_entropy", valid_entropy.mean().item() if valid_entropy.numel() > 0 else 0.0)
+        
+        valid_codes = targets["chance_codes"][mask]
         append_metric(metrics, "num_codes", int(torch.unique(valid_codes).numel()))
 
-        return sigma_loss
+        return sigma_loss_flat.reshape(B, T)
 
 
 class VQVAECommitmentLoss(LossModule):
@@ -838,39 +820,36 @@ class VQVAECommitmentLoss(LossModule):
     def required_targets(self) -> set[str]:
         return {"chance_codes"}
 
-    def should_compute(self, k: int, context: dict) -> bool:
-        return (
-            self.config.stochastic and k > 0 and not self.config.use_true_chance_codes
-        )
+    def should_compute(self, predictions: dict, targets: dict, context: dict) -> bool:
+        return self.config.stochastic and not self.config.use_true_chance_codes
 
-    def get_mask(self, k: int, context: dict) -> torch.Tensor:
-        # no chance nodes from terminal -> absorbing
-        return context["has_valid_action_mask"][:, k]
+    def get_mask(self, targets: dict) -> torch.Tensor:
+        return super().get_mask(targets)
 
     def compute_loss(
         self,
         predictions: dict,
         targets: dict,
         context: dict,
-        k: int = 0,
     ) -> torch.Tensor:
-        """MuZero-style: Returns elementwise_loss of shape (B,)"""
-        # Note: indexed at k-1 in the stochastic arrays
-        chance_encoder_embedding_k_plus_1 = predictions["chance_encoder_embeddings"]
-        target_codes_k = targets["chance_codes"].squeeze(-1).long()
-        chance_encoder_onehot_k_plus_1 = F.one_hot(
-            target_codes_k, num_classes=chance_encoder_embedding_k_plus_1.shape[-1]
-        ).float()
-
-        # VQ-VAE commitment cost between c_t+k+1 and (c^e)_t+k+1 ||c_t+k+1 - (c^e)_t+k+1||^2
-        diff = (
-            chance_encoder_embedding_k_plus_1 - chance_encoder_onehot_k_plus_1.detach()
-        )  # TODO: lightzero does not detach here, try both
-        vqvae_commitment_cost = self.config.vqvae_commitment_cost_factor * torch.sum(
-            diff.pow(2), dim=-1
-        )
-
-        return vqvae_commitment_cost
+        """MuZero-style: Returns elementwise_loss of shape (B, T)"""
+        embeddings = predictions["chance_encoder_embeddings"]
+        target_codes = targets["chance_codes"].squeeze(-1).long()
+        
+        # 1. Capture and Validate
+        assert embeddings.ndim == 3, f"VQVAECommitmentLoss requires [B, T, D], got {embeddings.shape}"
+        B, T, D = embeddings.shape
+        
+        # 2. Vectorized one-hot and diff
+        # [B, T, D]
+        target_onehot = F.one_hot(target_codes, num_classes=D).float()
+        
+        # [B, T, D] -> [B, T]
+        assert embeddings.shape == target_onehot.shape, f"VQVAECommitmentLoss: shape mismatch between embeddings {embeddings.shape} and target_onehot {target_onehot.shape}"
+        diff = embeddings - target_onehot.detach()
+        commitment_cost = torch.sum(diff.pow(2), dim=-1)
+        
+        return self.config.vqvae_commitment_cost_factor * commitment_cost
 
 
 class PPOPolicyLoss(LossModule):
@@ -896,38 +875,50 @@ class PPOPolicyLoss(LossModule):
     def required_targets(self) -> set[str]:
         return {"actions", "old_log_probs", "advantages"}
 
-    def compute_loss(
-        self, predictions: dict, targets: dict, context: dict, k: int = 0
-    ) -> torch.Tensor:
+    def should_compute(self, predictions: dict, targets: dict, context: dict) -> bool:
+        return True
+
+    def compute_loss(self, predictions: dict, targets: dict, context: dict) -> torch.Tensor:
+        """PPO Policy Loss: returns [B, T]"""
         policy_logits = predictions["policies"]
         actions = targets["actions"]
         old_log_probs = targets["old_log_probs"]
         advantages = targets["advantages"]
+        
+        # 1. Capture and Validate
+        assert policy_logits.ndim == 3, f"PPOPolicyLoss requires [B, T, A], got {policy_logits.shape}"
+        B, T = old_log_probs.shape[:2]
 
+        # 2. Vectorized Distribution math
         if self.policy_strategy is not None:
-            dist = self.policy_strategy.get_distribution(policy_logits)
+             # Strategy should handle [B, T, A] -> Dist with [B, T] sample shapes
+             dist = self.policy_strategy.get_distribution(policy_logits)
         else:
-            dist = torch.distributions.Categorical(logits=policy_logits)
+             dist = torch.distributions.Categorical(logits=policy_logits)
+        
+        # [B, T]
         log_probs = dist.log_prob(actions)
-
+        assert log_probs.shape == old_log_probs.shape, f"PPOPolicyLoss: shape mismatch between log_probs {log_probs.shape} and old_log_probs {old_log_probs.shape}"
         ratio = torch.exp(log_probs - old_log_probs)
+        
+        assert ratio.shape == advantages.shape, f"PPOPolicyLoss ratio vs advantages: {ratio.shape} vs {advantages.shape}"
         surr1 = ratio * advantages
-        surr2 = (
-            torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param)
-            * advantages
-        )
-
+        surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * advantages
+        
         entropy = dist.entropy()
-        # Return elementwise loss (B,)
+        
         loss = -torch.min(surr1, surr2) - self.entropy_coefficient * entropy
-
+        
+        # 3. Stats for full sequence
         with torch.no_grad():
-            approx_kl = (old_log_probs - log_probs).mean()
-            if "approx_kl" not in context:
-                context["approx_kl"] = []
-            context["approx_kl"].append(approx_kl.item())
-
+             approx_kl = (old_log_probs - log_probs).mean()
+             if "approx_kl" not in context:
+                  context["approx_kl"] = []
+             context["approx_kl"].append(approx_kl.item())
+             
         return loss
+        # Note: mask is applied in LossPipeline.run
+        # but for PPO it's usually 1s.
 
 
 class PPOValueLoss(LossModule):
@@ -984,12 +975,24 @@ class PPOValueLoss(LossModule):
         )
 
     def compute_loss(
-        self, predictions: dict, targets: dict, context: dict, k: int = 0
+        self, predictions: dict, targets: dict, context: dict
     ) -> torch.Tensor:
+        """PPO Value Loss: returns [B, T]"""
         value_logits = predictions["values"]
         returns = targets["returns"]
-        values = self._to_scalar_values(value_logits)
-        # Return elementwise loss (B,)
+        
+        # 1. Capture and Validate
+        assert value_logits.ndim >= 2, f"PPOValueLoss requires [B, T, ...], got {value_logits.shape}"
+        B, T = returns.shape[:2]
+        
+        # 2. Vectorized Conversion
+        # Flatten to use existing _to_scalar_values or wrap it
+        flat_logits = value_logits.reshape(-1, value_logits.shape[-1])
+        flat_values = self._to_scalar_values(flat_logits)
+        values = flat_values.reshape(B, T)
+        
+        # 3. Compute Vectorized MSE [B, T]
+        assert returns.shape == values.shape, f"PPOValueLoss: shape mismatch between returns {returns.shape} and values {values.shape}"
         return self.critic_coefficient * ((returns - values) ** 2)
 
 
@@ -1012,28 +1015,39 @@ class ImitationLoss(LossModule):
         return {"target_policies"}
 
     def compute_loss(
-        self, predictions: dict, targets: dict, context: dict, k: int = 0
+        self, predictions: dict, targets: dict, context: dict
     ) -> torch.Tensor:
+        """Imitation Loss: returns [B, T]"""
         policy_logits = predictions["policies"]
         target_policies = targets["target_policies"]
+        
+        # 1. Capture and Validate
+        assert policy_logits.ndim == 3, f"ImitationLoss requires [B, T, A], got {policy_logits.shape}"
+        B, T, A = policy_logits.shape
+        
+        # 2. Vectorized conversion to one-hot if labels provided
+        if target_policies.ndim < 3:
+            # Assume [B, T] of labels
+            one_hot = F.one_hot(target_policies.long(), num_classes=A).float()
+            target_policies = one_hot
 
-        if target_policies.dim() == 1:
-            # Handle class indices
-            targets_onehot = torch.zeros(
-                target_policies.shape[0], self.num_actions, device=self.device
-            )
-            targets_onehot.scatter_(1, target_policies.unsqueeze(1).long(), 1.0)
-            target_policies = targets_onehot
-
-        # Record policy mean for monitoring
+        # 3. Metrics for full sequence
         probs = torch.softmax(policy_logits, dim=-1)
         metrics = context.setdefault("metrics", {})
-        append_metric(metrics, "sl_policy", probs.mean(dim=0).detach().cpu())
+        append_metric(metrics, "sl_policy", probs.mean(dim=(0, 1)).detach().cpu())
 
-        # Return elementwise loss (B,)
-        loss = self.loss_function(policy_logits, target_policies)
-        if loss.dim() > 1:
+        # 4. Compute Vectorized Loss [B, T]
+        p_flat = policy_logits.reshape(-1, A)
+        tp_flat = target_policies.reshape(-1, A)
+        assert p_flat.shape == tp_flat.shape, f"ImitationLoss: shape mismatch between predictions {p_flat.shape} and target_policies {tp_flat.shape}"
+        loss = self.loss_function(
+            p_flat, 
+            tp_flat
+        ).reshape(B, T)
+        
+        if loss.ndim > 2:
             loss = loss.sum(dim=-1)
+            
         return loss
 
 
@@ -1082,200 +1096,82 @@ class LossPipeline:
         gradient_scales: Optional[torch.Tensor] = None,
     ) -> Tuple[Dict[str, torch.Tensor], Dict[str, float], torch.Tensor]:
         """
-        Run the loss pipeline across all unroll steps.
-
-        Args:
-            predictions: Dict of tensors with shape (B, K+1, ...) or (B, ...)
-            targets: Dict of tensors with shape (B, K+1, ...) or (B, ...)
-            context: Additional context (masks, etc.)
-            weights: PER weights of shape (B,)
-            gradient_scales: Gradient scales of shape (1, K+1)
-
-        Returns:
-            total_loss_dict: Dictionary mapping optimizer names to scalar losses
-            loss_dict: Dictionary of accumulated losses for logging
-            priorities: Priority tensor of shape (B,) for PER
+        Run the loss pipeline in a single vectorized pass across all sequence steps.
         """
         from modules.utils import support_to_scalar, scale_gradient
         from agents.learner.losses.shape_validator import ShapeValidator
+        import numpy as np
 
-        # Parameters from first module
+        # 1. Config and Shape Validation
         config = self.modules[0].config
         device = self.modules[0].device
-
-        # Shape Validation
         ShapeValidator(config).validate(predictions, targets)
 
-        # Convert NamedTuples/dataclasses to dicts if necessary
-        if isinstance(predictions, dict):
-            pass
-        elif hasattr(predictions, "_asdict"):
-            predictions = predictions._asdict()
-        else:
-            predictions = vars(predictions)
-        targets = targets if isinstance(targets, dict) else vars(targets)
-        # Determine actual batch size B from tensors
-        B = 0
-        for val in predictions.values():
-            if torch.is_tensor(val):
-                B = val.shape[0]
-                break
-        if B == 0:
-            for val in targets.values():
-                if torch.is_tensor(val):
-                    B = val.shape[0]
-                    break
+        # 2. Key/Format Normalization
+        if not isinstance(predictions, dict):
+            predictions = getattr(predictions, "_asdict", lambda: vars(predictions))()
+        if not isinstance(targets, dict):
+            targets = targets if isinstance(targets, dict) else vars(targets)
 
-        if B == 0:
-            # Fallback (should not happen if inputs are valid)
-            B = config.minibatch_size
+        # Determine dimensions B and T
+        first_tensor = next(iter(predictions.values()))
+        B, T = first_tensor.shape[:2]
 
+        # 3. Defaults and Scaling
         if weights is None:
             weights = torch.ones(B, device=device)
-
         if gradient_scales is None:
-            gradient_scales = torch.ones((1, 1), device=device)
-
-        total_loss_dict = {
-            module.optimizer_name: torch.tensor(0.0, device=device)
-            for module in self.modules
-        }
-        loss_dict = {module.name: 0.0 for module in self.modules}
-        priorities = torch.zeros(B, device=device)
-
-        # Determine unroll steps from gradient_scales (1, K+1)
-        # For non-sequence (DQN), gradient_scales is usually (1, 1)
-        unroll_steps = gradient_scales.shape[1] - 1
-        expected_steps = unroll_steps + 1
+            gradient_scales = torch.ones((1, T), device=device)
 
         context["full_targets"] = targets
+        # Vectorized ChanceQ targets: shift values by 1
+        if "values" in targets:
+            v = targets["values"]
+            v_next = torch.zeros_like(v)
+            v_next[:, :-1] = v[:, 1:]
+            context["target_values_next"] = v_next
 
-        for k in range(expected_steps):
-            # Extract predictions and targets for step k
-            preds_k = self._extract_step_data(predictions, k, expected_steps)
-            targets_k = self._extract_step_data(targets, k, expected_steps)
+        total_loss_dict = {
+            m.optimizer_name: torch.tensor(0.0, device=device) for m in self.modules
+        }
+        loss_dict = {}
+        priorities = torch.zeros(B, device=device)
 
-            # --- 1. Priority Update (Only for k=0) ---
-            if k == 0:
-                priorities = self._calculate_priorities(
-                    preds_k, targets_k, context, config, device
-                )
-
-            # --- 2. Compute losses for this step ---
-            step_losses = {
-                opt_name: torch.zeros(B, device=device)
-                for opt_name in total_loss_dict.keys()
-            }
-
-            # Special case for ChanceQLoss which needs the next value.
-            # targets["values"] is 2D [B, T] for scalar targets, so ndim >= 2.
-            if (
-                "values" in targets
-                and torch.is_tensor(targets["values"])
-                and targets["values"].ndim >= 2
-                and k + 1 < targets["values"].shape[1]
-            ):
-                context["target_values_next"] = targets["values"][:, k + 1]
-
-            for module in self.modules:
-                if not module.should_compute(k, context):
-                    continue
-
-                # Compute elementwise loss: (B,)
-                loss_k = module.compute_loss(
-                    predictions=preds_k, targets=targets_k, context=context, k=k
-                )
-
-                # Apply mask if any
-                if getattr(config, "mask_absorbing", False):
-                    mask_k = module.get_mask(k, targets_k)
-                    loss_k = loss_k * mask_k
-
-                # Accumulate for this step for the specific optimizer
-                step_losses[module.optimizer_name] += loss_k
-
-                # Accumulate for logging (unweighted)
-                loss_dict[module.name] += loss_k.sum().item()
-
-            # --- 3. Apply gradient scaling and PER weights ---
-            scale_k = gradient_scales[0, k].item()
-
-            for opt_name, step_loss in step_losses.items():
-                scaled_loss_k = scale_gradient(step_loss, scale_k)
-                weighted_scaled_loss_k = scaled_loss_k * weights
-
-                # Accumulate total loss per optimizer
-                total_loss_dict[opt_name] += weighted_scaled_loss_k.sum()
-
-        # Average the total loss by batch size
-        for opt_name in total_loss_dict:
-            total_loss_dict[opt_name] = (
-                total_loss_dict[opt_name] / config.minibatch_size
-            )
-
-        # Average accumulated losses for logging
-        for key in loss_dict:
-            loss_dict[key] /= config.minibatch_size
-
-        # --- 4. Propagate auxiliary metrics from context (e.g., approx_kl) ---
-        for key, value in context.items():
-            if key == "full_targets" or key == "target_values_next":
+        # 4. Single-Pass Vectorized Execution
+        for module in self.modules:
+            if not module.should_compute(predictions, targets, context):
                 continue
-            if (
-                isinstance(value, list)
-                and len(value) > 0
-                and isinstance(value[0], (int, float))
-            ):
+
+            # Compute [B, T] elementwise loss
+            elementwise_loss = module.compute_loss(predictions, targets, context)
+            mask = module.get_mask(targets)
+            
+            # Apply Gradient Scaling [1, T] -> [B, T]
+            scaled_loss = scale_gradient(elementwise_loss, gradient_scales)
+            
+            # Mask and Reduce over sequence [B, T] -> [B]
+            loss_seq_weighted = (scaled_loss * mask.float()).sum(dim=1)
+            
+            # Apply PER Weights [B]
+            weighted_batch_loss = loss_seq_weighted * weights
+            
+            # Final Mean for this batch
+            total_scalar_loss = weighted_batch_loss.mean()
+            
+            total_loss_dict[module.optimizer_name] += total_scalar_loss
+            loss_dict[module.name] = total_scalar_loss.item()
+
+            # PER Priorities [B]
+            if hasattr(module, "compute_priority"):
+                p = module.compute_priority(predictions, targets, context)
+                if p is not None:
+                    priorities = torch.max(priorities, p)
+
+        # 5. Extract Auxiliary metrics from context (approx_kl, etc.)
+        for key, value in context.items():
+            if key in ["full_targets", "target_values_next", "has_valid_action_mask", "is_same_game"]:
+                continue
+            if isinstance(value, list) and len(value) > 0 and isinstance(value[0], (int, float)):
                 loss_dict[key] = float(np.mean(value))
-            elif isinstance(value, (int, float)):
-                loss_dict[key] = float(value)
 
         return total_loss_dict, loss_dict, priorities
-
-    def _calculate_priorities(
-        self,
-        preds_k: dict,
-        targets_k: dict,
-        context: dict,
-        config,
-        device,
-    ) -> torch.Tensor:
-        """Calculate PER priorities for the current batch (k=0)."""
-
-        # Delegate priority calculation to the loss modules.
-        # The first module that returns a priority tensor defines the PER priorities.
-        for module in self.modules:
-            priority = module.compute_priority(preds_k, targets_k, context, k=0)
-            if priority is not None:
-                return priority
-
-        # raise ValueError(
-        #     "No active LossModule provided a priority calculation. "
-        #     "Ensure the primary module (e.g., ValueLoss, StandardDQNLoss, or C51Loss) "
-        #     "implements compute_priority()."
-        # )
-
-    def _extract_step_data(
-        self, tensor_dict: dict, k: int, expected_steps: int
-    ) -> dict:
-        """
-        Extract data for unroll step `k`.
-        Supports (B, K+1, ...) and (B, ...) shapes.
-        """
-        step_data = {}
-        for key, tensor in tensor_dict.items():
-            if tensor is None or not torch.is_tensor(tensor):
-                continue
-
-            if tensor.ndim > 1 and tensor.shape[1] == expected_steps:
-                # Sequence data: (B, K+1, ...)
-                step_data[key] = tensor[:, k]
-            elif tensor.ndim > 1 and tensor.shape[1] == expected_steps - 1:
-                # Transition-aligned data (e.g., rewards in some cases)
-                if k > 0:
-                    step_data[key] = tensor[:, k - 1]
-            else:
-                # Non-sequence data: (B, ...)
-                step_data[key] = tensor
-
-        return step_data
