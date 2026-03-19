@@ -1014,10 +1014,14 @@ class LossPipeline:
             priorities: Priority tensor of shape (B,) for PER
         """
         from modules.utils import support_to_scalar, scale_gradient
+        from agents.learner.losses.shape_validator import ShapeValidator
 
         # Parameters from first module
         config = self.modules[0].config
         device = self.modules[0].device
+
+        # Shape Validation
+        ShapeValidator(config).validate(predictions, targets)
 
         # Convert NamedTuples/dataclasses to dicts if necessary
         if isinstance(predictions, dict):

@@ -1,7 +1,7 @@
 import torch
 from typing import Any, Dict, List, Tuple
 from agents.registries.base import register_agent
-from learners.losses.losses import LossPipeline, PPOPolicyLoss, PPOValueLoss
+from agents.learner.losses.losses import LossPipeline, PPOPolicyLoss, PPOValueLoss
 from modules.utils import get_lr_scheduler
 from agents.learner.callbacks import PPOEarlyStoppingCallback
 from torch.optim.adam import Adam

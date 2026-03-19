@@ -1,7 +1,7 @@
 import pytest
 import torch
 import torch.nn.functional as F
-from learners.losses.representations import (
+from agents.learner.losses.representations import (
     ScalarRepresentation,
     TwoHotRepresentation,
     CategoricalRepresentation,

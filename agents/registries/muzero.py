@@ -1,7 +1,7 @@
 import torch
 from typing import Any, Dict, List, Tuple
 from agents.registries.base import register_agent
-from learners.losses.losses import (
+from agents.learner.losses.losses import (
     LossPipeline,
     ValueLoss,
     PolicyLoss,

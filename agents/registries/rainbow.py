@@ -1,7 +1,7 @@
 import torch
 from typing import Any, Dict, List, Tuple, Optional
 from agents.registries.base import register_agent
-from learners.losses.losses import LossPipeline, StandardDQNLoss, C51Loss, ErrorPriority
+from agents.learner.losses.losses import LossPipeline, StandardDQNLoss, C51Loss, ErrorPriority
 from modules.utils import create_optimizer, get_lr_scheduler
 from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
