@@ -851,6 +851,8 @@ class LossPipeline:
         import numpy as np
 
         # 1. Config and Shape Validation
+        import time
+        start_time = time.perf_counter()
         config = self.modules[0].config
         device = self.modules[0].device
         ShapeValidator(config).validate(predictions, targets)
@@ -899,18 +901,20 @@ class LossPipeline:
             elementwise_loss = module.compute_loss(predictions, targets, context)
             mask = module.get_mask(targets)
             
-            # Apply Gradient Scaling [1, T] -> [B, T]
+            # 1. Scale by Gradient Scales [1, T] and PER Weights [B, 1]
+            # scale_gradient handles the [1, T] broadcasting internally
             scaled_loss = scale_gradient(elementwise_loss, gradient_scales)
-            
-            # Mask and Reduce over sequence [B, T] -> [B]
-            loss_seq_weighted = (scaled_loss * mask.float()).sum(dim=1)
-            
-            # Apply PER Weights [B]
-            weighted_batch_loss = loss_seq_weighted * weights
-            
-            # Final Mean for this batch
-            total_scalar_loss = weighted_batch_loss.mean()
-            
+            weighted_loss = scaled_loss * weights.reshape(B, 1)
+
+            # 2. Mask and Reduce (Sum-over-Mask)
+            # We sum across BOTH Batch and Time to get the total transition-weighted loss
+            masked_weighted_loss = (weighted_loss * mask.float()).sum()
+            # Normalize by the total number of valid mathematical transitions
+            valid_transition_count = mask.float().sum().clamp(min=1.0)
+
+            # 3. Final Transition-Averaged Loss [Scalar]
+            total_scalar_loss = masked_weighted_loss / valid_transition_count
+
             total_loss_dict[module.optimizer_name] += total_scalar_loss
             loss_dict[module.name] = total_scalar_loss.item()
 
@@ -927,4 +931,5 @@ class LossPipeline:
             if isinstance(value, list) and len(value) > 0 and isinstance(value[0], (int, float)):
                 loss_dict[key] = float(np.mean(value))
 
+        loss_dict["loss_pipeline_latency_ms"] = (time.perf_counter() - start_time) * 1000
         return total_loss_dict, loss_dict, priorities

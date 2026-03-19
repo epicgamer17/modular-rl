@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import time
 from typing import (
     Any,
     Dict,
@@ -123,7 +124,7 @@ class UniversalLearner:
         yielded_current_result = False
 
         self.callbacks.on_step_begin(learner=self, iterator=batch_iterator)
-
+        t_last = time.perf_counter()
         try:
             for batch in batch_iterator:
                 # 1. Gradient Clearing
@@ -170,6 +171,20 @@ class UniversalLearner:
                 )
 
                 yielded_current_result = True
+                
+                # 10. Throughput Metrics
+                t_now = time.perf_counter()
+                dt = t_now - t_last
+                t_last = t_now
+                
+                B, T = 1, 1
+                if result.predictions:
+                    for p in result.predictions.values():
+                        if torch.is_tensor(p) and p.ndim >= 2:
+                            B, T = p.shape[:2]
+                            break
+                        
+                result.loss_dict["learner_throughput"] = (B * T) / dt if dt > 0 else 0
                 yield self._build_step_metrics(result)
 
         except EarlyStopIteration:
