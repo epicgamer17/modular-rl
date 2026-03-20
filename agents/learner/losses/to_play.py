@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Optional
-from agents.learner.losses.base import BaseLoss
+from agents.learner.losses.base import BaseLoss, LossRepresentation
 
 class ToPlayLoss(BaseLoss):
     """Loss for learning to predict who's turn it is."""
@@ -9,7 +9,7 @@ class ToPlayLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: Any,
+        representation: LossRepresentation,
         loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "to_play_mask",
@@ -35,7 +35,7 @@ class RelativeToPlayLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: Any,
+        representation: LossRepresentation,
         loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "to_play_mask",

@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from typing import Any
-from agents.learner.losses.base import BaseLoss
+from agents.learner.losses.base import BaseLoss, LossRepresentation
 
 class QBootstrappingLoss(BaseLoss):
     """
@@ -12,7 +12,7 @@ class QBootstrappingLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: Any,
+        representation: LossRepresentation,
         is_categorical: bool = False,
         loss_fn: Any = None,
         optimizer_name: str = "default",
@@ -86,7 +86,7 @@ class ChanceQLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: Any,
+        representation: LossRepresentation,
         loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "afterstate_value_mask",

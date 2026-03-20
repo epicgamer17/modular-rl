@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from typing import Any
-from agents.learner.losses.base import BaseLoss
+from agents.learner.losses.base import BaseLoss, LossRepresentation
 
 class ConsistencyLoss(BaseLoss):
     """Latent consistency loss (stochastic/standard MuZero)."""
@@ -9,7 +9,7 @@ class ConsistencyLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: Any,
+        representation: LossRepresentation,
         agent_network: Any,
         loss_factor: float,
         optimizer_name: str = "default",
@@ -32,7 +32,7 @@ class SigmaLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: Any,
+        representation: LossRepresentation,
         loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "sigma_mask",
@@ -54,7 +54,7 @@ class CommitmentLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: Any,
+        representation: LossRepresentation,
         optimizer_name: str = "default",
         mask_key: str = "commitment_mask",
     ):

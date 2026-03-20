@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Optional
-from agents.learner.losses.base import BaseLoss
+from agents.learner.losses.base import BaseLoss, LossRepresentation
 
 class ValueLoss(BaseLoss):
     """Value prediction loss module (Universal)."""
@@ -9,7 +9,7 @@ class ValueLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: Any,
+        representation: LossRepresentation,
         target_key: str = "values",
         optimizer_name: str = "default",
         mask_key: str = "value_mask",

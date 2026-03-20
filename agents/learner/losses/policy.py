@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Optional
-from agents.learner.losses.base import BaseLoss
+from agents.learner.losses.base import BaseLoss, LossRepresentation
 
 class PolicyLoss(BaseLoss):
     """Policy prediction loss module."""
@@ -9,7 +9,7 @@ class PolicyLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: Any,
+        representation: LossRepresentation,
         loss_fn: Any,
         loss_factor: float,
         optimizer_name: str = "default",
@@ -47,7 +47,7 @@ class ClippedSurrogateLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: Any,
+        representation: LossRepresentation,
         clip_param: float,
         entropy_coefficient: float,
         optimizer_name: str = "default",

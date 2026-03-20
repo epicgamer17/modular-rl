@@ -1,6 +1,6 @@
 import torch
 from typing import Any
-from agents.learner.losses.base import BaseLoss
+from agents.learner.losses.base import BaseLoss, LossRepresentation
 
 class RewardLoss(BaseLoss):
     """Reward prediction loss module."""
@@ -8,7 +8,7 @@ class RewardLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: Any,
+        representation: LossRepresentation,
         loss_fn: Any,
         loss_factor: float,
         optimizer_name: str = "default",

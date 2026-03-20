@@ -1,6 +1,25 @@
 import torch
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Protocol, runtime_checkable
+
+@runtime_checkable
+class LossRepresentation(Protocol):
+    """
+    Contract for mathematical representations of values (scalars, distributions, etc.).
+    """
+    @property
+    def num_features(self) -> int: ...
+    def to_inference(self, logits: torch.Tensor) -> Any: ...
+    def to_expected_value(self, logits: torch.Tensor) -> torch.Tensor: ...
+    def to_representation(self, scalar_targets: torch.Tensor) -> torch.Tensor: ...
+    def format_target(self, targets: Dict[str, torch.Tensor], target_key: str = "values") -> torch.Tensor: ...
+
+@runtime_checkable
+class DistributionalRepresentation(LossRepresentation, Protocol):
+    """
+    Contract for representations that support Bellman projections onto a fixed grid.
+    """
+    def project_onto_grid(self, shifted_support: torch.Tensor, probabilities: torch.Tensor) -> torch.Tensor: ...
 
 class BaseLoss(ABC):
     """
@@ -14,7 +33,7 @@ class BaseLoss(ABC):
         pred_key: str,
         target_key: str,
         mask_key: str,
-        representation: Any,  # Mandatory
+        representation: LossRepresentation,  # Mandatory
         loss_fn: Optional[Any] = None,
         optimizer_name: str = "default",
         loss_factor: float = 1.0,
