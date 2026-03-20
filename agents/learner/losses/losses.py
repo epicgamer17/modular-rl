@@ -132,139 +132,73 @@ class StandardDQNLoss(BaseLoss):
         optimizer_name: str = "default",
         mask_key: str = "value_mask",
     ):
+        # 1. Determine Pred/Target keys and default Loss function based on atom_size
+        is_categorical = getattr(config, "atom_size", 1) > 1
+        pred_key = "q_logits" if is_categorical else "q_values"
+        target_key = "q_logits" if is_categorical else "q_values"
+        
+        # Use cross_entropy for C51, but allow override via config.loss_function (MSE)
+        default_loss_fn = F.cross_entropy if is_categorical else F.mse_loss
+        loss_fn = getattr(config, "loss_function", default_loss_fn)
+
         super().__init__(
             config=config, 
             device=device,
-            pred_key="q_values",
-            target_key="q_values",
+            pred_key=pred_key,
+            target_key=target_key,
             mask_key=mask_key,
             representation=representation,
-            loss_fn=config.loss_function,
+            loss_fn=loss_fn,
             optimizer_name=optimizer_name
         )
-
 
     def compute_loss(
         self, predictions: dict, targets: dict, context: dict
     ) -> torch.Tensor:
-        q_values = predictions["q_values"]
+        q_preds = predictions[self.pred_key]
         actions = targets["actions"].long()
 
         # 1. Capture and Validate Shapes
-        assert q_values.ndim == 3, f"StandardDQNLoss requires [B, T, Actions] predictions, got {q_values.shape}"
+        # StandardDQNLoss expects [B, T, Actions] for scalar or [B, T, Actions, Atoms] for categorical
+        assert q_preds.ndim >= 3, f"StandardDQNLoss requires at least [B, T, Actions] predictions, got {q_preds.shape}"
         assert actions.ndim == 2, f"StandardDQNLoss requires [B, T] action targets, got {actions.shape}"
-        B, T, num_actions = q_values.shape
+        B, T = actions.shape
+        num_actions = q_preds.shape[2]
 
-        # 2. Flatten for vectorized indexing
-        flat_q = q_values.reshape(-1, num_actions)
+        # 2. Flatten for vectorized action selection
+        # [B * T, Actions, ...]
+        flat_preds = q_preds.reshape(B * T, num_actions, -1)
         flat_actions = actions.reshape(-1)
 
-        # [B * T]
-        selected_q = flat_q[torch.arange(B * T, device=self.device), flat_actions]
-        targets_val = targets["q_values"].reshape(-1)
+        # 3. Select Take Action Predictions: [B * T, ...] (could be scalar or distributions)
+        selected_preds = flat_preds[torch.arange(B * T, device=self.device), flat_actions]
+        if selected_preds.shape[-1] == 1:
+            selected_preds = selected_preds.squeeze(-1)
 
-        # 3. Compute and Unflatten
-        assert selected_q.shape == targets_val.shape, f"StandardDQNLoss: shape mismatch between selected_q {selected_q.shape} and targets_val {targets_val.shape}"
-        loss = self.config.loss_function(selected_q, targets_val, reduction="none")
+        # 4. Format Targets through the Representation bridge
+        target_ingredients = targets
+        formatted_target = self.representation.format_target(target_ingredients, target_key=self.target_key)
+        # [B, T, ...] -> [B * T, ...]
+        flat_targets = formatted_target.reshape(B * T, -1)
+        if flat_targets.shape[-1] == 1:
+             flat_targets = flat_targets.squeeze(-1)
+
+        # 5. Compute Vectorized Loss [B * T]
+        assert selected_preds.shape == flat_targets.shape, (
+            f"StandardDQNLoss: shape mismatch between selected_preds {selected_preds.shape} "
+            f"and flat_targets {flat_targets.shape}"
+        )
+        
+        # C51 Cross-Entropy math: Expects probabilities in target, logits in pred
+        if getattr(self.config, "atom_size", 1) > 1:
+            log_probs = F.log_softmax(selected_preds, dim=-1)
+            loss = -(flat_targets * log_probs).sum(dim=-1)
+        else:
+            loss = self.loss_fn(selected_preds, flat_targets, reduction="none")
+            
         return loss.reshape(B, T)
 
 
-class C51Loss(BaseLoss):
-    def __init__(
-        self,
-        config,
-        device,
-        representation: Any,
-        action_selector: Optional[object] = None,
-        optimizer_name: str = "default",
-        mask_key: str = "value_mask",
-    ):
-        super().__init__(
-            config=config,
-            device=device,
-            pred_key="q_logits",
-            target_key="q_logits",
-            mask_key=mask_key,
-            representation=representation,
-            loss_fn=None, # Custom internal math
-            optimizer_name=optimizer_name
-        )
-        self.action_selector = action_selector
-        self.support = torch.linspace(
-            self.config.v_min,
-            self.config.v_max,
-            self.config.atom_size,
-            device=self.device,
-        )
-
-    @property
-    def required_predictions(self) -> set[str]:
-        return {"q_logits"}
-
-    @property
-    def required_targets(self) -> set[str]:
-        return {"q_logits", "actions"}
-
-    def _project_target_distribution(
-        self,
-        rewards: torch.Tensor,
-        terminal_mask: torch.Tensor,
-        next_probs: torch.Tensor,
-    ) -> torch.Tensor:
-        batch_size = rewards.shape[0]
-        discount = self.config.discount_factor**self.config.n_step
-        delta_z = (self.config.v_max - self.config.v_min) / (self.config.atom_size - 1)
-
-        # Compute the projected support: Tz = r + gamma * z
-        tz = (
-            rewards.view(-1, 1)
-            + discount * (~terminal_mask.bool()).view(-1, 1) * self.support.view(1, -1)
-        ).clamp(self.config.v_min, self.config.v_max)
-
-        # Map back to index space: b = (Tz - v_min) / delta_z
-        b = (tz - self.config.v_min) / delta_z
-        l = b.floor().long()
-        u = b.ceil().long()
-
-        dist_l = u.float() - b
-        dist_u = b - l.float()
-
-        mask_equal = l == u
-        dist_l[mask_equal] = 1.0
-        dist_u[mask_equal] = 0.0
-
-        projected = torch.zeros((batch_size, self.config.atom_size), device=self.device)
-        projected.scatter_add_(1, l, next_probs * dist_l)
-        projected.scatter_add_(1, u, next_probs * dist_u)
-
-        return projected
-
-    def compute_loss(
-        self, predictions: dict, targets: dict, context: dict
-    ) -> torch.Tensor:
-        online_q_logits = predictions["q_logits"]
-        actions = targets["actions"].long()
-        target_q_logits = targets["q_logits"]
-
-        # 1. Capture and Validate
-        assert online_q_logits.ndim == 4, f"C51Loss requires [B, T, Actions, Atoms], got {online_q_logits.shape}"
-        B, T, num_actions, atoms = online_q_logits.shape
-
-        # 2. Flatten and select
-        flat_logits = online_q_logits.reshape(-1, num_actions, atoms)
-        flat_actions = actions.reshape(-1)
-        
-        # [B * T, Atoms]
-        chosen_logits = flat_logits[torch.arange(B * T, device=self.device), flat_actions]
-        log_probs = F.log_softmax(chosen_logits, dim=-1)
-        
-        # [B * T, Atoms]
-        flat_target_q_logits = target_q_logits.reshape(-1, atoms)
-        
-        # [B * T]
-        assert flat_target_q_logits.shape == log_probs.shape, f"C51Loss: shape mismatch between flat_target_q_logits {flat_target_q_logits.shape} and log_probs {log_probs.shape}"
-        loss = -(flat_target_q_logits * log_probs).sum(dim=-1)
-        return loss.reshape(B, T)
 
 
 # ============================================================================

@@ -307,13 +307,11 @@ class NFSPTrainer(BaseTrainer):
             bootstrap_on_truncated=getattr(rl_config, "bootstrap_on_truncated", False),
         )
 
-        training_selector = ArgmaxSelector()
-        td_loss_module = (
-            C51Loss(config=rl_config, device=device, action_selector=training_selector)
-            if rl_config.atom_size > 1
-            else StandardDQNLoss(
-                config=rl_config, device=device, action_selector=training_selector
-            )
+        rl_rep = self.br_agent_network.components["q_head"].representation
+        td_loss_module = StandardDQNLoss(
+            config=rl_config,
+            device=device,
+            representation=rl_rep,
         )
         rl_loss_pipeline = LossPipeline([td_loss_module])
 
@@ -356,8 +354,9 @@ class NFSPTrainer(BaseTrainer):
 
         sl_optimizer = create_opt(self.avg_agent_network.parameters(), sl_config)
         sl_scheduler = get_lr_scheduler(sl_optimizer, sl_config)
+        sl_rep = self.avg_agent_network.components["policy_head"].representation
         sl_loss_pipeline = LossPipeline(
-            [ImitationLoss(sl_config, device, self.num_actions)]
+            [ImitationLoss(sl_config, device, representation=sl_rep)]
         )
         
         # SL uses PassThroughTargetBuilder for target_policies -> policies mapping if needed, 
