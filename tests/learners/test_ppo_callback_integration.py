@@ -5,6 +5,8 @@ from agents.learner.base import UniversalLearner
 from agents.learner.callbacks import MetricEarlyStopCallback, EarlyStopIteration
 from agents.learner.losses import LossPipeline, ClippedSurrogateLoss
 from modules.agent_nets.modular import ModularAgentNetwork
+from configs.agents.ppo import PPOConfig
+from agents.learner.target_builders import TargetBuilderPipeline, PassThroughTargetBuilder, SingleStepFormatter
 
 pytestmark = pytest.mark.unit
 
@@ -19,18 +21,29 @@ class MockPolicyHead(nn.Module):
         return torch.zeros((*x.shape[:-1], self.num_actions), device=x.device)
 
 
-def test_ppo_kl_propagation_to_callback(ppo_config):
+def test_ppo_kl_propagation_to_callback(make_ppo_config_dict, cartpole_game_config):
     torch.manual_seed(42)
     device = torch.device("cpu")
 
-    # 1. Setup Network and Heads
+    # 1. Configuration Setup
+    # Ensure minibatch_size matches the test batch size (8) and unroll_steps is 0
+    config_dict = make_ppo_config_dict(steps_per_epoch=8, num_minibatches=1, unroll_steps=0)
+    ppo_config = PPOConfig(config_dict, cartpole_game_config)
+
+    # 2. Setup Network and Heads
     agent_network = ModularAgentNetwork(
         config=ppo_config,
         input_shape=(4,),
         num_actions=2,
     )
 
-    # 2. Setup Loss Pipeline
+    # 3. Setup Target Builder
+    target_builder = TargetBuilderPipeline([
+        PassThroughTargetBuilder(keys_to_keep=["actions", "old_log_probs", "advantages"]),
+        SingleStepFormatter()
+    ])
+
+    # 4. Setup Loss Pipeline
     # Extract representation from the head
     pol_rep = agent_network.components["policy_head"].representation
     ppo_loss = ClippedSurrogateLoss(
@@ -42,10 +55,10 @@ def test_ppo_kl_propagation_to_callback(ppo_config):
     )
     pipeline = LossPipeline(ppo_config, [ppo_loss])
 
-    # 3. Setup Callback
+    # 5. Setup Callback
     callback = MetricEarlyStopCallback(metric_key="approx_kl", threshold=0.01)
 
-    # 4. Setup Learner
+    # 6. Setup Learner
     optimizer = torch.optim.Adam(agent_network.parameters(), lr=1e-3)
     learner = UniversalLearner(
         config=ppo_config,
@@ -54,13 +67,15 @@ def test_ppo_kl_propagation_to_callback(ppo_config):
         num_actions=2,
         observation_dimensions=(4,),
         observation_dtype=torch.float32,
+        target_builder=target_builder,
         loss_pipeline=pipeline,
         optimizer=optimizer,
         callbacks=[callback],
     )
 
-    # 5. Create a batch that will generate some KL
+    # 7. Create a batch that will generate some KL
     # approx_kl = (old_log_probs - log_probs).mean()
+    # PPO requires [B, T, ...] but we use SingleStepFormatter to handle the unsqueeze
     batch = {
         "observations": torch.randn(8, 4),
         "actions": torch.zeros(8, dtype=torch.long),
@@ -69,12 +84,16 @@ def test_ppo_kl_propagation_to_callback(ppo_config):
     }
 
     # we need to mock the learner_inference to return a dict with "policies"
+    # SingleStepFormatter will expect [B, 1, A] if it was already formatted, 
+    # but here compute_step_result calls learner_inference FIRST then build_targets.
+    # predictions are checked AFTER learner_inference.
+    # So learner_inference MUST return [B, T, A].
     def mock_learner_inference(batch):
-        return {"policies": torch.zeros(8, 2)}
+        return {"policies": torch.zeros(8, 1, 2)}
 
     agent_network.learner_inference = mock_learner_inference
 
-    # 6. Run a step and check context/loss_dict
+    # 8. Run a step and check context/loss_dict
     # We call compute_step_result directly to verify propagation
     result = learner.compute_step_result(batch)
 

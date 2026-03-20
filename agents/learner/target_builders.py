@@ -245,7 +245,9 @@ class DistributionalTargetBuilder(BaseTargetBuilder):
 
             # [B, Actions, Atoms] -> [B, Atoms]
             next_probs = torch.softmax(
-                next_q_logits[torch.arange(batch_size, device=rewards.device), next_actions],
+                next_q_logits[
+                    torch.arange(batch_size, device=rewards.device), next_actions
+                ],
                 dim=-1,
             )
 
@@ -271,7 +273,9 @@ class DistributionalTargetBuilder(BaseTargetBuilder):
 
         # 5. Whitelist the labels for the loss module
         if "q_logits" in current_targets:
-            raise RuntimeError("Collision on 'q_logits' in DistributionalTargetBuilder.")
+            raise RuntimeError(
+                "Collision on 'q_logits' in DistributionalTargetBuilder."
+            )
 
         current_targets["q_logits"] = target_distribution
         current_targets["rewards"] = rewards
@@ -300,7 +304,9 @@ class PassThroughTargetBuilder(BaseTargetBuilder):
         for key in self.keys_to_keep:
             if key in batch:
                 if key in current_targets:
-                    raise RuntimeError(f"Collision on '{key}' in PassThroughTargetBuilder.")
+                    raise RuntimeError(
+                        f"Collision on '{key}' in PassThroughTargetBuilder."
+                    )
                 current_targets[key] = batch[key]
 
 
@@ -354,7 +360,9 @@ class MuZeroTargetBuilder(BaseTargetBuilder):
             T = self.T
 
             # Use the device from the actions tensor
-            base_mask = torch.ones((B, T), device=batch["actions"].device, dtype=torch.bool)
+            base_mask = torch.ones(
+                (B, T), device=batch["actions"].device, dtype=torch.bool
+            )
 
         res["value_mask"] = base_mask.clone()
         res["masks"] = base_mask.clone()
@@ -379,9 +387,15 @@ class MuZeroTargetBuilder(BaseTargetBuilder):
 
         # --- PURGING HACKS: Explicitly build derived targets ---
         # 1. Weights Bridge: Ensure weights [B] are in targets
-        B = batch["actions"].shape[0] if "actions" in batch else next(iter(batch.values())).shape[0]
+        B = (
+            batch["actions"].shape[0]
+            if "actions" in batch
+            else next(iter(batch.values())).shape[0]
+        )
         if "weights" not in res:
-            res["weights"] = batch.get("weights", torch.ones(B, device=batch["actions"].device))
+            res["weights"] = batch.get(
+                "weights", torch.ones(B, device=batch["actions"].device)
+            )
 
         # 2. Chance Shifting: Stochastic MuZero needs target value at step k+1
         if "values" in res:
@@ -393,8 +407,14 @@ class MuZeroTargetBuilder(BaseTargetBuilder):
         # 3. Secure T Anchor: Ensure gradient_scales [1, T] exists
         if "gradient_scales" not in res:
             unroll_steps = self.T - 1
-            scales = [1.0] + [1.0 / unroll_steps] * unroll_steps if unroll_steps > 0 else [1.0]
-            res["gradient_scales"] = torch.tensor(scales, device=batch["actions"].device).reshape(1, -1)
+            scales = (
+                [1.0] + [1.0 / unroll_steps] * unroll_steps
+                if unroll_steps > 0
+                else [1.0]
+            )
+            res["gradient_scales"] = torch.tensor(
+                scales, device=batch["actions"].device
+            ).reshape(1, -1)
 
         current_targets.update(res)
 
@@ -436,5 +456,3 @@ class LatentConsistencyBuilder(BaseTargetBuilder):
             batch_size, unroll_len, -1
         ).detach()
         current_targets["consistency_targets"] = consistency_targets
-
-

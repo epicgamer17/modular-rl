@@ -45,7 +45,9 @@ def build_loss_pipeline(
     Returns:
         A LossPipeline containing the appropriate loss modules.
     """
-    agent_type = config.agent_type
+    agent_type = getattr(config, "agent_type", None)
+    if agent_type is None:
+        raise ValueError("config.agent_type must be explicitly defined.")
 
     if agent_type == "muzero":
         from agents.registries.muzero import build_muzero_loss_pipeline
@@ -124,13 +126,10 @@ def build_universal_learner(
     if weight_broadcast_fn:
         callbacks.append(WeightBroadcastCallback(weight_broadcast_fn))
 
-    # Deduce agent type
+    # Ensure agent type is explicitly defined
     agent_type = getattr(config, "agent_type", None)
     if agent_type is None:
-        if hasattr(config, "clip_param"):
-            agent_type = "ppo"
-        elif hasattr(config, "unroll_steps"):
-            agent_type = "muzero"
+        raise ValueError("config.agent_type must be explicitly defined.")
     target_builder = None
     observation_dtype = torch.float32
 
