@@ -20,9 +20,22 @@ class BaseTargetBuilder(ABC):
 
 class SingleStepFormatter(BaseTargetBuilder):
     """
-    Upgrades [B, ...] to Universal T=1 [B, 1, ...] and generates Masks.
+    Upgrades explicitly whitelisted keys to Universal T=1 [B, 1, ...] and generates Masks.
     This is a pure modifier intended to be placed at the END of a single-step builder pipeline.
     """
+
+    def __init__(self, temporal_keys: Optional[List[str]] = None):
+        # Default whitelist for standard single-step RL
+        self.temporal_keys = temporal_keys or [
+            "actions",
+            "next_actions",
+            "rewards",
+            "dones",
+            "values",
+            "policies",
+            "q_logits",
+            "q_values",
+        ]
 
     def build_targets(
         self,
@@ -38,10 +51,12 @@ class SingleStepFormatter(BaseTargetBuilder):
         batch_size = current_targets["actions"].shape[0]
         device = current_targets["actions"].device
 
-        # 1. Inject T=1
-        for k, v in current_targets.items():
-            if torch.is_tensor(v) and v.ndim >= 1 and (v.ndim == 1 or v.shape[1] != 1):
-                current_targets[k] = v.unsqueeze(1)
+        # 1. Inject T=1 ONLY on the explicitly defined temporal keys
+        for k in self.temporal_keys:
+            if k in current_targets:
+                v = current_targets[k]
+                if torch.is_tensor(v) and (v.ndim == 1 or (v.ndim >= 2 and v.shape[1] != 1)):
+                    current_targets[k] = v.unsqueeze(1)
 
         # 2. Generate Universal T=1 Masks
         generic_mask = torch.ones((batch_size, 1), device=device, dtype=torch.bool)
