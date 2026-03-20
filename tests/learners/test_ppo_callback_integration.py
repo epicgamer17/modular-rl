@@ -75,12 +75,14 @@ def test_ppo_kl_propagation_to_callback(make_ppo_config_dict, cartpole_game_conf
 
     # 7. Create a batch that will generate some KL
     # approx_kl = (old_log_probs - log_probs).mean()
-    # PPO requires [B, T, ...] but we use SingleStepFormatter to handle the unsqueeze
+    # PPO typically operates with [B, T] where T=1 for standard rollout collection.
+    # SingleStepFormatter will handle the unsqueezing if we give it [B].
     batch = {
         "observations": torch.randn(8, 4),
         "actions": torch.zeros(8, dtype=torch.long),
         "old_log_probs": torch.ones(8) * 0.5,  # High old log probs
         "advantages": torch.ones(8),
+        "weights": torch.ones(8),
     }
 
     # we need to mock the learner_inference to return a dict with "policies"

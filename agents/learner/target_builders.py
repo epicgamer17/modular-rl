@@ -6,29 +6,15 @@ from torch import Tensor
 
 
 class BaseTargetBuilder(ABC):
-    """
-    Abstract base class for Reinforcement Learning target calculation modules.
-    """
-
     @abstractmethod
     def build_targets(
         self,
-        batch: Dict[str, Tensor],
-        predictions: Dict[str, Tensor],
+        batch: Dict[str, torch.Tensor],
+        predictions: Dict[str, torch.Tensor],
         network: nn.Module,
-        current_targets: Dict[str, Tensor],
+        current_targets: Dict[str, torch.Tensor],
     ) -> None:
-        """
-        Build target tensors for the loss calculation and update 'current_targets' in place.
-
-        Args:
-            batch: Dictionary of tensors from the replay buffer.
-            predictions: Current network predictions as a dictionary of tensors.
-            network: The neural network module (may be used for target network calls).
-
-        Returns:
-            Dictionary containing the computed target tensors.
-        """
+        """Mutates current_targets in-place."""
         pass  # pragma: no cover
 
 
@@ -83,14 +69,11 @@ class TargetBuilderPipeline(BaseTargetBuilder):
 
     def build_targets(
         self,
-        batch: Dict[str, Tensor],
-        predictions: Dict[str, Tensor],
+        batch: Dict[str, torch.Tensor],
+        predictions: Dict[str, torch.Tensor],
         network: nn.Module,
-        current_targets: Optional[Dict[str, Tensor]] = None,
-    ) -> Dict[str, Tensor]:
-        if current_targets is None:
-            current_targets = {}
-
+        current_targets: Dict[str, torch.Tensor],
+    ) -> None:
         for builder in self.builders:
             # Capture keys before mutation to check for illegal collisions
             pre_keys = set(current_targets.keys())
@@ -108,8 +91,6 @@ class TargetBuilderPipeline(BaseTargetBuilder):
                     f"TargetBuilder collision! Builder {builder.__class__.__name__} tried to overwrite keys: {collisions}. "
                     "Ensure builders have disjoint responsibilities."
                 )
-
-        return current_targets
 
 
 class TemporalDifferenceBuilder(BaseTargetBuilder):

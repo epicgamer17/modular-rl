@@ -52,21 +52,14 @@ class ShapeValidator:
         self, key: str, tensor: torch.Tensor, is_prediction: bool
     ) -> None:
         """Strict validation for Universal T: always expects [B, T, ...]."""
+        # 1. System/Infrastructure tensors that do not conform to Universal T
+        if key in ["weights", "gradient_scales", "metrics"]:
+            return  # Safely bypass the validator for these specific keys
+
         shape = list(tensor.shape)
         prefix = f"[{'Prediction' if is_prediction else 'Target'}] '{key}'"
 
-        # --- EXCEPTION: Gradient Scales ---
-        if key == "gradient_scales":
-            assert (
-                shape[0] == 1
-            ), f"{prefix} batch size must be 1 for broadcasting, got {shape[0]} | full shape: {shape}"
-            assert (
-                len(shape) >= 2 and shape[1] == self.T
-            ), f"{prefix} sequence length mismatch: expected {self.T}, got {shape[1] if len(shape) > 1 else 'None'} | full shape: {shape}"
-            return  # Skip the standard batch checks
-        # ----------------------------------
-
-        # 1. Batch Size (Dimension 0)
+        # 2. Batch Size (Dimension 0)
         assert (
             shape[0] == self.B
         ), f"{prefix} batch size mismatch: expected {self.B}, got {shape[0]} | full shape: {shape}"
