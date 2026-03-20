@@ -65,6 +65,7 @@ class SingleStepTargetBuilder(BaseTargetBuilder):
             formatted["reward_mask"] = generic_mask
             formatted["policy_mask"] = generic_mask
             formatted["q_mask"] = generic_mask
+            formatted["masks"] = generic_mask
 
         return formatted
 
@@ -256,6 +257,7 @@ class MuZeroTargetBuilder(BaseTargetBuilder):
             base_mask = torch.ones((B, T), device=self.device, dtype=torch.bool)
 
         res["value_mask"] = base_mask.clone()
+        res["masks"] = base_mask.clone()
         res["policy_mask"] = batch.get("has_valid_obs_mask", base_mask).clone()
 
         # Reward Mask: Zero out the root step (we predict r_k for k > 0)
