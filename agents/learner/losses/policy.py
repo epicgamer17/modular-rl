@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from typing import Any, Optional
+from typing import Any, Dict, Optional, Tuple
 from agents.learner.losses.base import BaseLoss, LossRepresentation
 
 class PolicyLoss(BaseLoss):
@@ -27,8 +27,8 @@ class PolicyLoss(BaseLoss):
         )
 
     def compute_loss(
-        self, predictions: dict, targets: dict
-    ) -> tuple[torch.Tensor, dict]:
+        self, predictions: Dict[str, torch.Tensor], targets: Dict[str, torch.Tensor]
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
         """MuZero Policy Loss: returns (loss, metrics)"""
         loss, metrics = super().compute_loss(predictions, targets)
 
@@ -64,8 +64,8 @@ class ClippedSurrogateLoss(BaseLoss):
         self.entropy_coefficient = entropy_coefficient
 
     def compute_loss(
-        self, predictions: dict, targets: dict
-    ) -> tuple[torch.Tensor, dict]:
+        self, predictions: Dict[str, torch.Tensor], targets: Dict[str, torch.Tensor]
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
         """PPO Policy Loss: returns [B, T]"""
         policy_logits = predictions["policies"]
         actions = targets["actions"]
@@ -111,7 +111,7 @@ class ImitationLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: Any,
+        representation: LossRepresentation,
         loss_fn: Any,
         loss_factor: float = 1.0,
         optimizer_name: str = "default",

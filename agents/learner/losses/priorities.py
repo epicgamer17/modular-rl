@@ -23,7 +23,12 @@ class BasePriorityComputer(ABC):
 
 class NullPriorityComputer(BasePriorityComputer):
     """Returns 1.0 for all batch elements, effectively disabling priority updates."""
-    def compute(self, elementwise_losses, predictions, targets):
+    def compute(
+        self,
+        elementwise_losses: Dict[str, torch.Tensor],
+        predictions: Dict[str, torch.Tensor],
+        targets: Dict[str, torch.Tensor],
+    ) -> torch.Tensor:
         if not elementwise_losses:
             return torch.ones(1)
         B = next(iter(elementwise_losses.values())).shape[0]
@@ -37,7 +42,12 @@ class RootLossPriorityComputer(BasePriorityComputer):
     def __init__(self, loss_key: str = "ValueLoss"):
         self.loss_key = loss_key
 
-    def compute(self, elementwise_losses, predictions, targets):
+    def compute(
+        self,
+        elementwise_losses: Dict[str, torch.Tensor],
+        predictions: Dict[str, torch.Tensor],
+        targets: Dict[str, torch.Tensor],
+    ) -> torch.Tensor:
         if self.loss_key not in elementwise_losses:
             B = next(iter(elementwise_losses.values())).shape[0]
             return torch.zeros(B, device=next(iter(elementwise_losses.values())).device)
@@ -53,7 +63,12 @@ class MaxLossPriorityComputer(BasePriorityComputer):
     def __init__(self, loss_key: str = "StandardDQNLoss"):
         self.loss_key = loss_key
 
-    def compute(self, elementwise_losses, predictions, targets):
+    def compute(
+        self,
+        elementwise_losses: Dict[str, torch.Tensor],
+        predictions: Dict[str, torch.Tensor],
+        targets: Dict[str, torch.Tensor],
+    ) -> torch.Tensor:
         if self.loss_key not in elementwise_losses:
             B = next(iter(elementwise_losses.values())).shape[0]
             return torch.zeros(B, device=next(iter(elementwise_losses.values())).device)

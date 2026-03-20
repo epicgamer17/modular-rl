@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from typing import Any
+from typing import Any, Dict, Tuple
 from agents.learner.losses.base import BaseLoss, LossRepresentation
 
 class ConsistencyLoss(BaseLoss):
@@ -68,7 +68,7 @@ class CommitmentLoss(BaseLoss):
         )
 
     def compute_loss(
-        self, predictions: dict, targets: dict
-    ) -> tuple[torch.Tensor, dict]:
+        self, predictions: Dict[str, torch.Tensor], targets: Dict[str, torch.Tensor]
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
         """Scalar-to-vectorized: returns [B, T] of loss values"""
         return predictions["commitment_loss"], {}

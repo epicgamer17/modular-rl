@@ -48,20 +48,20 @@ def mock_agent_network():
 def test_value_loss_vectorization():
     config = MockConfig()
     repr = ScalarRepresentation()
-    loss_module = ValueLoss(config, torch.device("cpu"), representation=repr)
+    loss_module = ValueLoss(torch.device("cpu"), representation=repr)
 
     B, T = 4, 1
     predictions = {"values": torch.randn(B, T, 1)}
     targets = {"values": torch.randn(B, T), "value_mask": torch.ones(B, T, dtype=torch.bool)}
 
-    loss = loss_module.compute_loss(predictions, targets, {})
+    loss = loss_module.compute_loss(predictions, targets)
     assert loss.shape == (B, T)
     assert not torch.isnan(loss).any()
 
 def test_q_bootstrapping_loss_vectorization():
     config = MockConfig(atom_size=21)
     repr = DiscreteSupportRepresentation(vmin=0, vmax=10, bins=21)
-    loss_module = QBootstrappingLoss(config, torch.device("cpu"), representation=repr)
+    loss_module = QBootstrappingLoss(torch.device("cpu"), representation=repr)
 
     B, T = 4, 1
     num_actions = 4
@@ -73,14 +73,16 @@ def test_q_bootstrapping_loss_vectorization():
         "value_mask": torch.ones(B, T, dtype=torch.bool)
     }
 
-    loss = loss_module.compute_loss(predictions, targets, {})
+    loss = loss_module.compute_loss(predictions, targets)
     assert loss.shape == (B, T)
     assert not torch.isnan(loss).any()
 
 def test_policy_loss_vectorization():
     config = MockConfig()
     repr = ClassificationRepresentation(num_classes=4)
-    loss_module = PolicyLoss(config, torch.device("cpu"), representation=repr)
+    loss_module = PolicyLoss(
+        torch.device("cpu"), representation=repr, loss_fn=F.cross_entropy, loss_factor=1.0
+    )
 
     B, T = 4, 1
     # PolicyLoss expects pred_key="policies"
@@ -90,14 +92,14 @@ def test_policy_loss_vectorization():
         "policy_mask": torch.ones(B, T, dtype=torch.bool)
     }
 
-    loss = loss_module.compute_loss(predictions, targets, {})
+    loss = loss_module.compute_loss(predictions, targets)
     assert loss.shape == (B, T)
     assert not torch.isnan(loss).any()
 
 def test_consistency_loss_vectorization(mock_agent_network):
     config = MockConfig()
     loss_module = ConsistencyLoss(
-        config, torch.device("cpu"), representation=None, agent_network=mock_agent_network
+        torch.device("cpu"), representation=None, agent_network=mock_agent_network, loss_factor=1.0
     )
 
     B, T = 4, 1
@@ -111,7 +113,7 @@ def test_consistency_loss_vectorization(mock_agent_network):
         "consistency_mask": torch.ones(B, T, dtype=torch.bool)
     }
 
-    loss = loss_module.compute_loss(predictions, targets, {"network": mock_agent_network})
+    loss = loss_module.compute_loss(predictions, targets)
     assert loss.shape == (B, T)
     assert not torch.isnan(loss).any()
 
@@ -122,10 +124,10 @@ def test_loss_pipeline_vectorization():
     repr_pol = ClassificationRepresentation(num_classes=4)
     
     losses = [
-        ValueLoss(config, torch.device("cpu"), representation=repr_val),
-        PolicyLoss(config, torch.device("cpu"), representation=repr_pol)
+        ValueLoss(torch.device("cpu"), representation=repr_val),
+        PolicyLoss(torch.device("cpu"), representation=repr_pol, loss_fn=F.cross_entropy, loss_factor=1.0)
     ]
-    pipeline = LossPipeline(losses)
+    pipeline = LossPipeline(config, losses)
 
     B, T = 4, 1
     predictions = {
@@ -139,7 +141,7 @@ def test_loss_pipeline_vectorization():
         "policy_mask": torch.ones(B, T, dtype=torch.bool)
     }
 
-    total_loss_dict, metrics, priorities = pipeline.run(predictions, targets, {})
+    total_loss_dict, metrics, priorities = pipeline.run(predictions, targets)
     
     # Loss pipeline run returns total_loss_dict (per-optimizer)
     # Each scalar loss is in metrics
@@ -148,10 +150,10 @@ def test_loss_pipeline_vectorization():
 
 def test_clipped_surrogate_loss():
     config = MockConfig()
-    # ClippedSurrogateLoss(config, device, representation, clip_param, entropy_coefficient)
+    repr = ClassificationRepresentation(4)
+    # ClippedSurrogateLoss(device, representation, clip_param, entropy_coefficient)
     loss_module = ClippedSurrogateLoss(
-        config, torch.device("cpu"), representation=ClassificationRepresentation(4),
-        clip_param=0.2, entropy_coefficient=0.01
+        torch.device("cpu"), representation=repr, clip_param=0.2, entropy_coefficient=0.01
     )
 
     B, T = 4, 1
@@ -167,5 +169,5 @@ def test_clipped_surrogate_loss():
         "policy_mask": torch.ones(B, T, dtype=torch.bool)
     }
 
-    loss = loss_module.compute_loss(predictions, targets, {})
+    loss = loss_module.compute_loss(predictions, targets)
     assert loss.shape == (B, T)

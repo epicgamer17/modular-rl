@@ -40,8 +40,19 @@ def test_universal_learner_multi_optimizer():
     # Mock compute_step_result
     loss1 = torch.tensor(1.0, requires_grad=True)
     loss2 = torch.tensor(2.0, requires_grad=True)
+    # B=1 (from batch_iterator), A=2 (from num_actions)
+    B, A = 1, 2
     result = StepResult(
-        loss={"opt1": loss1, "opt2": loss2}, loss_dict={"opt1": 1.0, "opt2": 2.0}
+        loss={"opt1": loss1, "opt2": loss2},
+        loss_dict={"opt1": 1.0, "opt2": 2.0},
+        predictions={
+            "policies": torch.randn(B, 1, A),
+            "values": torch.randn(B, 1),
+        },
+        targets={
+            "policies": torch.randn(B, 1, A),
+            "values": torch.randn(B, 1),
+        },
     )
     learner.compute_step_result = MagicMock(return_value=result)
 

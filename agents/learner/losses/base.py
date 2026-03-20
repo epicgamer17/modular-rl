@@ -1,6 +1,6 @@
 import torch
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Protocol, runtime_checkable
+from typing import Any, Dict, Optional, Protocol, runtime_checkable, Tuple
 
 @runtime_checkable
 class LossRepresentation(Protocol):
@@ -56,7 +56,7 @@ class BaseLoss(ABC):
     def required_targets(self) -> set[str]:
         return {self.target_key, self.mask_key}
 
-    def get_mask(self, targets: dict) -> torch.Tensor:
+    def get_mask(self, targets: Dict[str, torch.Tensor]) -> torch.Tensor:
         """Get the mask to apply for this loss (B, T)."""
         mask = targets.get(self.mask_key)
         if mask is None:
@@ -67,9 +67,9 @@ class BaseLoss(ABC):
 
     def compute_loss(
         self,
-        predictions: dict,
-        targets: dict,
-    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        predictions: Dict[str, torch.Tensor],
+        targets: Dict[str, torch.Tensor],
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
         """
         Pure Vectorized Execution Engine.
         Returns:
@@ -117,7 +117,7 @@ class BaseLoss(ABC):
 
     def compute_priority(
         self,
-        predictions: dict,
-        targets: dict,
+        predictions: Dict[str, torch.Tensor],
+        targets: Dict[str, torch.Tensor],
     ) -> Optional[torch.Tensor]:
         return None

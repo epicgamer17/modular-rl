@@ -2,7 +2,6 @@ import torch
 from replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
 from replay_buffers.concurrency import LocalBackend, TorchMPBackend, ConcurrencyBackend
 from typing import Dict, Optional
-from modules.world_models.inference_output import LearningOutput
 from replay_buffers.processors import (
     InputProcessor,
     IdentityInputProcessor,
@@ -81,7 +80,11 @@ class TargetPolicyInputProcessor(InputProcessor):
 
         policies = kwargs.get("policies")
         if policies is not None:
-            if torch.is_tensor(policies) and policies.ndim == 2 and policies.shape[0] == 1:
+            if (
+                torch.is_tensor(policies)
+                and policies.ndim == 2
+                and policies.shape[0] == 1
+            ):
                 policies = policies.squeeze(0)
             kwargs[self.target_policy_key] = policies
             return kwargs
@@ -101,6 +104,8 @@ class TargetPolicyInputProcessor(InputProcessor):
         one_hot[action] = 1.0
         kwargs[self.target_policy_key] = one_hot
         return kwargs
+
+
 #     def process_single(self, **kwargs):
 #         for old_k, new_k in self.mapping.items():
 #             if old_k in kwargs and new_k not in kwargs:

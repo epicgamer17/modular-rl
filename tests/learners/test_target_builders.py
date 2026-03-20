@@ -57,7 +57,8 @@ def test_dqn_target_builder_standard(rainbow_config):
     network.learner_inference.return_value = {
         "q_values": torch.tensor([[[0.0, 10.0]], [[0.0, 10.0]]])  # [B=2, T=1, Actions]
     }
-    builder.target_network.learner_inference.return_value = {
+    # DQN specific: setup mock for target network in the first builder
+    builder.builders[0].target_network.learner_inference.return_value = {
         "q_values": torch.tensor(
             [[[100.0, 200.0]], [[300.0, 400.0]]]
         )  # [B=2, T=1, Actions]
@@ -111,7 +112,8 @@ def test_dqn_target_builder_truncated(rainbow_config):
         "q_values": torch.tensor([[[10.0, 10.0]], [[10.0, 10.0]]]),
     }
 
-    builder.target_network.learner_inference.return_value = {
+    # DQN specific: setup mock for target network in the first builder
+    builder.builders[0].target_network.learner_inference.return_value = {
         "q_values": torch.tensor([[[100.0, 100.0]], [[100.0, 100.0]]])
     }
 

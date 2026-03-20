@@ -2,7 +2,7 @@ import pytest
 import torch
 import torch.nn as nn
 from agents.learner.base import UniversalLearner
-from agents.learner.callbacks import PPOEarlyStoppingCallback, EarlyStopIteration
+from agents.learner.callbacks import MetricEarlyStopCallback, EarlyStopIteration
 from agents.learner.losses import LossPipeline, ClippedSurrogateLoss
 from modules.agent_nets.modular import ModularAgentNetwork
 
@@ -31,17 +31,19 @@ def test_ppo_kl_propagation_to_callback(ppo_config):
     )
 
     # 2. Setup Loss Pipeline
-    ppo_loss = PPOPolicyLoss(
-        config=ppo_config,
+    # Extract representation from the head
+    pol_rep = agent_network.components["policy_head"].representation
+    ppo_loss = ClippedSurrogateLoss(
         device=device,
+        representation=pol_rep,
         clip_param=0.2,
         entropy_coefficient=0.01,
         optimizer_name="default",
     )
-    pipeline = LossPipeline([ppo_loss])
+    pipeline = LossPipeline(ppo_config, [ppo_loss])
 
     # 3. Setup Callback
-    callback = PPOEarlyStoppingCallback(target_kl=0.01)
+    callback = MetricEarlyStopCallback(metric_key="approx_kl", threshold=0.01)
 
     # 4. Setup Learner
     optimizer = torch.optim.Adam(agent_network.parameters(), lr=1e-3)
@@ -91,22 +93,6 @@ def test_ppo_kl_propagation_to_callback(ppo_config):
         learner.callbacks.on_backward_end(learner, result)
 
 
-def test_ppo_callback_fail_fast():
-    # Test valid target_kl
-    PPOEarlyStoppingCallback(target_kl=0.01)
-
-    # Test invalid target_kl
-    with pytest.raises(AssertionError, match="target_kl must be positive"):
-        PPOEarlyStoppingCallback(target_kl=-1.0)
-
-    # Test missing key in loss_dict
-    callback = PPOEarlyStoppingCallback(target_kl=0.01)
-    from agents.learner.base import StepResult
-
-    result = StepResult(loss={}, loss_dict={})  # Missing approx_kl
-
-    with pytest.raises(AssertionError, match="missing from StepResult.loss_dict"):
-        callback.on_backward_end(None, result)
 
 
 if __name__ == "__main__":

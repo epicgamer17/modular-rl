@@ -19,7 +19,7 @@ from agents.learner.target_builders import TemporalDifferenceBuilder
 from agents.learner.callbacks import (
     PriorityUpdaterCallback,
     WeightBroadcastCallback,
-    PPOEarlyStoppingCallback,
+    MetricEarlyStopCallback,
     TargetNetworkSyncCallback,
     ResetNoiseCallback,
     EpsilonGreedySchedulerCallback,

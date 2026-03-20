@@ -46,8 +46,8 @@ class LossPipeline:
 
     def run(
         self,
-        predictions: dict,
-        targets: dict,
+        predictions: Dict[str, torch.Tensor],
+        targets: Dict[str, torch.Tensor],
         weights: Optional[torch.Tensor] = None,
         gradient_scales: Optional[torch.Tensor] = None,
     ) -> Tuple[Dict[str, torch.Tensor], Dict[str, float], torch.Tensor]:

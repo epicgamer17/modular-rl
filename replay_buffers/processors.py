@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 import numpy as np
 import torch
 from abc import ABC, abstractmethod
@@ -109,7 +109,9 @@ class OutputProcessor(ABC):
     """
 
     @abstractmethod
-    def process_batch(self, indices: list[int], buffers: dict, **kwargs):
+    def process_batch(
+        self, indices: List[int], buffers: Dict[str, torch.Tensor], **kwargs
+    ):
         """
         Args:
             indices: List of indices selected by the Sampler.
@@ -195,7 +197,13 @@ class StackedOutputProcessor(OutputProcessor):
     def __init__(self, processors: List[OutputProcessor]):
         self.processors = processors
 
-    def process_batch(self, indices, buffers, batch=None, **kwargs):
+    def process_batch(
+        self,
+        indices: List[int],
+        buffers: Dict[str, torch.Tensor],
+        batch: Optional[Dict[str, torch.Tensor]] = None,
+        **kwargs,
+    ):
         if batch is None:
             batch = {}
 
@@ -821,7 +829,9 @@ class ObservationDecompressionProcessor(OutputProcessor):
                 f"Unsupported compression: {compression}. Use None, 'zlib', or 'lz4'"
             )
 
-    def process_batch(self, indices, buffers, **kwargs):
+    def process_batch(
+        self, indices: List[int], buffers: Dict[str, torch.Tensor], **kwargs
+    ):
         decompressed_buffers = dict(buffers)
 
         if self.compression or self.quantization:
@@ -951,7 +961,9 @@ class GAEProcessor(InputProcessor):
 class StandardOutputProcessor(OutputProcessor):
     """Returns data indices directly."""
 
-    def process_batch(self, indices, buffers, **kwargs):
+    def process_batch(
+        self, indices: List[int], buffers: Dict[str, torch.Tensor], **kwargs
+    ):
         return {key: buf[indices] for key, buf in buffers.items()}
 
 
@@ -983,7 +995,9 @@ class NStepUnrollProcessor(OutputProcessor):
         self.value_prefix = value_prefix
         self.tau = tau
 
-    def process_batch(self, indices, buffers, **kwargs):
+    def process_batch(
+        self, indices: List[int], buffers: Dict[str, torch.Tensor], **kwargs
+    ):
         # buffers dict should contain: obs, rew, val, pol, act, to_play, chance, game_id, legal_mask, training_step
 
         device = buffers["observations"].device
@@ -1343,7 +1357,9 @@ class AdvantageNormalizer(OutputProcessor):
     Normalizes advantages and formats batches for policy gradient methods.
     """
 
-    def process_batch(self, indices, buffers, **kwargs):
+    def process_batch(
+        self, indices: List[int], buffers: Dict[str, torch.Tensor], **kwargs
+    ):
         # In PPO we usually sample the whole filled rollout and then minibatch in the learner.
         sl = slice(None) if indices is None else indices
 

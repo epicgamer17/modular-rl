@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from typing import Any
+from typing import Any, Dict, Tuple
 from agents.learner.losses.base import BaseLoss, LossRepresentation
 
 class QBootstrappingLoss(BaseLoss):
@@ -36,8 +36,8 @@ class QBootstrappingLoss(BaseLoss):
         )
 
     def compute_loss(
-        self, predictions: dict, targets: dict
-    ) -> tuple[torch.Tensor, dict]:
+        self, predictions: Dict[str, torch.Tensor], targets: Dict[str, torch.Tensor]
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
         q_preds = predictions[self.pred_key]
         actions = targets["actions"].long()
 
@@ -103,8 +103,8 @@ class ChanceQLoss(BaseLoss):
         )
 
     def compute_loss(
-        self, predictions: dict, targets: dict
-    ) -> tuple[torch.Tensor, dict]:
+        self, predictions: Dict[str, torch.Tensor], targets: Dict[str, torch.Tensor]
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
         """Chance Q computes target value from next step."""
         chance_values_next = targets.get("chance_values_next")
         if chance_values_next is None:

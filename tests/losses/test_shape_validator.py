@@ -45,8 +45,8 @@ def test_shape_validator_ppo_valid(ppo_config):
     A = ppo_config.game.num_actions
 
     predictions = {
-        "policies": torch.randn(B, A),
-        "values": torch.randn(B),
+        "policies": torch.randn(B, 1, A),
+        "values": torch.randn(B, 1),
     }
     targets = {
         "policies": torch.randn(B, 1, A),
