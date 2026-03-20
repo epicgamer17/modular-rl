@@ -67,9 +67,7 @@ class QHead(BaseHead):
 
         # 3. Output Layer
         logits = self.output_layer(x)
-
-        if self.representation.num_features > 1:
-            logits = logits.view(-1, self.num_actions, self.representation.num_features)
+        logits = logits.view(-1, self.num_actions, self.representation.num_features)
 
         # 4. Standard Return: (logits, state, inference)
         new_state = state if state is not None else {}
@@ -193,8 +191,6 @@ class DuelingQHead(BaseHead):
         # Aggregation: Q = V + (A - mean(A))
         a_mean = a.mean(dim=1, keepdim=True)
         q = v + a - a_mean
-        if self.representation.num_features == 1:
-            q = q.squeeze(-1)
 
         new_state = state if state is not None else {}
         inference = self.representation.to_inference(q)

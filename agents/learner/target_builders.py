@@ -175,11 +175,15 @@ class TemporalDifferenceBuilder(SingleStepTargetBuilder):
         return self.format_single_step(raw_targets)
 
 
-class PPOTargetBuilder(SingleStepTargetBuilder):
+class PassThroughTargetBuilder(SingleStepTargetBuilder):
     """
-    Whitelist-based builder for PPO targets.
-    Ensures targets (values, returns, etc.) have a Universal T dimension [B, 1, ...].
+    Generic whitelist-based builder that passes specific keys 
+    from the batch through to the loss modules.
+    Ensures targets have a Universal T dimension [B, 1, ...].
     """
+
+    def __init__(self, keys_to_keep: List[str]):
+        self.keys_to_keep = keys_to_keep
 
     def build_targets(
         self,
@@ -187,35 +191,10 @@ class PPOTargetBuilder(SingleStepTargetBuilder):
         predictions: Dict[str, Tensor],
         network: nn.Module,
     ) -> Dict[str, Tensor]:
-        # Explicit Whitelist of mathematical labels needed for PPO Loss
         raw_targets = {}
-        target_keys = ["values", "returns", "actions", "old_log_probs", "advantages"]
-
-        for key in target_keys:
+        for key in self.keys_to_keep:
             if key in batch:
                 raw_targets[key] = batch[key]
-
-        # Upgrade them to [B, 1] and add masks
-        return self.format_single_step(raw_targets)
-
-
-class ImitationTargetBuilder(SingleStepTargetBuilder):
-    """
-    Whitelist-based builder for Behavioral Cloning / Imitation Learning.
-    """
-
-    def build_targets(
-        self,
-        batch: Dict[str, Tensor],
-        predictions: Dict[str, Tensor],
-        network: nn.Module,
-    ) -> Dict[str, Tensor]:
-        # Explicit Whitelist: we only need the actions and optional policy labels
-        raw_targets = {
-            "actions": batch["actions"],
-        }
-        if "target_policies" in batch:
-            raw_targets["policies"] = batch["target_policies"]
 
         # Upgrade them to [B, 1] and add masks
         return self.format_single_step(raw_targets)

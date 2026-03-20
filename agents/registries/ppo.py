@@ -85,8 +85,10 @@ def build_ppo(config: Any, agent_network: Any, device: torch.device) -> Dict[str
         callbacks.append(PPOEarlyStoppingCallback(config.early_stopping_kl))
 
     # 4. Target Builder
-    from agents.learner.target_builders import PPOTargetBuilder
-    target_builder = PPOTargetBuilder()
+    from agents.learner.target_builders import PassThroughTargetBuilder
+    target_builder = PassThroughTargetBuilder(
+        ["values", "returns", "actions", "old_log_probs", "advantages"]
+    )
 
     return {
         "loss_pipeline": loss_pipeline,

@@ -75,8 +75,8 @@ def test_dueling_qhead_forward_aggregation():
     x = torch.randn(2, 16)
     logits, _, q_vals = head(x)
 
-    # Output should be (B, Actions) => (2, 3)
-    assert logits.shape == (2, 3)
+    # Output should be (B, Actions, 1) => (2, 3, 1)
+    assert logits.shape == (2, 3, 1)
 
 
 def test_dueling_qhead_initialize_and_reset_noise():
