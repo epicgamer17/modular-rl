@@ -7,6 +7,8 @@ from modules.utils import create_optimizer, get_lr_scheduler
 from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
     DistributionalTargetBuilder,
+    TargetBuilderPipeline,
+    SingleStepFormatter,
 )
 from agents.action_selectors.selectors import ArgmaxSelector
 
@@ -102,12 +104,15 @@ def build_rainbow(
     is_distributional = getattr(config, "atom_size", 1) > 1
     builder_cls = DistributionalTargetBuilder if is_distributional else TemporalDifferenceBuilder
     
-    target_builder = builder_cls(
-        target_network=target_agent_network,
-        gamma=config.discount_factor,
-        n_step=config.n_step,
-        bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
-    )
+    target_builder = TargetBuilderPipeline([
+        builder_cls(
+            target_network=target_agent_network,
+            gamma=config.discount_factor,
+            n_step=config.n_step,
+            bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
+        ),
+        SingleStepFormatter()
+    ])
 
     return {
         "loss_pipeline": loss_pipeline,

@@ -16,9 +16,10 @@ class BaseTargetBuilder(ABC):
         batch: Dict[str, Tensor],
         predictions: Dict[str, Tensor],
         network: nn.Module,
-    ) -> Dict[str, Tensor]:
+        current_targets: Dict[str, Tensor],
+    ) -> None:
         """
-        Build target tensors for the loss calculation.
+        Build target tensors for the loss calculation and update 'current_targets' in place.
 
         Args:
             batch: Dictionary of tensors from the replay buffer.
@@ -31,60 +32,44 @@ class BaseTargetBuilder(ABC):
         pass  # pragma: no cover
 
 
-class SingleStepTargetBuilder(BaseTargetBuilder):
+class SingleStepFormatter(BaseTargetBuilder):
     """
-    Base class for all non-sequence algorithms (PPO, DQN, Imitation).
-    Automatically upgrades tensors to Universal T=1 and generates masks.
+    Upgrades [B, ...] to Universal T=1 [B, 1, ...] and generates Masks.
+    This is a pure modifier intended to be placed at the END of a single-step builder pipeline.
     """
 
-    def format_single_step(
+    def build_targets(
         self,
-        raw_targets: Dict[str, torch.Tensor],
-        batch_size: int,
-        weights: Optional[torch.Tensor] = None,
-    ) -> Dict[str, torch.Tensor]:
-        formatted = {}
+        batch: Dict[str, Tensor],
+        predictions: Dict[str, Tensor],
+        network: nn.Module,
+        current_targets: Dict[str, Tensor],
+    ) -> None:
+        if "actions" not in current_targets:
+            # We need actions to determine batch size and device
+            return
 
-        # 1. Determine Device for anchors
-        device = torch.device("cpu")
-        for v in raw_targets.values():
-            if torch.is_tensor(v):
-                device = v.device
-                break
+        batch_size = current_targets["actions"].shape[0]
+        device = current_targets["actions"].device
 
-        # 2. Vectorize T=1
-        for k, v in raw_targets.items():
-            # If it's a tensor and has at least a batch dimension, inject the T=1 dimension
-            if torch.is_tensor(v) and v.ndim >= 1:
-                formatted[k] = v.unsqueeze(1)
-            else:
-                formatted[k] = v
+        # 1. Inject T=1
+        for k, v in current_targets.items():
+            if torch.is_tensor(v) and v.ndim >= 1 and (v.ndim == 1 or v.shape[1] != 1):
+                current_targets[k] = v.unsqueeze(1)
 
-        # Automatically generate the Universal T=1 Mask for all standard semantics
-        if "value_mask" not in formatted and len(formatted) > 0:
-            # We explicitly know B (batch_size) and T (1)!
-            generic_mask = torch.ones((batch_size, 1), device=device, dtype=torch.bool)
+        # 2. Generate Universal T=1 Masks
+        generic_mask = torch.ones((batch_size, 1), device=device, dtype=torch.bool)
+        for mask_key in ["value_mask", "reward_mask", "policy_mask", "q_mask", "masks"]:
+            if mask_key not in current_targets:
+                current_targets[mask_key] = generic_mask
 
-            # Route it to all potential semantic keys expected by LossModules
-            formatted["value_mask"] = generic_mask
-            formatted["reward_mask"] = generic_mask
-            formatted["policy_mask"] = generic_mask
-            formatted["q_mask"] = generic_mask
-            formatted["masks"] = generic_mask
-
-        # --- PURGING HACKS: Explicitly build derived targets ---
-        # 3. Weights Bridge: [B]
-        if "weights" not in formatted:
-            if weights is not None:
-                formatted["weights"] = weights
-            else:
-                formatted["weights"] = torch.ones(batch_size, device=device)
-
-        # 4. Gradient Scales Bridge: [1, 1] for single-step
-        if "gradient_scales" not in formatted:
-            formatted["gradient_scales"] = torch.ones((1, 1), device=device)
-
-        return formatted
+        # 3. Weights and Gradient Scales Anchors
+        if "weights" not in current_targets:
+            current_targets["weights"] = batch.get(
+                "weights", torch.ones(batch_size, device=device)
+            )
+        if "gradient_scales" not in current_targets:
+            current_targets["gradient_scales"] = torch.ones((1, 1), device=device)
 
 
 class TargetBuilderPipeline(BaseTargetBuilder):
@@ -101,26 +86,33 @@ class TargetBuilderPipeline(BaseTargetBuilder):
         batch: Dict[str, Tensor],
         predictions: Dict[str, Tensor],
         network: nn.Module,
+        current_targets: Optional[Dict[str, Tensor]] = None,
     ) -> Dict[str, Tensor]:
-        combined_targets = {}
+        if current_targets is None:
+            current_targets = {}
+
         for builder in self.builders:
-            new_targets = builder.build_targets(batch, predictions, network)
+            # Capture keys before mutation to check for illegal collisions
+            pre_keys = set(current_targets.keys())
+
+            builder.build_targets(batch, predictions, network, current_targets)
 
             # The Fail-Fast Collision Check
-            collisions = set(combined_targets.keys()).intersection(new_targets.keys())
+            new_keys = set(current_targets.keys()) - pre_keys
+            collisions = pre_keys.intersection(new_keys)
+
             # Anchors are allowed to be updated by subsequent builders
             collisions -= {"weights", "gradient_scales"}
             if collisions:
                 raise RuntimeError(
-                    f"TargetBuilder collision! Multiple builders tried to create keys: {collisions}. "
+                    f"TargetBuilder collision! Builder {builder.__class__.__name__} tried to overwrite keys: {collisions}. "
                     "Ensure builders have disjoint responsibilities."
                 )
 
-            combined_targets.update(new_targets)
-        return combined_targets
+        return current_targets
 
 
-class TemporalDifferenceBuilder(SingleStepTargetBuilder):
+class TemporalDifferenceBuilder(BaseTargetBuilder):
     """
     Standard TD target builder for Q-learning (Double DQN).
     Calculates: target = reward + gamma^n * (1 - done) * max_a' Q_target(s', a')
@@ -143,7 +135,8 @@ class TemporalDifferenceBuilder(SingleStepTargetBuilder):
         batch: Dict[str, Tensor],
         predictions: Dict[str, Tensor],
         network: nn.Module,
-    ) -> Dict[str, Tensor]:
+        current_targets: Dict[str, Tensor],
+    ) -> None:
         rewards = batch["rewards"].float()
         dones = batch["dones"].bool()
         terminated = batch.get("terminated", dones).bool()
@@ -182,21 +175,17 @@ class TemporalDifferenceBuilder(SingleStepTargetBuilder):
         target_q = rewards + (1 - terminal_mask.float()) * discount * max_next_q
 
         # Whitelist the mathematical labels required for the loss
-        raw_targets = {
-            "values": target_q,
-            "rewards": rewards,
-            "dones": terminal_mask.float(),
-            "next_actions": next_actions,
-            "actions": batch["actions"],
-        }
+        if "values" in current_targets:
+            raise RuntimeError("Collision on 'values' in TemporalDifferenceBuilder.")
 
-        # Upgrade to Universal T=1 and add masks
-        return self.format_single_step(
-            raw_targets, batch_size=batch_size, weights=batch.get("weights")
-        )
+        current_targets["values"] = target_q
+        current_targets["rewards"] = rewards
+        current_targets["dones"] = terminal_mask.float()
+        current_targets["next_actions"] = next_actions
+        current_targets["actions"] = batch["actions"]
 
 
-class DistributionalTargetBuilder(SingleStepTargetBuilder):
+class DistributionalTargetBuilder(BaseTargetBuilder):
     """
     Builder for C51/Distributional RL targets.
     Handles the Bellman Shift (MDP math) and delegates projection to the Representation.
@@ -219,7 +208,8 @@ class DistributionalTargetBuilder(SingleStepTargetBuilder):
         batch: Dict[str, Tensor],
         predictions: Dict[str, Tensor],
         network: nn.Module,
-    ) -> Dict[str, Tensor]:
+        current_targets: Dict[str, Tensor],
+    ) -> None:
         # 1. Extract MDP elements
         rewards = batch["rewards"].float()
         dones = batch["dones"].bool()
@@ -280,20 +270,17 @@ class DistributionalTargetBuilder(SingleStepTargetBuilder):
         )
 
         # 5. Whitelist the labels for the loss module
-        raw_targets = {
-            "q_logits": target_distribution,  # Already projected mass grid
-            "rewards": rewards,
-            "actions": batch["actions"],
-            "next_actions": next_actions,
-            "dones": terminal_mask.float(),
-        }
+        if "q_logits" in current_targets:
+            raise RuntimeError("Collision on 'q_logits' in DistributionalTargetBuilder.")
 
-        return self.format_single_step(
-            raw_targets, batch_size=batch_size, weights=batch.get("weights")
-        )
+        current_targets["q_logits"] = target_distribution
+        current_targets["rewards"] = rewards
+        current_targets["actions"] = batch["actions"]
+        current_targets["next_actions"] = next_actions
+        current_targets["dones"] = terminal_mask.float()
 
 
-class PassThroughTargetBuilder(SingleStepTargetBuilder):
+class PassThroughTargetBuilder(BaseTargetBuilder):
     """
     Generic whitelist-based builder that passes specific keys
     from the batch through to the loss modules.
@@ -308,21 +295,13 @@ class PassThroughTargetBuilder(SingleStepTargetBuilder):
         batch: Dict[str, Tensor],
         predictions: Dict[str, Tensor],
         network: nn.Module,
-    ) -> Dict[str, Tensor]:
-        raw_targets = {}
+        current_targets: Dict[str, Tensor],
+    ) -> None:
         for key in self.keys_to_keep:
             if key in batch:
-                raw_targets[key] = batch[key]
-
-        # Upgrade them to [B, 1] and add masks
-        batch_size = (
-            batch["actions"].shape[0]
-            if "actions" in batch
-            else next(iter(batch.values())).shape[0]
-        )
-        return self.format_single_step(
-            raw_targets, batch_size=batch_size, weights=batch.get("weights")
-        )
+                if key in current_targets:
+                    raise RuntimeError(f"Collision on '{key}' in PassThroughTargetBuilder.")
+                current_targets[key] = batch[key]
 
 
 class MuZeroTargetBuilder(BaseTargetBuilder):
@@ -339,7 +318,8 @@ class MuZeroTargetBuilder(BaseTargetBuilder):
         batch: Dict[str, Tensor],
         predictions: Dict[str, Tensor],
         network: nn.Module,
-    ) -> Dict[str, Tensor]:
+        current_targets: Dict[str, Tensor],
+    ) -> None:
         res = {}
 
         # Explicit Whitelist of mathematical labels required for MuZero losses
@@ -416,7 +396,7 @@ class MuZeroTargetBuilder(BaseTargetBuilder):
             scales = [1.0] + [1.0 / unroll_steps] * unroll_steps if unroll_steps > 0 else [1.0]
             res["gradient_scales"] = torch.tensor(scales, device=batch["actions"].device).reshape(1, -1)
 
-        return res
+        current_targets.update(res)
 
 
 class LatentConsistencyBuilder(BaseTargetBuilder):
@@ -433,7 +413,8 @@ class LatentConsistencyBuilder(BaseTargetBuilder):
         batch: Dict[str, Tensor],
         predictions: Dict[str, Tensor],
         network: nn.Module,
-    ) -> Dict[str, Tensor]:
+        current_targets: Dict[str, Tensor],
+    ) -> None:
         # Use unroll_observations from buffer [B, T+1, C, H, W]
         # UniversalLearner already passed through the batch, so it's in batch
         real_obs = batch["unroll_observations"].float()
@@ -454,6 +435,6 @@ class LatentConsistencyBuilder(BaseTargetBuilder):
         consistency_targets = normalized_targets.reshape(
             batch_size, unroll_len, -1
         ).detach()
-        return {"consistency_targets": consistency_targets}
+        current_targets["consistency_targets"] = consistency_targets
 
 

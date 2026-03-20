@@ -20,7 +20,7 @@ class QBootstrappingLoss(BaseLoss):
     ):
         # 1. Determine Pred/Target keys and default Loss function based on atom_size
         pred_key = "q_logits" if is_categorical else "q_values"
-        target_key = "q_logits" if is_categorical else "q_values"
+        target_key = "q_logits" if is_categorical else "values"
 
         if loss_fn is None:
             loss_fn = F.cross_entropy if is_categorical else F.mse_loss

@@ -210,12 +210,11 @@ class UniversalLearner:
 
         # 2. Targets (Strict Delegation)
         # The TargetBuilder is the ONLY source of truth for the LossPipeline.
+        targets = {}
         if self.target_builder is not None:
-            targets = self.target_builder.build_targets(
-                batch, predictions, self.agent_network
+            self.target_builder.build_targets(
+                batch, predictions, self.agent_network, targets
             )
-        else:
-            targets = {}
 
         # 3. Context and PER weights
         context = batch

@@ -8,6 +8,8 @@ from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
     LatentConsistencyBuilder,
     BaseTargetBuilder,
+    TargetBuilderPipeline,
+    SingleStepFormatter,
 )
 
 pytestmark = pytest.mark.unit
@@ -27,12 +29,15 @@ def test_dqn_target_builder_standard(rainbow_config):
     rainbow_config.discount_factor = 0.9
     rainbow_config.n_step = 1
 
-    builder = TemporalDifferenceBuilder(
-        target_network=MagicMock(),
-        gamma=rainbow_config.discount_factor,
-        n_step=rainbow_config.n_step,
-        bootstrap_on_truncated=getattr(rainbow_config, "bootstrap_on_truncated", False),
-    )
+    builder = TargetBuilderPipeline([
+        TemporalDifferenceBuilder(
+            target_network=MagicMock(),
+            gamma=rainbow_config.discount_factor,
+            n_step=rainbow_config.n_step,
+            bootstrap_on_truncated=getattr(rainbow_config, "bootstrap_on_truncated", False),
+        ),
+        SingleStepFormatter()
+    ])
 
     # Batch size 2
     batch = {
@@ -58,7 +63,8 @@ def test_dqn_target_builder_standard(rainbow_config):
         )  # [B=2, T=1, Actions]
     }
 
-    targets = builder.build_targets(batch, predictions, network)
+    targets = {}
+    builder.build_targets(batch, predictions, network, targets)
 
     assert isinstance(targets, dict)
     # Online max action is 1 for both.
@@ -66,8 +72,8 @@ def test_dqn_target_builder_standard(rainbow_config):
     # target_q[0] = 1.0 + 0.9 * 200.0 = 181.0
     # target_q[1] = 0.0 + 0.9 * 0.0 = 0.0
 
-    expected_q = torch.tensor([181.0, 0.0])
-    assert torch.allclose(targets["q_values"], expected_q)
+    expected_q = torch.tensor([[181.0], [0.0]])
+    assert torch.allclose(targets["values"], expected_q)
     assert "actions" in targets
 
 
@@ -81,12 +87,15 @@ def test_dqn_target_builder_truncated(rainbow_config):
     rainbow_config.n_step = 1
     rainbow_config.bootstrap_on_truncated = True
 
-    builder = TemporalDifferenceBuilder(
-        target_network=MagicMock(),
-        gamma=rainbow_config.discount_factor,
-        n_step=rainbow_config.n_step,
-        bootstrap_on_truncated=rainbow_config.bootstrap_on_truncated,
-    )
+    builder = TargetBuilderPipeline([
+        TemporalDifferenceBuilder(
+            target_network=MagicMock(),
+            gamma=rainbow_config.discount_factor,
+            n_step=rainbow_config.n_step,
+            bootstrap_on_truncated=rainbow_config.bootstrap_on_truncated,
+        ),
+        SingleStepFormatter()
+    ])
 
     batch = {
         "next_observations": torch.randn((2, 4)),
@@ -110,13 +119,14 @@ def test_dqn_target_builder_truncated(rainbow_config):
         "q_values": torch.tensor([[10.0, 10.0], [10.0, 10.0]]),
     }
 
-    targets = builder.build_targets(batch, predictions, network)
+    targets = {}
+    builder.build_targets(batch, predictions, network, targets)
 
     assert isinstance(targets, dict)
     # Sample 0: Terminated=True -> target = reward = 1.0
     # Sample 1: Terminated=False -> target = reward + gamma * max_next_q = 1.0 + 0.9 * 100.0 = 91.0
-    expected_q = torch.tensor([1.0, 91.0])
-    assert torch.allclose(targets["q_values"], expected_q)
+    expected_q = torch.tensor([[1.0], [91.0]])
+    assert torch.allclose(targets["values"], expected_q)
 
 
 def test_latent_consistency_builder():
@@ -137,7 +147,8 @@ def test_latent_consistency_builder():
     # Mock network.project returning projects embeddings
     network.project.return_value = torch.randn((6, 32))  # [B*(T+1), Proj]
 
-    targets = builder.build_targets(batch, {}, network)
+    targets = {}
+    builder.build_targets(batch, {}, network, targets)
 
     assert "consistency_targets" in targets
     assert targets["consistency_targets"].shape == (2, 3, 32)
