@@ -178,7 +178,7 @@ class TemporalDifferenceBuilder(SingleStepTargetBuilder):
 
 class PassThroughTargetBuilder(SingleStepTargetBuilder):
     """
-    Generic whitelist-based builder that passes specific keys 
+    Generic whitelist-based builder that passes specific keys
     from the batch through to the loss modules.
     Ensures targets have a Universal T dimension [B, 1, ...].
     """

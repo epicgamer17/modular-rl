@@ -87,14 +87,8 @@ class BaseLoss(ABC):
             f"and formatted_target {formatted_target.shape}"
         )
         
-        # Determine B, T robustly
-        B, T = 1, 1
-        for key, tensor in targets.items():
-            if key == "gradient_scales":
-                continue
-            if torch.is_tensor(tensor) and tensor.ndim >= 2:
-                B, T = tensor.shape[:2]
-                break
+        # Determine B, T directly from the primary prediction tensor
+        B, T = pred.shape[:2]
         
         # Flatten B, T to handle universal T contract correctly
         orig_shape = pred.shape
@@ -737,14 +731,10 @@ class LossPipeline:
         if not isinstance(targets, dict):
             targets = targets if isinstance(targets, dict) else vars(targets)
 
-        # Determine dimensions B and T robustly
-        B, T = 1, 1
-        for key, tensor in predictions.items():
-            if key == "gradient_scales":
-                continue
-            if torch.is_tensor(tensor) and tensor.ndim >= 2:
-                B, T = tensor.shape[:2]
-                break
+        # Determine dimensions B and T directly from the prediction tensors
+        # (Guaranteed by ShapeValidator to be consistent [B, T, ...])
+        any_pred = next(p for p in predictions.values() if torch.is_tensor(p))
+        B, T = any_pred.shape[:2]
 
         # 3. Defaults and Scaling
         if weights is None:

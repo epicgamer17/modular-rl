@@ -177,12 +177,9 @@ class UniversalLearner:
                 dt = t_now - t_last
                 t_last = t_now
                 
-                B, T = 1, 1
-                if result.predictions:
-                    for p in result.predictions.values():
-                        if torch.is_tensor(p) and p.ndim >= 2:
-                            B, T = p.shape[:2]
-                            break
+                # Fetch B, T from any valid prediction
+                any_pred = next(p for p in result.predictions.values() if torch.is_tensor(p))
+                B, T = any_pred.shape[:2]
                         
                 result.loss_dict["learner_throughput"] = (B * T) / dt if dt > 0 else 0
                 yield self._build_step_metrics(result)
