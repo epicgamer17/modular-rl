@@ -19,7 +19,6 @@ class BaseLoss(ABC):
         loss_fn: Optional[Any] = None,
         optimizer_name: str = "default",
         loss_factor: float = 1.0,
-        pred_to_scalar: bool = False,
     ):
         self.config = config
         self.device = device
@@ -30,7 +29,6 @@ class BaseLoss(ABC):
         self.loss_fn = loss_fn
         self.optimizer_name = optimizer_name
         self.loss_factor = loss_factor
-        self.pred_to_scalar = pred_to_scalar
         self.name = self.__class__.__name__
 
     @property
@@ -66,10 +64,7 @@ class BaseLoss(ABC):
             elementwise_tensor of shape (B, T)
         """
         # 1. Extract [B, T, ...] inputs
-        if self.pred_to_scalar:
-            pred = self.representation.to_expected_value(predictions[self.pred_key])
-        else:
-            pred = predictions[self.pred_key]
+        pred = predictions[self.pred_key]
         target_ingredients = targets  # Representation will pull what it needs
 
         # 2. Format targets through the Representation bridge

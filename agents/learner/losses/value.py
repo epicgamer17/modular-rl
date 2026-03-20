@@ -16,7 +16,6 @@ class ValueLoss(BaseLoss):
         mask_key: str = "value_mask",
         loss_fn: Optional[Any] = None,
         loss_factor: Optional[float] = None,
-        pred_to_scalar: bool = False,
     ):
         # Fallback to algorithm-specific config or framework defaults
         loss_fn = loss_fn or getattr(config, "value_loss_function", F.mse_loss)
@@ -36,5 +35,4 @@ class ValueLoss(BaseLoss):
             loss_fn=loss_fn,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
-            pred_to_scalar=pred_to_scalar,
         )

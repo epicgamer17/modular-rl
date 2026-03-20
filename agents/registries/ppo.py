@@ -31,7 +31,6 @@ def build_ppo_loss_pipeline(config, agent_network, device):
                 target_key="returns",
                 optimizer_name="value",
                 loss_factor=config.critic_coefficient,
-                pred_to_scalar=True,
             ),
         ]
     )
