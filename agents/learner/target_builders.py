@@ -38,7 +38,7 @@ class SingleStepTargetBuilder(BaseTargetBuilder):
     """
 
     def format_single_step(
-        self, raw_targets: Dict[str, torch.Tensor]
+        self, raw_targets: Dict[str, torch.Tensor], batch_size: int
     ) -> Dict[str, torch.Tensor]:
         formatted = {}
         for k, v in raw_targets.items():
@@ -50,15 +50,10 @@ class SingleStepTargetBuilder(BaseTargetBuilder):
 
         # Automatically generate the Universal T=1 Mask for all standard semantics
         if "value_mask" not in formatted and len(formatted) > 0:
-            # Grab the device and batch size from the first tensor we can find
-            B, T = 1, 1
-            for key, tensor in formatted.items():
-                if key != "gradient_scales" and tensor.ndim >= 2:
-                    B, T = tensor.shape[:2]
-                    break  # We found a valid batch tensor (like rewards, actions, values)
-
-            # Create a generic all-ones mask [B, 1]
-            generic_mask = torch.ones((B, 1), device=tensor.device, dtype=torch.bool)
+            # We explicitly know B (batch_size) and T (1)!
+            tensor = next(iter(formatted.values()))
+            device = tensor.device
+            generic_mask = torch.ones((batch_size, 1), device=device, dtype=torch.bool)
 
             # Route it to all potential semantic keys expected by LossModules
             formatted["value_mask"] = generic_mask
@@ -172,7 +167,7 @@ class TemporalDifferenceBuilder(SingleStepTargetBuilder):
         }
 
         # Upgrade to Universal T=1 and add masks
-        return self.format_single_step(raw_targets)
+        return self.format_single_step(raw_targets, batch_size=batch_size)
 
 
 class DistributionalTargetBuilder(SingleStepTargetBuilder):
@@ -267,7 +262,7 @@ class DistributionalTargetBuilder(SingleStepTargetBuilder):
             "dones": terminal_mask.float(),
         }
 
-        return self.format_single_step(raw_targets)
+        return self.format_single_step(raw_targets, batch_size=batch_size)
 
 
 class PassThroughTargetBuilder(SingleStepTargetBuilder):
@@ -292,7 +287,8 @@ class PassThroughTargetBuilder(SingleStepTargetBuilder):
                 raw_targets[key] = batch[key]
 
         # Upgrade them to [B, 1] and add masks
-        return self.format_single_step(raw_targets)
+        batch_size = batch["actions"].shape[0] if "actions" in batch else next(iter(batch.values())).shape[0]
+        return self.format_single_step(raw_targets, batch_size=batch_size)
 
 
 class MuZeroTargetBuilder(BaseTargetBuilder):
@@ -337,18 +333,14 @@ class MuZeroTargetBuilder(BaseTargetBuilder):
             else:
                 res[key] = v
 
-        # MuZero Semantic Menu: Calculate specialized masks
-        # Standard [B, T] base mask from is_same_game (1s until episode truly ends)
         base_mask = batch.get("is_same_game")
         if base_mask is None:
-            # Fallback: find any tensor we just added to get the shape
-            B, T = 1, 1
-            for key, tensor in res.items():
-                if key != "gradient_scales" and tensor.ndim >= 2:
-                    B, T = tensor.shape[:2]
-                    break  # We found a valid batch tensor (like rewards, actions, values)
+            # The Anchor: MuZero must have actions to unroll
+            B = batch["actions"].shape[0]
+            T = self.T
 
-            base_mask = torch.ones((B, T), device=self.device, dtype=torch.bool)
+            # Use the device from the actions tensor
+            base_mask = torch.ones((B, T), device=batch["actions"].device, dtype=torch.bool)
 
         res["value_mask"] = base_mask.clone()
         res["masks"] = base_mask.clone()
