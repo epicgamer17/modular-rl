@@ -84,10 +84,20 @@ class TargetBuilderPipeline(BaseTargetBuilder):
         predictions: Dict[str, Tensor],
         network: nn.Module,
     ) -> Dict[str, Tensor]:
-        targets = {}
+        combined_targets = {}
         for builder in self.builders:
-            targets.update(builder.build_targets(batch, predictions, network))
-        return targets
+            new_targets = builder.build_targets(batch, predictions, network)
+
+            # The Fail-Fast Collision Check
+            collisions = set(combined_targets.keys()).intersection(new_targets.keys())
+            if collisions:
+                raise RuntimeError(
+                    f"TargetBuilder collision! Multiple builders tried to create keys: {collisions}. "
+                    "Ensure builders have disjoint responsibilities."
+                )
+
+            combined_targets.update(new_targets)
+        return combined_targets
 
 
 class TemporalDifferenceBuilder(SingleStepTargetBuilder):
