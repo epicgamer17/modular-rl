@@ -8,15 +8,14 @@ class ConsistencyLoss(BaseLoss):
 
     def __init__(
         self,
-        config: Any,
         device: torch.device,
         representation: Any,
         agent_network: Any,
+        loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "consistency_mask",
     ):
         super().__init__(
-            config=config,
             device=device,
             pred_key="consistency_logits",
             target_key="targets_latent",
@@ -24,7 +23,7 @@ class ConsistencyLoss(BaseLoss):
             representation=representation,
             loss_fn=F.cross_entropy,
             optimizer_name=optimizer_name,
-            loss_factor=config.consistency_loss_factor,
+            loss_factor=loss_factor,
         )
 
 class SigmaLoss(BaseLoss):
@@ -32,14 +31,13 @@ class SigmaLoss(BaseLoss):
 
     def __init__(
         self,
-        config: Any,
         device: torch.device,
         representation: Any,
+        loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "sigma_mask",
     ):
         super().__init__(
-            config=config,
             device=device,
             pred_key="sigma_logits",
             target_key="sigmas",
@@ -47,7 +45,7 @@ class SigmaLoss(BaseLoss):
             representation=representation,
             loss_fn=F.cross_entropy,
             optimizer_name=optimizer_name,
-            loss_factor=config.sigma_loss_factor,
+            loss_factor=loss_factor,
         )
 
 class CommitmentLoss(BaseLoss):
@@ -55,14 +53,12 @@ class CommitmentLoss(BaseLoss):
 
     def __init__(
         self,
-        config,
-        device,
+        device: torch.device,
         representation: Any,
         optimizer_name: str = "default",
         mask_key: str = "commitment_mask",
     ):
         super().__init__(
-            config=config,
             device=device,
             pred_key="commitment_loss",
             target_key="commitment_loss",
@@ -70,9 +66,6 @@ class CommitmentLoss(BaseLoss):
             representation=representation,
             optimizer_name=optimizer_name,
         )
-
-    def should_compute(self, predictions: dict, targets: dict, context: dict) -> bool:
-        return getattr(self.config, "stochastic", False)
 
     def compute_loss(
         self, predictions: dict, targets: dict, context: dict

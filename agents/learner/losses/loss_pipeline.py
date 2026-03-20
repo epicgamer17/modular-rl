@@ -4,6 +4,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 from agents.learner.losses.base import BaseLoss
 from agents.learner.losses.priorities import BasePriorityComputer, NullPriorityComputer
+from agents.learner.losses.shape_validator import ShapeValidator
 
 class LossPipeline:
     """
@@ -13,18 +14,20 @@ class LossPipeline:
 
     def __init__(
         self,
+        config: Any,
         modules: List[BaseLoss],
         priority_computer: Optional[BasePriorityComputer] = None,
     ):
+        self.config = config
         self.modules = modules
         self.priority_computer = priority_computer or NullPriorityComputer()
+        self.shape_validator = ShapeValidator(config)
 
     def validate_dependencies(
         self, network_output_keys: set[str], target_keys: set[str]
     ) -> None:
         """
         Verify that the provided keys satisfy all module requirements.
-        Raises ValueError with detailed error message on failure.
         """
         for module in self.modules:
             missing_preds = module.required_predictions - network_output_keys
@@ -53,13 +56,11 @@ class LossPipeline:
         Run the loss pipeline in a single vectorized pass across all sequence steps.
         """
         from modules.utils import scale_gradient
-        from agents.learner.losses.shape_validator import ShapeValidator
 
-        # 1. Config and Shape Validation
+        # 1. Shape Validation and Latency Setup
         start_time = time.perf_counter()
-        config = self.modules[0].config
-        device = self.modules[0].device
-        ShapeValidator(config).validate(predictions, targets)
+        device = self.modules[0].device if self.modules else torch.device("cpu")
+        self.shape_validator.validate(predictions, targets)
 
         # 2. Key/Format Normalization
         if not isinstance(predictions, dict):
@@ -68,7 +69,6 @@ class LossPipeline:
             targets = targets if isinstance(targets, dict) else vars(targets)
 
         # Determine dimensions B and T directly from the prediction tensors
-        # (Guaranteed by ShapeValidator to be consistent [B, T, ...])
         any_pred = next(p for p in predictions.values() if torch.is_tensor(p))
         B, T = any_pred.shape[:2]
 
@@ -94,9 +94,7 @@ class LossPipeline:
 
         # 4. Single-Pass Vectorized Execution
         for module in self.modules:
-            if not module.should_compute(predictions, targets, context):
-                continue
-
+            # Blindly compute: decision logic now lives in the Factory/Registry
             # Compute [B, T] elementwise loss
             elementwise_loss = module.compute_loss(predictions, targets, context)
             all_elementwise_losses[module.name] = elementwise_loss

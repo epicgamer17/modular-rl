@@ -36,36 +36,70 @@ def build_muzero_loss_pipeline(config, agent_network, device):
     tp_rep = agent_network.components["world_model"].to_play_head.representation
 
     modules = [
-        ValueLoss(config, device, representation=val_rep),
-        PolicyLoss(config, device, representation=pol_rep),
-        RewardLoss(config, device, representation=rew_rep),
+        ValueLoss(
+            device=device,
+            representation=val_rep,
+            loss_fn=config.value_loss_function,
+            loss_factor=config.value_loss_factor,
+        ),
+        PolicyLoss(
+            device=device,
+            representation=pol_rep,
+            loss_fn=config.policy_loss_function,
+            loss_factor=config.policy_loss_factor,
+        ),
+        RewardLoss(
+            device=device,
+            representation=rew_rep,
+            loss_fn=config.reward_loss_function,
+            loss_factor=config.reward_loss_factor,
+        ),
     ]
+
     if config.game.num_players > 1:
-        modules.append(ToPlayLoss(config, device, representation=tp_rep))
+        modules.append(
+            ToPlayLoss(
+                device=device,
+                representation=tp_rep,
+                loss_factor=config.to_play_loss_factor,
+            )
+        )
+
     if config.consistency_loss_factor > 0:
         modules.append(
             ConsistencyLoss(
-                config,
-                device,
+                device=device,
                 representation=IdentityRepresentation(),
                 agent_network=agent_network,
+                loss_factor=config.consistency_loss_factor,
             )
         )
+
     if config.stochastic:
         as_val_rep = agent_network.components["afterstate_value_head"].representation
         sigma_rep = agent_network.components["world_model"].sigma_head.representation
 
         modules.extend(
             [
-                ChanceQLoss(config, device, representation=as_val_rep),
-                SigmaLoss(config, device, representation=sigma_rep),
+                ChanceQLoss(
+                    device=device,
+                    representation=as_val_rep,
+                    loss_factor=config.chance_q_loss_factor,
+                ),
+                SigmaLoss(
+                    device=device,
+                    representation=sigma_rep,
+                    loss_factor=config.sigma_loss_factor,
+                ),
                 CommitmentLoss(
-                    config, device, representation=IdentityRepresentation()
+                    device=device,
+                    representation=IdentityRepresentation(),
                 ),
             ]
         )
+
     priority_computer = ExpectedValueErrorPriorityComputer(value_representation=val_rep)
-    return LossPipeline(modules, priority_computer=priority_computer)
+    return LossPipeline(config, modules, priority_computer=priority_computer)
 
 
 @register_agent("muzero")
@@ -76,7 +110,6 @@ def build_muzero(
     loss_pipeline = build_muzero_loss_pipeline(config, agent_network, device)
 
     # 2. Setup Optimizers and Schedulers
-    # Factory create_opt logic for non-PPO:
     from torch.optim.adam import Adam
     from torch.optim.sgd import SGD
 

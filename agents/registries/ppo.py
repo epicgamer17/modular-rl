@@ -15,9 +15,9 @@ def build_ppo_loss_pipeline(config, agent_network, device):
     val_rep = agent_network.components["value_head"].representation
 
     return LossPipeline(
-        [
+        config=config,
+        modules=[
             ClippedSurrogateLoss(
-                config=config,
                 device=device,
                 representation=pol_rep,
                 clip_param=config.clip_param,
@@ -25,7 +25,6 @@ def build_ppo_loss_pipeline(config, agent_network, device):
                 optimizer_name="policy",
             ),
             ValueLoss(
-                config=config,
                 device=device,
                 representation=val_rep,
                 target_key="returns",

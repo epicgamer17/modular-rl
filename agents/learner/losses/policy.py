@@ -8,36 +8,34 @@ class PolicyLoss(BaseLoss):
 
     def __init__(
         self,
-        config: Any,
         device: torch.device,
         representation: Any,
+        loss_fn: Any,
+        loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "policy_mask",
     ):
         super().__init__(
-            config=config,
             device=device,
             pred_key="policies",
             target_key="policies",
             mask_key=mask_key,
             representation=representation,
-            loss_fn=config.policy_loss_function,
+            loss_fn=loss_fn,
             optimizer_name=optimizer_name,
-            loss_factor=config.policy_loss_factor,
+            loss_factor=loss_factor,
         )
 
 class ClippedSurrogateLoss(BaseLoss):
     def __init__(
         self,
-        config,
-        device,
+        device: torch.device,
         representation: Any,
         clip_param: float,
         entropy_coefficient: float,
         optimizer_name: str = "default",
     ):
         super().__init__(
-            config=config,
             device=device,
             pred_key="policies",
             target_key="actions",
@@ -47,9 +45,6 @@ class ClippedSurrogateLoss(BaseLoss):
         )
         self.clip_param = clip_param
         self.entropy_coefficient = entropy_coefficient
-
-    def should_compute(self, predictions: dict, targets: dict, context: dict) -> bool:
-        return True
 
     def compute_loss(
         self, predictions: dict, targets: dict, context: dict
@@ -101,20 +96,20 @@ class ClippedSurrogateLoss(BaseLoss):
 class ImitationLoss(BaseLoss):
     def __init__(
         self,
-        config: Any,
         device: torch.device,
         representation: Any,
+        loss_fn: Any,
+        loss_factor: float = 1.0,
         optimizer_name: str = "default",
         mask_key: str = "policy_mask",
     ):
         super().__init__(
-            config=config,
             device=device,
             pred_key="policies",
             target_key="policies",
             mask_key=mask_key,
             representation=representation,
-            loss_fn=config.policy_loss_function,
+            loss_fn=loss_fn,
             optimizer_name=optimizer_name,
-            loss_factor=getattr(config, "policy_loss_factor", 1.0),
+            loss_factor=loss_factor,
         )

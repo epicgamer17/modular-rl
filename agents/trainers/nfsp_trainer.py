@@ -313,11 +313,12 @@ class NFSPTrainer(BaseTrainer):
 
         rl_rep = self.br_agent_network.components["q_head"].representation
         td_loss_module = QBootstrappingLoss(
-            config=rl_config,
             device=device,
             representation=rl_rep,
+            is_categorical=is_distributional,
+            loss_fn=getattr(rl_config, "loss_function", None),
         )
-        rl_loss_pipeline = LossPipeline([td_loss_module])
+        rl_loss_pipeline = LossPipeline(rl_config, [td_loss_module])
 
         self.rl_learner = UniversalLearner(
             config=rl_config,
@@ -360,7 +361,15 @@ class NFSPTrainer(BaseTrainer):
         sl_scheduler = get_lr_scheduler(sl_optimizer, sl_config)
         sl_rep = self.avg_agent_network.components["policy_head"].representation
         sl_loss_pipeline = LossPipeline(
-            [ImitationLoss(sl_config, device, representation=sl_rep)]
+            sl_config,
+            [
+                ImitationLoss(
+                    device=device,
+                    representation=sl_rep,
+                    loss_fn=sl_config.policy_loss_function,
+                    loss_factor=getattr(sl_config, "policy_loss_factor", 1.0),
+                )
+            ],
         )
         
         # SL uses PassThroughTargetBuilder for target_policies -> policies mapping if needed, 

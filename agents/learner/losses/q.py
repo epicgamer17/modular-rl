@@ -3,7 +3,6 @@ import torch.nn.functional as F
 from typing import Any
 from agents.learner.losses.base import BaseLoss
 
-
 class QBootstrappingLoss(BaseLoss):
     """
     Standard TD target loss for Q-learning.
@@ -12,23 +11,21 @@ class QBootstrappingLoss(BaseLoss):
 
     def __init__(
         self,
-        config,
-        device,
+        device: torch.device,
         representation: Any,
+        is_categorical: bool = False,
+        loss_fn: Any = None,
         optimizer_name: str = "default",
         mask_key: str = "value_mask",
     ):
         # 1. Determine Pred/Target keys and default Loss function based on atom_size
-        is_categorical = getattr(config, "atom_size", 1) > 1
         pred_key = "q_logits" if is_categorical else "q_values"
         target_key = "q_logits" if is_categorical else "q_values"
 
-        # Use cross_entropy for C51, but allow override via config.loss_function (MSE)
-        default_loss_fn = F.cross_entropy if is_categorical else F.mse_loss
-        loss_fn = getattr(config, "loss_function", default_loss_fn)
+        if loss_fn is None:
+            loss_fn = F.cross_entropy if is_categorical else F.mse_loss
 
         super().__init__(
-            config=config,
             device=device,
             pred_key=pred_key,
             target_key=target_key,
@@ -59,8 +56,6 @@ class QBootstrappingLoss(BaseLoss):
         ]
 
         # 3. Format Targets through the Representation bridge
-        # Responsibility for Bellman shift (MDP math) moved to TargetBuilder.
-        # Responsibility for Two-Hot projection (Geometric math) moved to Representation.
         formatted_target = self.representation.format_target(
             targets, target_key=self.target_key
         )
@@ -75,7 +70,6 @@ class QBootstrappingLoss(BaseLoss):
         # 5. Apply Loss Function
         if selected_preds.shape[-1] > 1:
             # Multi-atom categorical cross-entropy
-            # (Matches MuZero ValueLoss logic for distributions)
             log_probs = F.log_softmax(selected_preds, dim=-1)
             raw_loss = -(flat_targets * log_probs).sum(dim=-1)
         else:
@@ -86,20 +80,18 @@ class QBootstrappingLoss(BaseLoss):
 
         return raw_loss.reshape(B, T)
 
-
 class ChanceQLoss(BaseLoss):
     """Loss for stochastic muzero chance Q heads."""
 
     def __init__(
         self,
-        config: Any,
         device: torch.device,
         representation: Any,
+        loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "afterstate_value_mask",
     ):
         super().__init__(
-            config=config,
             device=device,
             pred_key="chance_q_logits",
             target_key="values",
@@ -107,7 +99,7 @@ class ChanceQLoss(BaseLoss):
             representation=representation,
             loss_fn=F.cross_entropy,
             optimizer_name=optimizer_name,
-            loss_factor=config.chance_q_loss_factor,
+            loss_factor=loss_factor,
         )
 
     def compute_loss(

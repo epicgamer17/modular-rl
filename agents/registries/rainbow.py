@@ -19,14 +19,17 @@ def build_rainbow_loss_pipeline(config, agent_network, device):
     ):
         representation = agent_network.components["q_head"].representation
 
+    is_distributional = getattr(config, "atom_size", 1) > 1
+
     td_loss_module = QBootstrappingLoss(
-        config=config,
         device=device,
         representation=representation,
+        is_categorical=is_distributional,
+        loss_fn=getattr(config, "loss_function", None),
     )
     priority_computer = MaxLossPriorityComputer(loss_key="QBootstrappingLoss")
 
-    return LossPipeline([td_loss_module], priority_computer=priority_computer)
+    return LossPipeline(config, [td_loss_module], priority_computer=priority_computer)
 
 
 @register_agent("rainbow")

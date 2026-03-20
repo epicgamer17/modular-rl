@@ -8,14 +8,13 @@ class ToPlayLoss(BaseLoss):
 
     def __init__(
         self,
-        config: Any,
         device: torch.device,
         representation: Any,
+        loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "to_play_mask",
     ):
         super().__init__(
-            config=config,
             device=device,
             pred_key="to_plays",
             target_key="to_plays",
@@ -23,7 +22,7 @@ class ToPlayLoss(BaseLoss):
             representation=representation,
             loss_fn=F.cross_entropy,
             optimizer_name=optimizer_name,
-            loss_factor=config.to_play_loss_factor,
+            loss_factor=loss_factor,
         )
 
 class RelativeToPlayLoss(BaseLoss):
@@ -35,14 +34,13 @@ class RelativeToPlayLoss(BaseLoss):
 
     def __init__(
         self,
-        config: Any,
         device: torch.device,
         representation: Any,
+        loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "to_play_mask",
     ):
         super().__init__(
-            config=config,
             device=device,
             pred_key="to_plays",
             target_key="to_plays",
@@ -50,5 +48,5 @@ class RelativeToPlayLoss(BaseLoss):
             representation=representation,
             loss_fn=F.cross_entropy,
             optimizer_name=optimizer_name,
-            loss_factor=config.to_play_loss_factor,
+            loss_factor=loss_factor,
         )

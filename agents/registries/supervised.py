@@ -9,7 +9,17 @@ def build_supervised_loss_pipeline(config, agent_network, device):
     # Extract representation from policy head
     pol_rep = agent_network.components["policy_head"].representation
 
-    return LossPipeline([ImitationLoss(config, device, representation=pol_rep)])
+    return LossPipeline(
+        config,
+        [
+            ImitationLoss(
+                device=device,
+                representation=pol_rep,
+                loss_fn=config.policy_loss_function,
+                loss_factor=getattr(config, "policy_loss_factor", 1.0),
+            )
+        ],
+    )
 
 
 @register_agent("supervised")

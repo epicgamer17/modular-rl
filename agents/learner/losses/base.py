@@ -10,7 +10,6 @@ class BaseLoss(ABC):
 
     def __init__(
         self,
-        config: Any,
         device: torch.device,
         pred_key: str,
         target_key: str,
@@ -20,7 +19,6 @@ class BaseLoss(ABC):
         optimizer_name: str = "default",
         loss_factor: float = 1.0,
     ):
-        self.config = config
         self.device = device
         self.pred_key = pred_key
         self.target_key = target_key
@@ -38,10 +36,6 @@ class BaseLoss(ABC):
     @property
     def required_targets(self) -> set[str]:
         return {self.target_key, self.mask_key}
-
-    def should_compute(self, predictions: dict, targets: dict, context: dict) -> bool:
-        """Determine if this loss should be computed for the batch."""
-        return True
 
     def get_mask(self, targets: dict) -> torch.Tensor:
         """Get the mask to apply for this loss (B, T)."""
