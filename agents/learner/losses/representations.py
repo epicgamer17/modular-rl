@@ -67,10 +67,11 @@ class ScalarRepresentation(BaseRepresentation):
         return scalar_targets.reshape(*scalar_targets.shape, 1)
 
 
-class DiscreteValuedRepresentation(BaseRepresentation):
+class TwoHotRepresentation(BaseRepresentation):
     """
-    Base class for value representations that map scalars to a categorical support.
+    Representation that maps scalars to a categorical support via two-hot projection.
     Provides common logic for expectation (to_expected_value) and two-hot projection (to_representation).
+    Used primarily for MuZero-style values and rewards.
     """
 
     def __init__(self, vmin: float, vmax: float, bins: int):
@@ -145,12 +146,7 @@ class DiscreteValuedRepresentation(BaseRepresentation):
         )
 
 
-class TwoHotRepresentation(DiscreteValuedRepresentation):
-    def __init__(self, vmin: float, vmax: float, bins: int):
-        super().__init__(vmin, vmax, bins)
-
-
-class CategoricalRepresentation(DiscreteValuedRepresentation):
+class CategoricalRepresentation(TwoHotRepresentation):
     def __init__(self, vmin: float, vmax: float, bins: int):
         super().__init__(vmin, vmax, bins)
 
