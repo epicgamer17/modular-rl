@@ -15,6 +15,7 @@ class ValueLoss(BaseLoss):
         mask_key: str = "value_mask",
         loss_fn: Any = F.mse_loss,
         loss_factor: float = 1.0,
+        name: Optional[str] = None,
     ):
         super().__init__(
             device=device,
@@ -25,4 +26,5 @@ class ValueLoss(BaseLoss):
             loss_fn=loss_fn,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
+            name=name,
         )

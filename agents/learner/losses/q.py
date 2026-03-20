@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 from agents.learner.losses.base import BaseLoss, LossRepresentation
 
 class QBootstrappingLoss(BaseLoss):
@@ -17,11 +17,12 @@ class QBootstrappingLoss(BaseLoss):
         loss_fn: Any = None,
         optimizer_name: str = "default",
         mask_key: str = "value_mask",
+        name: Optional[str] = None,
     ):
         # 1. Determine Pred/Target keys and default Loss function based on atom_size
         pred_key = "q_logits" if is_categorical else "q_values"
         target_key = "q_logits" if is_categorical else "values"
-
+        
         if loss_fn is None:
             loss_fn = F.cross_entropy if is_categorical else F.mse_loss
 
@@ -33,6 +34,7 @@ class QBootstrappingLoss(BaseLoss):
             representation=representation,
             loss_fn=loss_fn,
             optimizer_name=optimizer_name,
+            name=name,
         )
 
     def compute_loss(
@@ -90,6 +92,7 @@ class ChanceQLoss(BaseLoss):
         loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "afterstate_value_mask",
+        name: Optional[str] = None,
     ):
         super().__init__(
             device=device,
@@ -100,6 +103,7 @@ class ChanceQLoss(BaseLoss):
             loss_fn=F.cross_entropy,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
+            name=name,
         )
 
     def compute_loss(

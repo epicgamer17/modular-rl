@@ -14,6 +14,7 @@ class PolicyLoss(BaseLoss):
         loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "policy_mask",
+        name: Optional[str] = None,
     ):
         super().__init__(
             device=device,
@@ -24,6 +25,7 @@ class PolicyLoss(BaseLoss):
             loss_fn=loss_fn,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
+            name=name,
         )
 
     def compute_loss(
@@ -51,6 +53,7 @@ class ClippedSurrogateLoss(BaseLoss):
         clip_param: float,
         entropy_coefficient: float,
         optimizer_name: str = "default",
+        name: Optional[str] = None,
     ):
         super().__init__(
             device=device,
@@ -59,6 +62,7 @@ class ClippedSurrogateLoss(BaseLoss):
             mask_key="policy_mask",
             representation=representation,
             optimizer_name=optimizer_name,
+            name=name,
         )
         self.clip_param = clip_param
         self.entropy_coefficient = entropy_coefficient
@@ -116,6 +120,7 @@ class ImitationLoss(BaseLoss):
         loss_factor: float = 1.0,
         optimizer_name: str = "default",
         mask_key: str = "policy_mask",
+        name: Optional[str] = None,
     ):
         super().__init__(
             device=device,
@@ -126,4 +131,5 @@ class ImitationLoss(BaseLoss):
             loss_fn=loss_fn,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
+            name=name,
         )

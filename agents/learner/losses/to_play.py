@@ -13,6 +13,7 @@ class ToPlayLoss(BaseLoss):
         loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "to_play_mask",
+        name: Optional[str] = None,
     ):
         super().__init__(
             device=device,
@@ -23,6 +24,7 @@ class ToPlayLoss(BaseLoss):
             loss_fn=F.cross_entropy,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
+            name=name,
         )
 
 class RelativeToPlayLoss(BaseLoss):
@@ -39,6 +41,7 @@ class RelativeToPlayLoss(BaseLoss):
         loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "to_play_mask",
+        name: Optional[str] = None,
     ):
         super().__init__(
             device=device,
@@ -49,4 +52,5 @@ class RelativeToPlayLoss(BaseLoss):
             loss_fn=F.cross_entropy,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
+            name=name,
         )

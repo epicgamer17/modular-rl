@@ -37,6 +37,7 @@ class BaseLoss(ABC):
         loss_fn: Optional[Any] = None,
         optimizer_name: str = "default",
         loss_factor: float = 1.0,
+        name: Optional[str] = None,
     ):
         self.device = device
         self.pred_key = pred_key
@@ -46,7 +47,7 @@ class BaseLoss(ABC):
         self.loss_fn = loss_fn
         self.optimizer_name = optimizer_name
         self.loss_factor = loss_factor
-        self.name = self.__class__.__name__
+        self.name = name or self.__class__.__name__
 
     @property
     def required_predictions(self) -> set[str]:

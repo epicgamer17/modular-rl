@@ -1,5 +1,5 @@
 import torch
-from typing import Any
+from typing import Any, Dict, Optional, Tuple
 from agents.learner.losses.base import BaseLoss, LossRepresentation
 
 class RewardLoss(BaseLoss):
@@ -13,6 +13,7 @@ class RewardLoss(BaseLoss):
         loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "reward_mask",
+        name: Optional[str] = None,
     ):
         super().__init__(
             device=device,
@@ -23,4 +24,5 @@ class RewardLoss(BaseLoss):
             loss_fn=loss_fn,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
+            name=name,
         )
