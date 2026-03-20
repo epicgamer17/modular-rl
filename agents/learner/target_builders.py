@@ -169,10 +169,104 @@ class TemporalDifferenceBuilder(SingleStepTargetBuilder):
             "dones": terminal_mask.float(),
             "next_actions": next_actions,
             "actions": batch["actions"],
-            "q_logits": target_out["q_logits"],
         }
 
         # Upgrade to Universal T=1 and add masks
+        return self.format_single_step(raw_targets)
+
+
+class DistributionalTargetBuilder(SingleStepTargetBuilder):
+    """
+    Builder for C51/Distributional RL targets.
+    Handles the Bellman Shift (MDP math) and delegates projection to the Representation.
+    """
+
+    def __init__(
+        self,
+        target_network: nn.Module,
+        gamma: float = 0.99,
+        n_step: int = 1,
+        bootstrap_on_truncated: bool = False,
+    ):
+        self.target_network = target_network
+        self.gamma = gamma
+        self.n_step = n_step
+        self.bootstrap_on_truncated = bootstrap_on_truncated
+
+    def build_targets(
+        self,
+        batch: Dict[str, Tensor],
+        predictions: Dict[str, Tensor],
+        network: nn.Module,
+    ) -> Dict[str, Tensor]:
+        # 1. Extract MDP elements
+        rewards = batch["rewards"].float()
+        dones = batch["dones"].bool()
+        terminated = batch.get("terminated", dones).bool()
+        next_obs = batch.get("next_observations")
+        next_masks = batch.get("next_legal_moves_masks")
+
+        terminal_mask = terminated if self.bootstrap_on_truncated else dones
+        batch_size = rewards.shape[0]
+        discount = self.gamma**self.n_step
+
+        with torch.inference_mode():
+            # Double DQN: Use online network for action selection (argmax a' over Q)
+            # Use learner_inference to get [B, Actions] q_values
+            online_next_out = network.learner_inference({"observations": next_obs})
+            next_q_values = online_next_out["q_values"]
+            if next_q_values.ndim == 3:
+                next_q_values = next_q_values.squeeze(1)
+
+            if next_masks is not None:
+                next_q_values = next_q_values.masked_fill(
+                    ~next_masks.bool(), -float("inf")
+                )
+            next_actions = next_q_values.argmax(dim=-1)
+
+            # Target network evaluation: Get probabilities of atoms for the chosen action
+            target_out = self.target_network.learner_inference(
+                {"observations": next_obs}
+            )
+            next_q_logits = target_out["q_logits"]  # [B, 1, Actions, Atoms]
+            if next_q_logits.ndim == 4:
+                next_q_logits = next_q_logits.squeeze(1)
+
+            # [B, Actions, Atoms] -> [B, Atoms]
+            next_probs = torch.softmax(
+                next_q_logits[torch.arange(batch_size, device=rewards.device), next_actions],
+                dim=-1,
+            )
+
+        # 2. Get the base grid geometry from the network's representation
+        # It MUST be a C51Representation (or similar with support)
+        representation = getattr(network.q_head, "representation", None)
+        assert hasattr(
+            representation, "project_onto_grid"
+        ), "DistributionalTargetBuilder requires a representation with project_onto_grid API."
+
+        base_support = representation.support.to(rewards.device)
+
+        # 3. Do the MDP Math: Shift the support! (Tz = r + gamma * z)
+        # [B, 1] + [B, 1] * [1, Atoms] -> [B, Atoms]
+        shifted_support = rewards.unsqueeze(1) + discount * (
+            1.0 - terminal_mask.float()
+        ).unsqueeze(1) * base_support.unsqueeze(0)
+
+        # 4. Delegate the pure geometric projection back to the representation
+        target_distribution = representation.project_onto_grid(
+            shifted_support=shifted_support, probabilities=next_probs
+        )
+
+        # 5. Whitelist the labels for the loss module
+        raw_targets = {
+            "q_logits": target_distribution,  # Already projected mass grid
+            "rewards": rewards,
+            "actions": batch["actions"],
+            "next_actions": next_actions,
+            "dones": terminal_mask.float(),
+        }
+
         return self.format_single_step(raw_targets)
 
 

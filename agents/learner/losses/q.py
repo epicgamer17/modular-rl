@@ -3,11 +3,13 @@ import torch.nn.functional as F
 from typing import Any
 from agents.learner.losses.base import BaseLoss
 
+
 class QBootstrappingLoss(BaseLoss):
     """
     Standard TD target loss for Q-learning.
     Indexes the prediction tensor by the taken actions to compute TD errors.
     """
+
     def __init__(
         self,
         config,
@@ -43,51 +45,47 @@ class QBootstrappingLoss(BaseLoss):
         actions = targets["actions"].long()
 
         # 1. Capture and Validate Shapes
-        # StandardDQNLoss expects [B, T, Actions] for scalar or [B, T, Actions, Atoms] for categorical
         assert (
             q_preds.ndim >= 3
-        ), f"StandardDQNLoss requires at least [B, T, Actions] predictions, got {q_preds.shape}"
-        assert (
-            actions.ndim == 2
-        ), f"StandardDQNLoss requires [B, T] action targets, got {actions.shape}"
+        ), f"QBootstrappingLoss requires at least [B, T, Actions] predictions, got {q_preds.shape}"
         B, T = actions.shape
         num_actions = q_preds.shape[2]
 
-        # 2. Flatten for vectorized action selection
-        # [B * T, Actions, ...]
+        # 2. Select Take Action Predictions: [B, T, Atoms] or [B, T, 1]
         flat_preds = q_preds.reshape(B * T, num_actions, -1)
         flat_actions = actions.reshape(-1)
-
-        # 3. Select Take Action Predictions: [B * T, ...] (could be scalar or distributions)
         selected_preds = flat_preds[
             torch.arange(B * T, device=self.device), flat_actions
         ]
+
+        # 3. Format Targets through the Representation bridge
+        # Responsibility for Bellman shift (MDP math) moved to TargetBuilder.
+        # Responsibility for Two-Hot projection (Geometric math) moved to Representation.
+        formatted_target = self.representation.format_target(
+            targets, target_key=self.target_key
+        )
+        flat_targets = formatted_target.reshape(B * T, -1)
+
+        # 4. Final Squeezing and Matching
         if selected_preds.shape[-1] == 1:
             selected_preds = selected_preds.squeeze(-1)
-
-        # 4. Format Targets through the Representation bridge
-        target_ingredients = targets
-        formatted_target = self.representation.format_target(
-            target_ingredients, target_key=self.target_key
-        )
-        # [B, T, ...] -> [B * T, ...]
-        flat_targets = formatted_target.reshape(B * T, -1)
         if flat_targets.shape[-1] == 1:
             flat_targets = flat_targets.squeeze(-1)
 
-        assert (
-            selected_preds.shape == flat_targets.shape
-        ), f"StandardDQNLoss: shape mismatch {selected_preds.shape} vs {flat_targets.shape}"
-
-        # 5. Apply the actual loss function (CrossEntropy or MSE)
-        raw_loss = self.loss_fn(selected_preds, flat_targets, reduction="none")
-
-        # 6. Reshape and Return elementwise [B, T]
-        # Sum over categorical atom dimension if present
-        if raw_loss.ndim > 1:
-            raw_loss = raw_loss.sum(dim=-1)
+        # 5. Apply Loss Function
+        if selected_preds.shape[-1] > 1:
+            # Multi-atom categorical cross-entropy
+            # (Matches MuZero ValueLoss logic for distributions)
+            log_probs = F.log_softmax(selected_preds, dim=-1)
+            raw_loss = -(flat_targets * log_probs).sum(dim=-1)
+        else:
+            # Standard scalar regression (MSE)
+            selected_preds = selected_preds.squeeze(-1)
+            flat_targets = flat_targets.squeeze(-1)
+            raw_loss = self.loss_fn(selected_preds, flat_targets, reduction="none")
 
         return raw_loss.reshape(B, T)
+
 
 class ChanceQLoss(BaseLoss):
     """Loss for stochastic muzero chance Q heads."""

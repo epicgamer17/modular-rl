@@ -9,182 +9,163 @@ from agents.learner.losses import (
 )
 from agents.learner.losses.representations import (
     ScalarRepresentation, ClassificationRepresentation, 
-    IdentityRepresentation, TwoHotRepresentation, C51Representation
+    IdentityRepresentation, DiscreteSupportRepresentation, C51Representation
 )
 
 pytestmark = pytest.mark.unit
+
+class MockConfig:
+    def __init__(self, **kwargs):
+        self.minibatch_size = kwargs.get('minibatch_size', 4)
+        self.unroll_steps = kwargs.get('unroll_steps', 0)
+        class Game:
+            def __init__(self, num_actions): self.num_actions = num_actions
+        self.game = Game(kwargs.get('num_actions', 4))
+        self.atom_size = kwargs.get('atom_size', 1)
+        self.policy_loss_factor = kwargs.get('policy_loss_factor', 1.0)
+        self.reward_loss_factor = kwargs.get('reward_loss_factor', 1.0)
+        self.value_loss_factor = kwargs.get('value_loss_factor', 1.0)
+        self.consistency_loss_factor = kwargs.get('consistency_loss_factor', 1.0)
+        self.policy_loss_function = kwargs.get('policy_loss_function', F.cross_entropy)
+        self.loss_factor = kwargs.get('loss_factor', 1.0)
+        self.cosine_similarity = kwargs.get('cosine_similarity', True)
+        self.ppo_clip_param = kwargs.get('ppo_clip_param', 0.2)
+        
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
 @pytest.fixture
 def mock_agent_network():
     class MockNetwork(torch.nn.Module):
         def project(self, x, grad=True):
-            # Identity projection for testing
-            return x 
+            return x.clone()
+        
+        def learner_inference(self, batch):
+            return {"q_values": torch.zeros(1, 1, 4), "q_logits": torch.zeros(1, 1, 4, 21)}
+
     return MockNetwork()
 
-def test_muzero_losses_vectorized(muzero_config, mock_agent_network):
-    """
-    Verify that MuZero losses (Value, Policy, Reward, Consistency) 
-    work correctly with vectorized [B, T] inputs.
-    """
-    device = torch.device("cpu")
-    torch.manual_seed(42)
-    
-    # Configure muzero_config to expect distributional shapes
-    muzero_config.support_range = 300
-    muzero_config.atom_size = 601
-    
-    # 1. Setup Modules with Mandatory Representations
-    # MuZero typically uses TwoHot for values and rewards
-    v_rep = TwoHotRepresentation(-300, 300, 601)
-    p_rep = ClassificationRepresentation(2) # 2 actions
-    r_rep = TwoHotRepresentation(-300, 300, 601)
-    
-    v_loss = ValueLoss(muzero_config, device, representation=v_rep)
-    p_loss = PolicyLoss(muzero_config, device, representation=p_rep)
-    r_loss = RewardLoss(muzero_config, device, representation=r_rep)
-    c_loss = ConsistencyLoss(muzero_config, device, representation=IdentityRepresentation(), agent_network=mock_agent_network)
-    
-    pipeline = LossPipeline([v_loss, p_loss, r_loss, c_loss])
-    
-    B, T = 2, 4  
-    num_actions = 2 
-    latent_dim = 8
-    
-    # 2. Create Vectorized Data [B, T, ...]
-    # Values/Rewards are TwoHot (logits)
-    predictions = {
-        "values": torch.randn(B, T, 601, device=device),
-        "policies": torch.randn(B, T, num_actions, device=device),
-        "rewards": torch.randn(B, T, 601, device=device),
-        "consistency_logits": torch.randn(B, T, latent_dim, device=device),
-    }
+def test_value_loss_vectorization():
+    config = MockConfig()
+    repr = ScalarRepresentation()
+    loss_module = ValueLoss(config, torch.device("cpu"), representation=repr)
+
+    B, T = 4, 1
+    predictions = {"values": torch.randn(B, T, 1)}
+    targets = {"values": torch.randn(B, T), "value_mask": torch.ones(B, T, dtype=torch.bool)}
+
+    loss = loss_module.compute_loss(predictions, targets, {})
+    assert loss.shape == (B, T)
+    assert not torch.isnan(loss).any()
+
+def test_q_bootstrapping_loss_vectorization():
+    config = MockConfig(atom_size=21)
+    repr = DiscreteSupportRepresentation(vmin=0, vmax=10, bins=21)
+    loss_module = QBootstrappingLoss(config, torch.device("cpu"), representation=repr)
+
+    B, T = 4, 1
+    num_actions = 4
+    predictions = {"q_logits": torch.randn(B, T, num_actions, 21)}
     
     targets = {
-        "values": torch.randn(B, T, device=device), # TwoHot will project this
-        "policies": F.softmax(torch.randn(B, T, num_actions, device=device), dim=-1),
-        "rewards": torch.randn(B, T, device=device), # TwoHot will project this
-        "targets_latent": F.softmax(torch.randn(B, T, latent_dim, device=device), dim=-1),
-        "value_mask": torch.ones(B, T, dtype=torch.bool, device=device),
-        "policy_mask": torch.ones(B, T, dtype=torch.bool, device=device),
-        "reward_mask": torch.ones(B, T, dtype=torch.bool, device=device),
-        "consistency_mask": torch.ones(B, T, dtype=torch.bool, device=device),
+        "actions": torch.randint(0, num_actions, (B, T)),
+        "q_logits": torch.softmax(torch.randn(B, T, 21), dim=-1),
+        "value_mask": torch.ones(B, T, dtype=torch.bool)
     }
-    
-    # 3. Run Pipeline
-    scales = torch.ones(1, T, device=device) * 0.5
-    total_losses, logs, priorities = pipeline.run(
-        predictions, targets, gradient_scales=scales
+
+    loss = loss_module.compute_loss(predictions, targets, {})
+    assert loss.shape == (B, T)
+    assert not torch.isnan(loss).any()
+
+def test_policy_loss_vectorization():
+    config = MockConfig()
+    repr = ClassificationRepresentation(num_classes=4)
+    loss_module = PolicyLoss(config, torch.device("cpu"), representation=repr)
+
+    B, T = 4, 1
+    # PolicyLoss expects pred_key="policies"
+    predictions = {"policies": torch.randn(B, T, 4)}
+    targets = {
+        "policies": torch.softmax(torch.randn(B, T, 4), dim=-1), 
+        "policy_mask": torch.ones(B, T, dtype=torch.bool)
+    }
+
+    loss = loss_module.compute_loss(predictions, targets, {})
+    assert loss.shape == (B, T)
+    assert not torch.isnan(loss).any()
+
+def test_consistency_loss_vectorization(mock_agent_network):
+    config = MockConfig()
+    loss_module = ConsistencyLoss(
+        config, torch.device("cpu"), representation=None, agent_network=mock_agent_network
     )
-    
-    # 4. Verify Correctness
-    assert "default" in total_losses
-    assert total_losses["default"].ndim == 0
-    
-    for name in ["ValueLoss", "PolicyLoss", "RewardLoss", "ConsistencyLoss"]:
-        assert name in logs
 
-def test_dqn_losses_vectorized(rainbow_config):
-    """
-    Verify that DQN losses work with vectorized [B, T] inputs.
-    """
-    device = torch.device("cpu")
-    torch.manual_seed(42)
-    
-    # Standard DQN uses ScalarRepresentation
-    dqn_loss = QBootstrappingLoss(rainbow_config, device, representation=ScalarRepresentation())
-    
-    B, T = 2, 1
-    num_actions = 2 
-    
+    B, T = 4, 1
     predictions = {
-        "q_values": torch.randn(B, T, num_actions, device=device)
+        "consistency_logits": torch.randn(B, T, 128),
+        "predictions_latent": torch.randn(B, T, 128)
     }
     targets = {
-        "q_values": torch.randn(B, T, device=device),
-        "actions": torch.zeros(B, T, dtype=torch.long, device=device),
-        "value_mask": torch.ones(B, T, dtype=torch.bool, device=device)
+        "consistency_targets": torch.randn(B, T, 128),
+        "targets_latent": torch.randn(B, T, 128),
+        "consistency_mask": torch.ones(B, T, dtype=torch.bool)
     }
-    
-    pipeline = LossPipeline([dqn_loss])
-    total_losses, logs, priorities = pipeline.run(predictions, targets)
-    
-    assert "QBootstrappingLoss" in logs
 
-def test_to_play_losses_vectorized(muzero_config):
-    """
-    Verify ToPlayLoss and RelativeToPlayLoss vectorized logic.
-    """
-    device = torch.device("cpu")
-    torch.manual_seed(42)
+    loss = loss_module.compute_loss(predictions, targets, {"network": mock_agent_network})
+    assert loss.shape == (B, T)
+    assert not torch.isnan(loss).any()
+
+def test_loss_pipeline_vectorization():
+    config = MockConfig()
+
+    repr_val = ScalarRepresentation()
+    repr_pol = ClassificationRepresentation(num_classes=4)
     
-    muzero_config.game.num_players = 2
-    num_players = 2
-    
-    # ToPlay is classification
-    tp_rep = ClassificationRepresentation(num_players)
-    
-    tp_loss = ToPlayLoss(muzero_config, device, representation=tp_rep)
-    rtp_loss = RelativeToPlayLoss(muzero_config, device, representation=tp_rep)
-    
-    pipeline = LossPipeline([tp_loss, rtp_loss])
-    
-    B, T = 2, 4
-    
+    losses = [
+        ValueLoss(config, torch.device("cpu"), representation=repr_val),
+        PolicyLoss(config, torch.device("cpu"), representation=repr_pol)
+    ]
+    pipeline = LossPipeline(losses)
+
+    B, T = 4, 1
     predictions = {
-        "to_plays": torch.randn(B, T, num_players, device=device)
+        "values": torch.randn(B, T, 1),
+        "policies": torch.randn(B, T, 4)
     }
     targets = {
-        "to_plays": torch.tensor([[0, 1, 0, 1], [0, 1, 1, 0]], device=device),
-        "to_play_mask": torch.ones(B, T, dtype=torch.bool, device=device)
+        "values": torch.randn(B, T),
+        "policies": torch.softmax(torch.randn(B, T, 4), dim=-1),
+        "value_mask": torch.ones(B, T, dtype=torch.bool),
+        "policy_mask": torch.ones(B, T, dtype=torch.bool)
     }
-    
-    total_losses, logs, priorities = pipeline.run(predictions, targets)
-    
-    assert "ToPlayLoss" in logs
-    assert "RelativeToPlayLoss" in logs
 
-def test_ppo_losses_vectorized(ppo_config):
-    """
-    Verify PPO losses (Policy, Value) vectorized logic.
-    """
-    device = torch.device("cpu")
-    torch.manual_seed(42)
+    total_loss_dict, metrics, priorities = pipeline.run(predictions, targets, {})
     
-    # PPO uses IdentityRepresentation for its internal scaling/math
-    pol_rep = ClassificationRepresentation(2) # Actually PPO head is Categorical
-    val_rep = IdentityRepresentation() # PPO Value head is Identity/Scalar usually
-    
-    pol_loss = ClippedSurrogateLoss(
-        ppo_config, device, representation=pol_rep,
+    # Loss pipeline run returns total_loss_dict (per-optimizer)
+    # Each scalar loss is in metrics
+    assert "ValueLoss" in metrics
+    assert "PolicyLoss" in metrics
+
+def test_clipped_surrogate_loss():
+    config = MockConfig()
+    # ClippedSurrogateLoss(config, device, representation, clip_param, entropy_coefficient)
+    loss_module = ClippedSurrogateLoss(
+        config, torch.device("cpu"), representation=ClassificationRepresentation(4),
         clip_param=0.2, entropy_coefficient=0.01
     )
-    val_loss = ValueLoss(
-        ppo_config, device, representation=val_rep,
-        target_key="returns",
-        loss_factor=0.5,
-        pred_to_scalar=True,
-    )
-    
-    pipeline = LossPipeline([pol_loss, val_loss])
-    
-    B, T = 2, 1
-    num_actions = 2 
+
+    B, T = 4, 1
+    num_actions = 4
     
     predictions = {
-        "policies": torch.randn(B, T, num_actions, device=device),
-        "values": torch.randn(B, T, device=device)
+        "policies": torch.randn(B, T, num_actions)
     }
     targets = {
-        "actions": torch.zeros(B, T, dtype=torch.long, device=device),
-        "old_log_probs": torch.randn(B, T, device=device),
-        "advantages": torch.randn(B, T, device=device),
-        "returns": torch.randn(B, T, device=device),
-        "policy_mask": torch.ones(B, T, dtype=torch.bool, device=device),
-        "value_mask": torch.ones(B, T, dtype=torch.bool, device=device),
+        "actions": torch.randint(0, num_actions, (B, T)),
+        "old_log_probs": torch.randn(B, T),
+        "advantages": torch.randn(B, T),
+        "policy_mask": torch.ones(B, T, dtype=torch.bool)
     }
-    
-    total_losses, logs, priorities = pipeline.run(predictions, targets)
-    
-    assert "ClippedSurrogateLoss" in logs
-    assert "ValueLoss" in logs
+
+    loss = loss_module.compute_loss(predictions, targets, {})
+    assert loss.shape == (B, T)

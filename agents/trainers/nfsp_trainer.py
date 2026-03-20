@@ -300,7 +300,11 @@ class NFSPTrainer(BaseTrainer):
 
         rl_optimizer = create_opt(self.br_agent_network.parameters(), rl_config)
         rl_scheduler = get_lr_scheduler(rl_optimizer, rl_config)
-        rl_target_builder = TemporalDifferenceBuilder(
+        from agents.learner.target_builders import DistributionalTargetBuilder
+        is_distributional = getattr(rl_config, "atom_size", 1) > 1
+        builder_cls = DistributionalTargetBuilder if is_distributional else TemporalDifferenceBuilder
+
+        rl_target_builder = builder_cls(
             target_network=self.br_target_agent_network,
             gamma=rl_config.discount_factor,
             n_step=rl_config.n_step,

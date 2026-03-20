@@ -6,6 +6,7 @@ from agents.learner.losses.priorities import MaxLossPriorityComputer
 from modules.utils import create_optimizer, get_lr_scheduler
 from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
+    DistributionalTargetBuilder,
 )
 from agents.action_selectors.selectors import ArgmaxSelector
 
@@ -91,11 +92,14 @@ def build_rainbow(
         )
 
     # 4. Target Builder
-    # factory.py logic for target_builder
     assert (
         target_agent_network is not None
     ), "Rainbow requires a target_agent_network for TD target building."
-    target_builder = TemporalDifferenceBuilder(
+    
+    is_distributional = getattr(config, "atom_size", 1) > 1
+    builder_cls = DistributionalTargetBuilder if is_distributional else TemporalDifferenceBuilder
+    
+    target_builder = builder_cls(
         target_network=target_agent_network,
         gamma=config.discount_factor,
         n_step=config.n_step,

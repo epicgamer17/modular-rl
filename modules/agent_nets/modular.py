@@ -373,12 +373,14 @@ class ModularAgentNetwork(BaseAgentNetwork):
             chance_encoder_embeddings = None
 
             # --- PAD TRANSITION OUTPUTS (Rewards/Chance) ---
-            # MuZero predicts rewards for transitions (k=1..K). 
+            # MuZero predicts rewards for transitions (k=1..K).
             # We pad index 0 with zeros to satisfy the Universal [B, K+1, ...] contract.
             dummy_reward = torch.zeros(
-                B, 1, *physics_output.rewards.shape[2:],
+                B,
+                1,
+                *physics_output.rewards.shape[2:],
                 device=self.device,
-                dtype=physics_output.rewards.dtype
+                dtype=physics_output.rewards.dtype,
             )
             padded_rewards = torch.cat([dummy_reward, physics_output.rewards], dim=1)
 
@@ -388,7 +390,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
             ):
                 latents_afterstates = physics_output.latents_afterstates
                 stacked_backbone_features = physics_output.afterstate_backbone_features
-                B_as, T_as = stacked_backbone_features.shape[:2] # T_as is K
+                B_as, T_as = stacked_backbone_features.shape[:2]  # T_as is K
                 flat_backbone = stacked_backbone_features.reshape(
                     B_as * T_as, *stacked_backbone_features.shape[2:]
                 )
@@ -399,18 +401,24 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 # Stochastic Values: [B, K, atoms] -> [B, K+1, atoms]
                 stochastic_chance_values = raw_chance_values.view(B_as, T_as, -1)
                 dummy_chance_values = torch.zeros(
-                    B_as, 1, *stochastic_chance_values.shape[2:],
+                    B_as,
+                    1,
+                    *stochastic_chance_values.shape[2:],
                     device=self.device,
-                    dtype=stochastic_chance_values.dtype
+                    dtype=stochastic_chance_values.dtype,
                 )
-                stochastic_chance_values = torch.cat([dummy_chance_values, stochastic_chance_values], dim=1)
+                stochastic_chance_values = torch.cat(
+                    [dummy_chance_values, stochastic_chance_values], dim=1
+                )
 
                 # Stochastic Chance Logits: [B, K, num_chance] -> [B, K+1, num_chance]
                 stochastic_chance_logits = physics_output.chance_logits
                 dummy_chance_logits = torch.zeros(
-                    B_as, 1, *stochastic_chance_logits.shape[2:],
+                    B_as,
+                    1,
+                    *stochastic_chance_logits.shape[2:],
                     device=self.device,
-                    dtype=stochastic_chance_logits.dtype
+                    dtype=stochastic_chance_logits.dtype,
                 )
                 stochastic_chance_logits = torch.cat(
                     [dummy_chance_logits, stochastic_chance_logits], dim=1
@@ -419,9 +427,11 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 # Stochastic Chance Encoder Embeddings: [B, K, dim] -> [B, K+1, dim]
                 chance_encoder_embeddings = physics_output.chance_encoder_embeddings
                 dummy_chance_embeddings = torch.zeros(
-                    B_as, 1, *chance_encoder_embeddings.shape[2:],
+                    B_as,
+                    1,
+                    *chance_encoder_embeddings.shape[2:],
                     device=self.device,
-                    dtype=chance_encoder_embeddings.dtype
+                    dtype=chance_encoder_embeddings.dtype,
                 )
                 chance_encoder_embeddings = torch.cat(
                     [dummy_chance_embeddings, chance_encoder_embeddings], dim=1
@@ -459,7 +469,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
         # ----------------------------------------
         elif "policy_head" in self.components and "value_head" in self.components:
             policy_logits, _, _ = self.components["policy_head"](initial_observation)
-            value_logits, _ = self.components["value_head"](initial_observation)
+            value_logits, _, _ = self.components["value_head"](initial_observation)
 
             output = LearningOutput(
                 values=value_logits.unsqueeze(1),
@@ -587,7 +597,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
         shared_features = wm_output.features
         chance_logits = wm_output.chance
 
-        _, _, expected_afterstate_value = self.components["afterstate_value_head"](shared_features)
+        _, _, expected_afterstate_value = self.components["afterstate_value_head"](
+            shared_features
+        )
         network_state_after = MuZeroNetworkState(
             dynamics=wm_output.afterstate_features,
             wm_memory=network_state.wm_memory,

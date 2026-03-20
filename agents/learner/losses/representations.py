@@ -67,7 +67,7 @@ class ScalarRepresentation(BaseRepresentation):
         return scalar_targets.reshape(*scalar_targets.shape, 1)
 
 
-class TwoHotRepresentation(BaseRepresentation):
+class DiscreteSupportRepresentation(BaseRepresentation):
     """
     Representation that maps scalars to a categorical support via two-hot projection.
     Provides common logic for expectation (to_expected_value) and two-hot projection (to_representation).
@@ -139,82 +139,71 @@ class TwoHotRepresentation(BaseRepresentation):
         self, targets: Dict[str, Tensor], target_key: str = "values"
     ) -> Tensor:
         """Handle ingredient-based targets or fallback to scalar."""
-        if target_key in targets:
-            return self.to_representation(targets[target_key])
-        raise ValueError(
-            f"{self.__class__.__name__} received a targets dict without '{target_key}' or algorithm-specific ingredients."
-        )
+        if target_key not in targets:
+             raise ValueError(f"{self.__class__.__name__} received a targets dict without '{target_key}'")
+             
+        target = targets[target_key]
+        # If the target is already a distribution over our support, pass it through.
+        # This occurs when a TargetBuilder (like DistributionalTargetBuilder) 
+        # has already performed the projection.
+        if target.ndim > 1 and target.shape[-1] == self.bins:
+            return target
+            
+        return self.to_representation(target)
 
 
-class C51Representation(TwoHotRepresentation):
-    def __init__(self, vmin: float, vmax: float, bins: int):
-        super().__init__(vmin, vmax, bins)
+class C51Representation(DiscreteSupportRepresentation):
+    """
+    Representation specialized for categorical Q-learning (C51).
+    Exposes a pure mathematical projection API.
+    """
 
-    def format_target(
-        self, targets: Dict[str, Tensor], target_key: str = "next_q_logits"
-    ) -> Tensor:
+    def project_onto_grid(
+        self, shifted_support: torch.Tensor, probabilities: torch.Tensor
+    ) -> torch.Tensor:
         """
-        The Baker: Implements the C51 Bellman Projection.
-        Projects shifted atom probabilities back onto the fixed support grid.
-        Supports [B, T] inputs via Flatten-Process-Unflatten.
+        Pure geometric projection.
+        Takes masses at arbitrary points and snaps them to the fixed grid.
+
+        Args:
+            shifted_support: [..., Atoms] The locations of the probability mass after Bellman shift.
+            probabilities: [..., Atoms] The probability mass at each point.
+
+        Returns:
+            projected_distribution: [..., Atoms] Distribution aligned with the fixed support grid.
         """
-        if "next_q_logits" not in targets:
-            raise ValueError(
-                "C51Representation requires 'next_q_logits' in targets."
-            )
+        # 1. Capture original shape and flatten to [N, Atoms]
+        orig_shape = shifted_support.shape
+        N = shifted_support.numel() // self.bins
+        z = shifted_support.reshape(N, self.bins).clamp(self.vmin, self.vmax)
+        p = probabilities.reshape(N, self.bins)
+        device = z.device
 
-        # 1. Capture original prefix shape (e.g., [B, T])
-        raw_next_logits = targets["next_q_logits"]
-        assert (
-            raw_next_logits.shape[-1] == self.bins
-        ), f"C51Representation expected {self.bins} atoms, got {raw_next_logits.shape[-1]}"
-        orig_prefix = raw_next_logits.shape[:-2]  # Everything before [Actions, Atoms]
-        num_actions = raw_next_logits.shape[-2]
-        atoms = raw_next_logits.shape[-1]
-
-        # 2. Flatten all inputs into [N, ...]
-        next_q_logits = raw_next_logits.reshape(-1, num_actions, atoms)
-        next_actions = targets["next_actions"].reshape(-1).long()
-        rewards = targets["rewards"].reshape(-1)
-        dones = targets["dones"].reshape(-1)
-        gamma = targets.get("gamma", 0.99)
-        n_step = targets.get("n_step", 1)
-
-        device = rewards.device
-        N = rewards.shape[0]
-        discount = gamma**n_step
-
-        # 3. Process distributional Bellman math on flattened 2D buffer
-        chosen_logits = next_q_logits[torch.arange(N, device=device), next_actions]
-        next_probs = torch.softmax(chosen_logits, dim=-1)
-        support = self.support.to(device)
-
-        # Shifted support: Tz = r + discount * (1 - done) * z
-        Tz = rewards.view(-1, 1) + discount * (1.0 - dones).view(-1, 1) * support.view(
-            1, -1
-        )
-        Tz = Tz.clamp(self.vmin, self.vmax)
-
-        # True mathematical bounds
-        b = (Tz - self.vmin) / self.delta_z
+        # 2. Calculate offsets and bounds (l, u)
+        b = (z - self.vmin) / self.delta_z
         l = b.floor().long()
-        u = l + 1
+        u = b.ceil().long()
 
-        # Conserve mass: (u - b) + (b - l) always equals 1
-        p_l = next_probs * (u.float() - b)
-        p_u = next_probs * (b - l.float())
+        # 3. Calculate mass distribution
+        # (u - b) + (b - l) only equals 1 if u = l + 1.
+        # To avoid mass loss when b is an integer (l == u), we use:
+        p_u = p * (b - l.float())
+        p_l = p * (1.0 - (b - l.float()))
 
-        # Safe indexing for scattering
-        # (if b = bins-1, u=bins, so we clamp it back to bins-1 for the array index)
+        # 4. Safe indexing for scattering
         l_idx = l.clamp(0, self.bins - 1)
         u_idx = u.clamp(0, self.bins - 1)
 
-        projected_dist_flat = torch.zeros((N, self.bins), device=device)
-        projected_dist_flat.scatter_add_(1, l_idx, p_l)
-        projected_dist_flat.scatter_add_(1, u_idx, p_u)
+        projected = torch.zeros((N, self.bins), device=device, dtype=p.dtype)
+        projected.scatter_add_(1, l_idx, p_l)
+        projected.scatter_add_(1, u_idx, p_u)
 
-        # 4. Unflatten back to [B, T, bins]
-        return projected_dist_flat.reshape(*orig_prefix, self.bins)
+        # 5. Return unflattened
+        return projected.reshape(*orig_shape)
+
+    def to_representation(self, scalar_targets: Tensor) -> Tensor:
+        """Standard two-hot fallthrough for C51 if given a scalar."""
+        return super().to_representation(scalar_targets)
 
 
 class ExponentialBucketsRepresentation(BaseRepresentation):
@@ -224,7 +213,7 @@ class ExponentialBucketsRepresentation(BaseRepresentation):
         self.bins = bins
         self.log_vmin = self._log_transform(torch.tensor(vmin)).item()
         self.log_vmax = self._log_transform(torch.tensor(vmax)).item()
-        self._inner = DiscreteValuedRepresentation(self.log_vmin, self.log_vmax, bins)
+        self._inner = DiscreteSupportRepresentation(self.log_vmin, self.log_vmax, bins)
 
     def _log_transform(self, x: Tensor) -> Tensor:
         return torch.sign(x) * torch.log1p(torch.abs(x))
@@ -382,23 +371,21 @@ def get_representation(
     if identity:
         return IdentityRepresentation()
 
-    # Two-Hot / Categorical support logic
+    # Discrete / Support logic
     if vmin is not None and vmax is not None:
         if mode == "exponential":
             return ExponentialBucketsRepresentation(vmin, vmax, bins)
         elif mode == "categorical" or mode == "c51":
             return C51Representation(vmin, vmax, bins)
-        return TwoHotRepresentation(vmin, vmax, bins)
+        return DiscreteSupportRepresentation(vmin, vmax, bins)
 
     # MuZero style support_range
     if support_range is not None or mode == "muzero":
         if support_range is None:
-            # Fallback/Default for muzero if not provided?
-            # Usually it's 300 or similar, but better to require it.
             support_range = 300.0
 
         support_range = float(support_range)
-        return TwoHotRepresentation(
+        return DiscreteSupportRepresentation(
             -support_range, support_range, int(2 * support_range + 1)
         )
 

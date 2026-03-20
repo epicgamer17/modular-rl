@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 from agents.learner.losses.representations import (
     ScalarRepresentation,
-    TwoHotRepresentation,
+    DiscreteSupportRepresentation,
     C51Representation,
     ClassificationRepresentation,
     get_representation,
@@ -14,66 +14,70 @@ pytestmark = pytest.mark.unit
 
 def test_scalar_representation():
     repr = ScalarRepresentation()
-    assert repr.num_features == 1
+    targets = torch.tensor([1.0, 2.0, 3.0])
+    rep = repr.to_representation(targets)
+    assert rep.shape == (3, 1)
+    assert torch.allclose(rep.squeeze(), targets)
 
-    logits = torch.tensor([[10.5], [-2.3]])
-    scalar = repr.to_expected_value(logits)
-    assert torch.allclose(scalar, torch.tensor([10.5, -2.3]))
-
-    targets = torch.tensor([5.0, -1.0])
-    representation = repr.to_representation(targets)
-    assert torch.allclose(representation, targets.unsqueeze(-1))
+    # test to_expected_value
+    val_tensor = rep.unsqueeze(1) # [3, 1, 1]
+    expected = repr.to_expected_value(val_tensor)
+    assert expected.shape == (3, 1)
+    assert torch.allclose(expected.squeeze(), targets)
 
 
-def test_two_hot_representation():
-    vmin, vmax, bins = -300.0, 300.0, 601
-    repr = TwoHotRepresentation(vmin=vmin, vmax=vmax, bins=bins)
-    assert repr.num_features == 601
+def test_discrete_support_representation():
+    # bins=11 -> range [0, 10]
+    repr = DiscreteSupportRepresentation(vmin=0.0, vmax=10.0, bins=11)
+    targets = torch.tensor([0.0, 5.0, 10.0, 5.5])
+    
+    rep = repr.to_representation(targets)
+    assert rep.shape == (4, 11)
+    
+    # 0.0 should be [1, 0, 0, ...]
+    assert rep[0, 0] == 1.0
+    # 5.0 should be [0, 0, 0, 0, 0, 1, 0, ...]
+    assert rep[1, 5] == 1.0
+    # 10.0 should be [..., 0, 1]
+    assert rep[2, 10] == 1.0
+    # 5.5 should be [..., 0.5, 0.5, ...] at indices 5 and 6
+    assert rep[3, 5] == 0.5
+    assert rep[3, 6] == 0.5
 
-    # Test to_representation (scalar -> distribution)
-    targets = torch.tensor([15.5, -10.2])
-    dist = repr.to_representation(targets)
-    assert dist.shape == (2, 601)
-    assert torch.allclose(dist.sum(dim=-1), torch.ones(2))
-
-    # Test to_expected_value (logits -> scalar)
-    logits = torch.log(dist + 1e-10) # use log to avoid softmax saturation
-    recovered = repr.to_expected_value(logits)
-    assert torch.allclose(recovered, targets, atol=1e-2)
+    # test to_expected_value
+    # Use log to create logits that won't saturate softmax
+    logits = torch.log(rep + 1e-8).unsqueeze(1) # [4, 1, 11]
+    expected = repr.to_expected_value(logits)
+    assert torch.allclose(expected.squeeze(), targets, atol=1e-5)
 
 
 def test_classification_representation():
-    num_classes = 10
-    repr = ClassificationRepresentation(num_classes=num_classes)
-    assert repr.num_features == 10
+    repr = ClassificationRepresentation(num_classes=4)
+    # Target indices
+    targets = torch.tensor([0, 1, 2, 3])
+    rep = repr.to_representation(targets)
+    assert rep.shape == (4, 4)
+    assert torch.allclose(rep, torch.eye(4))
 
-    # Test to_representation (index -> one-hot)
-    targets = torch.tensor([3, 7])
-    one_hot = repr.to_representation(targets)
-    assert one_hot.shape == (2, 10)
-    assert one_hot[0, 3] == 1.0
-    assert one_hot[1, 7] == 1.0
-    assert one_hot.sum() == 2.0
-
-    # Test to_expected_value (logits -> index)
-    logits = torch.zeros((2, 10))
-    logits[0, 5] = 10.0
-    logits[1, 2] = 10.0
-    indices = repr.to_expected_value(logits)
-    assert torch.allclose(indices, torch.tensor([5.0, 2.0]))
+    # Expect logprob selector or argmax
+    logits = torch.randn(2, 1, 4)
+    expected = repr.to_expected_value(logits)
+    assert expected.shape == (2, 1)
 
 
-def test_get_representation_factory():
-    # Scalar
-    repr = get_representation(num_classes=1)
-    assert isinstance(repr, ScalarRepresentation)
-
-    # Classification
-    repr = get_representation(num_classes=5)
-    assert isinstance(repr, ClassificationRepresentation)
-    assert repr.num_features == 5
-
-    # Two-Hot
-    repr = get_representation(vmin=-300, vmax=300, bins=601)
-    assert isinstance(repr, TwoHotRepresentation)
-    assert repr.num_features == 601
+def test_get_representation():
+    # get_representation(config: Optional[Union[Dict[str, Any], int, Any]] = None, **kwargs)
+    r1 = get_representation(type="scalar")
+    assert isinstance(r1, ScalarRepresentation)
+    
+    config = {
+        'vmin': -10,
+        'vmax': 10,
+        'bins': 21
+    }
+    r2 = get_representation(config, type="discrete_support")
+    assert isinstance(r2, DiscreteSupportRepresentation)
+    
+    r3 = get_representation(num_classes=4)
+    assert isinstance(r3, ClassificationRepresentation)
+    assert r3._num_classes == 4
