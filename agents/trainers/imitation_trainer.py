@@ -11,7 +11,7 @@ from agents.learner.batch_iterators import RepeatSampleIterator
 from agents.learner.callbacks import ResetNoiseCallback
 from agents.trainers.base_trainer import BaseTrainer
 from agents.workers.actors import get_actor_class
-from agents.learner.losses.losses import ImitationLoss, LossPipeline
+from agents.learner.losses import ImitationLoss, LossPipeline
 from modules.agent_nets.modular import ModularAgentNetwork
 from modules.utils import get_lr_scheduler
 from replay_buffers.buffer_factories import create_nfsp_buffer

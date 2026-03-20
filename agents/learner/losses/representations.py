@@ -146,7 +146,7 @@ class TwoHotRepresentation(BaseRepresentation):
         )
 
 
-class CategoricalRepresentation(TwoHotRepresentation):
+class C51Representation(TwoHotRepresentation):
     def __init__(self, vmin: float, vmax: float, bins: int):
         super().__init__(vmin, vmax, bins)
 
@@ -160,14 +160,14 @@ class CategoricalRepresentation(TwoHotRepresentation):
         """
         if "next_q_logits" not in targets:
             raise ValueError(
-                "CategoricalRepresentation requires 'next_q_logits' in targets."
+                "C51Representation requires 'next_q_logits' in targets."
             )
 
         # 1. Capture original prefix shape (e.g., [B, T])
         raw_next_logits = targets["next_q_logits"]
         assert (
             raw_next_logits.shape[-1] == self.bins
-        ), f"CategoricalRepresentation expected {self.bins} atoms, got {raw_next_logits.shape[-1]}"
+        ), f"C51Representation expected {self.bins} atoms, got {raw_next_logits.shape[-1]}"
         orig_prefix = raw_next_logits.shape[:-2]  # Everything before [Actions, Atoms]
         num_actions = raw_next_logits.shape[-2]
         atoms = raw_next_logits.shape[-1]
@@ -387,7 +387,7 @@ def get_representation(
         if mode == "exponential":
             return ExponentialBucketsRepresentation(vmin, vmax, bins)
         elif mode == "categorical" or mode == "c51":
-            return CategoricalRepresentation(vmin, vmax, bins)
+            return C51Representation(vmin, vmax, bins)
         return TwoHotRepresentation(vmin, vmax, bins)
 
     # MuZero style support_range

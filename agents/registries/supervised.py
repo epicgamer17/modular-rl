@@ -1,7 +1,7 @@
 import torch
 from typing import Any, Dict, List, Tuple
 from agents.registries.base import register_agent
-from agents.learner.losses.losses import LossPipeline, ImitationLoss
+from agents.learner.losses import LossPipeline, ImitationLoss
 from modules.utils import create_optimizer, get_lr_scheduler
 
 

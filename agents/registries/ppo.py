@@ -1,7 +1,8 @@
 import torch
 from typing import Any, Dict, List, Tuple
 from agents.registries.base import register_agent
-from agents.learner.losses.losses import LossPipeline, PPOPolicyLoss, PPOValueLoss
+from agents.learner.losses import LossPipeline, ClippedSurrogateLoss, ValueLoss
+import torch.nn.functional as F
 from modules.utils import get_lr_scheduler
 from agents.learner.callbacks import PPOEarlyStoppingCallback
 from torch.optim.adam import Adam
@@ -15,7 +16,7 @@ def build_ppo_loss_pipeline(config, agent_network, device):
 
     return LossPipeline(
         [
-            PPOPolicyLoss(
+            ClippedSurrogateLoss(
                 config=config,
                 device=device,
                 representation=pol_rep,
@@ -23,15 +24,14 @@ def build_ppo_loss_pipeline(config, agent_network, device):
                 entropy_coefficient=config.entropy_coefficient,
                 optimizer_name="policy",
             ),
-            PPOValueLoss(
+            ValueLoss(
                 config=config,
                 device=device,
                 representation=val_rep,
-                critic_coefficient=config.critic_coefficient,
-                atom_size=getattr(config, "atom_size", 1),
-                v_min=getattr(config, "v_min", None),
-                v_max=getattr(config, "v_max", None),
+                target_key="returns",
                 optimizer_name="value",
+                loss_factor=config.critic_coefficient,
+                pred_to_scalar=True,
             ),
         ]
     )

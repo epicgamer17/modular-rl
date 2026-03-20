@@ -1,7 +1,7 @@
 import torch
 from typing import Any, Dict, List, Tuple, Optional
 from agents.registries.base import register_agent
-from agents.learner.losses.losses import LossPipeline, StandardDQNLoss
+from agents.learner.losses import LossPipeline, QBootstrappingLoss
 from agents.learner.losses.priorities import MaxLossPriorityComputer
 from modules.utils import create_optimizer, get_lr_scheduler
 from agents.learner.target_builders import (
@@ -18,12 +18,12 @@ def build_rainbow_loss_pipeline(config, agent_network, device):
     ):
         representation = agent_network.components["q_head"].representation
 
-    td_loss_module = StandardDQNLoss(
+    td_loss_module = QBootstrappingLoss(
         config=config,
         device=device,
         representation=representation,
     )
-    priority_computer = MaxLossPriorityComputer(loss_key="StandardDQNLoss")
+    priority_computer = MaxLossPriorityComputer(loss_key="QBootstrappingLoss")
 
     return LossPipeline([td_loss_module], priority_computer=priority_computer)
 

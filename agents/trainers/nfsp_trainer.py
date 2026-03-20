@@ -16,7 +16,7 @@ from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
     PassThroughTargetBuilder,
 )
-from agents.learner.losses.losses import C51Loss, ImitationLoss, LossPipeline, StandardDQNLoss
+from agents.learner.losses import ImitationLoss, LossPipeline, QBootstrappingLoss
 from replay_buffers.buffer_factories import create_dqn_buffer, create_nfsp_buffer
 from agents.action_selectors.policy_sources import NFSPNetworkPolicySource
 from agents.action_selectors.selectors import (
@@ -308,7 +308,7 @@ class NFSPTrainer(BaseTrainer):
         )
 
         rl_rep = self.br_agent_network.components["q_head"].representation
-        td_loss_module = StandardDQNLoss(
+        td_loss_module = QBootstrappingLoss(
             config=rl_config,
             device=device,
             representation=rl_rep,

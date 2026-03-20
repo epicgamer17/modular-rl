@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 from agents.learner.base import UniversalLearner
 from agents.learner.callbacks import Callback, EarlyStopIteration
 from agents.learner.target_builders import BaseTargetBuilder
-from agents.learner.losses.losses import LossPipeline
+from agents.learner.losses import LossPipeline
 from modules.world_models.inference_output import LearningOutput
 
 pytestmark = pytest.mark.unit

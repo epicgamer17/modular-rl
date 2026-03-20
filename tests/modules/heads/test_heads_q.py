@@ -4,7 +4,7 @@ from torch import nn
 from modules.heads.q import QHead, DuelingQHead
 from configs.modules.architecture_config import ArchitectureConfig
 from agents.learner.losses.representations import (
-    CategoricalRepresentation,
+    C51Representation,
     ScalarRepresentation,
 )
 
@@ -15,7 +15,7 @@ def test_qhead_forward_and_reshape():
     """Verifies that Categorical representations reshape the output back to (B, actions, atoms)."""
     torch.manual_seed(42)
     arch_config = ArchitectureConfig({"noisy_sigma": 0.0})
-    representation = CategoricalRepresentation(
+    representation = C51Representation(
         vmin=-10, vmax=10, bins=5
     )  # bins = 5 atoms
 

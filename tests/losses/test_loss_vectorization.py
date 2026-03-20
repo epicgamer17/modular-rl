@@ -2,14 +2,14 @@ import pytest
 import torch
 import torch.nn.functional as F
 import numpy as np
-from agents.learner.losses.losses import (
+from agents.learner.losses import (
     LossPipeline, ValueLoss, PolicyLoss, RewardLoss, 
-    StandardDQNLoss, C51Loss, ConsistencyLoss,
-    ToPlayLoss, RelativeToPlayLoss
+    QBootstrappingLoss, ConsistencyLoss,
+    ToPlayLoss, RelativeToPlayLoss, ClippedSurrogateLoss
 )
 from agents.learner.losses.representations import (
     ScalarRepresentation, ClassificationRepresentation, 
-    IdentityRepresentation, TwoHotRepresentation, CategoricalRepresentation
+    IdentityRepresentation, TwoHotRepresentation, C51Representation
 )
 
 pytestmark = pytest.mark.unit
@@ -30,7 +30,7 @@ def test_muzero_losses_vectorized(muzero_config, mock_agent_network):
     device = torch.device("cpu")
     torch.manual_seed(42)
     
-    # Configure muozero_config to expect distributional shapes
+    # Configure muzero_config to expect distributional shapes
     muzero_config.support_range = 300
     muzero_config.atom_size = 601
     
@@ -57,17 +57,18 @@ def test_muzero_losses_vectorized(muzero_config, mock_agent_network):
         "values": torch.randn(B, T, 601, device=device),
         "policies": torch.randn(B, T, num_actions, device=device),
         "rewards": torch.randn(B, T, 601, device=device),
-        "latents": torch.randn(B, T, latent_dim, device=device),
+        "consistency_logits": torch.randn(B, T, latent_dim, device=device),
     }
     
     targets = {
         "values": torch.randn(B, T, device=device), # TwoHot will project this
         "policies": F.softmax(torch.randn(B, T, num_actions, device=device), dim=-1),
         "rewards": torch.randn(B, T, device=device), # TwoHot will project this
-        "consistency_targets": torch.randn(B, T, latent_dim, device=device),
+        "targets_latent": F.softmax(torch.randn(B, T, latent_dim, device=device), dim=-1),
         "value_mask": torch.ones(B, T, dtype=torch.bool, device=device),
         "policy_mask": torch.ones(B, T, dtype=torch.bool, device=device),
         "reward_mask": torch.ones(B, T, dtype=torch.bool, device=device),
+        "consistency_mask": torch.ones(B, T, dtype=torch.bool, device=device),
     }
     
     # 3. Run Pipeline
@@ -91,7 +92,7 @@ def test_dqn_losses_vectorized(rainbow_config):
     torch.manual_seed(42)
     
     # Standard DQN uses ScalarRepresentation
-    dqn_loss = StandardDQNLoss(rainbow_config, device, representation=ScalarRepresentation())
+    dqn_loss = QBootstrappingLoss(rainbow_config, device, representation=ScalarRepresentation())
     
     B, T = 2, 1
     num_actions = 2 
@@ -108,7 +109,7 @@ def test_dqn_losses_vectorized(rainbow_config):
     pipeline = LossPipeline([dqn_loss])
     total_losses, logs, priorities = pipeline.run(predictions, targets)
     
-    assert "StandardDQNLoss" in logs
+    assert "QBootstrappingLoss" in logs
 
 def test_to_play_losses_vectorized(muzero_config):
     """
@@ -150,19 +151,19 @@ def test_ppo_losses_vectorized(ppo_config):
     device = torch.device("cpu")
     torch.manual_seed(42)
     
-    from agents.learner.losses.losses import PPOPolicyLoss, PPOValueLoss
-    
     # PPO uses IdentityRepresentation for its internal scaling/math
     pol_rep = ClassificationRepresentation(2) # Actually PPO head is Categorical
     val_rep = IdentityRepresentation() # PPO Value head is Identity/Scalar usually
     
-    pol_loss = PPOPolicyLoss(
+    pol_loss = ClippedSurrogateLoss(
         ppo_config, device, representation=pol_rep,
         clip_param=0.2, entropy_coefficient=0.01
     )
-    val_loss = PPOValueLoss(
+    val_loss = ValueLoss(
         ppo_config, device, representation=val_rep,
-        critic_coefficient=0.5
+        target_key="returns",
+        loss_factor=0.5,
+        pred_to_scalar=True,
     )
     
     pipeline = LossPipeline([pol_loss, val_loss])
@@ -185,5 +186,5 @@ def test_ppo_losses_vectorized(ppo_config):
     
     total_losses, logs, priorities = pipeline.run(predictions, targets)
     
-    assert "PPOPolicyLoss" in logs
-    assert "PPOValueLoss" in logs
+    assert "ClippedSurrogateLoss" in logs
+    assert "ValueLoss" in logs

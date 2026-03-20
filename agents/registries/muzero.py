@@ -1,7 +1,7 @@
 import torch
 from typing import Any, Dict, List, Tuple
 from agents.registries.base import register_agent
-from agents.learner.losses.losses import (
+from agents.learner.losses import (
     LossPipeline,
     ValueLoss,
     PolicyLoss,
@@ -10,7 +10,7 @@ from agents.learner.losses.losses import (
     ConsistencyLoss,
     ChanceQLoss,
     SigmaLoss,
-    VQVAECommitmentLoss,
+    CommitmentLoss,
 )
 from agents.learner.callbacks import (
     ResetNoiseCallback,
@@ -59,7 +59,7 @@ def build_muzero_loss_pipeline(config, agent_network, device):
             [
                 ChanceQLoss(config, device, representation=as_val_rep),
                 SigmaLoss(config, device, representation=sigma_rep),
-                VQVAECommitmentLoss(
+                CommitmentLoss(
                     config, device, representation=IdentityRepresentation()
                 ),
             ]

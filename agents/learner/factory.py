@@ -24,22 +24,7 @@ from agents.learner.callbacks import (
     ResetNoiseCallback,
     EpsilonGreedySchedulerCallback,
 )
-from agents.learner.losses.losses import (
-    LossPipeline,
-    ValueLoss,
-    PolicyLoss,
-    RewardLoss,
-    ToPlayLoss,
-    ConsistencyLoss,
-    ChanceQLoss,
-    SigmaLoss,
-    VQVAECommitmentLoss,
-    PPOPolicyLoss,
-    PPOValueLoss,
-    StandardDQNLoss,
-    C51Loss,
-    ImitationLoss,
-)
+from agents.learner.losses import LossPipeline
 from modules.utils import get_lr_scheduler
 
 if TYPE_CHECKING:

@@ -7,7 +7,7 @@ from modules.heads.reward import RewardHead
 from modules.heads.q import QHead
 from agents.learner.losses.representations import (
     ClassificationRepresentation,
-    CategoricalRepresentation,
+    C51Representation,
     GaussianRepresentation,
     ScalarRepresentation,
     IdentityRepresentation,
@@ -53,7 +53,7 @@ def test_value_head_scalar_inference():
 def test_reward_head_categorical_inference():
     arch_config = ArchitectureConfig({"noisy_sigma": 0.0})
     # C51-style reward
-    repr = CategoricalRepresentation(vmin=-10, vmax=10, bins=21)
+    repr = C51Representation(vmin=-10, vmax=10, bins=21)
     head = RewardHead(arch_config, input_shape=(16,), representation=repr)
     
     x = torch.randn(2, 16)
@@ -66,7 +66,7 @@ def test_reward_head_categorical_inference():
 
 def test_q_head_categorical_inference():
     arch_config = ArchitectureConfig({"noisy_sigma": 0.0})
-    repr = CategoricalRepresentation(vmin=-10, vmax=10, bins=21)
+    repr = C51Representation(vmin=-10, vmax=10, bins=21)
     head = QHead(arch_config, input_shape=(16,), representation=repr, hidden_widths=[8], num_actions=4)
     
     x = torch.randn(2, 16)
