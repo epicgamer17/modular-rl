@@ -25,7 +25,7 @@ from agents.learner.target_builders import (
 
 
 from agents.learner.losses.representations import IdentityRepresentation
-from agents.learner.losses.priorities import RootLossPriorityComputer
+from agents.learner.losses.priorities import ExpectedValueErrorPriorityComputer
 
 
 def build_muzero_loss_pipeline(config, agent_network, device):
@@ -64,9 +64,8 @@ def build_muzero_loss_pipeline(config, agent_network, device):
                 ),
             ]
         )
-    return LossPipeline(
-        modules, priority_computer=RootLossPriorityComputer(loss_key="ValueLoss")
-    )
+    priority_computer = ExpectedValueErrorPriorityComputer(value_representation=val_rep)
+    return LossPipeline(modules, priority_computer=priority_computer)
 
 
 @register_agent("muzero")
