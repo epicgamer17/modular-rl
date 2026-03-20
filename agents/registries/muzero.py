@@ -20,7 +20,11 @@ from modules.utils import get_lr_scheduler
 from agents.learner.target_builders import (
     TargetBuilderPipeline,
     LatentConsistencyBuilder,
-    MuZeroTargetBuilder,
+    MCTSExtractor,
+    SequencePadder,
+    SequenceMaskBuilder,
+    SequenceInfrastructureBuilder,
+    ChanceTargetBuilder,
 )
 
 
@@ -148,10 +152,16 @@ def build_muzero(
 
     # 4. Target Builder
     builders = [
-        MuZeroTargetBuilder(unroll_steps=config.unroll_steps),
+        MCTSExtractor(),
+        SequencePadder(unroll_steps=config.unroll_steps),
+        SequenceMaskBuilder(),
+        SequenceInfrastructureBuilder(unroll_steps=config.unroll_steps),
     ]
     if getattr(config, "consistency_loss_factor", 0) > 0:
         builders.append(LatentConsistencyBuilder())
+
+    if config.stochastic:
+        builders.append(ChanceTargetBuilder())
 
     target_builder = TargetBuilderPipeline(builders)
 

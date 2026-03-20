@@ -291,113 +291,97 @@ class PassThroughTargetBuilder(BaseTargetBuilder):
                 current_targets[key] = batch[key]
 
 
-class MuZeroTargetBuilder(BaseTargetBuilder):
-    """
-    Ensures MuZero targets follow Universal T [B, T, ...].
-    Specifically pads transition-aligned data (rewards, actions) from [B, K] to [B, T].
-    """
+class MCTSExtractor(BaseTargetBuilder):
+    """Generates targets by extracting MCTS search statistics from the batch."""
+
+    def build_targets(self, batch, predictions, network, current_targets) -> None:
+        target_keys = ["values", "rewards", "policies", "actions", "to_plays"]
+        for key in target_keys:
+            if key in batch and key not in current_targets:
+                current_targets[key] = batch[key]
+
+
+class SequencePadder(BaseTargetBuilder):
+    """Modifier: Pads transition-aligned data (length K) to state-aligned length (T)."""
 
     def __init__(self, unroll_steps: int):
         self.T = unroll_steps + 1
 
-    def build_targets(
-        self,
-        batch: Dict[str, Tensor],
-        predictions: Dict[str, Tensor],
-        network: nn.Module,
-        current_targets: Dict[str, Tensor],
-    ) -> None:
-        res = {}
+    def build_targets(self, batch, predictions, network, current_targets) -> None:
+        for key, v in current_targets.items():
+            if torch.is_tensor(v) and v.ndim >= 2 and v.shape[1] == self.T - 1:
+                padding_shape = list(v.shape)
+                padding_shape[1] = 1
+                # Insert t=0 padding: [B, 1, ...] + [B, K, ...] -> [B, K+1, ...]
+                padding = torch.zeros(padding_shape, device=v.device, dtype=v.dtype)
+                current_targets[key] = torch.cat([padding, v], dim=1)
 
-        # Explicit Whitelist of mathematical labels required for MuZero losses
-        # Transition-aligned: rewards, actions (K length)
-        # State-aligned: values, policies (T length)
-        target_keys = ["values", "rewards", "policies", "actions", "to_plays"]
 
-        for key in target_keys:
-            if key not in batch:
-                continue
+class SequenceMaskBuilder(BaseTargetBuilder):
+    """Modifier: Generates Universal [B, T] sequence masks."""
 
-            v = batch[key]
-            if torch.is_tensor(v) and v.ndim >= 2:
-                B, K = v.shape[:2]
-                if K == self.T - 1:
-                    # Pad one dummy element at the BEGINNING of the time dimension (step 0 / root)
-                    # This aligns k-th transition index with k-th state index in the LossPipeline.
-                    padding_shape = list(v.shape)
-                    padding_shape[1] = 1
-                    padding = torch.zeros(padding_shape, device=v.device, dtype=v.dtype)
-                    # [B, 1, ...] + [B, K, ...] -> [B, K+1, ...]
-                    res[key] = torch.cat([padding, v], dim=1)
-                else:
-                    res[key] = v
-            else:
-                res[key] = v
+    def build_targets(self, batch, predictions, network, current_targets) -> None:
+        B, T = current_targets["actions"].shape[:2]
+        device = current_targets["actions"].device
 
-        base_mask = batch.get("is_same_game")
-        if base_mask is None:
-            # The Anchor: MuZero must have actions to unroll
-            B = batch["actions"].shape[0]
-            T = self.T
+        base_mask = batch.get(
+            "is_same_game", torch.ones((B, T), device=device, dtype=torch.bool)
+        )
 
-            # Use the device from the actions tensor
-            base_mask = torch.ones(
-                (B, T), device=batch["actions"].device, dtype=torch.bool
-            )
+        current_targets["value_mask"] = base_mask.clone()
+        current_targets["masks"] = base_mask.clone()
+        current_targets["policy_mask"] = batch.get(
+            "has_valid_obs_mask", base_mask
+        ).clone()
 
-        res["value_mask"] = base_mask.clone()
-        res["masks"] = base_mask.clone()
-        res["policy_mask"] = batch.get("has_valid_obs_mask", base_mask).clone()
-
-        # Reward Mask: Zero out the root step (we predict r_k for k > 0)
+        # Rewards are transitions; root (t=0) does not get a reward prediction
         reward_mask = base_mask.clone()
         reward_mask[:, 0] = False
-        res["reward_mask"] = reward_mask
+        current_targets["reward_mask"] = reward_mask
 
-        # To-Play Mask: Zero out the root AND post-terminal steps
-        # Similar logic to reward_map, but can be more restrictive if needed
+        # To-Play is state-aligned, but we might not want loss on the root if the representation doesn't predict it
         to_play_mask = batch.get("has_valid_obs_mask", base_mask).clone()
         to_play_mask[:, 0] = False
-        # If any step is terminal, the to_play for THAT state is not useful (no action follows)
-        # So we can effectively use the same logic as reward_mask for alignment
-        # TODO: to_play targets may be coming in a batch size of 6 so we and im not sure what index 0 represents, need to verify this
-        res["to_play_mask"] = to_play_mask.clone()
-        res[
-            "to_play_mask"
-        ] &= reward_mask  # ensuring root is zero and terminal transitions aligned
+        to_play_mask &= reward_mask  # Cap at terminal states
+        current_targets["to_play_mask"] = to_play_mask
 
-        # --- PURGING HACKS: Explicitly build derived targets ---
-        # 1. Weights Bridge: Ensure weights [B] are in targets
-        B = (
-            batch["actions"].shape[0]
-            if "actions" in batch
-            else next(iter(batch.values())).shape[0]
-        )
-        if "weights" not in res:
-            res["weights"] = batch.get(
-                "weights", torch.ones(B, device=batch["actions"].device)
+
+class SequenceInfrastructureBuilder(BaseTargetBuilder):
+    """Modifier: Generates non-sequence infrastructure tensors (weights, gradient scales)."""
+
+    def __init__(self, unroll_steps: int):
+        self.unroll_steps = unroll_steps
+
+    def build_targets(self, batch, predictions, network, current_targets) -> None:
+        device = current_targets["actions"].device
+        B = current_targets["actions"].shape[0]
+
+        if "weights" not in current_targets:
+            current_targets["weights"] = batch.get(
+                "weights", torch.ones(B, device=device)
             )
 
-        # 2. Chance Shifting: Stochastic MuZero needs target value at step k+1
-        if "values" in res:
-            v = res["values"]
-            v_next = torch.zeros_like(v)
-            v_next[:, :-1] = v[:, 1:]
-            res["chance_values_next"] = v_next
-
-        # 3. Secure T Anchor: Ensure gradient_scales [1, T] exists
-        if "gradient_scales" not in res:
-            unroll_steps = self.T - 1
+        if "gradient_scales" not in current_targets:
             scales = (
-                [1.0] + [1.0 / unroll_steps] * unroll_steps
-                if unroll_steps > 0
+                [1.0] + [1.0 / self.unroll_steps] * self.unroll_steps
+                if self.unroll_steps > 0
                 else [1.0]
             )
-            res["gradient_scales"] = torch.tensor(
-                scales, device=batch["actions"].device
+            current_targets["gradient_scales"] = torch.tensor(
+                scales, device=device
             ).reshape(1, -1)
 
-        current_targets.update(res)
+
+class ChanceTargetBuilder(BaseTargetBuilder):
+    """Generator: Calculates chance outcomes for Stochastic MuZero."""
+
+    def build_targets(self, batch, predictions, network, current_targets) -> None:
+        # Stochastic MuZero shifts the value target by 1 step for chance nodes
+        if "values" in current_targets and "chance_values_next" not in current_targets:
+            v = current_targets["values"]
+            v_next = torch.zeros_like(v)
+            v_next[:, :-1] = v[:, 1:]  # Shift left
+            current_targets["chance_values_next"] = v_next
 
 
 class LatentConsistencyBuilder(BaseTargetBuilder):

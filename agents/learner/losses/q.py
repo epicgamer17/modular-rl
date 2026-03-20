@@ -109,7 +109,7 @@ class ChanceQLoss(BaseLoss):
         chance_values_next = targets.get("chance_values_next")
         if chance_values_next is None:
             raise KeyError(
-                "ChanceQLoss requires 'chance_values_next' in targets. (MuZeroTargetBuilder must provide it)"
+                "ChanceQLoss requires 'chance_values_next' in targets. (MuZero target builders must provide it)"
             )
 
         # Ingredients for Representation: we overwrite 'values' in local context
