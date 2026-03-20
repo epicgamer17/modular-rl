@@ -283,6 +283,12 @@ class RecordConfig:
         )
 
 
+class EarlyStoppingConfig:
+    def parse_early_stopping_params(self):
+        self.use_early_stopping: bool = self.parse_field("use_early_stopping", False)
+        self.early_stopping_kl: float = self.parse_field("early_stopping_kl", 0.015)
+
+
 class DistributionalConfig:
     def parse_distributional_params(self):
         self.atom_size: int = self.parse_field("atom_size", 1, wrapper=int)
@@ -313,11 +319,16 @@ class Config(
     RecordConfig,
     DistributionalConfig,
     ExecutionConfig,
+    EarlyStoppingConfig,
 ):
     def __init__(self, config_dict: dict, game_config: GameConfig) -> None:
         super().__init__(config_dict)
         self.game = game_config
         self._verify_game()
+
+        # Mixin: Early Stopping
+        self.parse_early_stopping_params()
+
         self.save_intermediate_weights: bool = self.parse_field(
             "save_intermediate_weights", False
         )

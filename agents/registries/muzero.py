@@ -14,6 +14,7 @@ from agents.learner.losses import (
 )
 from agents.learner.callbacks import (
     ResetNoiseCallback,
+    MetricEarlyStopCallback,
 )
 from modules.utils import get_lr_scheduler
 from agents.learner.target_builders import (
@@ -142,6 +143,8 @@ def build_muzero(
     callbacks = []
     if getattr(config, "use_noisy_net", False):
         callbacks.append(ResetNoiseCallback())
+    if getattr(config, "use_early_stopping", False):
+        callbacks.append(MetricEarlyStopCallback(threshold=config.early_stopping_kl))
 
     # 4. Target Builder
     builders = [

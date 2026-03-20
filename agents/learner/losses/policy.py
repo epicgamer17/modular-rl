@@ -26,6 +26,23 @@ class PolicyLoss(BaseLoss):
             loss_factor=loss_factor,
         )
 
+    def compute_loss(
+        self, predictions: dict, targets: dict
+    ) -> tuple[torch.Tensor, dict]:
+        """MuZero Policy Loss: returns (loss, metrics)"""
+        loss, metrics = super().compute_loss(predictions, targets)
+
+        with torch.no_grad():
+            pred_logits = predictions[self.pred_key]
+            target_probs = targets[self.target_key]
+
+            log_q = F.log_softmax(pred_logits, dim=-1)
+            log_p = torch.log(target_probs + 1e-10)
+            kl = (target_probs * (log_p - log_q)).sum(dim=-1).mean()
+            metrics["approx_kl"] = kl.item()
+
+        return loss, metrics
+
 class ClippedSurrogateLoss(BaseLoss):
     def __init__(
         self,
@@ -47,8 +64,8 @@ class ClippedSurrogateLoss(BaseLoss):
         self.entropy_coefficient = entropy_coefficient
 
     def compute_loss(
-        self, predictions: dict, targets: dict, context: dict
-    ) -> torch.Tensor:
+        self, predictions: dict, targets: dict
+    ) -> tuple[torch.Tensor, dict]:
         """PPO Policy Loss: returns [B, T]"""
         policy_logits = predictions["policies"]
         actions = targets["actions"]
@@ -87,11 +104,8 @@ class ClippedSurrogateLoss(BaseLoss):
         # 3. Stats for full sequence
         with torch.no_grad():
             approx_kl = (old_log_probs - log_probs).mean()
-            if "approx_kl" not in context:
-                context["approx_kl"] = []
-            context["approx_kl"].append(approx_kl.item())
 
-        return loss
+        return loss, {"approx_kl": approx_kl.item()}
 
 class ImitationLoss(BaseLoss):
     def __init__(

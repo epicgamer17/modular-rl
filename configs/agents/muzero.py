@@ -6,6 +6,7 @@ from configs.base import (
     ConsistencyConfig,
     DistributionalConfig,
     NoisyConfig,
+    EarlyStoppingConfig,
 )
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.backbones.factory import BackboneConfigFactory
@@ -29,6 +30,7 @@ class MuZeroConfig(
     ConsistencyConfig,
     DistributionalConfig,
     NoisyConfig,
+    EarlyStoppingConfig,
 ):
     def __init__(self, config_dict, game_config):
         if "agent_type" not in config_dict:
@@ -36,6 +38,9 @@ class MuZeroConfig(
         super(MuZeroConfig, self).__init__(config_dict, game_config)
 
         # Initialize Architecture Config handled by AgentConfig
+
+        # Mixin: Early Stopping
+        self.parse_early_stopping_params()
 
         # Mixin: Distributional (Support Range) - Parse early for head validation
         self.parse_distributional_params()

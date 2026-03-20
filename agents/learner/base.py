@@ -203,10 +203,10 @@ class UniversalLearner:
         1. Forward Pass (Predictions)
         2. Build Targets (via TargetBuilder or passthrough)
         3. Run Loss Pipeline
+        4. Priories
         """
         # 1. Predictions
         predictions = self.agent_network.learner_inference(batch)
-        batch["training_step"] = self.training_step
 
         # 2. Targets (Strict Delegation)
         # The TargetBuilder is the ONLY source of truth for the LossPipeline.
@@ -216,8 +216,7 @@ class UniversalLearner:
                 batch, predictions, self.agent_network, targets
             )
 
-        # 3. Context and PER weights
-        context = batch
+        # 3. PER weights
         weights = batch.get("weights")
         if weights is not None and torch.is_tensor(weights):
             weights = weights.to(self.device).float()
@@ -226,7 +225,6 @@ class UniversalLearner:
         loss, loss_dict, priorities = self.loss_pipeline.run(
             predictions=predictions,
             targets=targets,
-            context=context,
             weights=weights,
             gradient_scales=targets.get("gradient_scales"),
         )
@@ -244,7 +242,7 @@ class UniversalLearner:
             targets={
                 k: v.detach().cpu() for k, v in targets.items() if torch.is_tensor(v)
             },
-            meta={**context.copy(), "metrics": context.get("metrics", {})},
+            meta={"metrics": batch.get("metrics", {})},
         )
 
     def state_dict(self) -> Dict[str, Any]:

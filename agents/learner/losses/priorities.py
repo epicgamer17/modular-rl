@@ -14,7 +14,6 @@ class BasePriorityComputer(ABC):
         elementwise_losses: Dict[str, torch.Tensor],
         predictions: Dict[str, torch.Tensor],
         targets: Dict[str, torch.Tensor],
-        context: Dict[str, Any]
     ) -> torch.Tensor:
         """
         Returns:
@@ -24,7 +23,7 @@ class BasePriorityComputer(ABC):
 
 class NullPriorityComputer(BasePriorityComputer):
     """Returns 1.0 for all batch elements, effectively disabling priority updates."""
-    def compute(self, elementwise_losses, predictions, targets, context):
+    def compute(self, elementwise_losses, predictions, targets):
         if not elementwise_losses:
             return torch.ones(1)
         B = next(iter(elementwise_losses.values())).shape[0]
@@ -38,7 +37,7 @@ class RootLossPriorityComputer(BasePriorityComputer):
     def __init__(self, loss_key: str = "ValueLoss"):
         self.loss_key = loss_key
 
-    def compute(self, elementwise_losses, predictions, targets, context):
+    def compute(self, elementwise_losses, predictions, targets):
         if self.loss_key not in elementwise_losses:
             B = next(iter(elementwise_losses.values())).shape[0]
             return torch.zeros(B, device=next(iter(elementwise_losses.values())).device)
@@ -54,7 +53,7 @@ class MaxLossPriorityComputer(BasePriorityComputer):
     def __init__(self, loss_key: str = "StandardDQNLoss"):
         self.loss_key = loss_key
 
-    def compute(self, elementwise_losses, predictions, targets, context):
+    def compute(self, elementwise_losses, predictions, targets):
         if self.loss_key not in elementwise_losses:
             B = next(iter(elementwise_losses.values())).shape[0]
             return torch.zeros(B, device=next(iter(elementwise_losses.values())).device)
@@ -86,7 +85,6 @@ class ExpectedValueErrorPriorityComputer(BasePriorityComputer):
         elementwise_losses: Dict[str, torch.Tensor],
         predictions: Dict[str, torch.Tensor],
         targets: Dict[str, torch.Tensor],
-        context: Dict[str, Any],
     ) -> torch.Tensor:
         # 1. Predictions: Distribution -> Expected Scalar Value [B, T]
         pred_logits = predictions[self.pred_key]

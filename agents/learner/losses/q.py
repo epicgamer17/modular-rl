@@ -36,8 +36,8 @@ class QBootstrappingLoss(BaseLoss):
         )
 
     def compute_loss(
-        self, predictions: dict, targets: dict, context: dict
-    ) -> torch.Tensor:
+        self, predictions: dict, targets: dict
+    ) -> tuple[torch.Tensor, dict]:
         q_preds = predictions[self.pred_key]
         actions = targets["actions"].long()
 
@@ -78,7 +78,7 @@ class QBootstrappingLoss(BaseLoss):
             flat_targets = flat_targets.squeeze(-1)
             raw_loss = self.loss_fn(selected_preds, flat_targets, reduction="none")
 
-        return raw_loss.reshape(B, T)
+        return raw_loss.reshape(B, T), {}
 
 class ChanceQLoss(BaseLoss):
     """Loss for stochastic muzero chance Q heads."""
@@ -103,8 +103,8 @@ class ChanceQLoss(BaseLoss):
         )
 
     def compute_loss(
-        self, predictions: dict, targets: dict, context: dict
-    ) -> torch.Tensor:
+        self, predictions: dict, targets: dict
+    ) -> tuple[torch.Tensor, dict]:
         """Chance Q computes target value from next step."""
         chance_values_next = targets.get("chance_values_next")
         if chance_values_next is None:
@@ -130,4 +130,4 @@ class ChanceQLoss(BaseLoss):
         if raw_loss.ndim > 1:
             raw_loss = raw_loss.sum(dim=-1)
 
-        return self.loss_factor * raw_loss.reshape(B, T)
+        return self.loss_factor * raw_loss.reshape(B, T), {}

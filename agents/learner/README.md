@@ -1,43 +1,41 @@
 # 🧠 Learners: The Universal GPU Engine
 
-This module contains the core optimization engine for the reinforcement learning pipeline. It is designed with a strict **Event-Driven, Data-Oriented Architecture**. 
+This module contains the core optimization engine for the reinforcement learning pipeline. It is designed with a strict **Component-Centric, Data-Oriented Architecture**. 
 
-There are no algorithm-specific subclasses (e.g., `PPOLearner` or `MuZeroLearner` do not exist). Instead, a single `UniversalLearner` handles all optimization by acting as a pure mathematical pipeline. Algorithm-specific behavior is injected via strict interfaces: **Iterators**, **Target Builders**, **Loss Pipelines**, and **Callbacks**.
+There are no algorithm-specific subclasses (e.g., `PPOLearner` or `MuZeroLearner` do not exist). Instead, a single `UniversalLearner` acts as a pure, stateless mathematical pipeline. We build complex RL algorithms (like AlphaZero, Rainbow, or PPO) strictly by composing pure functional units via **Factories**.
 
 ## 🏗️ Core Contracts & Philosophy
 
-### 1. `UniversalLearner` (The Engine)
-The Learner is a blind, stateless GPU engine. It knows nothing about Replay Buffers, environments, or telemetry dashboards.
-* **Input Contract:** It accepts an `Iterable` that yields standard Python dictionaries (`Dict[str, Tensor]`).
-* **Execution Contract:** It processes data through a rigid sequence: `Forward Pass -> Target Building -> Loss Calculation -> Backward Pass -> Optimizer Step`.
-* **Output Contract:** It yields a lightweight `StepResult` dictionary containing the loss values and detached metrics. It **does not** average metrics or interact with loggers.
+### 1. The `Universal T` Contract
+The entire learner pipeline is strictly vectorized over the sequence/time dimension.
+* Every tensor flowing through the Loss Pipeline must be of shape `[Batch, Time, ...]`.
+* For sequence models (MuZero), `T` is the unroll horizon.
+* For single-step models (PPO, DQN, Imitation), `T = 1`. The network, target builders, and loss modules seamlessly handle this via native PyTorch broadcasting.
 
-### 2. `BatchIterators` (The Data Shield)
-Iterators decouple data sampling from the optimization loop. They act as the adapter between the Replay Buffer and the Learner.
-* **Responsibility:** They pull pinned memory from the buffer, move it asynchronously to the GPU (`non_blocking=True`), and handle all algorithm-specific batching logic.
-* **Examples:** `SingleBatchIterator` (yields once for DQN/Imitation) vs. `PPOEpochIterator` (shuffles and yields mini-batches over multiple epochs).
+### 2. `UniversalLearner` (The Engine)
+The Learner is a blind GPU engine. It knows nothing about Replay Buffers, environments, RL dynamics, or telemetry dashboards.
+* **Input Contract:** It accepts an `Iterable` that yields raw dictionary batches.
+* **Execution Contract:** It processes data through a rigid sequence: `Forward Pass -> Target Building -> Loss Execution -> Multi-Optimizer Backward Pass -> Step`.
+* **Output Contract:** It yields a lightweight dictionary containing loss values and decoupled metrics. It does not manage loggers or shared mutable state.
 
-### 3. `TargetBuilders` (The Math)
-Target builders are pure, stateless mathematical functions. They are named semantically based on the math they perform, not the algorithm that uses them.
-* **Contract:** `batch = builder(batch, predictions)`. They accept a dictionary, compute RL math (like $n$-step returns or MCTS value scalarization), and attach the new tensors to the dictionary. 
-* **Note:** They **do not** handle neural network distribution projections (like C51 or MuZero categorical logic); that is strictly the job of the `LossPipeline`.
+### 3. `TargetBuilders` (The Middleware Pipeline)
+Target builders are responsible for the **MDP Math** (Markov Decision Process logic like Bellman shifts, GAE, or MCTS extraction). They operate as a composable middleware chain modifying a `current_targets` dictionary.
+We split builders into two strict categories to avoid monolithic classes:
+* **Generators:** Extract or compute mathematical targets (e.g., `MCTSExtractor`, `TemporalDifferenceBuilder`).
+* **Modifiers:** Align, pad, mask, or format tensors without changing their RL meaning (e.g., `SequencePadder`, `SingleStepFormatter`, `UniversalMaskBuilder`).
+* **Explicit Anchoring:** Builders *never* dynamically guess dimensions by looping over dictionaries. Shapes are strictly derived from anchors like `batch["actions"]`.
 
 ### 4. `Callbacks` (The Event System)
-All side-effects and algorithm-specific control flows are handled via isolated callbacks injected into the Learner. Callbacks communicate with the outside world purely via injected `Callable` functions.
-* **`PPOEarlyStoppingCallback`:** Reads the KL divergence and raises an `EarlyStopIteration` exception to gracefully break the Learner's epoch loop.
-* **`PriorityUpdaterCallback`:** Hands PER priorities back to the Trainer via an injected queue/function.
-* **`WeightBroadcastCallback`:** Broadcasts the `state_dict` to remote Actors.
-
-### 5. `Factory` (The Assembly Layer)
-The factory wires the components together using the **Registry Pattern**. 
-* It looks up the requested algorithm in the `AGENT_REGISTRY` (e.g., `@register_agent("ppo")`), grabs the specific Iterators, Loss Pipelines, and Callbacks, and assembles the `UniversalLearner`. This keeps the factory completely flat and free of `if/else` chains.
+We rely on isolated callbacks for all side-effects.
+* **`PriorityUpdaterCallback`:** Syncs computed TD/MSE priorities back to the replay buffer.
+* **`TargetNetworkSyncCallback`:** Handles EMA or hard syncing for target networks.
+* **`MetricEarlyStopCallback`:** Stops epochs dynamically based on emitted metrics (e.g., KL divergence limits).
 
 ---
 
-## 🔄 The Data Flow Lifecycle
-
-1. **Setup:** The Trainer calls `build_universal_learner`. The factory pulls the specific components from the registry.
-2. **Ingestion:** The Trainer hands a `BatchIterator` to `learner.step(iterator)`.
-3. **Processing:** The Learner loops over the iterator. Tensors are routed through the `TargetBuilderPipeline` and then the `LossPipeline`.
-4. **Optimization:** The Learner dynamically iterates over the loss dictionary, calling `.backward()` and stepping the respective optimizers (enabling multi-optimizer architectures like Actor-Critic).
-5. **Events & Telemetry:** Callbacks fire at designated hook points (`on_backward_end`, `on_step_end`). The Learner yields a detached metrics dictionary back to the Trainer for logging.
+## 🚀 Adding a New Algorithm
+**Do not subclass the Learner.** To create a new algorithm (e.g., "Rainbow + Search" or "Dreamer"):
+1. Create a factory function in the `registries/` folder.
+2. Snap together the appropriate `TargetBuilder` generators and modifiers.
+3. Instantiate pure `BaseLoss` modules with the correct string keys.
+4. Pass the assembled pipeline to the `UniversalLearner`.

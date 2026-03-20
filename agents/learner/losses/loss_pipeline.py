@@ -48,7 +48,6 @@ class LossPipeline:
         self,
         predictions: dict,
         targets: dict,
-        context: dict = {},
         weights: Optional[torch.Tensor] = None,
         gradient_scales: Optional[torch.Tensor] = None,
     ) -> Tuple[Dict[str, torch.Tensor], Dict[str, float], torch.Tensor]:
@@ -72,7 +71,6 @@ class LossPipeline:
         B = weights.shape[0]
         T = gradient_scales.shape[1]
 
-        context["full_targets"] = targets
         total_loss_dict = {
             m.optimizer_name: torch.tensor(0.0, device=device) for m in self.modules
         }
@@ -82,10 +80,15 @@ class LossPipeline:
         # 4. Single-Pass Vectorized Execution
         for module in self.modules:
             # Blindly compute: decision logic now lives in the Factory/Registry
-            # Compute [B, T] elementwise loss
-            elementwise_loss = module.compute_loss(predictions, targets, context)
+            # Compute ([B, T] elementwise loss, metrics_dict)
+            elementwise_loss, module_metrics = module.compute_loss(
+                predictions, targets
+            )
             all_elementwise_losses[module.name] = elementwise_loss
             mask = module.get_mask(targets)
+
+            # Aggregate metrics from the module
+            loss_dict.update(module_metrics)
 
             # Scale by Gradient Scales [1, T] and PER Weights [B, 1]
             scaled_loss = scale_gradient(elementwise_loss, gradient_scales)
@@ -103,23 +106,8 @@ class LossPipeline:
 
         # 5. Extract Priorities via standalone computer [B]
         priorities = self.priority_computer.compute(
-            all_elementwise_losses, predictions, targets, context
+            all_elementwise_losses, predictions, targets
         )
-
-        # 6. Extract Auxiliary metrics from context (approx_kl, etc.)
-        for key, value in context.items():
-            if key in [
-                "full_targets",
-                "has_valid_action_mask",
-                "is_same_game",
-            ]:
-                continue
-            if (
-                isinstance(value, list)
-                and len(value) > 0
-                and isinstance(value[0], (int, float))
-            ):
-                loss_dict[key] = float(np.mean(value))
 
         loss_dict["loss_pipeline_latency_ms"] = (
             time.perf_counter() - start_time

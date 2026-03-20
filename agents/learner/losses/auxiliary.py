@@ -68,9 +68,7 @@ class CommitmentLoss(BaseLoss):
         )
 
     def compute_loss(
-        self, predictions: dict, targets: dict, context: dict
-    ) -> torch.Tensor:
+        self, predictions: dict, targets: dict
+    ) -> tuple[torch.Tensor, dict]:
         """Scalar-to-vectorized: returns [B, T] of loss values"""
-        B, T = predictions["commitment_loss"].shape[:2]
-        # Commitment loss is usually already [B, T] from the VQ head
-        return predictions["commitment_loss"]
+        return predictions["commitment_loss"], {}

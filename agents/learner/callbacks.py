@@ -181,31 +181,22 @@ class ResetNoiseCallback(Callback):
         learner.agent_network.reset_noise()
 
 
-class PPOEarlyStoppingCallback(Callback):
-    """Early stops the optimization loop if KL divergence exceeds target_kl."""
+class MetricEarlyStopCallback(Callback):
+    """Agnostic early stopping callback triggered by any metric threshold."""
 
-    def __init__(self, target_kl: float, key: str = "approx_kl"):
-        assert target_kl > 0, f"target_kl must be positive, got {target_kl}"
-        self.target_kl = target_kl
-        self.key = key
+    def __init__(self, metric_key: str = "approx_kl", threshold: float = 0.015):
+        self.metric_key = metric_key
+        self.threshold = threshold
 
     def on_backward_end(
         self,
         learner,
         step_result: StepResult,
     ) -> None:
-        """Checks KL divergence against target threshold."""
-        assert self.key in step_result.loss_dict, (
-            f"Key '{self.key}' missing from StepResult.loss_dict. "
-            f"Available keys: {list(step_result.loss_dict.keys())}. "
-            "Ensure the LossPipeline is propagating this metric from context."
-        )
-        kl = step_result.loss_dict[self.key]
-        if kl > 1.5 * self.target_kl:
-            append_metric(
-                step_result.meta.setdefault("metrics", {}), "ppo_early_stop", 1.0
-            )
-            raise EarlyStopIteration(f"KL divergence {kl:.4f} > 1.5 * {self.target_kl}")
+        val = step_result.loss_dict.get(self.metric_key)
+        if val is not None and val > self.threshold:
+            print(f"Early stopping triggered by {self.metric_key}: {val}")
+            raise EarlyStopIteration()
 
 
 class PriorityUpdaterCallback(Callback):

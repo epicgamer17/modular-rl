@@ -4,7 +4,7 @@ from agents.registries.base import register_agent
 from agents.learner.losses import LossPipeline, ClippedSurrogateLoss, ValueLoss
 import torch.nn.functional as F
 from modules.utils import get_lr_scheduler
-from agents.learner.callbacks import PPOEarlyStoppingCallback
+from agents.learner.callbacks import MetricEarlyStopCallback
 from torch.optim.adam import Adam
 from torch.optim.sgd import SGD
 
@@ -80,7 +80,7 @@ def build_ppo(config: Any, agent_network: Any, device: torch.device) -> Dict[str
     # 3. Callbacks
     callbacks = []
     if getattr(config, "use_early_stopping", False):
-        callbacks.append(PPOEarlyStoppingCallback(config.early_stopping_kl))
+        callbacks.append(MetricEarlyStopCallback(threshold=config.early_stopping_kl))
 
     # 4. Target Builder
     from agents.learner.target_builders import PassThroughTargetBuilder, TargetBuilderPipeline, SingleStepFormatter

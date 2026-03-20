@@ -50,24 +50,23 @@ class BaseLoss(ABC):
         self,
         predictions: dict,
         targets: dict,
-        context: dict,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         """
         Pure Vectorized Execution Engine.
         Returns:
-            elementwise_tensor of shape (B, T)
+            elementwise_tensor: [B, T]
+            metrics: Dictionary of auxiliary logging metrics
         """
         # 1. Extract [B, T, ...] inputs
         pred = predictions[self.pred_key]
-        target_ingredients = targets  # Representation will pull what it needs
 
         # 2. Format targets through the Representation bridge
-        # We pass target_key to help representations that handle multiple inputs
         if hasattr(self.representation, "format_target") and callable(
             self.representation.format_target
         ):
+            # Target ingredients are pulled directly from the targets dict!
             formatted_target = self.representation.format_target(
-                target_ingredients, target_key=self.target_key
+                targets, target_key=self.target_key
             )
         else:
             formatted_target = targets[self.target_key]
@@ -92,12 +91,14 @@ class BaseLoss(ABC):
         if raw_loss.ndim > 1:
             raw_loss = raw_loss.sum(dim=-1)
 
-        return self.loss_factor * raw_loss.reshape(B, T)
+        elementwise_loss = self.loss_factor * raw_loss.reshape(B, T)
+
+        # Base losses return no extra metrics by default
+        return elementwise_loss, {}
 
     def compute_priority(
         self,
         predictions: dict,
         targets: dict,
-        context: dict,
     ) -> Optional[torch.Tensor]:
         return None
