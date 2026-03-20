@@ -18,7 +18,6 @@ from agents.learner.callbacks import (
 from modules.utils import get_lr_scheduler
 from agents.learner.target_builders import (
     TargetBuilderPipeline,
-    TrajectoryGradientScaleBuilder,
     LatentConsistencyBuilder,
     MuZeroTargetBuilder,
 )
@@ -146,7 +145,6 @@ def build_muzero(
 
     # 4. Target Builder
     builders = [
-        TrajectoryGradientScaleBuilder(unroll_steps=config.unroll_steps),
         MuZeroTargetBuilder(unroll_steps=config.unroll_steps),
     ]
     if getattr(config, "consistency_loss_factor", 0) > 0:

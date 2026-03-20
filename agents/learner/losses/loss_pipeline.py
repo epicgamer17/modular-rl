@@ -62,23 +62,17 @@ class LossPipeline:
         device = self.modules[0].device if self.modules else torch.device("cpu")
         self.shape_validator.validate(predictions, targets)
 
-        # 2. Defaults and Scaling
-        # Determine dimensions B and T directly from the prediction tensors
-        any_pred = next(p for p in predictions.values() if torch.is_tensor(p))
-        B, T = any_pred.shape[:2]
+        # 2. Defaults and Secure Scaling
+        # We no longer guess B and T. They are anchored by weights and gradient_scales.
         if weights is None:
-            weights = torch.ones(B, device=device)
+            weights = targets["weights"]
         if gradient_scales is None:
-            gradient_scales = torch.ones((1, T), device=device)
+            gradient_scales = targets["gradient_scales"]
+
+        B = weights.shape[0]
+        T = gradient_scales.shape[1]
 
         context["full_targets"] = targets
-        # Vectorized ChanceQ targets: shift values by 1
-        if "values" in targets:
-            v = targets["values"]
-            v_next = torch.zeros_like(v)
-            v_next[:, :-1] = v[:, 1:]
-            context["target_values_next"] = v_next
-
         total_loss_dict = {
             m.optimizer_name: torch.tensor(0.0, device=device) for m in self.modules
         }
@@ -116,7 +110,6 @@ class LossPipeline:
         for key, value in context.items():
             if key in [
                 "full_targets",
-                "target_values_next",
                 "has_valid_action_mask",
                 "is_same_game",
             ]:

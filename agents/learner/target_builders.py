@@ -38,9 +38,21 @@ class SingleStepTargetBuilder(BaseTargetBuilder):
     """
 
     def format_single_step(
-        self, raw_targets: Dict[str, torch.Tensor], batch_size: int
+        self,
+        raw_targets: Dict[str, torch.Tensor],
+        batch_size: int,
+        weights: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         formatted = {}
+
+        # 1. Determine Device for anchors
+        device = torch.device("cpu")
+        for v in raw_targets.values():
+            if torch.is_tensor(v):
+                device = v.device
+                break
+
+        # 2. Vectorize T=1
         for k, v in raw_targets.items():
             # If it's a tensor and has at least a batch dimension, inject the T=1 dimension
             if torch.is_tensor(v) and v.ndim >= 1:
@@ -51,8 +63,6 @@ class SingleStepTargetBuilder(BaseTargetBuilder):
         # Automatically generate the Universal T=1 Mask for all standard semantics
         if "value_mask" not in formatted and len(formatted) > 0:
             # We explicitly know B (batch_size) and T (1)!
-            tensor = next(iter(formatted.values()))
-            device = tensor.device
             generic_mask = torch.ones((batch_size, 1), device=device, dtype=torch.bool)
 
             # Route it to all potential semantic keys expected by LossModules
@@ -61,6 +71,18 @@ class SingleStepTargetBuilder(BaseTargetBuilder):
             formatted["policy_mask"] = generic_mask
             formatted["q_mask"] = generic_mask
             formatted["masks"] = generic_mask
+
+        # --- PURGING HACKS: Explicitly build derived targets ---
+        # 3. Weights Bridge: [B]
+        if "weights" not in formatted:
+            if weights is not None:
+                formatted["weights"] = weights
+            else:
+                formatted["weights"] = torch.ones(batch_size, device=device)
+
+        # 4. Gradient Scales Bridge: [1, 1] for single-step
+        if "gradient_scales" not in formatted:
+            formatted["gradient_scales"] = torch.ones((1, 1), device=device)
 
         return formatted
 
@@ -86,6 +108,8 @@ class TargetBuilderPipeline(BaseTargetBuilder):
 
             # The Fail-Fast Collision Check
             collisions = set(combined_targets.keys()).intersection(new_targets.keys())
+            # Anchors are allowed to be updated by subsequent builders
+            collisions -= {"weights", "gradient_scales"}
             if collisions:
                 raise RuntimeError(
                     f"TargetBuilder collision! Multiple builders tried to create keys: {collisions}. "
@@ -167,7 +191,9 @@ class TemporalDifferenceBuilder(SingleStepTargetBuilder):
         }
 
         # Upgrade to Universal T=1 and add masks
-        return self.format_single_step(raw_targets, batch_size=batch_size)
+        return self.format_single_step(
+            raw_targets, batch_size=batch_size, weights=batch.get("weights")
+        )
 
 
 class DistributionalTargetBuilder(SingleStepTargetBuilder):
@@ -262,7 +288,9 @@ class DistributionalTargetBuilder(SingleStepTargetBuilder):
             "dones": terminal_mask.float(),
         }
 
-        return self.format_single_step(raw_targets, batch_size=batch_size)
+        return self.format_single_step(
+            raw_targets, batch_size=batch_size, weights=batch.get("weights")
+        )
 
 
 class PassThroughTargetBuilder(SingleStepTargetBuilder):
@@ -287,8 +315,14 @@ class PassThroughTargetBuilder(SingleStepTargetBuilder):
                 raw_targets[key] = batch[key]
 
         # Upgrade them to [B, 1] and add masks
-        batch_size = batch["actions"].shape[0] if "actions" in batch else next(iter(batch.values())).shape[0]
-        return self.format_single_step(raw_targets, batch_size=batch_size)
+        batch_size = (
+            batch["actions"].shape[0]
+            if "actions" in batch
+            else next(iter(batch.values())).shape[0]
+        )
+        return self.format_single_step(
+            raw_targets, batch_size=batch_size, weights=batch.get("weights")
+        )
 
 
 class MuZeroTargetBuilder(BaseTargetBuilder):
@@ -363,6 +397,25 @@ class MuZeroTargetBuilder(BaseTargetBuilder):
             "to_play_mask"
         ] &= reward_mask  # ensuring root is zero and terminal transitions aligned
 
+        # --- PURGING HACKS: Explicitly build derived targets ---
+        # 1. Weights Bridge: Ensure weights [B] are in targets
+        B = batch["actions"].shape[0] if "actions" in batch else next(iter(batch.values())).shape[0]
+        if "weights" not in res:
+            res["weights"] = batch.get("weights", torch.ones(B, device=batch["actions"].device))
+
+        # 2. Chance Shifting: Stochastic MuZero needs target value at step k+1
+        if "values" in res:
+            v = res["values"]
+            v_next = torch.zeros_like(v)
+            v_next[:, :-1] = v[:, 1:]
+            res["chance_values_next"] = v_next
+
+        # 3. Secure T Anchor: Ensure gradient_scales [1, T] exists
+        if "gradient_scales" not in res:
+            unroll_steps = self.T - 1
+            scales = [1.0] + [1.0 / unroll_steps] * unroll_steps if unroll_steps > 0 else [1.0]
+            res["gradient_scales"] = torch.tensor(scales, device=batch["actions"].device).reshape(1, -1)
+
         return res
 
 
@@ -404,25 +457,3 @@ class LatentConsistencyBuilder(BaseTargetBuilder):
         return {"consistency_targets": consistency_targets}
 
 
-class TrajectoryGradientScaleBuilder(BaseTargetBuilder):
-    """
-    Builds gradient scaling tensors for BPTT unrolling.
-    Ensures gradients are correctly weighted across the sequence.
-    """
-
-    def __init__(self, unroll_steps: int):
-        self.unroll_steps = unroll_steps
-
-    def build_targets(
-        self,
-        batch: Dict[str, Tensor],
-        predictions: Dict[str, Tensor],
-        network: nn.Module,
-    ) -> Dict[str, Tensor]:
-        # Gradient Scales for MuZero sequence unrolling
-        # Typically [1.0] for root, then [1/unroll_steps] for subsequent steps
-        scales = [1.0] + [1.0 / self.unroll_steps] * self.unroll_steps
-        # batch["rewards"] is used to get the device
-        device = batch["rewards"].device
-        scales_tensor = torch.tensor(scales, device=device).reshape(1, -1)
-        return {"gradient_scales": scales_tensor}

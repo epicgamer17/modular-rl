@@ -106,15 +106,15 @@ class ChanceQLoss(BaseLoss):
         self, predictions: dict, targets: dict, context: dict
     ) -> torch.Tensor:
         """Chance Q computes target value from next step."""
-        target_values_next = context.get("target_values_next")
-        if target_values_next is None:
+        chance_values_next = targets.get("chance_values_next")
+        if chance_values_next is None:
             raise KeyError(
-                "ChanceQLoss requires 'target_values_next' in context. (TargetBuilder must provide it)"
+                "ChanceQLoss requires 'chance_values_next' in targets. (MuZeroTargetBuilder must provide it)"
             )
 
         # Ingredients for Representation: we overwrite 'values' in local context
         local_ingredients = targets.copy()
-        local_ingredients["values"] = target_values_next
+        local_ingredients["values"] = chance_values_next
 
         formatted_target = self.representation.format_target(
             local_ingredients, target_key=self.target_key

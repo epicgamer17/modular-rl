@@ -7,7 +7,6 @@ import numpy as np
 from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
     LatentConsistencyBuilder,
-    TrajectoryGradientScaleBuilder,
     BaseTargetBuilder,
 )
 
@@ -147,13 +146,3 @@ def test_latent_consistency_builder():
     )
 
 
-def test_trajectory_gradient_scale_builder():
-    """Test TrajectoryGradientScaleBuilder for BPTT scaling."""
-    builder = TrajectoryGradientScaleBuilder(unroll_steps=5)
-    batch = {"rewards": torch.zeros(1)}  # dummy to provide device
-
-    targets = builder.build_targets(batch, {}, MagicMock())
-
-    assert "gradient_scales" in targets
-    expected_scales = torch.tensor([[1.0, 0.2, 0.2, 0.2, 0.2, 0.2]])
-    assert torch.allclose(targets["gradient_scales"], expected_scales)
