@@ -601,7 +601,6 @@ class PPOPolicyLoss(BaseLoss):
         representation: Any,
         clip_param: float,
         entropy_coefficient: float,
-        policy_strategy: Optional[object] = None,
         optimizer_name: str = "default",
     ):
         super().__init__(
@@ -615,7 +614,6 @@ class PPOPolicyLoss(BaseLoss):
         )
         self.clip_param = clip_param
         self.entropy_coefficient = entropy_coefficient
-        self.policy_strategy = policy_strategy
 
     @property
     def required_targets(self) -> set[str]:
@@ -636,11 +634,7 @@ class PPOPolicyLoss(BaseLoss):
         B, T = old_log_probs.shape[:2]
 
         # 2. Vectorized Distribution math
-        if self.policy_strategy is not None:
-             # Strategy should handle [B, T, A] -> Dist with [B, T] sample shapes
-             dist = self.policy_strategy.get_distribution(policy_logits)
-        else:
-             dist = torch.distributions.Categorical(logits=policy_logits)
+        dist = self.representation.to_inference(policy_logits)
         
         # [B, T]
         log_probs = dist.log_prob(actions)
@@ -677,7 +671,6 @@ class PPOValueLoss(BaseLoss):
         atom_size: int = 1,
         v_min: Optional[float] = None,
         v_max: Optional[float] = None,
-        value_strategy: Optional[object] = None,
         optimizer_name: str = "default",
     ):
         super().__init__(
@@ -693,33 +686,9 @@ class PPOValueLoss(BaseLoss):
         self.atom_size = atom_size
         self.v_min = v_min
         self.v_max = v_max
-        self.value_strategy = value_strategy
 
     def _to_scalar_values(self, value_logits: torch.Tensor) -> torch.Tensor:
-        if self.value_strategy is not None:
-            return self.value_strategy.to_expected_value(value_logits)
-
-        if value_logits.ndim == 1:
-            return value_logits
-
-        if value_logits.shape[-1] == 1:
-            return value_logits.squeeze(-1)
-
-        if self.atom_size > 1 and self.v_min is not None and self.v_max is not None:
-            support = torch.linspace(
-                self.v_min,
-                self.v_max,
-                value_logits.shape[-1],
-                device=value_logits.device,
-                dtype=value_logits.dtype,
-            )
-            probs = torch.softmax(value_logits, dim=-1)
-            return (probs * support).sum(dim=-1)
-
-        raise ValueError(
-            "PPOValueLoss received multi-logit values without distributional bounds "
-            "(v_min/v_max)."
-        )
+        return self.representation.to_expected_value(value_logits)
 
     def compute_loss(
         self, predictions: dict, targets: dict, context: dict

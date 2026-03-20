@@ -2,7 +2,7 @@ from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
 import torch
 from .base import BaseHead
-from modules.heads.strategies import OutputStrategy, ScalarStrategy
+from agents.learner.losses.representations import BaseRepresentation, ScalarRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
 
@@ -19,28 +19,29 @@ class ObservationHead(BaseHead):
         self,
         arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
-        strategy: Optional[OutputStrategy] = None,
+        representation: Optional[BaseRepresentation] = None,
         neck_config: Optional[BackboneConfig] = None,
         use_output_layer: bool = True,
     ):
-        # Pass strategy=None to avoid creating the default output layer in BaseHead if not wanted
+        # Pass representation=None to avoid creating the default output layer in BaseHead if not wanted
         super().__init__(
             arch_config,
             input_shape,
-            strategy if use_output_layer else None,
+            representation if use_output_layer else None,
             neck_config,
         )
         self.use_output_layer = use_output_layer
 
-        # Ensure we have a strategy for logic downstream
-        if self.strategy is None:
-            self.strategy = strategy or ScalarStrategy()
+        # Ensure we have a representation for logic downstream
+        if self.representation is None:
+            self.representation = representation or ScalarRepresentation()
 
     def forward(
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
+        """Returns: (logits, state, observation_pred)"""
         state = state if state is not None else {}
 
         # Process neck
@@ -54,7 +55,7 @@ class ObservationHead(BaseHead):
         else:
             logits = x
 
-        # expected_observation is strategy conversion
-        observation_pred = self.strategy.to_expected_value(logits)
+        # expected_observation is representation conversion
+        observation_pred = self.representation.to_expected_value(logits)
 
         return logits, state, observation_pred

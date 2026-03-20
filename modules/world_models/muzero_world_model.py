@@ -10,7 +10,7 @@ from modules.backbones.factory import BackboneFactory
 from modules.heads.factory import HeadFactory
 from modules.heads.to_play import ToPlayHead
 from modules.heads.reward import RewardHead
-from modules.heads.strategy_factory import OutputStrategyFactory
+from agents.learner.losses.representations import get_representation
 from modules.utils import scale_gradient
 from modules.world_models.inference_output import (
     MuZeroNetworkState,
@@ -91,22 +91,22 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
 
         # 3. Physics Heads (Owned by WorldModel now)
         # Reward Head
-        r_strategy = OutputStrategyFactory.create(config.reward_head.output_strategy)
+        r_rep = get_representation(config.reward_head.output_strategy)
         self.reward_head = HeadFactory.create(
             config.reward_head,
             config.arch,
             input_shape=self.dynamics.output_shape,
-            strategy=r_strategy,
+            representation=r_rep,
         )
 
         # To-Play Head
-        tp_strategy = OutputStrategyFactory.create(config.to_play_head.output_strategy)
+        tp_rep = get_representation(config.to_play_head.output_strategy)
         self.to_play_head = ToPlayHead(
             arch_config=config.arch,
             input_shape=self.dynamics.output_shape,
             num_players=config.game.num_players,
             neck_config=config.to_play_head.neck,
-            strategy=tp_strategy,
+            representation=tp_rep,
         )
 
         # Dynamics output must match Representation output shape
@@ -233,7 +233,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         shared_features = self.shared_backbone(afterstate_latent)
 
         # 3. Predict Chance Probabilities (Logits)
-        chance_logits, _ = self.sigma_head(shared_features)
+        chance_logits, _, _ = self.sigma_head(shared_features)
 
         return WorldModelOutput(
             afterstate_features=afterstate_latent,  # Raw dynamics output

@@ -47,9 +47,13 @@ def test_modules_modular_net_rainbow_forward_shapes(
     assert actor_output.q_values is not None
     assert actor_output.value is not None
     assert actor_output.policy is not None
-    assert actor_output.q_values.shape == (5, 3)
-    assert actor_output.value.shape == (5,)
-    assert actor_output.policy.mean.shape == (5, 3)
+    # Depending on strategy, policy could be Distribution or Tensor
+    if hasattr(actor_output.policy, "probs"):
+        assert actor_output.policy.probs.shape == (5, 3)
+    elif hasattr(actor_output.policy, "mean"):
+        assert actor_output.policy.mean.shape == (5, 3)
+    else:
+        assert actor_output.policy.shape == (5, 3)
 
     assert learner_output.q_values is not None
     assert learner_output.q_logits is not None

@@ -13,7 +13,7 @@ from modules.backbones.factory import BackboneFactory
 from modules.heads.policy import PolicyHead
 from modules.heads.value import ValueHead
 from modules.heads.q import QHead, DuelingQHead
-from modules.heads.strategy_factory import OutputStrategyFactory
+from agents.learner.losses.representations import get_representation
 from modules.projectors.sim_siam import Projector
 from agents.learner.losses.shape_validator import ShapeValidator
 
@@ -86,21 +86,21 @@ class ModularAgentNetwork(BaseAgentNetwork):
         prediction_feat_shape = self.components["prediction_backbone"].output_shape
 
         # Value
-        val_strategy = OutputStrategyFactory.create(config.value_head.output_strategy)
+        val_rep = get_representation(config.value_head.output_strategy)
         self.components["value_head"] = ValueHead(
             arch_config=config.arch,
             input_shape=prediction_feat_shape,
-            strategy=val_strategy,
+            representation=val_rep,
             neck_config=config.value_head.neck,
         )
 
         # Policy
-        pol_strategy = OutputStrategyFactory.create(config.policy_head.output_strategy)
+        pol_rep = get_representation(config.policy_head.output_strategy)
         self.components["policy_head"] = PolicyHead(
             arch_config=config.arch,
             input_shape=prediction_feat_shape,
             neck_config=config.policy_head.neck,
-            strategy=pol_strategy,
+            representation=pol_rep,
         )
 
         # Stochastic Chance Heads (if applicable)
@@ -111,7 +111,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
             self.components["afterstate_value_head"] = ValueHead(
                 arch_config=config.arch,
                 input_shape=shared_backbone_output_shape,
-                strategy=val_strategy,
+                representation=val_rep,
                 neck_config=config.value_head.neck,
             )
 
@@ -127,23 +127,23 @@ class ModularAgentNetwork(BaseAgentNetwork):
         **kwargs,
     ):
         # Policy Head (Actor)
-        strategy = None
+        pol_rep = None
         if hasattr(config.policy_head, "output_strategy"):
-            strategy = OutputStrategyFactory.create(config.policy_head.output_strategy)
+            pol_rep = get_representation(config.policy_head.output_strategy)
 
         self.components["policy_head"] = PolicyHead(
             arch_config=config.arch,
             input_shape=input_shape,
             neck_config=config.policy_head.neck,
-            strategy=strategy,
+            representation=pol_rep,
         )
 
         # Value Head (Critic)
-        val_strat = OutputStrategyFactory.create(config.value_head.output_strategy)
+        val_rep = get_representation(config.value_head.output_strategy)
         self.components["value_head"] = ValueHead(
             arch_config=config.arch,
             input_shape=input_shape,
-            strategy=val_strat,
+            representation=val_rep,
             neck_config=config.value_head.neck,
         )
 
@@ -160,13 +160,13 @@ class ModularAgentNetwork(BaseAgentNetwork):
         )
         current_shape = self.components["feature_block"].output_shape
 
-        strategy = OutputStrategyFactory.create(config.head.output_strategy)
+        representation = get_representation(config.head.output_strategy)
 
         if config.dueling:
             self.components["q_head"] = DuelingQHead(
                 arch_config=config.arch,
                 input_shape=current_shape,
-                strategy=strategy,
+                representation=representation,
                 value_hidden_widths=config.head.value_hidden_widths,
                 advantage_hidden_widths=config.head.advantage_hidden_widths,
                 num_actions=num_actions,
@@ -176,7 +176,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
             self.components["q_head"] = QHead(
                 arch_config=config.arch,
                 input_shape=current_shape,
-                strategy=strategy,
+                representation=representation,
                 hidden_widths=config.head.hidden_widths,
                 num_actions=num_actions,
                 neck_config=config.head.neck,
@@ -212,8 +212,8 @@ class ModularAgentNetwork(BaseAgentNetwork):
             arch_config=config.arch,
             input_shape=current_shape,
             neck_config=neck_config,
-            strategy=OutputStrategyFactory.create(
-                {"type": "categorical", "num_classes": num_actions}
+            representation=get_representation(
+                {"type": "classification", "num_classes": num_actions}
             ),
         )
 
@@ -255,12 +255,8 @@ class ModularAgentNetwork(BaseAgentNetwork):
             hidden_state = wm_output.features
 
             pred_features = self.components["prediction_backbone"](hidden_state)
-            raw_value, _ = self.components["value_head"](pred_features)
+            raw_value, _, expected_value = self.components["value_head"](pred_features)
             raw_policy, _, policy_dist = self.components["policy_head"](pred_features)
-
-            expected_value = self.components["value_head"].strategy.to_expected_value(
-                raw_value
-            )
             network_state = MuZeroNetworkState(
                 dynamics=hidden_state,
                 wm_memory=wm_output.head_state,
@@ -280,10 +276,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
         # ----------------------------------------
         elif "policy_head" in self.components and "value_head" in self.components:
             policy_logits, _, policy_dist = self.components["policy_head"](obs)
-            value_logits, _ = self.components["value_head"](obs)
-            expected_value = self.components["value_head"].strategy.to_expected_value(
-                value_logits
-            )
+            value_logits, _, expected_value = self.components["value_head"](obs)
 
             return InferenceOutput(policy=policy_dist, value=expected_value)
 
@@ -292,15 +285,15 @@ class ModularAgentNetwork(BaseAgentNetwork):
         # ----------------------------------------
         elif "q_head" in self.components:
             x = self.components["feature_block"](obs)
-            Q = self.components["q_head"](x)
+            Q_logits, _, q_vals = self.components["q_head"](x)
 
-            q_vals = self.components["q_head"].strategy.to_expected_value(Q)
             state_value = q_vals.max(dim=-1)[0]
+            policy_dist = self.components["q_head"].representation.to_inference(
+                Q_logits
+            )
 
             return InferenceOutput(
-                value=state_value,
-                q_values=q_vals,
-                policy=self.components["q_head"].strategy.get_distribution(Q),
+                value=state_value, q_values=q_vals, policy=policy_dist
             )
 
         # ----------------------------------------
@@ -368,7 +361,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
             )
 
             pred_features = self.components["prediction_backbone"](flat_latents)
-            raw_values, _ = self.components["value_head"](pred_features)
+            raw_values, _, _ = self.components["value_head"](pred_features)
             raw_policies, _, _ = self.components["policy_head"](pred_features)
 
             raw_values = raw_values.view(B, T_plus_1, -1)
@@ -400,7 +393,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
                     B_as * T_as, *stacked_backbone_features.shape[2:]
                 )
 
-                raw_chance_values, _ = self.components["afterstate_value_head"](
+                raw_chance_values, _, _ = self.components["afterstate_value_head"](
                     flat_backbone
                 )
                 # Stochastic Values: [B, K, atoms] -> [B, K+1, atoms]
@@ -564,12 +557,8 @@ class ModularAgentNetwork(BaseAgentNetwork):
         next_hidden = wm_output.features
         pred_features = self.components["prediction_backbone"](next_hidden)
 
-        raw_value, _ = self.components["value_head"](pred_features)
+        _, _, expected_value = self.components["value_head"](pred_features)
         _, _, policy_dist = self.components["policy_head"](pred_features)
-
-        expected_value = self.components["value_head"].strategy.to_expected_value(
-            raw_value
-        )
         next_network_state = MuZeroNetworkState(
             dynamics=next_hidden,
             wm_memory=wm_output.head_state,
@@ -598,7 +587,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
         shared_features = wm_output.features
         chance_logits = wm_output.chance
 
-        raw_value, _ = self.components["afterstate_value_head"](shared_features)
+        _, _, expected_afterstate_value = self.components["afterstate_value_head"](shared_features)
         network_state_after = MuZeroNetworkState(
             dynamics=wm_output.afterstate_features,
             wm_memory=network_state.wm_memory,
@@ -606,12 +595,10 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
         chance_policy = self.components[
             "world_model"
-        ].sigma_head.strategy.get_distribution(chance_logits)
+        ].sigma_head.representation.to_inference(chance_logits)
         return InferenceOutput(
             network_state=network_state_after,
-            value=self.components["afterstate_value_head"].strategy.to_expected_value(
-                raw_value
-            ),
+            value=expected_afterstate_value,
             policy=chance_policy,
             chance=chance_policy,
             reward=None,

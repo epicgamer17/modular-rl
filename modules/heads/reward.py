@@ -3,7 +3,7 @@ from torch import Tensor
 from torch import nn
 import torch
 from .base import BaseHead
-from modules.heads.strategies import OutputStrategy
+from agents.learner.losses.representations import BaseRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.heads.reward import ValuePrefixRewardHeadConfig
@@ -20,21 +20,22 @@ class RewardHead(BaseHead):
         self,
         arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
-        strategy: Optional[OutputStrategy] = None,
+        representation: BaseRepresentation,
         neck_config: Optional[BackboneConfig] = None,
     ):
-        super().__init__(arch_config, input_shape, strategy, neck_config)
+        super().__init__(arch_config, input_shape, representation, neck_config)
 
     def forward(
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
+        """Returns: (logits, state, instant_reward)"""
         state = state if state is not None else {}
         logits, _ = super().forward(x, state)
 
-        # Default instant reward is strategy conversion of logits
-        instant_reward = self.strategy.to_expected_value(logits)
+        # Default instant reward is representation conversion of logits
+        instant_reward = self.representation.to_expected_value(logits)
         return logits, state, instant_reward
 
 
@@ -48,15 +49,15 @@ class ValuePrefixRewardHead(RewardHead):
         self,
         arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
-        strategy: OutputStrategy,
+        representation: BaseRepresentation,
         config: ValuePrefixRewardHeadConfig,
         neck_config: Optional[BackboneConfig] = None,
     ):
-        # Pass strategy=None to avoid creating the default output layer in BaseHead
+        # Pass representation=None to avoid creating the default output layer in BaseHead
         super().__init__(
-            arch_config, input_shape, strategy=None, neck_config=neck_config
+            arch_config, input_shape, representation=None, neck_config=neck_config
         )
-        self.strategy = strategy
+        self.representation = representation
         self.lstm_hidden_size = config.lstm_hidden_size
         self.lstm_horizon_len = config.lstm_horizon_len
 
@@ -67,10 +68,10 @@ class ValuePrefixRewardHead(RewardHead):
             batch_first=True,
         )
 
-        # Output layer needs to map from LSTM hidden size to strategy bins
+        # Output layer needs to map from LSTM hidden size to representation features
         self.output_layer = build_dense(
             in_features=self.lstm_hidden_size,
-            out_features=self.strategy.num_bins,
+            out_features=self.representation.num_features,
             sigma=self.arch_config.noisy_sigma,
         )
 
@@ -133,7 +134,7 @@ class ValuePrefixRewardHead(RewardHead):
 
         # Final projection: Predicted Cumulative Reward (Value Prefix)
         logits = self.output_layer(output)
-        expected_cumulative = self.strategy.to_expected_value(logits)
+        expected_cumulative = self.representation.to_expected_value(logits)
         # Ensure (B, 1) shape for consistent accumulation with parent_cumulative
         if expected_cumulative.dim() == 1:
             expected_cumulative = expected_cumulative.unsqueeze(-1)

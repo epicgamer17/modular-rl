@@ -1,7 +1,7 @@
 from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
 from .base import BaseHead
-from modules.heads.strategies import Categorical
+from agents.learner.losses.representations import ClassificationRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
 
@@ -19,8 +19,8 @@ class ChanceProbabilityHead(BaseHead):
         num_chance_codes: int,
         neck_config: Optional[BackboneConfig] = None,
     ):
-        strategy = Categorical(num_classes=num_chance_codes)
-        super().__init__(arch_config, input_shape, strategy, neck_config)
+        representation = ClassificationRepresentation(num_classes=num_chance_codes)
+        super().__init__(arch_config, input_shape, representation, neck_config)
 
     def forward(
         self,
@@ -28,4 +28,5 @@ class ChanceProbabilityHead(BaseHead):
         state: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Tensor, Dict[str, Any]]:
         logits, new_state = super().forward(x, state)
-        return logits, new_state
+        inference = self.representation.to_inference(logits)
+        return logits, new_state, inference

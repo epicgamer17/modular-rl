@@ -1,7 +1,7 @@
 from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
 from .base import BaseHead
-from modules.heads.strategies import OutputStrategy, Categorical, ScalarStrategy
+from agents.learner.losses.representations import BaseRepresentation, ScalarRepresentation, ClassificationRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
 
@@ -16,31 +16,30 @@ class ContinuationHead(BaseHead):
         self,
         arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
-        strategy: Optional[OutputStrategy] = None,
+        representation: Optional[BaseRepresentation] = None,
         neck_config: Optional[BackboneConfig] = None,
     ):
-        # Default to ScalarStrategy(1) if none provided, but often used as Categorical(2)
-        if strategy is None:
-            strategy = ScalarStrategy(1)
+        # Default to ScalarRepresentation(1) if none provided, but often used as ClassificationRepresentation(2)
+        if representation is None:
+            representation = ScalarRepresentation()
 
-        super().__init__(arch_config, input_shape, strategy, neck_config)
+        super().__init__(arch_config, input_shape, representation, neck_config)
 
     def forward(
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
+        """Returns: (logits, state, continuation_probability)"""
         state = state if state is not None else {}
         logits, _ = super().forward(x, state)
 
-        # continuation is essentially the expected value (probability if categorical)
-        continuation = self.strategy.to_expected_value(logits)
+        # continuation is essentially the expected value (probability if classification)
+        continuation = self.representation.to_expected_value(logits)
 
-        # If it's categorical(2), to_expected_value might return argmax.
-        # For continuation, we might want the probability of class 1 if it's categorical.
-        if isinstance(self.strategy, Categorical) and self.strategy.num_bins == 2:
+        # If it's classification(2), we want the probability of class 1
+        if isinstance(self.representation, ClassificationRepresentation) and self.representation.num_features == 2:
             import torch.nn.functional as F
-
             probs = F.softmax(logits, dim=-1)
             continuation = probs[..., 1]  # Probability of "continue"
 

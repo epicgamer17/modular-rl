@@ -4,7 +4,7 @@ from torch import nn, Tensor
 from modules.backbones.factory import BackboneFactory
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.architecture_config import ArchitectureConfig
-from modules.heads.strategies import OutputStrategy
+from agents.learner.losses.representations import BaseRepresentation
 from modules.blocks.dense import build_dense
 
 
@@ -18,13 +18,13 @@ class BaseHead(nn.Module):
         self,
         arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
-        strategy: Optional[OutputStrategy] = None,
+        representation: BaseRepresentation,
         neck_config: Optional[BackboneConfig] = None,
     ):
         super().__init__()
         self.arch_config = arch_config
         self.input_shape = input_shape
-        self.strategy = strategy
+        self.representation = representation
 
         # 1. Neck (optional modular backbone associated with the head)
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -33,11 +33,10 @@ class BaseHead(nn.Module):
 
         # 2. Final Output Layer
         self.output_layer = None
-        if self.strategy is not None:
-            assert self.strategy.num_bins is not None
+        if self.representation is not None:
             self.output_layer = build_dense(
                 in_features=self.flat_dim,
-                out_features=self.strategy.num_bins,
+                out_features=self.representation.num_features,
                 sigma=self.arch_config.noisy_sigma,
             )
 

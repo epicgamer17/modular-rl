@@ -65,7 +65,7 @@ class HeadFactory:
                 input_shape=input_shape,
                 num_players=num_players,
                 neck_config=config.neck,
-                strategy=kwargs.get("strategy"),
+                representation=kwargs.get("representation"),
             )
 
         # PolicyHead
@@ -74,7 +74,7 @@ class HeadFactory:
                 arch_config=arch_config,
                 input_shape=input_shape,
                 neck_config=config.neck,
-                strategy=kwargs.get("strategy"),
+                representation=kwargs.get("representation"),
             )
 
         # ChanceProbabilityHead needs num_chance_codes
@@ -96,9 +96,9 @@ class HeadFactory:
             return ValuePrefixRewardHead(
                 arch_config=arch_config,
                 input_shape=input_shape,
-                strategy=kwargs.get(
-                    "strategy"
-                ),  # Strategy is usually created outside and passed in
+                representation=kwargs.get(
+                    "representation"
+                ),  # Representation is usually created outside and passed in
                 config=config,
                 neck_config=config.neck,
             )
@@ -108,7 +108,7 @@ class HeadFactory:
             return LatentConsistencyHead(
                 arch_config=arch_config,
                 input_shape=input_shape,
-                strategy=kwargs.get("strategy"),
+                representation=kwargs.get("representation"),
                 neck_config=config.neck,
                 projection_dim=config.projection_dim,
             )
@@ -116,6 +116,6 @@ class HeadFactory:
         return head_cls(
             arch_config=arch_config,
             input_shape=input_shape,
-            strategy=kwargs.get("strategy"),
+            representation=kwargs.get("representation"),
             neck_config=config.neck,
         )

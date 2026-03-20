@@ -1,11 +1,11 @@
-from typing import Tuple, Optional, Callable
+from typing import Tuple, Optional, Callable, Dict, Any
 import torch
 from torch import nn, Tensor
 
 from .base import BaseHead
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
-from modules.heads.strategies import OutputStrategy
+from agents.learner.losses.representations import BaseRepresentation
 from modules.blocks.dense import DenseStack, build_dense
 
 
@@ -19,20 +19,12 @@ class QHead(BaseHead):
         self,
         arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
-        strategy: OutputStrategy,
+        representation: BaseRepresentation,
         hidden_widths: list[int],
         num_actions: int,
         neck_config: Optional[BackboneConfig] = None,
     ):
-        # Initialize BaseHead (handles neck)
-        # Note: BaseHead creates output_layer based on flat_dim.
-        # We need to intercept this because we insert hidden layers between neck and output.
-        # But BaseHead architecture is: Neck -> Output.
-        # We can implement hidden layers as a "Neck" via DenseBackbone?
-        # No, BaseHead is designed for [Pre-Head Backbone] -> [Head Output].
-        # If we want hidden layers strictly *inside* the head (post-neck), we should manage them here.
-
-        super().__init__(arch_config, input_shape, strategy, neck_config)
+        super().__init__(arch_config, input_shape, representation, neck_config)
 
         self.num_actions = num_actions
         self.input_dim = self.flat_dim  # From super()
@@ -50,7 +42,7 @@ class QHead(BaseHead):
         # Output size: num_actions * atoms
         self.output_layer = build_dense(
             in_features=self.hidden_layers.output_width,
-            out_features=self.strategy.num_bins * self.num_actions,
+            out_features=self.representation.num_features * self.num_actions,
             sigma=self.arch_config.noisy_sigma,
         )
 
@@ -64,7 +56,9 @@ class QHead(BaseHead):
         super().reset_noise()
         self.hidden_layers.reset_noise()
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(
+        self, x: Tensor, state: Optional[Dict[str, Any]] = None
+    ) -> Tuple[Tensor, Dict[str, Any], Any]:
         # 1. Neck + Flatten
         x = self.process_input(x)
 
@@ -74,14 +68,14 @@ class QHead(BaseHead):
         # 3. Output Layer
         logits = self.output_layer(x)
 
-        # 4. Reshape for actions (B, actions, atoms) if needed by strategy?
-        # Strategies like C51 expect (B, actions, atoms)
-        # Strategies like ScalarStrategy expect (B, actions)
+        if self.representation.num_features > 1:
+            logits = logits.view(-1, self.num_actions, self.representation.num_features)
 
-        if self.strategy.num_bins > 1:
-            logits = logits.view(-1, self.num_actions, self.strategy.num_bins)
+        # 4. Standard Return: (logits, state, inference)
+        new_state = state if state is not None else {}
+        inference = self.representation.to_inference(logits)
 
-        return logits
+        return logits, new_state, inference
 
 
 class DuelingQHead(BaseHead):
@@ -97,13 +91,13 @@ class DuelingQHead(BaseHead):
         self,
         arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
-        strategy: OutputStrategy,
+        representation: BaseRepresentation,
         value_hidden_widths: list[int],
         advantage_hidden_widths: list[int],
         num_actions: int,
         neck_config: Optional[BackboneConfig] = None,
     ):
-        super().__init__(arch_config, input_shape, strategy, neck_config)
+        super().__init__(arch_config, input_shape, representation, neck_config)
 
         self.num_actions = num_actions
         self.input_dim = self.flat_dim
@@ -118,7 +112,7 @@ class DuelingQHead(BaseHead):
         )
         self.value_output = build_dense(
             in_features=self.value_hidden.output_width,
-            out_features=self.strategy.num_bins,  # 1 value * atoms
+            out_features=self.representation.num_features,  # 1 value * atoms
             sigma=self.arch_config.noisy_sigma,
         )
 
@@ -132,7 +126,8 @@ class DuelingQHead(BaseHead):
         )
         self.advantage_output = build_dense(
             in_features=self.advantage_hidden.output_width,
-            out_features=self.strategy.num_bins * self.num_actions,  # N actions * atoms
+            out_features=self.representation.num_features
+            * self.num_actions,  # N actions * atoms
             sigma=self.arch_config.noisy_sigma,
         )
 
@@ -177,23 +172,31 @@ class DuelingQHead(BaseHead):
         if hasattr(self.advantage_output, "reset_noise"):
             self.advantage_output.reset_noise()
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(
+        self, x: Tensor, state: Optional[Dict[str, Any]] = None
+    ) -> Tuple[Tensor, Dict[str, Any], Any]:
         # Neck
         x = self.process_input(x)
 
         # Value Stream
         v = self.value_hidden(x)
         v = self.value_output(v)  # (B, atoms)
-        v = v.view(-1, 1, self.strategy.num_bins)  # (B, 1, atoms)
+        v = v.view(-1, 1, self.representation.num_features)  # (B, 1, atoms)
 
         # Advantage Stream
         a = self.advantage_hidden(x)
         a = self.advantage_output(a)  # (B, actions * atoms)
-        a = a.view(-1, self.num_actions, self.strategy.num_bins)  # (B, actions, atoms)
+        a = a.view(
+            -1, self.num_actions, self.representation.num_features
+        )  # (B, actions, atoms)
 
         # Aggregation: Q = V + (A - mean(A))
         a_mean = a.mean(dim=1, keepdim=True)
         q = v + a - a_mean
-        if self.strategy.num_bins == 1:
+        if self.representation.num_features == 1:
             q = q.squeeze(-1)
-        return q
+
+        new_state = state if state is not None else {}
+        inference = self.representation.to_inference(q)
+
+        return q, new_state, inference

@@ -1,7 +1,7 @@
 from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
 from .base import BaseHead
-from modules.heads.strategies import OutputStrategy
+from agents.learner.losses.representations import BaseRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
 
@@ -16,15 +16,17 @@ class ValueHead(BaseHead):
         self,
         arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
-        strategy: OutputStrategy,
+        representation: BaseRepresentation,
         neck_config: Optional[BackboneConfig] = None,
     ):
-        super().__init__(arch_config, input_shape, strategy, neck_config)
+        super().__init__(arch_config, input_shape, representation, neck_config)
 
     def forward(
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Tensor, Dict[str, Any]]:
+    ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
+        """Returns: (logits, state, expected_value)"""
         logits, new_state = super().forward(x, state)
-        return logits, new_state
+        expected_value = self.representation.to_expected_value(logits)
+        return logits, new_state, expected_value

@@ -3,27 +3,32 @@ import torch
 from torch import nn
 from modules.heads.q import QHead, DuelingQHead
 from configs.modules.architecture_config import ArchitectureConfig
-from modules.heads.strategies import Categorical, ScalarStrategy
+from agents.learner.losses.representations import (
+    CategoricalRepresentation,
+    ScalarRepresentation,
+)
 
 pytestmark = pytest.mark.unit
 
 
 def test_qhead_forward_and_reshape():
-    """Verifies that Categorical strategies reshape the output to (B, actions, atoms)."""
+    """Verifies that Categorical representations reshape the output back to (B, actions, atoms)."""
     torch.manual_seed(42)
     arch_config = ArchitectureConfig({"noisy_sigma": 0.0})
-    strategy = Categorical(num_classes=5)  # 5 atoms
+    representation = CategoricalRepresentation(
+        vmin=-10, vmax=10, bins=5
+    )  # bins = 5 atoms
 
     head = QHead(
         arch_config=arch_config,
         input_shape=(16,),
-        strategy=strategy,
+        representation=representation,
         hidden_widths=[32],
         num_actions=4,
     )
 
     x = torch.randn(2, 16)
-    logits = head(x)
+    logits, _, _ = head(x)
 
     # Batch size 2, 4 actions, 5 atoms
     assert logits.shape == (2, 4, 5)
@@ -33,12 +38,12 @@ def test_qhead_initialize_and_reset_noise():
     """Verifies custom initializers and noise resets pass through the hidden layers."""
     torch.manual_seed(42)
     arch_config = ArchitectureConfig({"noisy_sigma": 0.5})  # Enable noise
-    strategy = ScalarStrategy()
+    representation = ScalarRepresentation()
 
     head = QHead(
         arch_config=arch_config,
         input_shape=(16,),
-        strategy=strategy,
+        representation=representation,
         hidden_widths=[16],
         num_actions=2,
     )
@@ -56,34 +61,34 @@ def test_dueling_qhead_forward_aggregation():
     """Verifies the Dueling Q aggregation logic Q = V + A - mean(A)."""
     torch.manual_seed(42)
     arch_config = ArchitectureConfig({"noisy_sigma": 0.0})
-    strategy = ScalarStrategy()  # atoms = 1
+    representation = ScalarRepresentation()
 
     head = DuelingQHead(
         arch_config=arch_config,
         input_shape=(16,),
-        strategy=strategy,
+        representation=representation,
         value_hidden_widths=[8],
         advantage_hidden_widths=[8],
         num_actions=3,
     )
 
     x = torch.randn(2, 16)
-    q_vals = head(x)
+    logits, _, q_vals = head(x)
 
-    # Output should be (B, Actions, Atoms) => (2, 3, 1)
-    assert q_vals.shape == (2, 3, 1)
+    # Output should be (B, Actions) => (2, 3)
+    assert logits.shape == (2, 3)
 
 
 def test_dueling_qhead_initialize_and_reset_noise():
     """Verifies custom initializers hit both the Value and Advantage streams."""
     torch.manual_seed(42)
     arch_config = ArchitectureConfig({"noisy_sigma": 0.5})
-    strategy = ScalarStrategy()
+    representation = ScalarRepresentation()
 
     head = DuelingQHead(
         arch_config=arch_config,
         input_shape=(16,),
-        strategy=strategy,
+        representation=representation,
         value_hidden_widths=[8],
         advantage_hidden_widths=[8],
         num_actions=2,

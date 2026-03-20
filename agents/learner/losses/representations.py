@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Dict
+from typing import Optional, Dict, Any, Union
 import torch
 from torch import Tensor
 import torch.nn.functional as F
@@ -13,21 +13,32 @@ class BaseRepresentation(ABC):
 
     @property
     @abstractmethod
-    def num_classes(self) -> int:
-        """The final output dimension for the network head."""
+    def num_features(self) -> int:
+        """The required output dimension for the network head (e.g., bins or classes)."""
         pass
 
     @abstractmethod
-    def to_scalar(self, logits: Tensor) -> Tensor:
-        """Converts network output logits into expected scalar values."""
+    def to_inference(self, logits: Tensor) -> Any:
+        """
+        Converts raw logits into a format suitable for the Actor or MCTS.
+        Returns:
+            A torch.distributions.Distribution object OR a Tensor (expected value).
+        """
+        pass
+
+    @abstractmethod
+    def to_expected_value(self, logits: Tensor) -> Tensor:
+        """Converts network output logits strictly into expected scalar values."""
         pass
 
     @abstractmethod
     def to_representation(self, scalar_targets: Tensor) -> Tensor:
-        """Converts mathematically pure targets into the target distribution expected by the loss metric."""
+        """Converts mathematically pure targets into the target distribution expected by the loss engine."""
         pass
 
-    def format_target(self, targets: Dict[str, Tensor], target_key: str = "values") -> Tensor:
+    def format_target(
+        self, targets: Dict[str, Tensor], target_key: str = "values"
+    ) -> Tensor:
         """
         Converts raw target ingredients from the TargetBuilder into the final target representation.
         Default implementation handles simple scalar values.
@@ -42,10 +53,14 @@ class ScalarRepresentation(BaseRepresentation):
     """
 
     @property
-    def num_classes(self) -> int:
+    def num_features(self) -> int:
         return 1
 
-    def to_scalar(self, logits: Tensor) -> Tensor:
+    def to_inference(self, logits: Tensor) -> Tensor:
+        """For regression, the prediction is the scalar value."""
+        return self.to_expected_value(logits)
+
+    def to_expected_value(self, logits: Tensor) -> Tensor:
         return logits.reshape(logits.shape[:-1])
 
     def to_representation(self, scalar_targets: Tensor) -> Tensor:
@@ -55,7 +70,7 @@ class ScalarRepresentation(BaseRepresentation):
 class DiscreteValuedRepresentation(BaseRepresentation):
     """
     Base class for value representations that map scalars to a categorical support.
-    Provides common logic for expectation (to_scalar) and two-hot projection (to_representation).
+    Provides common logic for expectation (to_expected_value) and two-hot projection (to_representation).
     """
 
     def __init__(self, vmin: float, vmax: float, bins: int):
@@ -67,10 +82,14 @@ class DiscreteValuedRepresentation(BaseRepresentation):
         self.delta_z = (vmax - vmin) / (bins - 1)
 
     @property
-    def num_classes(self) -> int:
+    def num_features(self) -> int:
         return self.bins
 
-    def to_scalar(self, logits: Tensor) -> Tensor:
+    def to_inference(self, logits: Tensor) -> torch.distributions.Categorical:
+        """Returns the categorical distribution over support bins."""
+        return torch.distributions.Categorical(logits=logits)
+
+    def to_expected_value(self, logits: Tensor) -> Tensor:
         """Expected value over the support: [B, T, bins] -> [B, T]"""
         assert (
             logits.shape[-1] == self.bins
@@ -115,7 +134,9 @@ class DiscreteValuedRepresentation(BaseRepresentation):
         # 3. Unflatten back to [B, T, bins]
         return projected.view(*orig_shape, self.bins)
 
-    def format_target(self, targets: Dict[str, Tensor], target_key: str = "values") -> Tensor:
+    def format_target(
+        self, targets: Dict[str, Tensor], target_key: str = "values"
+    ) -> Tensor:
         """Handle ingredient-based targets or fallback to scalar."""
         if target_key in targets:
             return self.to_representation(targets[target_key])
@@ -216,11 +237,14 @@ class ExponentialBucketsRepresentation(BaseRepresentation):
         return torch.sign(y) * (torch.exp(torch.abs(y)) - 1.0)
 
     @property
-    def num_classes(self) -> int:
+    def num_features(self) -> int:
         return self.bins
 
-    def to_scalar(self, logits: Tensor) -> Tensor:
-        log_scalar = self._inner.to_scalar(logits)
+    def to_inference(self, logits: Tensor) -> torch.distributions.Categorical:
+        return self._inner.to_inference(logits)
+
+    def to_expected_value(self, logits: Tensor) -> Tensor:
+        log_scalar = self._inner.to_expected_value(logits)
         return self._exp_inverse(log_scalar)
 
     def to_representation(self, scalar_targets: Tensor) -> Tensor:
@@ -233,10 +257,13 @@ class ClassificationRepresentation(BaseRepresentation):
         self._num_classes = num_classes
 
     @property
-    def num_classes(self) -> int:
+    def num_features(self) -> int:
         return self._num_classes
 
-    def to_scalar(self, logits: Tensor) -> Tensor:
+    def to_inference(self, logits: Tensor) -> torch.distributions.Categorical:
+        return torch.distributions.Categorical(logits=logits)
+
+    def to_expected_value(self, logits: Tensor) -> Tensor:
         assert (
             logits.shape[-1] == self._num_classes
         ), f"Expected last dimension to be {self._num_classes}, got {logits.shape[-1]}"
@@ -263,51 +290,131 @@ class ClassificationRepresentation(BaseRepresentation):
 
 class IdentityRepresentation(BaseRepresentation):
     """
-    Identity representation that returns targets exactly as stored.
-    Useful for PPO (log_probs, advantages) or single-variable scalar regression.
+    Identity representation for vectors or scalars where no conversion is needed.
     """
-    @property
-    def num_classes(self) -> int:
-        return 1
 
-    def to_scalar(self, logits: Tensor) -> Tensor:
+    def __init__(self, num_features: int = 1):
+        self._num_features = num_features
+
+    @property
+    def num_features(self) -> int:
+        return self._num_features
+
+    def to_inference(self, logits: Tensor) -> Tensor:
+        return logits
+
+    def to_expected_value(self, logits: Tensor) -> Tensor:
         return logits
 
     def to_representation(self, scalar_targets: Tensor) -> Tensor:
         return scalar_targets
 
-    def format_target(self, targets: Dict[str, Tensor], target_key: str = "values") -> Tensor:
+    def format_target(
+        self, targets: Dict[str, Tensor], target_key: str = "values"
+    ) -> Tensor:
         return targets.get(target_key, targets.get("values"))
 
 
+class GaussianRepresentation(BaseRepresentation):
+    """
+    Representation for continuous values using a Gaussian distribution.
+    Expects logits to be [..., 2 * action_dim] where first half is mean, second is log_std.
+    """
+
+    def __init__(
+        self,
+        action_dim: int,
+        min_log_std: float = -20.0,
+        max_log_std: float = 2.0,
+    ):
+        self.action_dim = action_dim
+        self.min_log_std = min_log_std
+        self.max_log_std = max_log_std
+
+    @property
+    def num_features(self) -> int:
+        return 2 * self.action_dim
+
+    def to_inference(self, logits: Tensor) -> torch.distributions.Normal:
+        """Returns a Normal distribution from [mean, log_std] logits."""
+        mean, log_std = torch.chunk(logits, 2, dim=-1)
+        log_std = torch.clamp(log_std, self.min_log_std, self.max_log_std)
+        std = torch.exp(log_std)
+        return torch.distributions.Normal(mean, std)
+
+    def to_expected_value(self, logits: Tensor) -> Tensor:
+        """Returns the mean of the Gaussian."""
+        mean, _ = torch.chunk(logits, 2, dim=-1)
+        return mean
+
+    def to_representation(self, scalar_targets: Tensor) -> Tensor:
+        """For continuous targets, the representation is often just the scalar target."""
+        return scalar_targets
+
+
 def get_representation(
-    num_classes: int = 1,
-    support_range: Optional[int] = None,
-    vmin: Optional[float] = None,
-    vmax: Optional[float] = None,
-    bins: Optional[int] = None,
-    mode: str = "linear",
-    identity: bool = False,
+    config: Optional[Union[Dict[str, Any], int, Any]] = None,
+    **kwargs,
 ) -> BaseRepresentation:
+    """
+    Factory to create a representation strategy.
+    Can take a configuration dictionary (e.g. from output_strategy),
+    a ConfigBase object, or direct arguments.
+    """
+    if config is None:
+        config = kwargs
+    elif isinstance(config, int):
+        config = {"num_classes": config, **kwargs}
+    elif isinstance(config, dict):
+        config = {**config, **kwargs}
+    elif hasattr(config, "config_dict"):
+        config = {**config.config_dict, **kwargs}
+    else:
+        # Fallback for unexpected types
+        config = kwargs
+
+    mode = config.get("type", config.get("mode", "scalar"))
+    num_classes = config.get(
+        "num_classes", config.get("num_features", config.get("num_atoms", 1))
+    )
+    bins = config.get("bins", num_classes)
+    vmin = config.get("vmin", config.get("v_min"))
+    vmax = config.get("vmax", config.get("v_max"))
+    support_range = config.get("support_range")
+    identity = config.get("identity", False)
+
     if identity:
         return IdentityRepresentation()
 
-    if vmin is not None and vmax is not None and bins is not None:
+    # Two-Hot / Categorical support logic
+    if vmin is not None and vmax is not None:
         if mode == "exponential":
-            print("Using ExponentialBucketsRepresentation")
             return ExponentialBucketsRepresentation(vmin, vmax, bins)
-        elif mode == "categorical":
-            print("Using CategoricalRepresentation")
+        elif mode == "categorical" or mode == "c51":
             return CategoricalRepresentation(vmin, vmax, bins)
-        print("Using TwoHotRepresentation")
         return TwoHotRepresentation(vmin, vmax, bins)
 
-    if support_range is not None:
+    # MuZero style support_range
+    if support_range is not None or mode == "muzero":
+        if support_range is None:
+            # Fallback/Default for muzero if not provided?
+            # Usually it's 300 or similar, but better to require it.
+            support_range = 300.0
+
+        support_range = float(support_range)
         return TwoHotRepresentation(
-            float(-support_range), float(support_range), 2 * support_range + 1
+            -support_range, support_range, int(2 * support_range + 1)
         )
 
-    if num_classes > 1:
+    # Classification logic
+    if num_classes > 1 or mode == "classification" or mode == "categorical":
         return ClassificationRepresentation(num_classes)
+
+    # Gaussian / Continuous logic
+    if mode == "gaussian" or mode == "continuous":
+        action_dim = config.get("action_dim", 1)
+        min_log_std = config.get("min_log_std", -20.0)
+        max_log_std = config.get("max_log_std", 2.0)
+        return GaussianRepresentation(action_dim, min_log_std, max_log_std)
 
     return ScalarRepresentation()

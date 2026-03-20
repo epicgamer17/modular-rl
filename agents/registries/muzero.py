@@ -30,23 +30,18 @@ from agents.learner.losses.priorities import RootLossPriorityComputer
 
 def build_muzero_loss_pipeline(config, agent_network, device):
     # Extract representations from heads
-    val_rep = agent_network.components["value_head"].strategy.representation
-    pol_rep = agent_network.components["policy_head"].strategy.representation
-    rew_rep = agent_network.components[
-        "world_model"
-    ].reward_head.strategy.representation
-    tp_rep = agent_network.components[
-        "world_model"
-    ].to_play_head.strategy.representation
+    val_rep = agent_network.components["value_head"].representation
+    pol_rep = agent_network.components["policy_head"].representation
+    rew_rep = agent_network.components["world_model"].reward_head.representation
+    tp_rep = agent_network.components["world_model"].to_play_head.representation
+
     modules = [
         ValueLoss(config, device, representation=val_rep),
         PolicyLoss(config, device, representation=pol_rep),
         RewardLoss(config, device, representation=rew_rep),
     ]
     if config.game.num_players > 1:
-        modules.append(
-            ToPlayLoss(config, device, representation=tp_rep)
-        )
+        modules.append(ToPlayLoss(config, device, representation=tp_rep))
     if config.consistency_loss_factor > 0:
         modules.append(
             ConsistencyLoss(
@@ -57,12 +52,8 @@ def build_muzero_loss_pipeline(config, agent_network, device):
             )
         )
     if config.stochastic:
-        as_val_rep = agent_network.components[
-            "afterstate_value_head"
-        ].strategy.representation
-        sigma_rep = agent_network.components[
-            "world_model"
-        ].sigma_head.strategy.representation
+        as_val_rep = agent_network.components["afterstate_value_head"].representation
+        sigma_rep = agent_network.components["world_model"].sigma_head.representation
 
         modules.extend(
             [
@@ -74,8 +65,7 @@ def build_muzero_loss_pipeline(config, agent_network, device):
             ]
         )
     return LossPipeline(
-        modules, 
-        priority_computer=RootLossPriorityComputer(loss_key="ValueLoss")
+        modules, priority_computer=RootLossPriorityComputer(loss_key="ValueLoss")
     )
 
 

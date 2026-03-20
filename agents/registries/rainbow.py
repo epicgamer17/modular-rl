@@ -18,7 +18,7 @@ def build_rainbow_loss_pipeline(config, agent_network, device):
         and hasattr(agent_network, "components")
         and "q_head" in agent_network.components
     ):
-        representation = agent_network.components["q_head"].strategy.representation
+        representation = agent_network.components["q_head"].representation
 
     td_loss_module = (
         C51Loss(

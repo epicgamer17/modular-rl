@@ -3,7 +3,7 @@ import torch
 from modules.heads.reward import ValuePrefixRewardHead
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.heads.reward import ValuePrefixRewardHeadConfig
-from modules.heads.strategies import ScalarStrategy
+from agents.learner.losses.representations import ScalarRepresentation
 
 pytestmark = pytest.mark.unit
 
@@ -19,10 +19,13 @@ def test_value_prefix_instant_reward_calculation():
     config = ValuePrefixRewardHeadConfig(
         {"lstm_hidden_size": 8, "lstm_horizon_len": 10}
     )
-    strategy = ScalarStrategy()  # Simple scalar output
+    representation = ScalarRepresentation()  # Simple scalar output
 
     head = ValuePrefixRewardHead(
-        arch_config=arch_config, input_shape=(4,), strategy=strategy, config=config
+        arch_config=arch_config,
+        input_shape=(4,),
+        representation=representation,
+        config=config,
     )
 
     # Mock some input
@@ -36,7 +39,7 @@ def test_value_prefix_instant_reward_calculation():
 
     logits, new_state, instant_reward = head(x, state)
 
-    # expected_cumulative = strategy.to_expected_value(logits)
+    # expected_cumulative = representation.to_expected_value(logits)
     # instant_reward = expected_cumulative - 0.0
     assert torch.allclose(instant_reward, new_state["cumulative_reward"].squeeze())
 
@@ -63,10 +66,13 @@ def test_value_prefix_horizon_subtraction_reset():
 
     arch_config = ArchitectureConfig({"noisy_sigma": 0.0})
     config = ValuePrefixRewardHeadConfig({"lstm_hidden_size": 8, "lstm_horizon_len": 5})
-    strategy = ScalarStrategy()
+    representation = ScalarRepresentation()
 
     head = ValuePrefixRewardHead(
-        arch_config=arch_config, input_shape=(4,), strategy=strategy, config=config
+        arch_config=arch_config,
+        input_shape=(4,),
+        representation=representation,
+        config=config,
     )
 
     x = torch.randn(1, 4)
