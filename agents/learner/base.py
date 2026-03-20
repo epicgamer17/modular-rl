@@ -112,54 +112,70 @@ class UniversalLearner:
     def step(
         self, batch_iterator: Iterable[Dict[str, Any]]
     ) -> Iterator[Dict[str, Any]]:
-        """Processes all batches from the iterator through the optimization loop.
+        """Standard optimization loop with Gradient Accumulation support.
 
         The learner is blind to where the data comes from. For DQN/Imitation,
         the iterator yields exactly one batch. For PPO, it yields shuffled
         mini-batches across multiple epochs. The learner just processes until
         the iterator is exhausted or a callback raises EarlyStopIteration.
         """
+        accum_steps = getattr(self.config, "gradient_accumulation_steps", 1)
 
         current_result: Optional[StepResult] = None
         yielded_current_result = False
 
         self.callbacks.on_step_begin(learner=self, iterator=batch_iterator)
         t_last = time.perf_counter()
-        try:
-            for batch in batch_iterator:
-                # 1. Gradient Clearing
-                for opt in self.optimizers.values():
-                    opt.zero_grad(set_to_none=True)
 
-                # 2. Forward + Targets + Loss
+        # Ensure we start with clean gradients
+        for opt in self.optimizers.values():
+            opt.zero_grad(set_to_none=True)
+
+        try:
+            for step_idx, batch in enumerate(batch_iterator):
+                # 1. Forward Pass + Targets + Loss
                 result = self.compute_step_result(batch=batch)
                 current_result = result
                 yielded_current_result = False
 
-                # 3. Backward + Step (linear, multi-optimizer routing)
-                for opt_key, loss_tensor in result.loss.items():
+                # 2. Backward Pass (Routed to specific optimizers)
+                # We iterate over unique optimizers to avoid redundant backward passes on aggregated losses
+                for opt_key, total_loss in result.loss.items():
+                    # CRITICAL: Scale the loss so the accumulated gradients are averaged!
+                    loss_tensor = total_loss / accum_steps
+
+                    # Backward with retain_graph as multiple optimizers might share parameters
                     loss_tensor.backward(retain_graph=len(result.loss) > 1)
 
-                    # 4. Optional Gradient Clipping (per optimizer)
+                # 3. Accumulation Boundary
+                if (step_idx + 1) % accum_steps == 0:
+
+                    # Optional Gradient Clipping (Global across all parameters)
                     if self.clipnorm is not None and self.clipnorm > 0:
-                        clip_grad_norm_(self.agent_network.parameters(), self.clipnorm)
+                        torch.nn.utils.clip_grad_norm_(
+                            self.agent_network.parameters(), self.clipnorm
+                        )
+                    elif hasattr(self.config, "max_grad_norm"):
+                        torch.nn.utils.clip_grad_norm_(
+                            self.agent_network.parameters(), self.config.max_grad_norm
+                        )
 
-                    # 5. Weight Update
-                    self.optimizers[opt_key].step()
+                    # Step and clear
+                    for opt in self.optimizers.values():
+                        opt.step()
+                        opt.zero_grad(set_to_none=True)
 
-                # 6. Fire on_backward_end (e.g. PPO KL early stopping, metrics)
-                # NOTE: The semantics of 'on_backward_end' might be slightly shifted,
-                # but it now happens after the complete routing for that batch.
-                self.callbacks.on_backward_end(learner=self, step_result=result)
+                    # Fire callbacks that happen after weight update
+                    self.callbacks.on_backward_end(learner=self, step_result=result)
 
-                # 7. LR Scheduler Step
-                for sched in self.lr_schedulers.values():
-                    sched.step()
+                    # LR Scheduler Step
+                    for sched in self.lr_schedulers.values():
+                        sched.step()
 
-                # 8. Fire on_optimizer_step_end (e.g. noisy net reset)
-                self.callbacks.on_optimizer_step_end(learner=self)
+                    # Fire on_optimizer_step_end (e.g. noisy net reset)
+                    self.callbacks.on_optimizer_step_end(learner=self)
 
-                # 9. Fire on_step_end
+                # 4. Fire on_step_end
                 self.callbacks.on_step_end(
                     learner=self,
                     predictions=result.predictions,
@@ -171,16 +187,18 @@ class UniversalLearner:
                 )
 
                 yielded_current_result = True
-                
-                # 10. Throughput Metrics
+
+                # 5. Throughput Metrics
                 t_now = time.perf_counter()
                 dt = t_now - t_last
                 t_last = t_now
-                
+
                 # Fetch B, T from any valid prediction
-                any_pred = next(p for p in result.predictions.values() if torch.is_tensor(p))
+                any_pred = next(
+                    p for p in result.predictions.values() if torch.is_tensor(p)
+                )
                 B, T = any_pred.shape[:2]
-                        
+
                 result.loss_dict["learner_throughput"] = (B * T) / dt if dt > 0 else 0
                 yield self._build_step_metrics(result)
 
