@@ -3,7 +3,6 @@ import pytest
 pytestmark = pytest.mark.unit
 
 import torch
-from modules.world_models.inference_output import LearningOutput
 from replay_buffers.processors import NStepUnrollProcessor
 
 

@@ -5,7 +5,6 @@ from torch import nn, Tensor
 from modules.agent_nets.base import BaseAgentNetwork
 from modules.world_models.inference_output import (
     InferenceOutput,
-    LearningOutput,
     MuZeroNetworkState,
 )
 from modules.world_models.muzero_world_model import MuzeroWorldModel
@@ -313,7 +312,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 "Network components don't match any known inference pipeline."
             )
 
-    def learner_inference(self, batch: Dict[str, Any]) -> LearningOutput:
+    def learner_inference(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         """
         Universal Learner API: routes batch data appropriately based on components.
         """
@@ -437,30 +436,35 @@ class ModularAgentNetwork(BaseAgentNetwork):
                     [dummy_chance_embeddings, chance_encoder_embeddings], dim=1
                 )
 
-            output = LearningOutput(
-                values=raw_values,
-                policies=raw_policies,
-                rewards=padded_rewards,
-                to_plays=physics_output.to_plays,
-                latents=stacked_latents,
-                latents_afterstates=latents_afterstates,
-                chance_logits=stochastic_chance_logits,
-                chance_values=stochastic_chance_values,
-                chance_encoder_embeddings=chance_encoder_embeddings,
-            )
+            output = {
+                "values": raw_values,
+                "policies": raw_policies,
+                "rewards": padded_rewards,
+                "to_plays": physics_output.to_plays,
+                "latents": stacked_latents,
+            }
+
+            if (
+                getattr(self.config, "stochastic", False)
+                and latents_afterstates is not None
+            ):
+                output["latents_afterstates"] = latents_afterstates
+                output["chance_logits"] = stochastic_chance_logits
+                output["chance_values"] = stochastic_chance_values
+                output["chance_encoder_embeddings"] = chance_encoder_embeddings
 
             # --- SHAPE VALIDATION ---
             # MuZero unrolls k steps, so T = k + 1
             expected_T = getattr(self.config, "unroll_steps", 0) + 1
             assert (
-                output.values.ndim >= 2 and output.values.shape[1] == expected_T
-            ), f"MuZero values shape mismatch: {output.values.shape}"
+                output["values"].ndim >= 2 and output["values"].shape[1] == expected_T
+            ), f"MuZero values shape mismatch: {output['values'].shape}"
             assert (
-                output.policies.ndim >= 3 and output.policies.shape[1] == expected_T
-            ), f"MuZero policies shape mismatch: {output.policies.shape}"
+                output["policies"].ndim >= 3 and output["policies"].shape[1] == expected_T
+            ), f"MuZero policies shape mismatch: {output['policies'].shape}"
 
             # --- STRICT SYSTEM-WIDE VALIDATION ---
-            ShapeValidator(self.config).validate_predictions(output._asdict())
+            ShapeValidator(self.config).validate_predictions(output)
 
             return output
 
@@ -471,24 +475,24 @@ class ModularAgentNetwork(BaseAgentNetwork):
             policy_logits, _, _ = self.components["policy_head"](initial_observation)
             value_logits, _, _ = self.components["value_head"](initial_observation)
 
-            output = LearningOutput(
-                values=value_logits.unsqueeze(1),
-                policies=policy_logits.unsqueeze(1),
-            )
+            output = {
+                "values": value_logits.unsqueeze(1),
+                "policies": policy_logits.unsqueeze(1),
+            }
 
             # --- SHAPE VALIDATION ---
             # PPO is single-step by default in learner_inference
             assert (
-                output.values.ndim == 3
-                and output.values.shape[1] == 1
-                and output.values.shape[2] == 1
+                output["values"].ndim == 3
+                and output["values"].shape[1] == 1
+                and output["values"].shape[2] == 1
             )
             assert (
-                output.policies.ndim == 3 and output.policies.shape[1] == 1
-            ), f"PPO policies shape mismatch: {output.policies.shape}"
+                output["policies"].ndim == 3 and output["policies"].shape[1] == 1
+            ), f"PPO policies shape mismatch: {output['policies'].shape}"
 
             # --- STRICT SYSTEM-WIDE VALIDATION ---
-            ShapeValidator(self.config).validate_predictions(output._asdict())
+            ShapeValidator(self.config).validate_predictions(output)
 
             return output
 
@@ -501,22 +505,21 @@ class ModularAgentNetwork(BaseAgentNetwork):
             Q = self.components["q_head"](x)
             q_vals = self.components["q_head"].strategy.to_expected_value(Q)
 
-            output = LearningOutput(
-                values=None,
-                q_values=q_vals.unsqueeze(1),
-                q_logits=Q.unsqueeze(1),
-            )
+            output = {
+                "q_values": q_vals.unsqueeze(1),
+                "q_logits": Q.unsqueeze(1),
+            }
 
             # --- SHAPE VALIDATION ---
             assert (
-                output.q_values.ndim == 2 and output.q_values.shape[1] == 1
-            ), f"Rainbow q_values shape mismatch: {output.q_values.shape}"
+                output["q_values"].ndim == 3 and output["q_values"].shape[1] == 1
+            ), f"Rainbow q_values shape mismatch: {output['q_values'].shape}"
             assert (
-                output.q_logits.ndim >= 3 and output.q_logits.shape[1] == 1
-            ), f"Rainbow q_logits shape mismatch: {output.q_logits.shape}"
+                output["q_logits"].ndim >= 3 and output["q_logits"].shape[1] == 1
+            ), f"Rainbow q_logits shape mismatch: {output['q_logits'].shape}"
 
             # --- STRICT SYSTEM-WIDE VALIDATION ---
-            ShapeValidator(self.config).validate_predictions(output._asdict())
+            ShapeValidator(self.config).validate_predictions(output)
 
             return output
 
@@ -529,15 +532,15 @@ class ModularAgentNetwork(BaseAgentNetwork):
             if "feature_block" in self.components:
                 x = self.components["feature_block"](initial_observation)
             logits, _, _ = self.components["policy_head"](x)
-            output = LearningOutput(policies=logits.unsqueeze(1))
+            output = {"policies": logits.unsqueeze(1)}
 
             # --- SHAPE VALIDATION ---
             assert (
-                output.policies.ndim == 3 and output.policies.shape[1] == 1
-            ), f"Imitation policies shape mismatch: {output.policies.shape}"
+                output["policies"].ndim == 3 and output["policies"].shape[1] == 1
+            ), f"Imitation policies shape mismatch: {output['policies'].shape}"
 
             # --- STRICT SYSTEM-WIDE VALIDATION ---
-            ShapeValidator(self.config).validate_predictions(output._asdict())
+            ShapeValidator(self.config).validate_predictions(output)
 
             return output
 

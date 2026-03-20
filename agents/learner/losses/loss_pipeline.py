@@ -62,17 +62,10 @@ class LossPipeline:
         device = self.modules[0].device if self.modules else torch.device("cpu")
         self.shape_validator.validate(predictions, targets)
 
-        # 2. Key/Format Normalization
-        if not isinstance(predictions, dict):
-            predictions = getattr(predictions, "_asdict", lambda: vars(predictions))()
-        if not isinstance(targets, dict):
-            targets = targets if isinstance(targets, dict) else vars(targets)
-
+        # 2. Defaults and Scaling
         # Determine dimensions B and T directly from the prediction tensors
         any_pred = next(p for p in predictions.values() if torch.is_tensor(p))
         B, T = any_pred.shape[:2]
-
-        # 3. Defaults and Scaling
         if weights is None:
             weights = torch.ones(B, device=device)
         if gradient_scales is None:

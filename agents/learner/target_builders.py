@@ -22,7 +22,7 @@ class BaseTargetBuilder(ABC):
 
         Args:
             batch: Dictionary of tensors from the replay buffer.
-            predictions: Current network predictions (LearningOutput).
+            predictions: Current network predictions as a dictionary of tensors.
             network: The neural network module (may be used for target network calls).
 
         Returns:

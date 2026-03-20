@@ -8,7 +8,6 @@ from agents.learner.base import UniversalLearner
 from agents.learner.callbacks import Callback, EarlyStopIteration
 from agents.learner.target_builders import BaseTargetBuilder
 from agents.learner.losses import LossPipeline
-from modules.world_models.inference_output import LearningOutput
 
 pytestmark = pytest.mark.unit
 
@@ -61,7 +60,7 @@ def test_universal_learner_step_calls_optimizer_and_callbacks():
     }
     batch_iterator = [batch]
 
-    predictions = LearningOutput(values=torch.randn(2, 1, requires_grad=True))
+    predictions = {"values": torch.randn(2, 1, requires_grad=True)}
     agent_network.learner_inference.return_value = predictions
 
     targets = {"values": torch.randn(2, 1)}
@@ -118,9 +117,9 @@ def test_universal_learner_early_stop_iteration_breaks_loop():
     agent_network.parameters.return_value = [
         torch.nn.Parameter(torch.randn(1, requires_grad=True))
     ]
-    agent_network.learner_inference.return_value = LearningOutput(
-        values=torch.randn(1, 1, requires_grad=True)
-    )
+    agent_network.learner_inference.return_value = {
+        "values": torch.randn(1, 1, requires_grad=True)
+    }
 
     target_builder = MagicMock(spec=BaseTargetBuilder)
     target_builder.build_targets.return_value = {"values": torch.randn(1, 1)}
