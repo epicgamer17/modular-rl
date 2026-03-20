@@ -406,16 +406,19 @@ class LatentConsistencyBuilder(BaseTargetBuilder):
         batch_size, unroll_len = real_obs.shape[:2]
         flat_obs = real_obs.flatten(0, 1)
 
-        initial_out = network.obs_inference(flat_obs)
-        real_latents = initial_out.network_state.dynamics
+        # 1. The Builder explicitly owns the detached context
+        # We use no_grad() so the resulting tensors are standard detached tensors,
+        # NOT strict inference_mode tensors which crash loss functions.
+        with torch.no_grad():
+            initial_out = network.obs_inference(flat_obs)
+            real_latents = initial_out.network_state.dynamics
 
-        # Clone to promote from inference_mode tensors to normal autograd-tracked tensors
-        real_latents = real_latents.clone()
-
-        proj_targets = network.project(real_latents, grad=False)
-        normalized_targets = torch.nn.functional.normalize(
-            proj_targets, p=2.0, dim=-1, eps=1e-5
-        )
+            # No more .clone() hacks!
+            # real_latents is already safely detached.
+            proj_targets = network.project(real_latents, grad=False)
+            normalized_targets = torch.nn.functional.normalize(
+                proj_targets, p=2.0, dim=-1, eps=1e-5
+            )
 
         consistency_targets = normalized_targets.reshape(
             batch_size, unroll_len, -1
