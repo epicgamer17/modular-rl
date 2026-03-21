@@ -62,7 +62,7 @@ class ChanceNode:
         Called when the Dynamics Network is run on (parent_state, action).
         """
         self.to_play = to_play
-        self.network_state = network_state
+        self.recurrent_state = network_state
 
         self.network_value = network_value
         # code_probs should be a dict or array mapping code_index -> probability
@@ -264,7 +264,7 @@ class DecisionNode:
     ):
         self.to_play = to_play
         self.reward = reward
-        self.network_state = network_state
+        self.recurrent_state = network_state
 
         self.network_policy = network_policy.cpu()
         self.network_policy_dist = network_policy_dist

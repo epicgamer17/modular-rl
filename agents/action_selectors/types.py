@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Union
 import torch
 from torch import Tensor
-from torch.distributions import Distribution
+from torch.distributions import Distribution, Categorical
 from modules.world_models.inference_output import InferenceOutput
 
 
@@ -37,11 +37,34 @@ class InferenceResult:
             return self.policy.logits
         return None
 
+    @logits.setter
+    def logits(self, value: Tensor):
+        """Updates the policy with new logits."""
+        self.policy = Categorical(logits=value)
+
     @property
     def probs(self) -> Optional[Tensor]:
         if hasattr(self.policy, "probs"):
             return self.policy.probs
         return None
+
+    @probs.setter
+    def probs(self, value: Optional[Tensor]):
+        """Updates the policy with new probabilities, or clears it if None."""
+        if value is None:
+            # If we are clearing probs, we might still have logits if it's a Categorical.
+            # However, usually this is called to force re-evaluation from logits.
+            # For now, we just clear the policy if we don't have a way to keep only logits.
+            # But the Categorical distribution in PyTorch doesn't easily let us clear one side.
+            # If the user sets probs=None, they likely want to rely on the current logits.
+            # But since this is a data contract, we'll just allow setting it to None if needed.
+            if hasattr(self.policy, "probs"):
+                # We can't easily 'unset' probs on an existing Categorical.
+                # If someone sets result.probs = None, they might be trying to 'dirty' the object.
+                # In our case, we'll just allow it to stay as is or set policy to None.
+                pass
+        else:
+            self.policy = Categorical(probs=value)
 
     @property
     def action_dim(self) -> Optional[Tensor]:

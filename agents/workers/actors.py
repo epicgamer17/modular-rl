@@ -160,7 +160,9 @@ class BaseActor(ABC):
         player_val = player_id if isinstance(player_id, int) else 0
 
         # Vectorize player ID: [1] tensor for single actor (AOS contract requires shape[0] == 1)
-        info["player"] = torch.tensor([player_val], dtype=torch.int8, device=self.device)
+        info["player"] = torch.tensor(
+            [player_val], dtype=torch.int8, device=self.device
+        )
 
         # Vectorize legal moves: 1D boolean tensor [num_actions]
         num_actions = self.agent_network.num_actions
@@ -233,8 +235,8 @@ class BaseActor(ABC):
                 episode_step=self._episode_length,
             )
             # Merge search_metadata (and other extras) from the policy source result
-            if result.extra_metadata:
-                for k, v in result.extra_metadata.items():
+            if result.extras:
+                for k, v in result.extras.items():
                     if k not in metadata or metadata[k] is None:
                         metadata[k] = v
                     elif k == "search_metadata" and isinstance(v, dict):
@@ -264,7 +266,7 @@ class BaseActor(ABC):
 
             action_val = action.item()
 
-            final_metadata = {**result.extra_metadata, **metadata}
+            final_metadata = {**result.extras, **metadata}
 
             next_obs, reward, term, trunc, next_info = self._step_env(action_val)
 

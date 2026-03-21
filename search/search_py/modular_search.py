@@ -204,7 +204,7 @@ class ModularSearch:
             policy_logits = self._safe_log_probs(policy_probs)
         if policy_logits.dim() == 1:
             policy_logits = policy_logits.unsqueeze(0)
-        recurrent_state = outputs.recurrent_state
+        network_state = outputs.recurrent_state
 
         # 3. Legal Moves
         # TODO: MOVE THE MASKING INTO THE ACTOR
@@ -727,7 +727,7 @@ class ModularSearch:
                 )
 
                 reward = outputs.reward
-                recurrent_state = outputs.recurrent_state
+                network_state = outputs.recurrent_state
                 value = outputs.value
                 policy = outputs.policy.probs
                 if policy is None:
@@ -777,7 +777,7 @@ class ModularSearch:
                 )
 
                 reward = float(outputs.reward)
-                recurrent_state = outputs.recurrent_state
+                network_state = outputs.recurrent_state
                 value = float(outputs.value)
                 policy = outputs.policy.probs
                 if policy is None:
@@ -825,7 +825,7 @@ class ModularSearch:
                 ),
             )
 
-            recurrent_state = outputs.recurrent_state
+            network_state = outputs.recurrent_state
             value = float(outputs.value)
             code_probs = outputs.policy.probs
 

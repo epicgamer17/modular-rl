@@ -18,36 +18,75 @@ def batch_recurrent_state(states: List[Dict[str, Any]]) -> Dict[str, Any]:
     if not states:
         return {}
 
-    first = states[0]
+    # 1. Find the first non-None state to use as a template for keys
+    first = None
+    for s in states:
+        if s is not None:
+            first = s
+            break
+    
+    if first is None:
+        return None
+
     batched = {}
 
     for k in first.keys():
-        vals = [s[k] for s in states]
+        # Safely extract values for this key across all states
+        vals = [s[k] if (s is not None and k in s) else None for s in states]
+        
+        # Find the first non-None value to determine type
+        first_val = next((v for v in vals if v is not None), None)
 
-        if vals[0] is None:
+        if first_val is None:
             batched[k] = None
-        elif isinstance(vals[0], torch.Tensor):
+        elif isinstance(first_val, torch.Tensor):
             # Special case for RNN states: [num_layers, batch, hidden]
-            if vals[0].dim() == 3 and vals[0].shape[1] == 1:
-                batched[k] = torch.cat(vals, dim=1)
-            else:
-                batched[k] = torch.cat(vals, dim=0)
-        elif isinstance(vals[0], tuple):
-            batched_elements = []
-            for i in range(len(vals[0])):
-                element_list = [v[i] for v in vals]
-                if isinstance(element_list[0], torch.Tensor):
-                    if element_list[0].dim() == 3 and element_list[0].shape[1] == 1:
-                        batched_elements.append(torch.cat(element_list, dim=1))
-                    else:
-                        batched_elements.append(torch.cat(element_list, dim=0))
+            # If some values are None, pad them with zeros of the same shape/device
+            padded_vals = []
+            for v in vals:
+                if v is not None:
+                    padded_vals.append(v)
                 else:
-                    batched_elements.append(element_list[0])
+                    padded_vals.append(torch.zeros_like(first_val))
+            
+            if first_val.dim() == 3 and first_val.shape[1] == 1:
+                batched[k] = torch.cat(padded_vals, dim=1)
+            else:
+                batched[k] = torch.cat(padded_vals, dim=0)
+        elif isinstance(first_val, tuple):
+            batched_elements = []
+            for i in range(len(first_val)):
+                # Recursively batch elements, handling None tuples
+                element_list = []
+                for v in vals:
+                    if v is not None:
+                        element_list.append(v[i])
+                    else:
+                        element_list.append(None)
+                
+                # Check if elements are tensors or need further recursion
+                first_elem = next((e for e in element_list if e is not None), None)
+                if isinstance(first_elem, torch.Tensor):
+                    padded_elems = [e if e is not None else torch.zeros_like(first_elem) for e in element_list]
+                    if first_elem.dim() == 3 and first_elem.shape[1] == 1:
+                        batched_elements.append(torch.cat(padded_elems, dim=1))
+                    else:
+                        batched_elements.append(torch.cat(padded_elems, dim=0))
+                elif isinstance(first_elem, (dict, list, tuple)):
+                    # Further generic recursion if needed, but usually just dicts
+                    if isinstance(first_elem, dict):
+                        batched_elements.append(batch_recurrent_state(element_list))
+                    else:
+                        batched_elements.append(first_elem)
+                else:
+                    batched_elements.append(first_elem)
             batched[k] = tuple(batched_elements)
-        elif isinstance(vals[0], dict):
+        elif isinstance(first_val, dict):
             batched[k] = batch_recurrent_state(vals)
         else:
-            batched[k] = vals[0]
+            batched[k] = first_val
+
+    return batched
 
     return batched
 
@@ -116,8 +155,13 @@ def unbatch_recurrent_state(state: Dict[str, Any]) -> List[Dict[str, Any]]:
                 )
         elif isinstance(v, dict):
             sub_unbatched = unbatch_recurrent_state(v)
-            for i in range(batch_size):
-                unbatched[i][k] = sub_unbatched[i]
+            if len(sub_unbatched) == 1 and batch_size > 1:
+                # Broadcast sub-dict if it has no tensors or batch size 1
+                for i in range(batch_size):
+                    unbatched[i][k] = sub_unbatched[0]
+            else:
+                for i in range(batch_size):
+                    unbatched[i][k] = sub_unbatched[i]
         else:
             for i in range(batch_size):
                 unbatched[i][k] = v

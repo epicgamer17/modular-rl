@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional, Union, List
 import torch
 import time
 import numpy as np
+from torch.distributions import Categorical
 
 from agents.action_selectors.types import InferenceResult
 from modules.agent_nets.base import BaseAgentNetwork
@@ -79,14 +80,12 @@ class SearchPolicySource(BasePolicySource):
             info = dict(info)
             info["player"] = kwargs["to_play"]
 
-        assert "player" in info, (
-            "info must contain 'player', or pass to_play as a kwarg"
-        )
+        assert (
+            "player" in info
+        ), "info must contain 'player', or pass to_play as a kwarg"
 
         # MCTSDecorator logic uses run_vectorized if B > 1
-        is_batched = (
-            obs.dim() > len(agent_network.input_shape) and obs.shape[0] > 1
-        )
+        is_batched = obs.dim() > len(agent_network.input_shape) and obs.shape[0] > 1
 
         start_time = time.time()
 
@@ -142,9 +141,7 @@ class SearchPolicySource(BasePolicySource):
                 },
             )
         else:
-            res = self.search.run(
-                obs, info, agent_network, exploration=exploration
-            )
+            res = self.search.run(obs, info, agent_network, exploration=exploration)
             (
                 root_value,
                 exploratory_policy,
@@ -168,9 +165,9 @@ class SearchPolicySource(BasePolicySource):
                 best_actions_out = torch.tensor(best_action, device=obs.device)
 
             return InferenceResult(
-                probs=probs,
+                policy=Categorical(probs=probs),
                 value=value,
-                extra_metadata={
+                extras={
                     "target_policies": target_policies_out,
                     "search_duration": search_duration,
                     "search_metadata": search_metadata,
@@ -211,10 +208,16 @@ class NFSPNetworkPolicySource(BasePolicySource):
             q_values=br_result.q_values,
             logits=avg_result.logits,
             probs=avg_result.probs,
-            reward=br_result.reward if br_result.reward is not None else avg_result.reward,
-            to_play=br_result.to_play if br_result.to_play is not None else avg_result.to_play,
-            extra_metadata={
-                **(br_result.extra_metadata or {}),
-                **(avg_result.extra_metadata or {}),
+            reward=(
+                br_result.reward if br_result.reward is not None else avg_result.reward
+            ),
+            to_play=(
+                br_result.to_play
+                if br_result.to_play is not None
+                else avg_result.to_play
+            ),
+            extras={
+                **(br_result.extras or {}),
+                **(avg_result.extras or {}),
             },
         )

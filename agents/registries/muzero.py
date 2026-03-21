@@ -36,8 +36,8 @@ def build_muzero_loss_pipeline(config, agent_network, device):
     # Extract representations from heads
     val_rep = agent_network.components["value_head"].representation
     pol_rep = agent_network.components["policy_head"].representation
-    rew_rep = agent_network.components["world_model"].reward_head.representation
-    tp_rep = agent_network.components["world_model"].to_play_head.representation
+    rew_rep = agent_network.components["world_model"].heads["reward"].representation
+    tp_rep = agent_network.components["world_model"].heads["to_play"].representation
 
     modules = [
         ValueLoss(
