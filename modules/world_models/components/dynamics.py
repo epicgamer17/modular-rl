@@ -29,11 +29,6 @@ class BaseDynamics(nn.Module):
         self.action_encoder = ActionEncoder(
             action_space_size=num_actions,
             embedding_dim=self.action_embedding_dim,
-            is_continuous=is_continuous,
-            single_action_plane=(
-                layer_prefix == "dynamics"
-            ),  # Assuming standard dynamics uses single_action_plane=True
-            # TODO: FIX THIS AND DONT MAKE THIS ASSUMPTION
         )
 
         # 2. Fusion Layer (Move from ActionEncoder to Dynamics)
