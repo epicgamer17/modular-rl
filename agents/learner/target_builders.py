@@ -35,6 +35,9 @@ class SingleStepFormatter(BaseTargetBuilder):
             "policies",
             "q_logits",
             "q_values",
+            "returns",
+            "advantages",
+            "old_log_probs",
         ]
 
     def build_targets(
@@ -55,7 +58,9 @@ class SingleStepFormatter(BaseTargetBuilder):
         for k in self.temporal_keys:
             if k in current_targets:
                 v = current_targets[k]
-                if torch.is_tensor(v) and (v.ndim == 1 or (v.ndim >= 2 and v.shape[1] != 1)):
+                if torch.is_tensor(v) and (
+                    v.ndim == 1 or (v.ndim >= 2 and v.shape[1] != 1)
+                ):
                     current_targets[k] = v.unsqueeze(1)
 
         # 2. Generate Universal T=1 Masks
@@ -249,7 +254,7 @@ class DistributionalTargetBuilder(BaseTargetBuilder):
 
         # 2. Get the base grid geometry from the network's representation
         # It MUST be a C51Representation (or similar with support)
-        representation = getattr(network.q_head, "representation", None)
+        representation = network.components["q_head"].representation
         assert hasattr(
             representation, "project_onto_grid"
         ), "DistributionalTargetBuilder requires a representation with project_onto_grid API."

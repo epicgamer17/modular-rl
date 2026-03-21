@@ -114,33 +114,7 @@ class RainbowTrainer(BaseTrainer):
 
         self.training_selector = ArgmaxSelector()
 
-        # 5. Initialize architecture-agnostic TD loss module
-        from agents.registries.rainbow import build_rainbow_loss_pipeline
 
-        self.loss_pipeline = build_rainbow_loss_pipeline(
-            config, self.agent_network, device
-        )
-
-        # 6. Initialize Target Builder
-        self.target_builder = TemporalDifferenceBuilder(
-            target_network=self.target_agent_network,
-            gamma=config.discount_factor,
-            n_step=config.n_step,
-            bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
-        )
-        self.loss_pipeline.validate_dependencies(
-            network_output_keys={"q_logits", "q_values"},
-            target_keys={
-                "values",
-                "rewards",
-                "dones",
-                "next_q_logits",
-                "next_actions",
-                "gamma",
-                "n_step",
-                "actions",
-            },
-        )
         self.buffer = create_dqn_buffer(
             observation_dimensions=self.obs_dim,
             max_size=config.replay_buffer_size,

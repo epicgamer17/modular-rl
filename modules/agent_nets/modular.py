@@ -284,12 +284,10 @@ class ModularAgentNetwork(BaseAgentNetwork):
         # ----------------------------------------
         elif "q_head" in self.components:
             x = self.components["feature_block"](obs)
-            Q_logits, _, q_vals = self.components["q_head"](x)
+            Q_logits, _, policy_dist = self.components["q_head"](x)
 
+            q_vals = self.components["q_head"].representation.to_expected_value(Q_logits)
             state_value = q_vals.max(dim=-1)[0]
-            policy_dist = self.components["q_head"].representation.to_inference(
-                Q_logits
-            )
 
             return InferenceOutput(
                 value=state_value, q_values=q_vals, policy=policy_dist
@@ -502,12 +500,12 @@ class ModularAgentNetwork(BaseAgentNetwork):
         elif "q_head" in self.components:
             # 1. Online Inference at s_t
             x = self.components["feature_block"](initial_observation)
-            Q = self.components["q_head"](x)
-            q_vals = self.components["q_head"].strategy.to_expected_value(Q)
+            Q_logits, _, _ = self.components["q_head"](x)
+            q_vals = self.components["q_head"].representation.to_expected_value(Q_logits)
 
             output = {
                 "q_values": q_vals.unsqueeze(1),
-                "q_logits": Q.unsqueeze(1),
+                "q_logits": Q_logits.unsqueeze(1),
             }
 
             # --- SHAPE VALIDATION ---
