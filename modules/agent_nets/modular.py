@@ -364,17 +364,12 @@ class ModularAgentNetwork(BaseAgentNetwork):
             stochastic_chance_values = None
             chance_encoder_embeddings = None
 
-            # --- PAD TRANSITION OUTPUTS (Rewards/Chance) ---
-            # MuZero predicts rewards for transitions (k=1..K).
-            # We pad index 0 with zeros to satisfy the Universal [B, K+1, ...] contract.
-            dummy_reward = torch.zeros(
-                B,
-                1,
-                *physics_output["rewards"].shape[2:],
-                device=self.device,
-                dtype=physics_output["rewards"].dtype,
-            )
-            padded_rewards = torch.cat([dummy_reward, physics_output["rewards"]], dim=1)
+            # --- SHAPE NORMALIZATION ---
+            # physics_output now includes root predictions (K+1) for all environment heads.
+            # We no longer need to manually pad/cat dummy rewards here.
+            rewards = physics_output["rewards"]
+            to_plays = physics_output["to_plays"]
+            continuations = physics_output.get("continuations")
 
             if (
                 getattr(self.config, "stochastic", False)
@@ -432,10 +427,12 @@ class ModularAgentNetwork(BaseAgentNetwork):
             output = {
                 "values": raw_values,
                 "policies": raw_policies,
-                "rewards": padded_rewards,
-                "to_plays": physics_output["to_plays"],
+                "rewards": rewards,
+                "to_plays": to_plays,
                 "latents": stacked_latents,
             }
+            if continuations is not None:
+                output["continuations"] = continuations
 
             if (
                 getattr(self.config, "stochastic", False)

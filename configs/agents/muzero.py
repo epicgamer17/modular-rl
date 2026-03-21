@@ -151,6 +151,20 @@ class MuZeroConfig(
             ChanceProbabilityHeadConfig(chance_dict)
         )
 
+        # Continuation Head
+        c_dict = self.parse_field("continuation_head", default=None, required=False)
+        if c_dict is not None:
+            # Inject auto-num_classes for continuation if not provided
+            c_strat = c_dict.get("output_strategy", {"type": "categorical"})
+            if "num_classes" not in c_strat:
+                c_strat["num_classes"] = 2
+            c_dict["output_strategy"] = c_strat
+            self.continuation_head: Optional[ContinuationHeadConfig] = (
+                ContinuationHeadConfig(c_dict)
+            )
+        else:
+            self.continuation_head = None
+
         # Support a shared 'backbone' field as a fallback
         shared_bb = self.parse_field("backbone", default=None, required=False)
         if shared_bb:

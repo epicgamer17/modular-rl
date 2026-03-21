@@ -87,25 +87,39 @@ class ModularWorldModel(WorldModelInterface, nn.Module):
                 action_embedding_dim=self.config.action_embedding_dim,
             )
 
-        # 3. Physics Heads (Owned by WorldModel now)
+        # 3. Environment Heads (Physics Engine)
+        self.heads = nn.ModuleDict()
+        
         # Reward Head
-        r_rep = get_representation(config.reward_head.output_strategy)
-        self.reward_head = HeadFactory.create(
-            config.reward_head,
-            config.arch,
-            input_shape=self.dynamics.output_shape,
-            representation=r_rep,
-        )
+        if getattr(config, "reward_head", None) is not None:
+            r_rep = get_representation(config.reward_head.output_strategy)
+            self.heads["reward"] = HeadFactory.create(
+                config.reward_head,
+                config.arch,
+                input_shape=self.dynamics.output_shape,
+                representation=r_rep,
+            )
+
+        # Continuation Head (Termination)
+        if getattr(config, "continuation_head", None) is not None:
+            c_rep = get_representation(config.continuation_head.output_strategy)
+            self.heads["continuation"] = HeadFactory.create(
+                config.continuation_head,
+                config.arch,
+                input_shape=self.dynamics.output_shape,
+                representation=c_rep,
+            )
 
         # To-Play Head
-        tp_rep = get_representation(config.to_play_head.output_strategy)
-        self.to_play_head = ToPlayHead(
-            arch_config=config.arch,
-            input_shape=self.dynamics.output_shape,
-            num_players=config.game.num_players,
-            neck_config=config.to_play_head.neck,
-            representation=tp_rep,
-        )
+        if getattr(config, "to_play_head", None) is not None:
+            tp_rep = get_representation(config.to_play_head.output_strategy)
+            self.heads["to_play"] = HeadFactory.create(
+                config.to_play_head,
+                config.arch,
+                input_shape=self.dynamics.output_shape,
+                num_players=config.game.num_players,
+                representation=tp_rep,
+            )
 
         # Dynamics output must match Representation output shape
         assert (
@@ -151,26 +165,33 @@ class ModularWorldModel(WorldModelInterface, nn.Module):
             )
 
         next_hidden_state = self.dynamics(hidden_state, action)
+        
+        # Predictions for all heads
+        predictions = {}
+        head_state = {} if recurrent_state is None else recurrent_state
+        new_head_state = {}
 
-        reward_logits, new_state, instant_reward = self.reward_head(
-            next_hidden_state, state=recurrent_state
-        )
-        # For return, we might want to return the full opaque state as "head_state" field
-        # or separate fields? properties of WorldModelOutput are flexible?
-        # WorldModelOutput.head_state is Any.
-        outcome_state = new_state if isinstance(recurrent_state, dict) else new_state
-
-        # to_play_head returns (logits, state, player_idx).
-        # Recurrent inference exposes logits for the learner, player_idx for the actor/MCTS.
-        to_play_logits, _, to_play = self.to_play_head(next_hidden_state)
+        for name, head in self.heads.items():
+            # Pass individual head state if present
+            h_state = head_state.get(name) if isinstance(head_state, dict) else None
+            
+            # Heads return (logits, state, extra)
+            # extra is usually the expected value (reward, player_idx)
+            logits, n_state, extra = head(next_hidden_state, state=h_state)
+            
+            predictions[name] = logits
+            predictions[f"{name}_extra"] = extra
+            new_head_state[name] = n_state
 
         return WorldModelOutput(
             features=next_hidden_state,
-            reward=reward_logits,
-            to_play=to_play,  # actor-facing: scalar player index (B,)
-            to_play_logits=to_play_logits,  # learner-facing: raw logits (B, num_players)
-            head_state=outcome_state,
-            instant_reward=instant_reward,
+            reward=predictions.get("reward"),
+            to_play=predictions.get("to_play_extra"),
+            to_play_logits=predictions.get("to_play"),
+            continuation=predictions.get("continuation_extra"),
+            continuation_logits=predictions.get("continuation"),
+            head_state=new_head_state,
+            instant_reward=predictions.get("reward_extra"),
         )
 
     def afterstate_recurrent_inference(
@@ -226,194 +247,123 @@ class ModularWorldModel(WorldModelInterface, nn.Module):
         self,
         initial_latent_state: Tensor,
         actions: Tensor,
-        encoder_inputs: Tensor,
-        true_chance_codes: Tensor,
-        head_state: Any,
-        target_observations: Optional[Tensor] = None,
+        encoder_inputs: Optional[Tensor] = None,
+        true_chance_codes: Optional[Tensor] = None,
+        head_state: Any = None,
+        **kwargs,
     ) -> Dict[str, Tensor]:
         """
         Unrolls the dynamics for K steps given actions.
-        Returns a dictionary containing STACKED tensors for each step.
+        Returns a dictionary containing sequences for each predicted field.
         """
-        batch_size = actions.shape[0]
-        # Use the actual number of provided actions rather than config.unroll_steps
-        # so callers (e.g. tests) may pass shorter sequences without errors.
-        unroll_steps = actions.shape[
-            1
-        ]  # TODO: this really should be config.unroll_steps
+        batch_size, unroll_steps = actions.shape[:2]
         device = initial_latent_state.device
 
-        # --- 2. Prepare Storage ---
-        latent_states = []
-        rewards = []
-        to_plays = []
-        latent_afterstates = []  # For stochastic MuZero
-        latent_code_probabilities = []  # For stochastic MuZero
-        afterstate_backbone_features = []  # For stochastic MuZero Value Head
+        # 1. Initialize sequences with root state
+        latents = [initial_latent_state]
+        head_sequences = {name: [] for name in self.heads.keys()}
+        
+        current_latent = initial_latent_state
+        current_head_state = head_state if head_state is not None else {}
+        
+        # Predict all heads at root
+        for name, head in self.heads.items():
+            h_state = current_head_state.get(name) if isinstance(current_head_state, dict) else None
+            # At root, reward is typically 0, but to_play is essential
+            logits, n_state, _ = head(current_latent, state=h_state)
+            head_sequences[name].append(logits)
+            if isinstance(current_head_state, dict):
+                current_head_state[name] = n_state
 
-        # Current states
-        hidden_states = initial_latent_state
-        # Initialize opaque reward state
-        # We assume start of unroll is step 0 for horizon purposes
-        current_head_state = head_state
+        # Stochastic-specific storage
+        stochastic_sequences = {
+            "latents_afterstates": [],
+            "chance_logits": [],
+            "afterstate_backbone_features": [],
+            "chance_encoder_embeddings": [],
+            "chance_encoder_onehots": [],
+        } if self.config.stochastic else {}
 
-        # Add initial states to lists
-        latent_states.append(hidden_states)
-
-        # Predict initial player — return logits so ToPlayLoss receives pre-softmax
-        # values (cross_entropy expects logits, not probabilities).
-        # to_play_head returns (logits, state, player_idx); store logits for the learner.
-        initial_to_play_logits, _, _player_idx = self.to_play_head(hidden_states)
-        to_plays.append(initial_to_play_logits)
-
-        # Stochastic MuZero specific storage
-        if self.config.stochastic:
-            latent_afterstates = []
-            latent_code_probabilities = []
-            chance_encoder_embeddings = []
-            chance_encoder_onehots = []
-            afterstate_backbone_features = []
-        else:
-            latent_afterstates = []
-            latent_code_probabilities = []
-            afterstate_backbone_features = []
-            chance_encoder_embeddings = []
-            chance_encoder_onehots = []
-
-        # Rewards: MuZero unrolls usually return T rewards for T actions.
-        # Physics unroll returns rewards: [B, T, ...]
-        rewards = []
-
-        # --- 4. Unroll Loop ---
+        # 2. Step Dynamics and Heads (Steps 1...K)
         for k in range(unroll_steps):
-            actions_k = actions[:, k]
+            action_k = actions[:, k]
 
             if self.config.stochastic:
-                # 1. Afterstate Inference — wrap latent in a recurrent state dictionary so the
-                # method's strict type check passes (it must be a structured object,
-                # never a raw Tensor).
+                # Afterstate Recurrent Inference
                 afterstate_out = self.afterstate_recurrent_inference(
-                    {"dynamics": hidden_states}, actions_k
+                    {"dynamics": current_latent}, action_k
                 )
-                afterstates = afterstate_out.afterstate_features
+                afterstate = afterstate_out.afterstate_features
                 shared_features = afterstate_out.features
-                chance_logits_k = afterstate_out.chance
+                chance_logits = afterstate_out.chance
 
-                # 3. Encoder Inference
-                chance_encoder_embedding_k, chance_encoder_onehot_k = self.encoder(encoder_inputs[:, k])
-
-                if self.config.use_true_chance_codes:
+                # Chance Code
+                if self.config.use_true_chance_codes and true_chance_codes is not None:
                     codes_k = F.one_hot(
                         true_chance_codes[:, k + 1].squeeze(-1).long(),
                         self.config.num_chance,
-                    )
-                    chance_encoder_onehot_k = codes_k.float()
+                    ).float()
+                else:
+                    _, codes_k = self.encoder(encoder_inputs[:, k])
 
-                latent_afterstates.append(afterstates)
-                latent_code_probabilities.append(chance_logits_k)  # Logits
-                afterstate_backbone_features.append(shared_features)
-
-                # Store encoder outputs
-                chance_encoder_onehots.append(chance_encoder_onehot_k)
-                chance_encoder_embeddings.append(chance_encoder_embedding_k)
-
-                # 4. Dynamics Inference (using chance code as action)
-                next_hidden_state = self.dynamics(afterstates, chance_encoder_onehot_k)
-
-                # Heads
-                reward_logits, new_state, instant_reward = self.reward_head(
-                    next_hidden_state, state=current_head_state
-                )
-                current_head_state = new_state
-
-                # to_play_head returns (logits, state, player_idx).
-                to_play_logits, _, to_play = self.to_play_head(next_hidden_state)
-
-                rewards_k = reward_logits  # Changed
-                hidden_states = next_hidden_state
-                # Store logits for the learner (ToPlayLoss expects pre-softmax values).
-                to_plays_k = to_play_logits
-
-                # Update LSTM states (for potential external usage, though unroll mainly uses dict now)
-                # But we don't strictly need these unpacking if we pass current_reward_state next time
-
+                stochastic_sequences["latents_afterstates"].append(afterstate)
+                stochastic_sequences["chance_logits"].append(chance_logits)
+                stochastic_sequences["afterstate_backbone_features"].append(shared_features)
+                
+                # Final Dynamics Step
+                next_latent = self.dynamics(afterstate, codes_k)
             else:
-                wm_output = self.recurrent_inference(
-                    hidden_states,
-                    actions_k,
-                    current_head_state,
-                )
-                rewards_k = wm_output.reward
-                hidden_states = wm_output.features
-                # Use logits for the learner (cross_entropy expects pre-softmax values).
-                to_plays_k = wm_output.to_play_logits
+                # Deterministic Step
+                action_k_vec = action_k.view(-1).long()
+                action_onehot = F.one_hot(action_k_vec, num_classes=self.num_actions).float()
+                next_latent = self.dynamics(current_latent, action_onehot)
 
-                # wm_output.head_state is now the opaque dict
-                current_head_state = wm_output.head_state
-                instant_rewards_k = wm_output.instant_reward  # New
+            # 3. Predict Environment Heads
+            # We step ALL heads defined in self.heads
+            for name, head in self.heads.items():
+                h_state = current_head_state.get(name) if isinstance(current_head_state, dict) else None
+                logits, n_state, _ = head(next_latent, state=h_state)
+                head_sequences[name].append(logits)
+                # Update head state for next step
+                if isinstance(current_head_state, dict):
+                    current_head_state[name] = n_state
 
-            latent_states.append(hidden_states)
-            rewards.append(rewards_k)
-            to_plays.append(to_plays_k)
-
-            # Scale the gradient of the hidden state (applies to the whole batch)
-            hidden_states = scale_gradient(hidden_states, 0.5)
-
-            # Horizon logic is now handled inside ValuePrefixRewardHead via step_count
-
-        # --- 5. No Padding needed for K steps alignment ---
-
-        # --- 6. Stack and Return Output ---
-        # Stack everything here to avoid returning lists of tensors
-        stacked_latents = torch.stack(latent_states, dim=1)
-
-        # Rewards: size K (1...K)
-        stacked_rewards = torch.stack(rewards, dim=1) if rewards else torch.empty(0)
-
-        stacked_to_plays = torch.stack(to_plays, dim=1) if to_plays else torch.empty(0)
-
-        stacked_afterstates = None
-        stacked_chance_logits = None
-        stacked_backbone = None
-        stacked_chance_encoder_embeddings = None
-        stacked_chance_encoder_onehots = None
-
-        if self.config.stochastic:
-            stacked_afterstates = torch.stack(latent_afterstates, dim=1)
-            stacked_chance_logits = torch.stack(latent_code_probabilities, dim=1)
-            stacked_backbone = torch.stack(afterstate_backbone_features, dim=1)
-            stacked_chance_encoder_embeddings = torch.stack(chance_encoder_embeddings, dim=1)
-            stacked_chance_encoder_onehots = torch.stack(chance_encoder_onehots, dim=1)
-
-        # 7. Compute target latents for consistency loss if requested
-        stacked_target_latents = None
-        if target_observations is not None and self.config.consistency_loss_factor > 0:
-            B_target, T_plus_1_target = target_observations.shape[:2]
-            flat_target_obs = target_observations.reshape(
-                B_target * T_plus_1_target, *target_observations.shape[2:]
-            )
-            # Encode target observations
-            with torch.no_grad():
-                target_latents = self.representation(flat_target_obs.float())
-                stacked_target_latents = target_latents.view(
-                    B_target, T_plus_1_target, *target_latents.shape[1:]
-                )
-
-        output = {
-            "latents": stacked_latents,
-            "rewards": stacked_rewards,
-            "to_plays": stacked_to_plays,
-        }
-
-        if stacked_afterstates is not None:
-            output["latents_afterstates"] = stacked_afterstates
-            output["chance_logits"] = stacked_chance_logits
-            output["afterstate_backbone_features"] = stacked_backbone
-            output["chance_encoder_embeddings"] = stacked_chance_encoder_embeddings
-            output["chance_encoder_onehots"] = stacked_chance_encoder_onehots
+            current_latent = next_latent
+            latents.append(current_latent)
             
-        if stacked_target_latents is not None:
-            output["target_latents"] = stacked_target_latents
+            # Scale Gradient
+            current_latent = scale_gradient(current_latent, 0.5)
+
+        # 4. Target Latents (Consistency Loss)
+        target_latents = None
+        if "target_observations" in kwargs and self.config.consistency_loss_factor > 0:
+            target_obs = kwargs["target_observations"]
+            B_t, T_t = target_obs.shape[:2]
+            flat_obs = target_obs.reshape(B_t * T_t, *target_obs.shape[2:])
+            with torch.no_grad():
+                encoded = self.representation(flat_obs.float())
+                target_latents = encoded.view(B_t, T_t, *encoded.shape[1:])
+
+        # 5. Stack Final Output
+        # Dynamics sequences: [B, T+1, ...]
+        output = {
+            "latents": torch.stack(latents, dim=1),
+        }
+        
+        # Head sequences: [B, T, ...]
+        for name, seq in head_sequences.items():
+            if seq:
+                # Normalizing key names (reward -> rewards)
+                key = f"{name}s" if not name.endswith("s") else name
+                output[key] = torch.stack(seq, dim=1)
+
+        # Stochastic sequences: [B, T, ...]
+        for name, seq in stochastic_sequences.items():
+            if seq:
+                output[name] = torch.stack(seq, dim=1)
+
+        if target_latents is not None:
+            output["target_latents"] = target_latents
 
         return output
 

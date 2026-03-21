@@ -143,6 +143,10 @@ class WorldModelOutput(NamedTuple):
     head_state: Any = None
     instant_reward: Optional[torch.Tensor] = None
 
+    # Environment predictions
+    continuation: Optional[torch.Tensor] = None
+    continuation_logits: Optional[torch.Tensor] = None
+
     # Stochastic MuZero specific
     afterstate_features: Optional[torch.Tensor] = None
     chance: Optional[torch.Tensor] = None  # Chance logits
