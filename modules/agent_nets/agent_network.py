@@ -132,6 +132,69 @@ class AgentNetwork(nn.Module):
             self.flat_hidden_dim = torch.Size(hidden_state_shape).numel()
             self.components["projector"] = Projector(self.flat_hidden_dim, config)
 
+    def _pack_recurrent_state(
+        self, 
+        dynamics_latent: Optional[Tensor],
+        wm_head_state: Optional[Dict[str, Any]],
+        backbone_h: Optional[Union[Tensor, Tuple[Tensor, Tensor]]]
+    ) -> Dict[str, Tensor]:
+        """Strictly packs internal states into a flat {str: Tensor} dict."""
+        state = {}
+        if dynamics_latent is not None:
+            state["dynamics"] = dynamics_latent
+            
+        if wm_head_state:
+            for head_name, h in wm_head_state.items():
+                if h is not None:
+                    if isinstance(h, (tuple, list)):
+                        for i, t in enumerate(h):
+                            state[f"wm_{head_name}_{i}"] = t
+                    else:
+                        state[f"wm_{head_name}"] = h
+                        
+        if backbone_h is not None:
+            if isinstance(backbone_h, (tuple, list)):
+                for i, t in enumerate(backbone_h):
+                    state[f"backbone_{i}"] = t
+            else:
+                state["backbone"] = backbone_h
+        return state
+
+    def _unpack_recurrent_state(
+        self, 
+        state: Dict[str, Tensor]
+    ) -> Tuple[Optional[Tensor], Dict[str, Any], Any]:
+        """Strictly unpacks flat {str: Tensor} dict back into internal concepts."""
+        dynamics = state.get("dynamics")
+        
+        wm_head_state = {}
+        if "world_model" in self.components:
+            for head_name in self.components["world_model"].heads.keys():
+                if f"wm_{head_name}" in state:
+                    wm_head_state[head_name] = state[f"wm_{head_name}"]
+                else:
+                    i = 0
+                    tuple_h = []
+                    while f"wm_{head_name}_{i}" in state:
+                        tuple_h.append(state[f"wm_{head_name}_{i}"])
+                        i += 1
+                    if tuple_h:
+                        wm_head_state[head_name] = tuple(tuple_h)
+        
+        backbone_h = None
+        if "backbone" in state:
+            backbone_h = state["backbone"]
+        else:
+            i = 0
+            tuple_bb = []
+            while f"backbone_{i}" in state:
+                tuple_bb.append(state[f"backbone_{i}"])
+                i += 1
+            if tuple_bb:
+                backbone_h = tuple(tuple_bb)
+                
+        return dynamics, wm_head_state, backbone_h
+
     def initialize(
         self, initializer: Optional[Union[Callable[[Tensor], None], str]] = None
     ) -> None:
@@ -196,11 +259,11 @@ class AgentNetwork(nn.Module):
             out, *rest = head(features)
             outputs[name] = rest[1] if len(rest) >= 2 else out
 
-        network_state = {
-            "dynamics": latent if "world_model" in self.components else None,
-            "wm_memory": wm_output.head_state if wm_output else None,
-            "backbone_memory": next_h,
-        }
+        network_state = self._pack_recurrent_state(
+            dynamics_latent=latent if "world_model" in self.components else None,
+            wm_head_state=wm_output.head_state if wm_output else None,
+            backbone_h=next_h,
+        )
 
         q_vals = outputs.get("q_logits")
         state_value = (
@@ -284,14 +347,16 @@ class AgentNetwork(nn.Module):
         ShapeValidator(self.config).validate_predictions(final_output)
         return final_output
 
-    def hidden_state_inference(self, network_state: Dict[str, Any], action: Tensor) -> InferenceOutput:
+    def hidden_state_inference(self, network_state: Dict[str, Tensor], action: Tensor) -> InferenceOutput:
         if "world_model" not in self.components:
             raise NotImplementedError("hidden_state_inference requires a world_model.")
 
+        dynamics_h, wm_head_state, backbone_h = self._unpack_recurrent_state(network_state)
+
         wm_output = self.components["world_model"].recurrent_inference(
-            hidden_state=network_state["dynamics"],
+            hidden_state=dynamics_h,
             action=action,
-            recurrent_state=network_state.get("wm_memory"),
+            recurrent_state=wm_head_state,
         )
         latent = wm_output.features
 
@@ -303,7 +368,7 @@ class AgentNetwork(nn.Module):
 
         if "memory_core" in self.components:
             seq_features = features.unsqueeze(1)
-            seq_memory, next_h = self.components["memory_core"](seq_features, network_state.get("backbone_memory"))
+            seq_memory, next_h = self.components["memory_core"](seq_features, backbone_h)
             features = seq_memory.squeeze(1)
         else:
             next_h = None
@@ -313,11 +378,11 @@ class AgentNetwork(nn.Module):
             out, *rest = head(features)
             outputs[name] = rest[1] if len(rest) >= 2 else out
 
-        next_recurrent_state = {
-            "dynamics": latent,
-            "wm_memory": wm_output.head_state,
-            "backbone_memory": next_h,
-        }
+        next_recurrent_state = self._pack_recurrent_state(
+            dynamics_latent=latent,
+            wm_head_state=wm_output.head_state,
+            backbone_h=next_h,
+        )
 
         return InferenceOutput(
             recurrent_state=next_recurrent_state,
@@ -328,20 +393,25 @@ class AgentNetwork(nn.Module):
             extras={},
         )
 
-    def afterstate_inference(self, recurrent_state: Any, action: Tensor) -> InferenceOutput:
+    def afterstate_inference(self, recurrent_state: Dict[str, Tensor], action: Tensor) -> InferenceOutput:
         if "world_model" not in self.components or not getattr(self.config, "stochastic", False):
             raise NotImplementedError("afterstate_inference requires a stochastic world_model.")
 
-        wm_output = self.components["world_model"].afterstate_recurrent_inference(recurrent_state, action)
+        dynamics_h, wm_head_state, backbone_h = self._unpack_recurrent_state(recurrent_state)
+
+        wm_output = self.components["world_model"].afterstate_recurrent_inference(
+            {"dynamics": dynamics_h}, action
+        )
         
         shared_backbone_features = wm_output.features
         _, *rest = self.components["behavior_heads"]["afterstate_value"](shared_backbone_features)
         expected_afterstate_value = rest[-1] if rest else None
 
-        recurrent_state_after = {
-            "dynamics": wm_output.afterstate_features,
-            "wm_memory": recurrent_state.get("wm_memory"),
-        }
+        recurrent_state_after = self._pack_recurrent_state(
+            dynamics_latent=wm_output.afterstate_features,
+            wm_head_state=wm_head_state,
+            backbone_h=backbone_h,
+        )
 
         chance_policy = self.components["world_model"].sigma_head.representation.to_inference(wm_output.chance)
 
