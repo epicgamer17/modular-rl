@@ -18,7 +18,7 @@ class PolicyLoss(BaseLoss):
     ):
         super().__init__(
             device=device,
-            pred_key="policies",
+            pred_key="policy_logits",
             target_key="policies",
             mask_key=mask_key,
             representation=representation,
@@ -57,7 +57,7 @@ class ClippedSurrogateLoss(BaseLoss):
     ):
         super().__init__(
             device=device,
-            pred_key="policies",
+            pred_key="policy_logits",
             target_key="actions",
             mask_key="policy_mask",
             representation=representation,
@@ -71,7 +71,7 @@ class ClippedSurrogateLoss(BaseLoss):
         self, predictions: Dict[str, torch.Tensor], targets: Dict[str, torch.Tensor]
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
         """PPO Policy Loss: returns [B, T]"""
-        policy_logits = predictions["policies"]
+        policy_logits = predictions[self.pred_key]
         actions = targets["actions"]
         old_log_probs = targets["old_log_probs"]
         advantages = targets["advantages"]
@@ -124,7 +124,7 @@ class ImitationLoss(BaseLoss):
     ):
         super().__init__(
             device=device,
-            pred_key="policies",
+            pred_key="policy_logits",
             target_key="policies",
             mask_key=mask_key,
             representation=representation,

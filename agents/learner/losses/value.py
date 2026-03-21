@@ -19,7 +19,7 @@ class ValueLoss(BaseLoss):
     ):
         super().__init__(
             device=device,
-            pred_key="values",
+            pred_key="state_value",
             target_key=target_key,
             mask_key=mask_key,
             representation=representation,

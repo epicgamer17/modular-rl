@@ -311,7 +311,7 @@ class NFSPTrainer(BaseTrainer):
             bootstrap_on_truncated=getattr(rl_config, "bootstrap_on_truncated", False),
         )
 
-        rl_rep = self.br_agent_network.components["q_head"].representation
+        rl_rep = self.br_agent_network.components["behavior_heads"]["q_logits"].representation
         td_loss_module = QBootstrappingLoss(
             device=device,
             representation=rl_rep,
@@ -359,7 +359,7 @@ class NFSPTrainer(BaseTrainer):
 
         sl_optimizer = create_opt(self.avg_agent_network.parameters(), sl_config)
         sl_scheduler = get_lr_scheduler(sl_optimizer, sl_config)
-        sl_rep = self.avg_agent_network.components["policy_head"].representation
+        sl_rep = self.avg_agent_network.components["behavior_heads"]["policy_logits"].representation
         sl_loss_pipeline = LossPipeline(
             sl_config,
             [

@@ -17,9 +17,10 @@ def build_rainbow_loss_pipeline(config, agent_network, device):
     if (
         agent_network is not None
         and hasattr(agent_network, "components")
-        and "q_head" in agent_network.components
+        and "behavior_heads" in agent_network.components
+        and "q_logits" in agent_network.components["behavior_heads"]
     ):
-        representation = agent_network.components["q_head"].representation
+        representation = agent_network.components["behavior_heads"]["q_logits"].representation
 
     is_distributional = getattr(config, "atom_size", 1) > 1
 

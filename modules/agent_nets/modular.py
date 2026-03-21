@@ -46,176 +46,117 @@ class ModularAgentNetwork(BaseAgentNetwork):
         self.input_shape = input_shape
         self.num_actions = num_actions
 
-        # Modules injected at runtime
+        # --- DYNAMIC ASSEMBLY ---
         self.components = nn.ModuleDict()
+        self.components["behavior_heads"] = nn.ModuleDict()
 
-        config_type = getattr(config, "agent_type", None)
-
-        if isinstance(config, MuZeroConfig) or config_type == "muzero":
-            self._init_muzero(config, input_shape, num_actions, **kwargs)
-        elif isinstance(config, PPOConfig) or config_type == "ppo":
-            self._init_ppo(config, input_shape, num_actions, **kwargs)
-        elif isinstance(config, RainbowConfig) or config_type == "rainbow":
-            self._init_rainbow(config, input_shape, num_actions, **kwargs)
-        elif isinstance(config, SupervisedConfig) or config_type == "supervised":
-            self._init_sl(config, input_shape, num_actions, **kwargs)
+        # 1. Environment Phase (The Physics Engine)
+        # MuZero-style dynamics or World Model
+        if hasattr(config, "representation_backbone") or hasattr(config, "world_model"):
+            world_model_cls = kwargs.get("world_model_cls", ModularWorldModel)
+            self.components["world_model"] = world_model_cls(
+                config, input_shape, num_actions
+            )
+            current_head_input_shape = self.components[
+                "world_model"
+            ].representation.output_shape
         else:
-            raise ValueError(
-                f"Unsupported config type for ModularAgentNetwork: {type(config)}"
+            current_head_input_shape = input_shape
+
+        # 2. Behavior Phase: Feature Extraction (Backbones)
+        backbone_config = getattr(
+            config, "prediction_backbone", getattr(config, "backbone", None)
+        )
+
+        # If backbone_config is specified, it might be a memory_core or a feature_extractor
+        if backbone_config:
+            backbone = BackboneFactory.create(backbone_config, current_head_input_shape)
+            if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
+                self.components["memory_core"] = backbone
+            else:
+                self.components["feature_extractor"] = backbone
+            current_head_input_shape = backbone.output_shape
+
+        # 3. Behavior Phase: Behavioral Heads (Policy, Value, Q)
+        if hasattr(config, "policy_head"):
+            pol_rep = (
+                get_representation(config.policy_head.output_strategy)
+                if hasattr(config.policy_head, "output_strategy")
+                else None
+            )
+            self.components["behavior_heads"]["policy_logits"] = PolicyHead(
+                arch_config=config.arch,
+                input_shape=current_head_input_shape,
+                neck_config=config.policy_head.neck,
+                representation=pol_rep,
             )
 
-    def _init_muzero(
-        self,
-        config: MuZeroConfig,
-        input_shape: Tuple[int, ...],
-        num_actions: int,
-        **kwargs,
-    ):
-        # 1. The Physics Engine
-        world_model_cls = kwargs.get("world_model_cls", ModularWorldModel)
-        self.components["world_model"] = world_model_cls(
-            config, input_shape, num_actions
-        )
+        if hasattr(config, "value_head"):
+            val_rep = get_representation(config.value_head.output_strategy)
+            self.components["behavior_heads"]["state_value"] = ValueHead(
+                arch_config=config.arch,
+                input_shape=current_head_input_shape,
+                representation=val_rep,
+                neck_config=config.value_head.neck,
+            )
 
-        hidden_state_shape = self.components["world_model"].representation.output_shape
-
-        # 2. The Task-Specific Heads
-        self.components["prediction_backbone"] = BackboneFactory.create(
-            config.prediction_backbone, hidden_state_shape
-        )
-        prediction_feat_shape = self.components["prediction_backbone"].output_shape
-
-        # Value
-        val_rep = get_representation(config.value_head.output_strategy)
-        self.components["value_head"] = ValueHead(
-            arch_config=config.arch,
-            input_shape=prediction_feat_shape,
-            representation=val_rep,
-            neck_config=config.value_head.neck,
-        )
-
-        # Policy
-        pol_rep = get_representation(config.policy_head.output_strategy)
-        self.components["policy_head"] = PolicyHead(
-            arch_config=config.arch,
-            input_shape=prediction_feat_shape,
-            neck_config=config.policy_head.neck,
-            representation=pol_rep,
-        )
-
-        # Stochastic Chance Heads (if applicable)
-        if config.stochastic:
+        # Handle stochastic extra heads
+        if getattr(config, "stochastic", False):
+            val_rep = get_representation(config.value_head.output_strategy)
             shared_backbone_output_shape = self.components[
                 "world_model"
             ].shared_backbone.output_shape
-            self.components["afterstate_value_head"] = ValueHead(
+            self.components["behavior_heads"]["afterstate_value"] = ValueHead(
                 arch_config=config.arch,
                 input_shape=shared_backbone_output_shape,
                 representation=val_rep,
                 neck_config=config.value_head.neck,
             )
 
-        # 3. Efficient Zero Projector
-        self.flat_hidden_dim = torch.Size(hidden_state_shape).numel()
-        self.components["projector"] = Projector(self.flat_hidden_dim, config)
+        # Handle Rainbow-style Q Heads
+        if hasattr(config, "head") and not hasattr(config, "policy_head"):
+            representation = get_representation(config.head.output_strategy)
+            if getattr(config, "dueling", False):
+                self.components["behavior_heads"]["q_logits"] = DuelingQHead(
+                    arch_config=config.arch,
+                    input_shape=current_head_input_shape,
+                    representation=representation,
+                    value_hidden_widths=config.head.value_hidden_widths,
+                    advantage_hidden_widths=config.head.advantage_hidden_widths,
+                    num_actions=num_actions,
+                    neck_config=config.head.neck,
+                )
+            else:
+                self.components["behavior_heads"]["q_logits"] = QHead(
+                    arch_config=config.arch,
+                    input_shape=current_head_input_shape,
+                    representation=representation,
+                    hidden_widths=config.head.hidden_widths,
+                    num_actions=num_actions,
+                    neck_config=config.head.neck,
+                )
 
-    def _init_ppo(
-        self,
-        config: PPOConfig,
-        input_shape: Tuple[int, ...],
-        num_actions: int,
-        **kwargs,
-    ):
-        # Policy Head (Actor)
-        pol_rep = None
-        if hasattr(config.policy_head, "output_strategy"):
-            pol_rep = get_representation(config.policy_head.output_strategy)
+        # Fallback for Supervised/Imitation (No explicit head config, just a backbone)
+        if len(self.components["behavior_heads"]) == 0 and backbone_config:
+            # Create a default categorical policy head for imitation
+            from configs.modules.backbones.factory import BackboneConfigFactory
 
-        self.components["policy_head"] = PolicyHead(
-            arch_config=config.arch,
-            input_shape=input_shape,
-            neck_config=config.policy_head.neck,
-            representation=pol_rep,
-        )
-
-        # Value Head (Critic)
-        val_rep = get_representation(config.value_head.output_strategy)
-        self.components["value_head"] = ValueHead(
-            arch_config=config.arch,
-            input_shape=input_shape,
-            representation=val_rep,
-            neck_config=config.value_head.neck,
-        )
-
-    def _init_rainbow(
-        self,
-        config: RainbowConfig,
-        input_shape: Tuple[int, ...],
-        num_actions: int,
-        **kwargs,
-    ):
-        # Feature Extraction
-        self.components["feature_block"] = BackboneFactory.create(
-            config.backbone, input_shape
-        )
-        current_shape = self.components["feature_block"].output_shape
-
-        representation = get_representation(config.head.output_strategy)
-
-        if config.dueling:
-            self.components["q_head"] = DuelingQHead(
+            self.components["behavior_heads"]["policy_logits"] = PolicyHead(
                 arch_config=config.arch,
-                input_shape=current_shape,
-                representation=representation,
-                value_hidden_widths=config.head.value_hidden_widths,
-                advantage_hidden_widths=config.head.advantage_hidden_widths,
-                num_actions=num_actions,
-                neck_config=config.head.neck,
-            )
-        else:
-            self.components["q_head"] = QHead(
-                arch_config=config.arch,
-                input_shape=current_shape,
-                representation=representation,
-                hidden_widths=config.head.hidden_widths,
-                num_actions=num_actions,
-                neck_config=config.head.neck,
+                input_shape=current_head_input_shape,
+                neck_config=BackboneConfigFactory.create({"type": "identity"}),
+                representation=get_representation(
+                    {"type": "classification", "num_classes": num_actions}
+                ),
             )
 
-    def _init_sl(
-        self,
-        config: SupervisedConfig,
-        input_shape: Tuple[int, ...],
-        num_actions: int,
-        **kwargs,
-    ):
-        """Initializes components for supervised learning/imitation."""
-        # Simple policy head based on backbone
-        self.components["feature_block"] = BackboneFactory.create(
-            config.backbone, input_shape
-        )
-        current_shape = self.components["feature_block"].output_shape
-
-        # We use a basic policy head. SupervisedConfig might not have a full PolicyHeadConfig,
-        # but we can construct one or just use a simple linear layer.
-        # For consistency with other modular nets, we'll try to use a PolicyHead if possible.
-        from configs.modules.heads.policy import PolicyHeadConfig
-        from configs.modules.backbones.factory import BackboneConfigFactory
-
-        # Create a default PolicyHeadConfig if not in SupervisedConfig
-        neck_config = BackboneConfigFactory.create({"type": "identity"})
-        pol_head_config = PolicyHeadConfig(
-            {"neck": {"type": "identity"}, "output_strategy": {"type": "categorical"}}
-        )
-
-        self.components["policy_head"] = PolicyHead(
-            arch_config=config.arch,
-            input_shape=current_shape,
-            neck_config=neck_config,
-            representation=get_representation(
-                {"type": "classification", "num_classes": num_actions}
-            ),
-        )
+        # 4. Projector (For EfficientZero)
+        if hasattr(config, "projector"):
+            hidden_state_shape = self.components[
+                "world_model"
+            ].representation.output_shape
+            self.flat_hidden_dim = torch.Size(hidden_state_shape).numel()
+            self.components["projector"] = Projector(self.flat_hidden_dim, config)
 
     @property
     def device(self) -> torch.device:
@@ -225,419 +166,173 @@ class ModularAgentNetwork(BaseAgentNetwork):
             else torch.device("cpu")
         )
 
-
     def reset_noise(self) -> None:
         """Resamples NoisyNet parameters across all configured components."""
-        for name, module in self.components.items():
+        for module in self.components.values():
             if hasattr(module, "reset_noise"):
                 module.reset_noise()
+            if isinstance(module, nn.ModuleDict):
+                for sub in module.values():
+                    if hasattr(sub, "reset_noise"):
+                        sub.reset_noise()
 
     def obs_inference(self, obs: Tensor) -> InferenceOutput:
         """
-        Universal Actor API: Translates raw observations based
-        on the exact flow implied by the instantiated components.
+        Actor Inference (Unified Routing): latent -> feature_extractor -> memory_core -> behavior_heads
         """
+        # 1. Input Processing
         if not torch.is_tensor(obs):
             obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-
         if obs.dim() == len(self.input_shape):
             obs = obs.unsqueeze(0)
 
-        # ----------------------------------------
-        # MuZero Logic
-        # ----------------------------------------
+        # 2. LATENT PHASE (World Model)
         if "world_model" in self.components:
             wm_output = self.components["world_model"].initial_inference(obs)
-            hidden_state = wm_output.features
-
-            # Prediction Backbone: Memory Core (B, T, D) or Feature Extractor (B*, D)
-            backbone = self.components["prediction_backbone"]
-            h_state = None  # To be managed for recurrent backbones during acting if needed
-            
-            if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
-                # --- MEMORY CORE: Strictly (B, T, D) ---
-                seq_features = hidden_state.unsqueeze(1) # (B, 1, D)
-                seq_memory, next_h = backbone(seq_features, h_state)
-                pred_features = seq_memory.squeeze(1) # (B, H) for terminal heads
-            else:
-                # --- FEATURE EXTRACTOR: Strictly flat (B*, D) ---
-                # obs_inference already provides (B, D) at this stage
-                pred_features = backbone(hidden_state)
-
-            # Heads: Strictly receive flat (B*, D) batches
-            raw_value, _, expected_value = self.components["value_head"](pred_features)
-            raw_policy, _, policy_dist = self.components["policy_head"](pred_features)
-            
-            network_state = {
-                "dynamics": hidden_state,
-                "wm_memory": wm_output.head_state,
-                "backbone_memory": next_h if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)) else None,
-            }
-
-            return InferenceOutput(
-                recurrent_state=network_state,
-                value=expected_value,
-                policy=policy_dist,
-                reward=None,
-                to_play=wm_output.to_play,
-                extras={},
-            )
-
-        # ----------------------------------------
-        # PPO Logic
-        # ----------------------------------------
-        elif "policy_head" in self.components and "value_head" in self.components:
-            # PPO acting usually has no internal memory in standard ModularAgentNetwork,
-            # but if it did, we'd apply the same B, T logic. 
-            # For now, we assume simple flat observation features.
-            
-            policy_logits, _, policy_dist = self.components["policy_head"](obs)
-            value_logits, _, expected_value = self.components["value_head"](obs)
-
-            return InferenceOutput(policy=policy_dist, value=expected_value)
-
-        # ----------------------------------------
-        # Rainbow DQN Logic
-        # ----------------------------------------
-        elif "q_head" in self.components:
-            # Feature Extraction (Feature Extractor or Memory Core)
-            backbone = self.components["feature_block"]
-            if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
-                seq_features = obs.unsqueeze(1)
-                seq_memory, _ = backbone(seq_features)
-                pred_features = seq_memory.squeeze(1)
-            else:
-                pred_features = backbone(obs)
-                
-            Q_logits, _, policy_dist = self.components["q_head"](pred_features)
-
-            q_vals = self.components["q_head"].representation.to_expected_value(Q_logits)
-            state_value = q_vals.max(dim=-1)[0]
-
-            return InferenceOutput(
-                value=state_value, q_values=q_vals, policy=policy_dist
-            )
-
-        # ----------------------------------------
-        # Supervised/Imitation Logic
-        # ----------------------------------------
-        elif "policy_head" in self.components:
-            # Feature Extraction (Feature Extractor or Memory Core)
-            backbone = self.components.get("feature_block")
-            if backbone:
-                if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
-                    seq_features = obs.unsqueeze(1)
-                    seq_memory, _ = backbone(seq_features)
-                    features = seq_memory.squeeze(1)
-                else:
-                    features = backbone(obs)
-            else:
-                features = obs
-
-            logits, _, dist = self.components["policy_head"](features)
-            return InferenceOutput(policy=dist)
-
+            latent = wm_output.features
         else:
-            raise NotImplementedError(
-                "Network components don't match any known inference pipeline."
-            )
+            latent = obs
+            wm_output = None
+
+        # 3. BEHAVIOR PHASE: Feature Extraction
+        features = (
+            self.components["feature_extractor"](latent)
+            if "feature_extractor" in self.components
+            else latent
+        )
+
+        # 4. BEHAVIOR PHASE: Memory Core
+        # During acting (T=1), memory_core gets a dummy time dimension.
+        if "memory_core" in self.components:
+            seq_features = features.unsqueeze(1)  # (B, 1, D)
+            # Fetch backbone memory from network_state to maintain continuity
+            # (Note: Actor state management happens outside this core inference)
+            seq_memory, next_h = self.components["memory_core"](seq_features, None)
+            features = seq_memory.squeeze(1)
+        else:
+            next_h = None
+
+        # 5. BEHAVIOR PHASE: Route to Terminal Heads
+        outputs = {}
+        head_dicts = self.components["behavior_heads"]
+        for name, head in head_dicts.items():
+            out, *rest = head(features)
+            # Index 1 of rest is the 3rd return value (inference/expected_value)
+            outputs[name] = rest[1] if len(rest) >= 2 else out
+
+        # 6. Assemble InferenceOutput
+        # network_state persists the opaque tokens for the world model and memory core
+        network_state = {
+            "dynamics": latent if "world_model" in self.components else None,
+            "wm_memory": wm_output.head_state if wm_output else None,
+            "backbone_memory": next_h,
+        }
+
+        # Handling Q-Values (Rainbow)
+        q_vals = outputs.get("q_logits")
+        state_value = (
+            q_vals.max(dim=-1)[0] if q_vals is not None else outputs.get("state_value")
+        )
+
+        return InferenceOutput(
+            recurrent_state=network_state,
+            value=state_value,
+            policy=outputs.get("policy_logits"),
+            q_values=q_vals,
+            reward=None,
+            to_play=wm_output.to_play if wm_output else None,
+            extras={},
+        )
 
     def learner_inference(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Universal Learner API: routes batch data appropriately based on components.
+        Learner Inference (The Explicit Flat-Batch Pipeline)
         """
-        initial_observation = batch.get("observations")
-        assert initial_observation is not None, "Batch must contain 'observations'"
-        initial_observation = initial_observation.to(self.device).float()
+        obs = batch.get("observations")
+        assert obs is not None, "Batch must contain 'observations'"
+        obs = obs.to(self.device).float()
 
-        # ----------------------------------------
-        # MuZero Logic
-        # ----------------------------------------
+        # 1. ENVIRONMENT PHASE (World Model / Physics)
         if "world_model" in self.components:
-            actions = batch.get("actions")
-            assert actions is not None, "Batch must contain 'actions' for MuZero"
-            target_observations = batch.get("unroll_observations")
-            target_chance_codes = batch.get("chance_codes")
-
-            wm_output = self.components["world_model"].initial_inference(
-                initial_observation
+            env_results = self.components["world_model"].unroll_physics(
+                initial_latent_state=self.components["world_model"]
+                .initial_inference(obs)
+                .features,
+                actions=batch["actions"],
+                encoder_inputs=(
+                    torch.cat(
+                        [
+                            batch["unroll_observations"][:, :-1],
+                            batch["unroll_observations"][:, 1:],
+                        ],
+                        dim=2,
+                    )
+                    if getattr(self.config, "stochastic", False)
+                    else None
+                ),
+                true_chance_codes=batch.get("chance_codes"),
+                target_observations=batch.get("unroll_observations"),
             )
-            latent = wm_output.features
-            head_state = wm_output.head_state
-
-            encoder_inputs = None
-            if (
-                getattr(self.config, "stochastic", False)
-                and target_observations is not None
-            ):
-                encoder_inputs = torch.cat(
-                    [target_observations[:, :-1], target_observations[:, 1:]], dim=2
-                )
-
-            physics_output = self.components["world_model"].unroll_physics(
-                initial_latent_state=latent,
-                actions=actions,
-                encoder_inputs=encoder_inputs,
-                true_chance_codes=target_chance_codes,
-                head_state=head_state,
-                target_observations=target_observations,
-            )
-
-            stacked_latents = physics_output["latents"]
-            B, T_plus_1 = stacked_latents.shape[:2]
-            
-            # --- THE EXPLICIT FLAT-BATCH PIPELINE (Learner Inference) ---
-            backbone = self.components["prediction_backbone"]
-            if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
-                # 1. Memory Core: Strictly (B, T, D)
-                seq_memory, _ = backbone(stacked_latents) 
-                # 2. Re-flatten for Behavioral Heads
-                flat_memory = seq_memory.flatten(0, 1) # (B*(T+1), H)
-            else:
-                # 1. Feature Extractor: Strictly flat (B*T, D)
-                flat_latents = stacked_latents.reshape(
-                    B * T_plus_1, *stacked_latents.shape[2:]
-                )
-                flat_memory = backbone(flat_latents)
-
-            # Heas Strictly receive flat batches
-            raw_values, _, _ = self.components["value_head"](flat_memory)
-            raw_policies, _, _ = self.components["policy_head"](flat_memory)
-
-            # Unflatten final predictions for the loss function
-            raw_values = raw_values.view(B, T_plus_1, -1)
-            raw_policies = raw_policies.view(B, T_plus_1, -1)
-
-            latents_afterstates = None
-            stochastic_chance_logits = None
-            stochastic_chance_values = None
-            chance_encoder_embeddings = None
-
-            # --- SHAPE NORMALIZATION ---
-            # physics_output now includes root predictions (K+1) for all environment heads.
-            # We no longer need to manually pad/cat dummy rewards here.
-            rewards = physics_output["rewards"]
-            to_plays = physics_output["to_plays"]
-            continuations = physics_output.get("continuations")
-
-            if (
-                getattr(self.config, "stochastic", False)
-                and physics_output.get("latents_afterstates") is not None
-            ):
-                latents_afterstates = physics_output["latents_afterstates"]
-                stacked_backbone_features = physics_output["afterstate_backbone_features"]
-                B_as, T_as = stacked_backbone_features.shape[:2]  # T_as is K
-                flat_backbone = stacked_backbone_features.reshape(
-                    B_as * T_as, *stacked_backbone_features.shape[2:]
-                )
-
-                raw_chance_values, _, _ = self.components["afterstate_value_head"](
-                    flat_backbone
-                )
-                # Stochastic Values: [B, K, atoms] -> [B, K+1, atoms]
-                stochastic_chance_values = raw_chance_values.view(B_as, T_as, -1)
-                dummy_chance_values = torch.zeros(
-                    B_as,
-                    1,
-                    *stochastic_chance_values.shape[2:],
-                    device=self.device,
-                    dtype=stochastic_chance_values.dtype,
-                )
-                stochastic_chance_values = torch.cat(
-                    [dummy_chance_values, stochastic_chance_values], dim=1
-                )
-
-                # Stochastic Chance Logits: [B, K, num_chance] -> [B, K+1, num_chance]
-                stochastic_chance_logits = physics_output["chance_logits"]
-                dummy_chance_logits = torch.zeros(
-                    B_as,
-                    1,
-                    *stochastic_chance_logits.shape[2:],
-                    device=self.device,
-                    dtype=stochastic_chance_logits.dtype,
-                )
-                stochastic_chance_logits = torch.cat(
-                    [dummy_chance_logits, stochastic_chance_logits], dim=1
-                )
-
-                # Stochastic Chance Encoder Embeddings: [B, K, dim] -> [B, K+1, dim]
-                chance_encoder_embeddings = physics_output["chance_encoder_embeddings"]
-                dummy_chance_embeddings = torch.zeros(
-                    B_as,
-                    1,
-                    *chance_encoder_embeddings.shape[2:],
-                    device=self.device,
-                    dtype=chance_encoder_embeddings.dtype,
-                )
-                chance_encoder_embeddings = torch.cat(
-                    [dummy_chance_embeddings, chance_encoder_embeddings], dim=1
-                )
-
-            output = {
-                "values": raw_values,
-                "policies": raw_policies,
-                "rewards": rewards,
-                "to_plays": to_plays,
-                "latents": stacked_latents,
-            }
-            if continuations is not None:
-                output["continuations"] = continuations
-
-            if (
-                getattr(self.config, "stochastic", False)
-                and latents_afterstates is not None
-            ):
-                output["latents_afterstates"] = latents_afterstates
-                output["chance_logits"] = stochastic_chance_logits
-                output["chance_values"] = stochastic_chance_values
-                output["chance_encoder_embeddings"] = chance_encoder_embeddings
-
-            # --- SHAPE VALIDATION ---
-            # MuZero unrolls k steps, so T = k + 1
-            expected_T = getattr(self.config, "unroll_steps", 0) + 1
-            assert (
-                output["values"].ndim >= 2 and output["values"].shape[1] == expected_T
-            ), f"MuZero values shape mismatch: {output['values'].shape}"
-            assert (
-                output["policies"].ndim >= 3 and output["policies"].shape[1] == expected_T
-            ), f"MuZero policies shape mismatch: {output['policies'].shape}"
-
-            # --- STRICT SYSTEM-WIDE VALIDATION ---
-            ShapeValidator(self.config).validate_predictions(output)
-
-            return output
-
-        # ----------------------------------------
-        # PPO Logic (Learner)
-        # ----------------------------------------
-        elif "policy_head" in self.components and "value_head" in self.components:
-            # 1. Determine structure
-            obs = initial_observation
-            if obs.dim() > len(self.input_shape) + 1:
-                B, T = obs.shape[:2]
-                flat_obs = obs.flatten(0, 1)
-                is_seq = True
-            else:
-                flat_obs = obs
-                is_seq = False
-
-            # Note: PPO typically routes observations straight to behavioral heads,
-            # which might have their own modular 'necks'.
-            # Terminal Heads strictly receive flat (B*, D) batches.
-            policy_logits, _, _ = self.components["policy_head"](flat_obs)
-            value_logits, _, _ = self.components["value_head"](flat_obs)
-
-            # --- ROUTER UNFLATTENING ---
-            if is_seq:
-                values = value_logits.view(B, T, -1)
-                policies = policy_logits.view(B, T, -1)
-            else:
-                values = value_logits.unsqueeze(1)
-                policies = policy_logits.unsqueeze(1)
-
-            output = {"values": values, "policies": policies}
-
-            # --- SHAPE VALIDATION ---
-            assert output["values"].ndim == 3, f"PPO values shape mismatch: {output['values'].shape}"
-            assert output["policies"].ndim == 3, f"PPO policies shape mismatch: {output['policies'].shape}"
-
-            ShapeValidator(self.config).validate_predictions(output)
-            return output
-
-        # ----------------------------------------
-        # Rainbow DQN Logic (Learner)
-        # ----------------------------------------
-        elif "q_head" in self.components:
-            obs = initial_observation
-            if obs.dim() > len(self.input_shape) + 1:
-                B, T = obs.shape[:2]
-                is_seq = True
-            else:
-                is_seq = False
-
-            # 1. Feature Extraction (Memory Core or Feature Extractor)
-            backbone = self.components["feature_block"]
-            if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
-                if not is_seq:
-                    # Unsqueeze for consistent memory-core contract
-                    obs = obs.unsqueeze(1)
-                seq_memory, _ = backbone(obs)
-                flat_memory = seq_memory.flatten(0, 1)
-            else:
-                flat_obs = obs.flatten(0, 1) if is_seq else obs
-                flat_memory = backbone(flat_obs)
-
-            # 2. Terminal Headsstrictly receive flat batches
-            Q_logits, _, _ = self.components["q_head"](flat_memory)
-            q_vals = self.components["q_head"].representation.to_expected_value(Q_logits)
-
-            # --- ROUTER UNFLATTENING ---
-            if is_seq:
-                B, T = (B, T) # already captured
-                q_values_seq = q_vals.view(B, T, -1)
-                q_logits_seq = Q_logits.view(B, T, -1)
-            else:
-                q_values_seq = q_vals.unsqueeze(1)
-                q_logits_seq = Q_logits.unsqueeze(1)
-
-            output = {
-                "q_values": q_values_seq,
-                "q_logits": q_logits_seq,
-            }
-
-            # --- SHAPE VALIDATION ---
-            assert output["q_values"].ndim == 3, f"Rainbow q_values shape mismatch: {output['q_values'].shape}"
-            assert output["q_logits"].ndim >= 3, f"Rainbow q_logits shape mismatch: {output['q_logits'].shape}"
-
-            ShapeValidator(self.config).validate_predictions(output)
-            return output
-
-        # ----------------------------------------
-        # Supervised/Imitation Logic (Learner)
-        # ----------------------------------------
-        elif "policy_head" in self.components and "value_head" not in self.components:
-            obs = initial_observation
-            if obs.dim() > len(self.input_shape) + 1:
-                B, T = obs.shape[:2]
-                is_seq = True
-            else:
-                is_seq = False
-
-            # 1. Feature Extraction (Memory Core or Feature Extractor)
-            backbone = self.components.get("feature_block")
-            if backbone:
-                if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
-                    if not is_seq:
-                         obs = obs.unsqueeze(1)
-                    seq_memory, _ = backbone(obs)
-                    flat_memory = seq_memory.flatten(0, 1)
-                else:
-                    flat_obs = obs.flatten(0, 1) if is_seq else obs
-                    flat_memory = backbone(flat_obs)
-            else:
-                flat_memory = obs.flatten(0, 1) if is_seq else obs
-
-            # 2. Terminal Head strictly receives flat batches
-            logits, _, _ = self.components["policy_head"](flat_memory)
-            
-            # --- ROUTER UNFLATTENING ---
-            if is_seq:
-                policies = logits.view(B, T, -1)
-            else:
-                policies = logits.unsqueeze(1)
-                
-            output = {"policies": policies}
-
-            # --- SHAPE VALIDATION ---
-            assert output["policies"].ndim == 3, f"Imitation policies shape mismatch: {output['policies'].shape}"
-
-            ShapeValidator(self.config).validate_predictions(output)
-            return output
-
+            latents = env_results["latents"]
         else:
-            raise NotImplementedError(
-                "Network components don't match any known learner inference pipeline."
+            # For PPO/Rainbow, the environment phase is just the raw sequence
+            latents = obs
+            env_results = {"observations": obs}
+
+        B, T = latents.shape[:2]
+
+        # 2. FLATTEN: Spatial/Dense Feature Extraction
+        flat_latents = latents.flatten(0, 1)
+        if "feature_extractor" in self.components:
+            flat_features = self.components["feature_extractor"](flat_latents)
+        else:
+            flat_features = flat_latents
+
+        # 3. BEHAVIOR PHASE: Temporal Memory (Sequence Boundary)
+        if "memory_core" in self.components:
+            seq_features = flat_features.view(B, T, -1)
+            seq_memory, _ = self.components["memory_core"](seq_features)
+            flat_memory = seq_memory.flatten(0, 1)
+        else:
+            flat_memory = flat_features
+
+        # 4. BEHAVIOR PHASE: Route to Terminal Heads
+        behavior_results = {}
+        for name, head in self.components["behavior_heads"].items():
+            if name == "afterstate_value":
+                continue # Handled in section 5
+            flat_out, *rest = head(flat_memory)
+            behavior_results[name] = flat_out.view(B, T, -1)
+
+        # 5. STOCHASTIC ADDITIONAL HEADS (Afterstate Values)
+        if "world_model" in self.components and getattr(
+            self.config, "stochastic", False
+        ):
+            # Special handling for stochastic afterstate values
+            # Physics output has 'afterstate_backbone_features' [B, K, D]
+            as_features = env_results["afterstate_backbone_features"]
+            flat_as = as_features.flatten(0, 1)
+            raw_as_values, *rest = self.components["behavior_heads"]["afterstate_value"](
+                flat_as
             )
+
+            # Unflatten and Pad (Root step has no afterstate value)
+            B_as, K_as = as_features.shape[:2]
+            as_values = raw_as_values.view(B_as, K_as, -1)
+            root_as_values = torch.zeros(
+                B_as, 1, *as_values.shape[2:], device=self.device
+            )
+            behavior_results["afterstate_value"] = torch.cat(
+                [root_as_values, as_values], dim=1
+            )
+            behavior_results["chance_logits"] = env_results.get("chance_logits")
+
+        # 6. MERGE: One massive dictionary for the loss pipeline
+        final_output = {**env_results, **behavior_results}
+
+        final_output["latents"] = latents
+        ShapeValidator(self.config).validate_predictions(final_output)
+        return final_output
 
     # ==========================================
     # SEARCH API (Only relevant for MuZero routing)
@@ -645,45 +340,54 @@ class ModularAgentNetwork(BaseAgentNetwork):
     def hidden_state_inference(
         self, network_state: Dict[str, Any], action: Tensor
     ) -> InferenceOutput:
+        """
+        MCTS Routing: Step the world model and immediately pass through behavior heads.
+        """
         if "world_model" not in self.components:
             return super().hidden_state_inference(network_state, action)
 
-        dynamics_state = network_state["dynamics"]
-        wm_memory = network_state.get("wm_memory")
-
         wm_output = self.components["world_model"].recurrent_inference(
-            hidden_state=dynamics_state,
+            hidden_state=network_state["dynamics"],
             action=action,
-            recurrent_state=wm_memory,
+            recurrent_state=network_state.get("wm_memory"),
+        )
+        latent = wm_output.features
+
+        # Feature Extraction
+        features = (
+            self.components["feature_extractor"](latent)
+            if "feature_extractor" in self.components
+            else latent
         )
 
-        next_hidden = wm_output.features
-        
-        # Prediction Backbone: (B, T, D) OR (B*, D)
-        backbone = self.components["prediction_backbone"]
-        h_state = network_state.get("backbone_memory")
-        
-        if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
-            seq_features = next_hidden.unsqueeze(1) # (B, 1, D)
-            seq_memory, next_h = backbone(seq_features, h_state)
-            pred_features = seq_memory.squeeze(1)
+        # Memory Core
+        if "memory_core" in self.components:
+            seq_features = features.unsqueeze(1)
+            seq_memory, next_h = self.components["memory_core"](
+                seq_features, network_state.get("backbone_memory")
+            )
+            features = seq_memory.squeeze(1)
         else:
-            pred_features = backbone(next_hidden)
             next_h = None
 
-        _, _, expected_value = self.components["value_head"](pred_features)
-        _, _, policy_dist = self.components["policy_head"](pred_features)
-        
+        # Behavior Heads
+        outputs = {}
+        head_dicts = self.components["behavior_heads"]
+        for name, head in head_dicts.items():
+            out, *rest = head(features)
+            # Index 1 of rest is the 3rd return value (inference/expected_value)
+            outputs[name] = rest[1] if len(rest) >= 2 else out
+
         next_recurrent_state = {
-            "dynamics": next_hidden,
+            "dynamics": latent,
             "wm_memory": wm_output.head_state,
             "backbone_memory": next_h,
         }
 
         return InferenceOutput(
             recurrent_state=next_recurrent_state,
-            value=expected_value,
-            policy=policy_dist,
+            value=outputs.get("state_value"),
+            policy=outputs.get("policy_logits"),
             reward=wm_output.instant_reward,
             to_play=wm_output.to_play,
             extras={},
@@ -692,6 +396,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
     def afterstate_inference(
         self, recurrent_state: Any, action: Tensor
     ) -> InferenceOutput:
+        """
+        MCTS Routing: Step the world model's afterstate and return afterstate value.
+        """
         if "world_model" not in self.components or not getattr(
             self.config, "stochastic", False
         ):
@@ -700,12 +407,17 @@ class ModularAgentNetwork(BaseAgentNetwork):
         wm_output = self.components["world_model"].afterstate_recurrent_inference(
             recurrent_state, action
         )
-        shared_features = wm_output.features
-        chance_logits = wm_output.chance
+        as_latent = wm_output.features
 
-        _, _, expected_afterstate_value = self.components["afterstate_value_head"](
-            shared_features
+        # Afterstate Value prediction uses the shared backbone from the world model
+        shared_backbone_features = (
+            wm_output.features
+        )  # Correctly returning features from shared backbone
+        _, *rest = self.components["behavior_heads"]["afterstate_value"](
+            shared_backbone_features
         )
+        expected_afterstate_value = rest[-1] if rest else None
+
         recurrent_state_after = {
             "dynamics": wm_output.afterstate_features,
             "wm_memory": recurrent_state.get("wm_memory"),
@@ -713,7 +425,8 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
         chance_policy = self.components[
             "world_model"
-        ].sigma_head.representation.to_inference(chance_logits)
+        ].sigma_head.representation.to_inference(wm_output.chance)
+
         return InferenceOutput(
             recurrent_state=recurrent_state_after,
             value=expected_afterstate_value,

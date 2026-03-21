@@ -45,7 +45,7 @@ def test_ppo_kl_propagation_to_callback(make_ppo_config_dict, cartpole_game_conf
 
     # 4. Setup Loss Pipeline
     # Extract representation from the head
-    pol_rep = agent_network.components["policy_head"].representation
+    pol_rep = agent_network.components["behavior_heads"]["policy"].representation
     ppo_loss = ClippedSurrogateLoss(
         device=device,
         representation=pol_rep,

@@ -17,7 +17,7 @@ class ToPlayLoss(BaseLoss):
     ):
         super().__init__(
             device=device,
-            pred_key="to_plays",
+            pred_key="to_play_logits",
             target_key="to_plays",
             mask_key=mask_key,
             representation=representation,
@@ -45,7 +45,7 @@ class RelativeToPlayLoss(BaseLoss):
     ):
         super().__init__(
             device=device,
-            pred_key="to_plays",
+            pred_key="to_play_logits",
             target_key="to_plays",
             mask_key=mask_key,
             representation=representation,

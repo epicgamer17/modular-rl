@@ -89,7 +89,7 @@ class ExpectedValueErrorPriorityComputer(BasePriorityComputer):
         self,
         value_representation: Any,
         target_key: str = "values",
-        pred_key: str = "values",
+        pred_key: str = "state_value",
     ):
         self.value_representation = value_representation
         self.target_key = target_key

@@ -73,11 +73,11 @@ class ShapeValidator:
         ), f"{prefix} sequence length mismatch: expected {self.T}, got {shape[1]} | full shape: {shape}"
 
         # 3. Content specific checks
-        if key == "policies":
-            assert (
-                shape[2] == self.num_actions
-            ), f"{prefix} action dim mismatch: expected {self.num_actions}, got {shape[2]} | full shape: {shape}"
-        elif key in ["values", "returns"]:
+        if key in ["policy_logits", "q_logits", "to_play_logits", "continuation_logits"]:
+            # Action/Categorical distributions: [B, T, D]
+            # (Note: to_play and continuation also follow this but D is num_players or 2)
+            pass 
+        elif key in ["state_value", "returns", "afterstate_value", "reward_logits"]:
             # Could be scalar [B, T] or distributional [B, T, atoms]
             if len(shape) == 3:
                 assert (

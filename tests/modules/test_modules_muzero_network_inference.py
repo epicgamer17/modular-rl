@@ -69,8 +69,8 @@ def test_muzero_network_structure(
     net = ModularAgentNetwork(config, input_shape, config.game.num_actions)
 
     print("Parameters check:")
-    print(f"Prediction Value Head: {net.components['value_head']}")
-    print(f"Prediction Policy Head: {net.components['policy_head']}")
+    print(f"Prediction Value Head: {net.components['behavior_heads']['state_value']}")
+    print(f"Prediction Policy Head: {net.components['behavior_heads']['policy_logits']}")
 
     if hasattr(net, "prediction"):
         print("FAILED: Network still has 'prediction' attribute.")
@@ -132,28 +132,28 @@ def test_learner_inference(rainbow_cartpole_replay_config, make_cartpole_config)
     print("Running learner_inference...")
     learning_output = net.learner_inference(batch)
 
-    print(f"Values shape: {learning_output['values'].shape}")
-    print(f"Policies shape: {learning_output['policies'].shape}")
-    print(f"Rewards shape: {learning_output['rewards'].shape}")
+    print(f"Values shape: {learning_output['state_value'].shape}")
+    print(f"Policies shape: {learning_output['policy_logits'].shape}")
+    print(f"Rewards shape: {learning_output['reward_logits'].shape}")
     print(f"Latents shape: {learning_output['latents'].shape}")
 
-    assert learning_output["values"].shape == (batch_size, unroll_steps + 1, 1)
-    assert learning_output["policies"].shape == (
+    assert learning_output["state_value"].shape == (batch_size, unroll_steps + 1, 1)
+    assert learning_output["policy_logits"].shape == (
         batch_size,
         unroll_steps + 1,
         config.game.num_actions,
     )
-    assert learning_output["rewards"].shape == (
+    assert learning_output["reward_logits"].shape == (
         batch_size,
         unroll_steps + 1,
         1,
-    ), f"Expected rewards shape (B, T+1, 1), got {learning_output['rewards'].shape}"
+    ), f"Expected rewards shape (B, T+1, 1), got {learning_output['reward_logits'].shape}"
     assert learning_output["latents"].shape == (batch_size, unroll_steps + 1, 4)
 
     if config.stochastic:
         print(f"Latents Afterstates shape: {learning_output['latents_afterstates'].shape}")
         print(f"Chance Logits shape: {learning_output['chance_logits'].shape}")
-        print(f"Chance Values shape: {learning_output['chance_values'].shape}")
+        print(f"Chance Values shape: {learning_output['afterstate_value'].shape}")
         assert learning_output["latents_afterstates"].shape == (
             batch_size,
             unroll_steps,
@@ -164,6 +164,6 @@ def test_learner_inference(rainbow_cartpole_replay_config, make_cartpole_config)
             unroll_steps + 1,
             config.num_chance,
         )
-        assert learning_output["chance_values"].shape == (batch_size, unroll_steps + 1, 1)
+        assert learning_output["afterstate_value"].shape == (batch_size, unroll_steps + 1, 1)
 
     print("learner_inference Test Success!")

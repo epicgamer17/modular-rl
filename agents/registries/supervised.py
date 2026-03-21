@@ -7,7 +7,7 @@ from modules.utils import create_optimizer, get_lr_scheduler
 
 def build_supervised_loss_pipeline(config, agent_network, device):
     # Extract representation from policy head
-    pol_rep = agent_network.components["policy_head"].representation
+    pol_rep = agent_network.components["behavior_heads"]["policy"].representation
 
     return LossPipeline(
         config,

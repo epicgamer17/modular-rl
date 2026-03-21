@@ -17,7 +17,7 @@ class RewardLoss(BaseLoss):
     ):
         super().__init__(
             device=device,
-            pred_key="rewards",
+            pred_key="reward_logits",
             target_key="rewards",
             mask_key=mask_key,
             representation=representation,

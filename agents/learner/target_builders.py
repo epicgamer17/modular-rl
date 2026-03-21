@@ -151,13 +151,13 @@ class TemporalDifferenceBuilder(BaseTargetBuilder):
         with torch.inference_mode():
             # Double DQN: Use online network for action selection
             online_next_out = network.learner_inference({"observations": next_obs})
-            next_q_values = online_next_out["q_values"]
+            next_q_values = online_next_out["q_logits"]
 
             # Use target network for value estimation
             target_out = self.target_network.learner_inference(
                 {"observations": next_obs}
             )
-            target_q_values = target_out["q_values"]
+            target_q_values = target_out["q_logits"]
 
         # Ensure shapes are [B, Actions]
         if next_q_values.dim() == 3:
@@ -226,7 +226,7 @@ class DistributionalTargetBuilder(BaseTargetBuilder):
             # Double DQN: Use online network for action selection (argmax a' over Q)
             # Use learner_inference to get [B, Actions] q_values
             online_next_out = network.learner_inference({"observations": next_obs})
-            next_q_values = online_next_out["q_values"]
+            next_q_values = online_next_out["q_logits"]
             if next_q_values.ndim == 3:
                 next_q_values = next_q_values.squeeze(1)
 
@@ -254,10 +254,10 @@ class DistributionalTargetBuilder(BaseTargetBuilder):
 
         # 2. Get the base grid geometry from the network's representation
         # It MUST be a C51Representation (or similar with support)
-        representation = network.components["q_head"].representation
+        representation = network.components["behavior_heads"]["q_logits"].representation
         assert hasattr(
             representation, "project_onto_grid"
-        ), "DistributionalTargetBuilder requires a representation with project_onto_grid API."
+        )
 
         base_support = representation.support.to(rewards.device)
 

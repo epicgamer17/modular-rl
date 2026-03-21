@@ -34,10 +34,10 @@ from agents.learner.losses.priorities import ExpectedValueErrorPriorityComputer
 
 def build_muzero_loss_pipeline(config, agent_network, device):
     # Extract representations from heads
-    val_rep = agent_network.components["value_head"].representation
-    pol_rep = agent_network.components["policy_head"].representation
-    rew_rep = agent_network.components["world_model"].heads["reward"].representation
-    tp_rep = agent_network.components["world_model"].heads["to_play"].representation
+    val_rep = agent_network.components["behavior_heads"]["state_value"].representation
+    pol_rep = agent_network.components["behavior_heads"]["policy_logits"].representation
+    rew_rep = agent_network.components["world_model"].heads["reward_logits"].representation
+    tp_rep = agent_network.components["world_model"].heads["to_play_logits"].representation
 
     modules = [
         ValueLoss(
@@ -80,7 +80,7 @@ def build_muzero_loss_pipeline(config, agent_network, device):
         )
 
     if config.stochastic:
-        as_val_rep = agent_network.components["afterstate_value_head"].representation
+        as_val_rep = agent_network.components["behavior_heads"]["afterstate_value"].representation
         sigma_rep = agent_network.components["world_model"].sigma_head.representation
 
         modules.extend(

@@ -11,8 +11,8 @@ from torch.optim.sgd import SGD
 
 def build_ppo_loss_pipeline(config, agent_network, device):
     # Extract representation from heads directly
-    pol_rep = agent_network.components["policy_head"].representation
-    val_rep = agent_network.components["value_head"].representation
+    pol_rep = agent_network.components["behavior_heads"]["policy_logits"].representation
+    val_rep = agent_network.components["behavior_heads"]["state_value"].representation
 
     return LossPipeline(
         config=config,
@@ -66,11 +66,11 @@ def build_ppo(config: Any, agent_network: Any, device: torch.device) -> Dict[str
             return opt_cls(params, lr=config.learning_rate)
 
     optimizers["policy"] = create_opt(
-        agent_network.components["policy_head"].parameters(),
+        agent_network.components["behavior_heads"]["policy_logits"].parameters(),
         getattr(config, "actor", config),
     )
     optimizers["value"] = create_opt(
-        agent_network.components["value_head"].parameters(),
+        agent_network.components["behavior_heads"]["state_value"].parameters(),
         getattr(config, "critic", config),
     )
 

@@ -93,7 +93,7 @@ class ModularWorldModel(WorldModelInterface, nn.Module):
         # Reward Head
         if getattr(config, "reward_head", None) is not None:
             r_rep = get_representation(config.reward_head.output_strategy)
-            self.heads["reward"] = HeadFactory.create(
+            self.heads["reward_logits"] = HeadFactory.create(
                 config.reward_head,
                 config.arch,
                 input_shape=self.dynamics.output_shape,
@@ -103,7 +103,7 @@ class ModularWorldModel(WorldModelInterface, nn.Module):
         # Continuation Head (Termination)
         if getattr(config, "continuation_head", None) is not None:
             c_rep = get_representation(config.continuation_head.output_strategy)
-            self.heads["continuation"] = HeadFactory.create(
+            self.heads["continuation_logits"] = HeadFactory.create(
                 config.continuation_head,
                 config.arch,
                 input_shape=self.dynamics.output_shape,
@@ -113,7 +113,7 @@ class ModularWorldModel(WorldModelInterface, nn.Module):
         # To-Play Head
         if getattr(config, "to_play_head", None) is not None:
             tp_rep = get_representation(config.to_play_head.output_strategy)
-            self.heads["to_play"] = HeadFactory.create(
+            self.heads["to_play_logits"] = HeadFactory.create(
                 config.to_play_head,
                 config.arch,
                 input_shape=self.dynamics.output_shape,
@@ -185,13 +185,13 @@ class ModularWorldModel(WorldModelInterface, nn.Module):
 
         return WorldModelOutput(
             features=next_hidden_state,
-            reward=predictions.get("reward"),
-            to_play=predictions.get("to_play_extra"),
-            to_play_logits=predictions.get("to_play"),
-            continuation=predictions.get("continuation_extra"),
-            continuation_logits=predictions.get("continuation"),
+            reward=predictions.get("reward_logits"),
+            to_play=predictions.get("to_play_logits_extra"),
+            to_play_logits=predictions.get("to_play_logits"),
+            continuation=predictions.get("continuation_logits_extra"),
+            continuation_logits=predictions.get("continuation_logits"),
             head_state=new_head_state,
-            instant_reward=predictions.get("reward_extra"),
+            instant_reward=predictions.get("reward_logits_extra"),
         )
 
     def afterstate_recurrent_inference(
@@ -353,9 +353,7 @@ class ModularWorldModel(WorldModelInterface, nn.Module):
         # Head sequences: [B, T, ...]
         for name, seq in head_sequences.items():
             if seq:
-                # Normalizing key names (reward -> rewards)
-                key = f"{name}s" if not name.endswith("s") else name
-                output[key] = torch.stack(seq, dim=1)
+                output[name] = torch.stack(seq, dim=1)
 
         # Stochastic sequences: [B, T, ...]
         for name, seq in stochastic_sequences.items():
