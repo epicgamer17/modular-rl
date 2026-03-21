@@ -35,8 +35,6 @@ class ResNetBackbone(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.stack(x)
 
-    def initialize(self, initializer: torch.Tensor) -> None:
-        self.stack.initialize(initializer)
 
     def reset_noise(self) -> None:
         self.stack.reset_noise()

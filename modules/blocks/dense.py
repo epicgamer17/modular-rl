@@ -13,8 +13,6 @@ class Dense(nn.Module):
             in_features=in_features, out_features=out_features, bias=bias
         )
 
-    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
-        initializer(self.layer.weight)
 
     def forward(self, inputs: Tensor) -> Tensor:
         return self.layer(inputs)
@@ -106,8 +104,6 @@ class NoisyDense(nn.Module):
         else:
             return None
 
-    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
-        pass
 
     def forward(self, input: Tensor) -> Tensor:
         return functional.F.linear(input, self.weight, self.bias)

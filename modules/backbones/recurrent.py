@@ -45,9 +45,3 @@ class RecurrentBackbone(nn.Module):
         output, h_n = self.rnn(x, h)
         return output[:, -1, :], h_n  # Return last output and hidden state
 
-    def initialize(self, initializer: torch.Tensor) -> None:
-        for name, param in self.rnn.named_parameters():
-            if "weight" in name:
-                initializer(param)
-            elif "bias" in name:
-                nn.init.constant_(param, 0)

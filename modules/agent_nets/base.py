@@ -1,153 +1,106 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable, Union, Tuple
 import torch
-from torch import nn
+from torch import nn, Tensor
 
+from modules.utils import kernel_initializer_wrapper
 from modules.world_models.inference_output import InferenceOutput
 
 
 class BaseAgentNetwork(nn.Module, ABC):
     """
-    Abstract Base Class for all Agent Networks (PPO, Rainbow, MuZero, etc.).
     Enforces a strict separation between Actor (Environment) and Learner (Training) APIs.
+    All Agent Networks must implement these methods to be compatible with ModularSearch and UniversalLearner.
     """
 
-    # ==========================================
-    # 1. THE ACTOR'S API (Real World, t=0)
-    # ==========================================
+    def __init__(self):
+        super().__init__()
+        # These will be set by subclasses
+        self.input_shape: Optional[Tuple[int, ...]] = None
+        self.num_actions: Optional[int] = None
+
+    def initialize(
+        self, initializer: Optional[Union[Callable[[Tensor], None], str]] = None
+    ) -> None:
+        """
+        Unified initialization for all Agent Network components.
+        Recursively applies the initializer function to all applicable layers (Conv, Linear).
+        """
+        init_fn = kernel_initializer_wrapper(initializer)
+        if init_fn is None:
+            return
+
+        def init_weights(m):
+            if isinstance(m, (nn.Conv2d, nn.Linear, nn.ConvTranspose2d)):
+                if hasattr(m, "weight") and m.weight is not None:
+                    init_fn(m.weight)
+                if hasattr(m, "bias") and m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+        self.apply(init_weights)
+
+    @property
+    def device(self) -> torch.device:
+        """Returns the device this network is currently on."""
+        try:
+            return next(self.parameters()).device
+        except StopIteration:
+            return torch.device("cpu")
+
+    def reset_noise(self) -> None:
+        """Resamples NoisyNet parameters across all layers recursively."""
+        def _reset_recursive(m):
+            if hasattr(m, "reset_noise") and callable(m.reset_noise):
+                m.reset_noise()
+        self.apply(_reset_recursive)
+
     @abstractmethod
-    def obs_inference(self, obs: Any) -> InferenceOutput:
-        """
-        Called by the ActionSelector.
-        Translates a real environment observation into semantic distributions and a root network_state.
+    def obs_inference(self, obs: Tensor, **kwargs) -> InferenceOutput:
+        """Standard interface for raw observation inputs (Initial Inference)."""
+        pass
 
-        Args:
-            obs: The current observation from the environment.
-
-        Returns:
-            InferenceOutput containing:
-                - value: Expected value V(s)
-                - policy: Action distribution (Categorical, Normal, etc.)
-                - network_state: Opaque state for future search steps (if supported)
-        """
-        pass  # pragma: no cover
-
-    # ==========================================
-    # 3. SEARCH API (Hypothetical World, t > 0)
-    # ==========================================
+    @abstractmethod
     def hidden_state_inference(
-        self,
-        network_state: Dict[str, Any],
-        action: torch.Tensor,
+        self, hidden_state: Any, action: Tensor, **kwargs
     ) -> InferenceOutput:
+        """Standard interface for MuZero-style latent rollout (Recurrent Inference)."""
+        pass
+
+    def afterstate_inference(self, network_state: Any, action: Tensor) -> InferenceOutput:
         """
-        Translates (state, action) -> (next_state, reward, value, policy).
-        Used by MCTS / Planning.
+        Optional interface for Stochastic MuZero (Afterstate Inference).
+        If the architecture does not support stochasticity, this will raise NotImplementedError.
         """
         raise NotImplementedError(
-            "hidden_state_inference not implemented for this AgentNetwork"
-        )  # pragma: no cover
-
-    def afterstate_inference(
-        self,
-        network_state: Dict[str, Any],
-        action: torch.Tensor,
-    ) -> InferenceOutput:
-        """
-        Translates (state, action) -> (afterstate_value, policy_over_codes/outcomes).
-        Used by Stochastic MCTS.
-        """
-        raise NotImplementedError(
-            "afterstate_inference not implemented for this AgentNetwork"
-        )  # pragma: no cover
-
-    def search_afterstate(
-        self, network_state: Any, action: torch.Tensor
-    ) -> InferenceOutput:
-        """
-        Called by Stochastic MCTS Algorithms.
-        Steps the latent simulator to the intermediate 'afterstate' (post-action, pre-environment).
-
-        Args:
-            network_state: The opaque state from the previous step.
-            action: The action taken.
-
-        Returns:
-            InferenceOutput containing afterstate predictions (e.g. chance logits).
-
-        Raises:
-            NotImplementedError: If the agent does not support stochastic afterstates.
-        """
-        raise NotImplementedError(
-            "This agent does not support stochastic afterstates."
-        )  # pragma: no cover
-
-    # ==========================================
-    # 3. THE LEARNER'S API (Historical Batch Optimization)
-    # ==========================================
-    @abstractmethod
-    def learner_inference(self, batch: Any) -> Dict[str, Any]:
-        """
-        Learner API: Pure logits for loss computation.
-
-        Args:
-            batch: Batch of data (observations, actions, etc.)
-
-        Returns:
-            Algorithm-specific learner predictions as a dictionary of tensors.
-        """
-        pass  # pragma: no cover
-
-    def compile(self, mode: str = "reduce-overhead", fullgraph: bool = False):
-        """
-        Compiles the network's inference and learner methods for performance.
-        Skip on MPS as it's not supported.
-        Also skip on Mac CPU to avoid 'PythonDispatcher' crashes in some torch versions.
-        """
-        import platform
-
-        # is_mac = platform.system() == "Darwin"
-
-        # if self.device.type == "mps":
-        #     print("Notice: torch.compile is not supported on MPS. Skipping.")
-        #     return
-
-        # if is_mac and self.device.type == "cpu":
-        #     print("Notice: torch.compile is often unstable on Mac CPU. Skipping.")
-        #     return
-
-        print(
-            f"Compiling {self.__class__.__name__} with mode={mode}, fullgraph={fullgraph}..."
+            f"{self.__class__.__name__} does not support afterstate_inference."
         )
 
+    @abstractmethod
+    def learner_inference(self, batch: Dict[str, Any]) -> Dict[str, Tensor]:
+        """Standard interface for Learner to get raw math tensors across a sequence."""
+        pass
+
+    def compile(self, mode: str = "default", fullgraph: bool = False) -> None:
+        """Compiles the inference methods for performance gains on supported platforms."""
+        # Check if MPS (Mac) is active. MPS currently doesn't support torch.compile.
+        if self.device.type == "mps":
+            print("Skipping torch.compile on Apple Silicon (MPS).")
+            return
+
+        # Compile the specific inference methods.
+        self.obs_inference = torch.compile(
+            self.obs_inference, mode=mode, fullgraph=fullgraph
+        )
+        self.hidden_state_inference = torch.compile(
+            self.hidden_state_inference, mode=mode, fullgraph=fullgraph
+        )
+        self.learner_inference = torch.compile(
+            self.learner_inference, mode=mode, fullgraph=fullgraph
+        )
+        # Note: afterstate_inference is optional and might raise error if compiled.
         try:
-            # 1. Observation Inference
-            print(f"  [1/4] Compiling obs_inference...")
-            self.obs_inference = torch.compile(
-                self.obs_inference, mode=mode, fullgraph=fullgraph
-            )
-
-            # 2. Hidden State Inference
-            print(f"  [2/4] Compiling hidden_state_inference...")
-            self.hidden_state_inference = torch.compile(
-                self.hidden_state_inference, mode=mode, fullgraph=fullgraph
-            )
-
-            # 3. Afterstate Inference
-            print(f"  [3/4] Compiling afterstate_inference...")
             self.afterstate_inference = torch.compile(
                 self.afterstate_inference, mode=mode, fullgraph=fullgraph
             )
-
-            # 4. Learner Inference
-            print(f"  [4/4] Compiling learner_inference...")
-            self.learner_inference = torch.compile(
-                self.learner_inference, mode=mode, fullgraph=fullgraph
-            )
-            print(f"Finished compiling {self.__class__.__name__}.")
-        except Exception as e:
-            print(f"CRITICAL: torch.compile failed in {self.__class__.__name__}!")
-            print(f"Error: {e}")
-            import traceback
-
-            traceback.print_exc()
+        except (AttributeError, NotImplementedError):
+            pass

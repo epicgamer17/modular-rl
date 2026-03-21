@@ -1,4 +1,4 @@
-from typing import Callable, List, Optional, Tuple, Dict, Any
+from typing import Callable, List, Optional, Tuple, Dict, Any, Union
 
 from torch import Tensor
 import torch
@@ -11,7 +11,7 @@ from modules.heads.factory import HeadFactory
 from modules.heads.to_play import ToPlayHead
 from modules.heads.reward import RewardHead
 from agents.learner.losses.representations import get_representation
-from modules.utils import scale_gradient
+from modules.utils import scale_gradient, kernel_initializer_wrapper
 from modules.world_models.inference_output import (
     MuZeroNetworkState,
     WorldModelOutput,
@@ -122,19 +122,25 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             else torch.device("cpu")
         )
 
-    def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
-        self.representation.initialize(initializer)
-        self.dynamics.initialize(initializer)
-        self.reward_head.initialize(initializer)
-        self.to_play_head.initialize(initializer)
-        if hasattr(self, "afterstate_dynamics"):
-            self.afterstate_dynamics.initialize(initializer)
-        if hasattr(self, "shared_backbone"):
-            self.shared_backbone.initialize(initializer)
-        if hasattr(self, "sigma_head"):
-            self.sigma_head.initialize(initializer)
-        if hasattr(self, "encoder"):
-            self.encoder.initialize(initializer)
+    def initialize(
+        self, initializer: Optional[Union[Callable[[Tensor], None], str]] = None
+    ) -> None:
+        """
+        Unified initialization for the World Model.
+        Recursively applies the initializer function to all applicable layers (Conv, Linear).
+        """
+        init_fn = kernel_initializer_wrapper(initializer)
+        if init_fn is None:
+            return
+
+        def init_weights(m):
+            if isinstance(m, (nn.Conv2d, nn.Linear, nn.ConvTranspose2d)):
+                if hasattr(m, "weight") and m.weight is not None:
+                    init_fn(m.weight)
+                if hasattr(m, "bias") and m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+        self.apply(init_weights)
 
     def initial_inference(self, observation: Tensor) -> WorldModelOutput:
         # Ensure observation is a tensor

@@ -23,11 +23,6 @@ class DenseResidualBlock(nn.Module):
         x = self.norm(x)
         return self.activation(x + residual)
 
-    def initialize(self, initializer: torch.Tensor) -> None:
-        if hasattr(self.linear, "initialize"):
-            self.linear.initialize(initializer)
-        else:
-            initializer(self.linear.layer.weight)
 
     def reset_noise(self) -> None:
         if hasattr(self.linear, "reset_noise"):
@@ -83,16 +78,6 @@ class DenseResNetBackbone(nn.Module):
             x = layer(x)
         return x
 
-    def initialize(self, initializer: torch.Tensor) -> None:
-        for layer in self.layers:
-            if hasattr(layer, "initialize"):
-                layer.initialize(initializer)
-            elif isinstance(layer, nn.Sequential):
-                for sublayer in layer:
-                    if hasattr(sublayer, "initialize"):
-                        sublayer.initialize(initializer)
-                    elif isinstance(sublayer, (nn.Linear, nn.Conv2d)):
-                        initializer(sublayer.weight)
 
     def reset_noise(self) -> None:
         for layer in self.layers:

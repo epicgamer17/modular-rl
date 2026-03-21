@@ -19,8 +19,5 @@ class IdentityBackbone(nn.Module):
     def get_output_shape(self) -> Tuple[int]:
         return self.output_shape
 
-    def initialize(self, initializer):
-        pass  # pragma: no cover
-
     def reset_noise(self):
         pass  # pragma: no cover

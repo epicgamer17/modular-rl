@@ -224,10 +224,6 @@ class ModularAgentNetwork(BaseAgentNetwork):
             else torch.device("cpu")
         )
 
-    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
-        for name, module in self.components.items():
-            if hasattr(module, "initialize") and callable(module.initialize):
-                module.initialize(initializer)
 
     def reset_noise(self) -> None:
         """Resamples NoisyNet parameters across all configured components."""

@@ -46,11 +46,6 @@ class QHead(BaseHead):
             sigma=self.arch_config.noisy_sigma,
         )
 
-    def initialize(
-        self, initializer: Optional[Callable[[Tensor], None]] = None
-    ) -> None:
-        super().initialize(initializer)  # Inits neck and output_layer
-        self.hidden_layers.initialize(initializer)
 
     def reset_noise(self) -> None:
         super().reset_noise()
@@ -134,32 +129,6 @@ class DuelingQHead(BaseHead):
             del self.output_layer
             self.output_layer = None
 
-    def initialize(
-        self, initializer: Optional[Callable[[Tensor], None]] = None
-    ) -> None:
-        # Init neck
-        super().initialize(initializer)
-
-        # Init streams
-        init_fn = initializer or self.arch_config.kernel_initializer
-        out_init_fn = (
-            initializer
-            or self.arch_config.output_layer_initializer
-            or self.arch_config.kernel_initializer
-        )
-
-        self.value_hidden.initialize(init_fn)
-        self.advantage_hidden.initialize(init_fn)
-
-        if hasattr(self.value_output, "initialize"):
-            self.value_output.initialize(out_init_fn)
-        elif out_init_fn:
-            self.value_output.apply(out_init_fn)
-
-        if hasattr(self.advantage_output, "initialize"):
-            self.advantage_output.initialize(out_init_fn)
-        elif out_init_fn:
-            self.advantage_output.apply(out_init_fn)
 
     def reset_noise(self) -> None:
         super().reset_noise()  # Neck

@@ -36,8 +36,6 @@ class DenseBackbone(nn.Module):
             x = x.flatten(1, -1)
         return self.stack(x)
 
-    def initialize(self, initializer: torch.Tensor) -> None:
-        self.stack.initialize(initializer)
 
     def reset_noise(self) -> None:
         self.stack.reset_noise()

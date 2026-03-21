@@ -61,9 +61,6 @@ class ChanceEncoder(nn.Module):
 
         return probs, one_hot_st
 
-    def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
-        self.net.initialize(initializer)
-        zero_weights_initializer(self.fc)
 
 
 # TODO ADD MORE CHANCE ENCODERS, gumbel softmax, output logits instead of probs, LightZero version, etc

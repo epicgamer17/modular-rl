@@ -14,15 +14,6 @@ class BaseStack(nn.Module):
         self._layers = nn.ModuleList()
         self._output_len = None
 
-    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
-        """Initializes all Conv2d and Linear layers in the stack."""
-
-        def initialize_if_relevant(m: nn.Module):
-            if isinstance(m, (nn.Conv2d, nn.Linear)):
-                # Only apply to weight, as bias might be handled by NoisyDense
-                initializer(m.weight)
-
-        self.apply(initialize_if_relevant)
 
     def reset_noise(self) -> None:
         """Resets the noise for all noisy layers."""

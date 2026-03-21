@@ -47,9 +47,3 @@ class TransformerBackbone(nn.Module):
         x = self.transformer_encoder(x)
         return x[:, -1, :]  # Return last token's representation
 
-    def initialize(self, initializer: torch.Tensor) -> None:
-        for name, p in self.named_parameters():
-            if p.dim() > 1:
-                initializer(p)
-            elif "bias" in name:
-                nn.init.zeros_(p)

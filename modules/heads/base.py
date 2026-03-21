@@ -46,28 +46,6 @@ class BaseHead(nn.Module):
             flat *= dim
         return flat
 
-    def initialize(
-        self, initializer: Optional[Callable[[Tensor], None]] = None
-    ) -> None:
-        """Initializes the neck and the output layer using the architecture config or provided initializer."""
-        # Initialize neck
-        if hasattr(self.neck, "initialize"):
-            # Prefer provided initializer, then config
-            init_fn = initializer or self.arch_config.kernel_initializer
-            if init_fn:
-                self.neck.initialize(init_fn)
-
-        # Initialize the final output layer (defined in subclasses)
-        if self.output_layer is not None:
-            init_fn = (
-                initializer
-                or self.arch_config.output_layer_initializer
-                or self.arch_config.kernel_initializer
-            )
-            if hasattr(self.output_layer, "initialize"):
-                self.output_layer.initialize(init_fn)
-            elif init_fn:
-                self.output_layer.apply(init_fn)
 
     def reset_noise(self) -> None:
         if hasattr(self.neck, "reset_noise"):

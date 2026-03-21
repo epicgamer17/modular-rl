@@ -17,8 +17,6 @@ class Representation(nn.Module):
         self.net = BackboneFactory.create(config.representation_backbone, input_shape)
         self.output_shape = self.net.output_shape
 
-    def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
-        self.net.initialize(initializer)
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         S = self.net(inputs)

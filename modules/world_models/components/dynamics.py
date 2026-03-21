@@ -63,9 +63,6 @@ class BaseDynamics(nn.Module):
         self.net = BackboneFactory.create(bb_cfg, input_shape)
         self.output_shape = self.net.output_shape
 
-    def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
-        self.net.initialize(initializer)
-        # Additional initializations for fusion layers if needed
 
     def _fuse_and_process(
         self, hidden_state: torch.Tensor, action: torch.Tensor
