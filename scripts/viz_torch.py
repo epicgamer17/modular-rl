@@ -81,7 +81,7 @@ try:
     AgentConfig.__init__ = robust_agent_config_init
     AgentConfig._verify_game = robust_verify_game
 
-    from modules.agent_nets.modular import ModularAgentNetwork
+    from modules.agent_nets.agent_network import AgentNetwork
     from configs.agents.ppo import PPOConfig
     from configs.agents.muzero import MuZeroConfig
     from configs.agents.rainbow_dqn import RainbowConfig
@@ -92,10 +92,10 @@ except ImportError as e:
     sys.exit(1)
 
 AGENT_MAPPING = {
-    "ppo": {"config": PPOConfig, "network": ModularAgentNetwork},
-    "muzero": {"config": MuZeroConfig, "network": ModularAgentNetwork},
-    "dqn": {"config": RainbowConfig, "network": ModularAgentNetwork},
-    "rainbow": {"config": RainbowConfig, "network": ModularAgentNetwork},
+    "ppo": {"config": PPOConfig, "network": AgentNetwork},
+    "muzero": {"config": MuZeroConfig, "network": AgentNetwork},
+    "dqn": {"config": RainbowConfig, "network": AgentNetwork},
+    "rainbow": {"config": RainbowConfig, "network": AgentNetwork},
 }
 
 

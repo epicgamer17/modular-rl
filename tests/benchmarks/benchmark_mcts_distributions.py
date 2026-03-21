@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from types import SimpleNamespace
 from search.modular_search import ModularSearch
-from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.agent_network import AgentNetwork
 from configs.agents.muzero import MuZeroConfig
 from search.search_selectors import SelectionStrategy
 from search.backpropogation import Backpropagator
@@ -200,7 +200,7 @@ def main():
     input_shape = (3, 3, 3)
     num_actions = 9
 
-    agent_network = ModularAgentNetwork(base_config, input_shape, num_actions)
+    agent_network = AgentNetwork(base_config, input_shape, num_actions)
     agent_network.eval()
 
     test_cases = [

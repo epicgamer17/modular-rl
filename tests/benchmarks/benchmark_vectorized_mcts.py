@@ -7,7 +7,7 @@ import time
 import torch
 import torch.nn as nn
 from search.modular_search import ModularSearch
-from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.agent_network import AgentNetwork
 from configs.agents.muzero import MuZeroConfig
 from configs.games.game import GameConfig
 from search.search_factories import create_mcts
@@ -90,7 +90,7 @@ def main():
     input_shape = (3, 3, 3)
     num_actions = 9
 
-    agent_network = ModularAgentNetwork(base_config, input_shape, num_actions)
+    agent_network = AgentNetwork(base_config, input_shape, num_actions)
     agent_network.eval()
 
     test_cases = [

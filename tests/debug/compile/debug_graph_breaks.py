@@ -5,8 +5,8 @@ from configs.games.game import GameConfig
 from configs.agents.ppo import PPOConfig
 from configs.agents.rainbow_dqn import RainbowConfig
 from configs.agents.muzero import MuZeroConfig
-from modules.agent_nets.modular import ModularAgentNetwork
-from modules.world_models.modular_world_model import ModularWorldModel
+from modules.agent_nets.agent_network import AgentNetwork
+from modules.world_models.world_model import WorldModel
 
 
 def create_mock_game(num_actions: int = 5) -> GameConfig:
@@ -59,7 +59,7 @@ def run_ppo_tests(game: GameConfig, input_shape: Tuple[int, ...], num_actions: i
         },
         game,
     )
-    ppo_net = ModularAgentNetwork(ppo_config, input_shape, num_actions)
+    ppo_net = AgentNetwork(ppo_config, input_shape, num_actions)
     obs = torch.randn(1, *input_shape)
 
     debug_graph_breaks("PPO obs_inference", ppo_net.obs_inference, obs)
@@ -84,7 +84,7 @@ def run_rainbow_tests(game: GameConfig, input_shape: Tuple[int, ...], num_action
         },
         game,
     )
-    rainbow_net = ModularAgentNetwork(rainbow_config, input_shape, num_actions)
+    rainbow_net = AgentNetwork(rainbow_config, input_shape, num_actions)
     obs = torch.randn(1, *input_shape)
 
     debug_graph_breaks("Rainbow obs_inference", rainbow_net.obs_inference, obs)
@@ -107,7 +107,7 @@ def run_muzero_tests(game: GameConfig, input_shape: Tuple[int, ...], num_actions
     # Deterministic MuZero
     muzero_config = MuZeroConfig(
         {
-            "world_model_cls": ModularWorldModel,
+            "world_model_cls": WorldModel,
             "stochastic": False,
             "prediction_backbone": {"type": "identity"},
             "representation_backbone": {"type": "identity"},
@@ -118,7 +118,7 @@ def run_muzero_tests(game: GameConfig, input_shape: Tuple[int, ...], num_actions
         },
         game,
     )
-    muzero_net = ModularAgentNetwork(muzero_config, input_shape, num_actions)
+    muzero_net = AgentNetwork(muzero_config, input_shape, num_actions)
     obs = torch.randn(1, *input_shape)
     outputs = muzero_net.obs_inference(obs)
 
@@ -147,7 +147,7 @@ def run_muzero_tests(game: GameConfig, input_shape: Tuple[int, ...], num_actions
     print("\n--- Stochastic MuZero ---")
     stoch_muzero_config = MuZeroConfig(
         {
-            "world_model_cls": ModularWorldModel,
+            "world_model_cls": WorldModel,
             "stochastic": True,
             "num_chance": 10,
             "prediction_backbone": {"type": "identity"},
@@ -161,7 +161,7 @@ def run_muzero_tests(game: GameConfig, input_shape: Tuple[int, ...], num_actions
         },
         game,
     )
-    stoch_muzero_net = ModularAgentNetwork(
+    stoch_muzero_net = AgentNetwork(
         stoch_muzero_config, input_shape, num_actions
     )
     stoch_outputs = stoch_muzero_net.obs_inference(obs)

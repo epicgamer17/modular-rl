@@ -8,8 +8,8 @@ import gymnasium as gym
 import torch
 
 from configs.agents.muzero import MuZeroConfig
-from modules.agent_nets.modular import ModularAgentNetwork
-from modules.world_models.modular_world_model import ModularWorldModel
+from modules.agent_nets.agent_network import AgentNetwork
+from modules.world_models.world_model import WorldModel
 
 
 class MockEnv:
@@ -40,7 +40,7 @@ def _build_muzero_test_config(
     config_dict = copy.deepcopy(rainbow_cartpole_replay_config.config_dict)
     config_dict.update(
         {
-            "world_model_cls": ModularWorldModel,
+            "world_model_cls": WorldModel,
             "stochastic": True,
             "num_chance": 10,
             "prediction_backbone": {"type": "identity"},
@@ -66,7 +66,7 @@ def test_muzero_network_structure(
 
     print("Initializing Network...")
     input_shape = (4,)
-    net = ModularAgentNetwork(config, input_shape, config.game.num_actions)
+    net = AgentNetwork(config, input_shape, config.game.num_actions)
 
     print("Parameters check:")
     print(f"Prediction Value Head: {net.components['behavior_heads']['state_value']}")
@@ -119,7 +119,7 @@ def test_learner_inference(rainbow_cartpole_replay_config, make_cartpole_config)
         rainbow_cartpole_replay_config, make_cartpole_config
     )
     input_shape = (4,)
-    net = ModularAgentNetwork(config, input_shape, config.game.num_actions)
+    net = AgentNetwork(config, input_shape, config.game.num_actions)
 
     batch_size = 2
     unroll_steps = 3

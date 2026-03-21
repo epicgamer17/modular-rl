@@ -31,7 +31,7 @@ from agents.executors.local_executor import LocalExecutor
 from agents.executors.torch_mp_executor import TorchMPExecutor
 from agents.trainers.base_trainer import BaseTrainer
 from agents.workers.actors import GymActor, PettingZooActor
-from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.agent_network import AgentNetwork
 from modules.utils import get_clean_state_dict
 from replay_buffers.sequence import Sequence
 from stats.stats import StatTracker, PlotType
@@ -46,7 +46,7 @@ class _NFSPActorMixin:
     `Sequence.policy_history` so the trainer can route SL storage.
     """
 
-    average_agent_network: ModularAgentNetwork
+    average_agent_network: AgentNetwork
 
     def update_parameters(self, params_dict: Dict[str, Any]) -> None:
         if not params_dict:
@@ -134,8 +134,8 @@ class NFSPGymActor(_NFSPActorMixin, GymActor):
     def __init__(
         self,
         env_factory,
-        best_response_agent_network: ModularAgentNetwork,
-        average_agent_network: ModularAgentNetwork,
+        best_response_agent_network: AgentNetwork,
+        average_agent_network: AgentNetwork,
         replay_buffer,
         num_players: Optional[int] = None,
         config: Optional[Any] = None,
@@ -174,8 +174,8 @@ class NFSPPettingZooActor(_NFSPActorMixin, PettingZooActor):
     def __init__(
         self,
         env_factory,
-        best_response_agent_network: ModularAgentNetwork,
-        average_agent_network: ModularAgentNetwork,
+        best_response_agent_network: AgentNetwork,
+        average_agent_network: AgentNetwork,
         replay_buffer,
         num_players: Optional[int] = None,
         config: Optional[Any] = None,
@@ -242,12 +242,12 @@ class NFSPTrainer(BaseTrainer):
         sl_config = config.sl_configs[0]
 
         # Networks (Best Response + Target, and Average Strategy)
-        self.br_agent_network = ModularAgentNetwork(
+        self.br_agent_network = AgentNetwork(
             config=rl_config,
             input_shape=self.obs_dim,
             num_actions=self.num_actions,
         ).to(device)
-        self.br_target_agent_network = ModularAgentNetwork(
+        self.br_target_agent_network = AgentNetwork(
             config=rl_config,
             input_shape=self.obs_dim,
             num_actions=self.num_actions,
@@ -256,7 +256,7 @@ class NFSPTrainer(BaseTrainer):
             get_clean_state_dict(self.br_agent_network), strict=False
         )
 
-        self.avg_agent_network = ModularAgentNetwork(
+        self.avg_agent_network = AgentNetwork(
             config=sl_config,
             input_shape=self.obs_dim,
             num_actions=self.num_actions,

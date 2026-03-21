@@ -4,7 +4,7 @@ pytestmark = pytest.mark.integration
 
 import torch
 import torch.nn as nn
-from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.agent_network import AgentNetwork
 from configs.agents.muzero import MuZeroConfig
 from configs.games.tictactoe import TicTacToeConfig
 from search import ModularSearch
@@ -43,7 +43,7 @@ def test_batched_search():
     num_actions = 9
     input_shape = (5, 3, 3)  # Handled by TicTacToe env wrappers
     # Create shared network
-    model = ModularAgentNetwork(config, input_shape, num_actions)
+    model = AgentNetwork(config, input_shape, num_actions)
 
     # 2. Setup Search Algorithm
     search = ModularSearch(

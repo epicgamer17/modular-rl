@@ -11,7 +11,7 @@ from agents.action_selectors.policy_sources import NetworkPolicySource
 
 # from agents.workers.actors import get_actor_class # REMOVED as unused
 
-from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.agent_network import AgentNetwork
 
 # from agents.policies.ppo_policy import PPOPolicy # REMOVED
 from stats.stats import StatTracker, PlotType
@@ -48,7 +48,7 @@ class PPOTrainer(BaseTrainer):
         # 1. Initialize Network
         # New standard: input_shape excludes batch dimension
         input_shape = self.obs_dim
-        self.agent_network = ModularAgentNetwork(
+        self.agent_network = AgentNetwork(
             config=config,
             input_shape=input_shape,
             num_actions=self.num_actions,

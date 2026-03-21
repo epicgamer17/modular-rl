@@ -13,7 +13,7 @@ from agents.action_selectors.policy_sources import (
 )
 from configs.base import Config
 from replay_buffers.modular_buffer import ModularReplayBuffer
-from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.agent_network import AgentNetwork
 from utils.wrappers import wrap_recording
 import numpy as np
 
@@ -27,7 +27,7 @@ class BaseActor(ABC):
     def __init__(
         self,
         env_factory: Callable[[], Any],
-        agent_network: ModularAgentNetwork,
+        agent_network: AgentNetwork,
         action_selector: BaseActionSelector,
         replay_buffer: ModularReplayBuffer,
         num_players: Optional[int] = None,

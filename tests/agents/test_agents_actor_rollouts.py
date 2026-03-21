@@ -12,7 +12,7 @@ import gymnasium as gym
 
 from agents.workers.actors import GymActor
 from agents.workers.tester import Tester as TesterWorker, StandardGymTest
-from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.agent_network import AgentNetwork
 from agents.action_selectors.factory import SelectorFactory
 from replay_buffers.buffer_factories import create_dqn_buffer
 
@@ -57,7 +57,7 @@ def test_gym_actor_rollout(make_cartpole_config, make_rainbow_config_dict):
     rainbow_config = RainbowConfig(rainbow_config_dict, config)
 
     cartpole_obs_shape = (4,)  # CartPole observation: [pos, vel, angle, angular_vel]
-    network = ModularAgentNetwork(
+    network = AgentNetwork(
         config=rainbow_config,
         input_shape=cartpole_obs_shape,
         num_actions=config.num_actions,
@@ -135,7 +135,7 @@ def test_tester_worker_rollout(make_cartpole_config, make_rainbow_config_dict):
     )
     rainbow_config = RainbowConfig(rainbow_config_dict, config)
 
-    network = ModularAgentNetwork(
+    network = AgentNetwork(
         config=rainbow_config,
         input_shape=(4,),  # CartPole observation: [pos, vel, angle, angular_vel]
         num_actions=config.num_actions,

@@ -4,7 +4,7 @@ import shutil
 
 from configs.agents.muzero import MuZeroConfig
 from agents.muzero import MuZeroAgent
-from modules.world_models.modular_world_model import ModularWorldModel
+from modules.world_models.world_model import WorldModel
 from configs.games.cartpole_config import CartPoleConfig
 
 
@@ -12,7 +12,7 @@ def test_chance_prob_tracking():
     # 1. Setup Config
     game_config = CartPoleConfig()
     config_dict = {
-        "world_model_cls": ModularWorldModel,
+        "world_model_cls": WorldModel,
         "stochastic": True,
         "num_chance": 4,
         "value_loss_factor": 1.0,  # minimal config

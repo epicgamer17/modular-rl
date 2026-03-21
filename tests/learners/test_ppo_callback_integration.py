@@ -4,7 +4,7 @@ import torch.nn as nn
 from agents.learner.base import UniversalLearner
 from agents.learner.callbacks import MetricEarlyStopCallback, EarlyStopIteration
 from agents.learner.losses import LossPipeline, ClippedSurrogateLoss
-from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.agent_network import AgentNetwork
 from configs.agents.ppo import PPOConfig
 from agents.learner.target_builders import TargetBuilderPipeline, PassThroughTargetBuilder, SingleStepFormatter
 
@@ -31,7 +31,7 @@ def test_ppo_kl_propagation_to_callback(make_ppo_config_dict, cartpole_game_conf
     ppo_config = PPOConfig(config_dict, cartpole_game_config)
 
     # 2. Setup Network and Heads
-    agent_network = ModularAgentNetwork(
+    agent_network = AgentNetwork(
         config=ppo_config,
         input_shape=(4,),
         num_actions=2,

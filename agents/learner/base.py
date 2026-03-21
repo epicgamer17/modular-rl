@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from agents.learner.target_builders import BaseTargetBuilder
     from agents.learner.losses import LossPipeline
     from agents.learner.callbacks import Callback
-    from modules.agent_nets.modular import ModularAgentNetwork
+    from modules.agent_nets.agent_network import AgentNetwork
 
 from agents.learner.callbacks import (
     CallbackList,
@@ -64,7 +64,7 @@ class UniversalLearner:
     def __init__(
         self,
         config,
-        agent_network: ModularAgentNetwork,
+        agent_network: AgentNetwork,
         device: torch.device,
         num_actions: int,
         observation_dimensions: Tuple[int, ...],

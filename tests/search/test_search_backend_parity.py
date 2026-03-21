@@ -121,7 +121,7 @@ class MockNetwork(torch.nn.Module):
         return MockNetworkState(data=torch.zeros((B, 1)))
 
     # ------------------------------------------------------------------
-    # Public interface (mirrors BaseAgentNetwork API)
+    # Public interface (mirrors AgentNetwork API)
     # ------------------------------------------------------------------
 
     def obs_inference(self, obs):

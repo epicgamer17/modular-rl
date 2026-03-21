@@ -11,7 +11,7 @@ from utils.telemetry import (
 
 if TYPE_CHECKING:
     from agents.learner.base import StepResult, UniversalLearner
-    from modules.agent_nets.modular import ModularAgentNetwork
+    from modules.agent_nets.agent_network import AgentNetwork
 from abc import ABC, abstractmethod
 
 
@@ -133,7 +133,7 @@ class TargetNetworkSyncCallback(Callback):
 
     def __init__(
         self,
-        target_network: ModularAgentNetwork,
+        target_network: AgentNetwork,
         sync_interval: int,
         soft_update: bool = False,
         ema_beta: float = 0.99,

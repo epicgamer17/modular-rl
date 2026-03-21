@@ -16,7 +16,7 @@ from configs.agents.muzero import MuZeroConfig
 from configs.games.tictactoe import TicTacToeConfig
 
 
-from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.agent_network import AgentNetwork
 
 
 @pytest.fixture
@@ -141,7 +141,7 @@ def search_setup():
         # Use real lightweight network for compliance
         env = game_config.make_env()
         input_shape = env.observation_space(env.possible_agents[0]).shape
-        network = ModularAgentNetwork(config, input_shape, num_actions)
+        network = AgentNetwork(config, input_shape, num_actions)
 
         env.reset()
         obs = env.observe(env.possible_agents[0])

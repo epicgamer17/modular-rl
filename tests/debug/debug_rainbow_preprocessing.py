@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from configs.agents.rainbow_dqn import RainbowConfig
 from agents.learner.base import UniversalLearner
-from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.agent_network import AgentNetwork
 
 
 class MockGame:
@@ -50,7 +50,7 @@ def test_preprocessing():
     config = RainbowConfig(config_dict, game)
 
     # Initialize a dummy model
-    model = ModularAgentNetwork(config=config, num_actions=2, input_shape=(4,)).to(
+    model = AgentNetwork(config=config, num_actions=2, input_shape=(4,)).to(
         device
     )
 

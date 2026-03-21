@@ -12,7 +12,7 @@ from agents.learner.callbacks import ResetNoiseCallback
 from agents.trainers.base_trainer import BaseTrainer
 from agents.workers.actors import get_actor_class
 from agents.learner.losses import ImitationLoss, LossPipeline
-from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.agent_network import AgentNetwork
 from modules.utils import get_lr_scheduler
 from replay_buffers.buffer_factories import create_nfsp_buffer
 from stats.stats import PlotType, StatTracker
@@ -24,7 +24,7 @@ class ImitationTrainer(BaseTrainer):
     Notes:
     - This trainer expects a config that is compatible with BaseTrainer (i.e. has `game`,
       execution params, and an `action_selector` block) and whose network can be built by
-      `ModularAgentNetwork` (e.g. a config with `agent_type='supervised'`).
+      `AgentNetwork` (e.g. a config with `agent_type='supervised'`).
     """
 
     def __init__(
@@ -39,7 +39,7 @@ class ImitationTrainer(BaseTrainer):
         super().__init__(config, env, device, name, stats, test_agents)
 
         # Network
-        self.agent_network = ModularAgentNetwork(
+        self.agent_network = AgentNetwork(
             config=config,
             num_actions=self.num_actions,
             input_shape=self.obs_dim,

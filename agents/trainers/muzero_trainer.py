@@ -8,7 +8,7 @@ from replay_buffers.buffer_factories import create_muzero_buffer
 from agents.action_selectors.selectors import CategoricalSelector
 from agents.action_selectors.decorators import TemperatureSelector
 from agents.workers.actors import get_actor_class
-from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.agent_network import AgentNetwork
 from stats.stats import StatTracker, PlotType
 
 
@@ -37,7 +37,7 @@ class MuZeroTrainer(BaseTrainer):
             self.player_id_mapping = {"player_0": 0}
 
         # 1. Initialize Network
-        self.agent_network = ModularAgentNetwork(
+        self.agent_network = AgentNetwork(
             config=config,
             input_shape=self.obs_dim,
             num_actions=self.num_actions,

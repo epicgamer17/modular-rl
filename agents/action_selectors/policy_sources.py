@@ -6,7 +6,7 @@ import numpy as np
 from torch.distributions import Categorical
 
 from agents.action_selectors.types import InferenceResult
-from modules.agent_nets.base import BaseAgentNetwork
+from modules.agent_nets.agent_network import AgentNetwork
 from modules.world_models.inference_output import InferenceOutput
 
 
@@ -31,7 +31,7 @@ class NetworkPolicySource(BasePolicySource):
     Policy source that performs a pure forward pass on a neural network.
     """
 
-    def __init__(self, agent_network: BaseAgentNetwork):
+    def __init__(self, agent_network: AgentNetwork):
         self.agent_network = agent_network
 
     def get_inference(
@@ -56,7 +56,7 @@ class SearchPolicySource(BasePolicySource):
     def __init__(
         self,
         search_engine: Any,
-        agent_network: Optional[BaseAgentNetwork],
+        agent_network: Optional[AgentNetwork],
         config: Any = None,
     ):
         self.search = search_engine
@@ -188,8 +188,8 @@ class NFSPNetworkPolicySource(BasePolicySource):
 
     def __init__(
         self,
-        best_response_network: BaseAgentNetwork,
-        average_network: BaseAgentNetwork,
+        best_response_network: AgentNetwork,
+        average_network: AgentNetwork,
     ):
         self.best_response_network = best_response_network
         self.average_network = average_network

@@ -7,7 +7,7 @@ import copy
 from configs.agents.muzero import MuZeroConfig
 from configs.agents.ppo import PPOConfig
 from configs.modules.output_strategies import MuZeroSupportConfig
-from modules.world_models.modular_world_model import ModularWorldModel
+from modules.world_models.world_model import WorldModel
 
 
 def test_ppo_strict_value_head_requires_explicit_strategy(cartpole_game_config):
@@ -54,7 +54,7 @@ def test_ppo_strict_value_head_overrides_strategy_num_classes(cartpole_game_conf
 
 def test_muzero_strict_value_head_defaults_strategy(cartpole_game_config):
     base_dict = {
-        "world_model_cls": ModularWorldModel,
+        "world_model_cls": WorldModel,
         "atom_size": 51,
         "support_range": 10,
         "value_head": {"neck": {"type": "identity"}},
@@ -75,7 +75,7 @@ def test_muzero_strict_value_head_defaults_strategy(cartpole_game_config):
 
 def test_muzero_strict_value_head_overrides_strategy_num_classes(cartpole_game_config):
     cfg_dict = {
-        "world_model_cls": ModularWorldModel,
+        "world_model_cls": WorldModel,
         "atom_size": 51,
         "support_range": 10,
         "value_head": {

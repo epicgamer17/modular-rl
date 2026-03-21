@@ -39,7 +39,7 @@ from search.scoring_methods import (
     UCBScoring,
     DeterministicChanceScoring,
 )
-from modules.agent_nets.base import BaseAgentNetwork
+from modules.agent_nets.agent_network import AgentNetwork
 from .utils import _safe_log_probs
 
 
@@ -172,7 +172,7 @@ class ModularSearch:
         self,
         observation: Any,
         info: Dict[str, Any],
-        agent_network: BaseAgentNetwork,
+        agent_network: AgentNetwork,
         trajectory_action=None,
         exploration: bool = True,
     ):
@@ -365,7 +365,7 @@ class ModularSearch:
         self,
         batched_obs: Any,
         batch_info: Dict[str, Any],
-        agent_network: BaseAgentNetwork,
+        agent_network: AgentNetwork,
         trajectory_actions=None,
         exploration: bool = True,
     ):

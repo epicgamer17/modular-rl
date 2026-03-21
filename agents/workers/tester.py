@@ -4,7 +4,7 @@ import numpy as np
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Union, Tuple
 
-from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.agent_network import AgentNetwork
 from agents.action_selectors.selectors import BaseActionSelector
 from agents.action_selectors.types import InferenceResult
 from agents.action_selectors.policy_sources import (
@@ -22,7 +22,7 @@ class NetworkAgent:
     def __init__(
         self,
         name: str,
-        agent_network: ModularAgentNetwork,
+        agent_network: AgentNetwork,
         action_selector: BaseActionSelector,
         device: torch.device,
     ):
@@ -272,7 +272,7 @@ class Tester:
     def __init__(
         self,
         env_factory,
-        agent_network: ModularAgentNetwork,
+        agent_network: AgentNetwork,
         action_selector: BaseActionSelector,
         replay_buffer: ModularReplayBuffer,
         num_players: int,  # For compatibility with standard actor launch args
@@ -437,7 +437,7 @@ class TestFactory:
     @staticmethod
     def get_launch_args(
         config: Config,
-        agent_network: ModularAgentNetwork,
+        agent_network: AgentNetwork,
         action_selector: BaseActionSelector,
         device: torch.device,
         name: str = "tester",

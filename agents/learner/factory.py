@@ -28,11 +28,11 @@ from agents.learner.losses import LossPipeline
 from modules.utils import get_lr_scheduler
 
 if TYPE_CHECKING:
-    from modules.agent_nets.modular import ModularAgentNetwork
+    from modules.agent_nets.agent_network import AgentNetwork
 
 
 def build_loss_pipeline(
-    config: Any, agent_network: ModularAgentNetwork, device: torch.device
+    config: Any, agent_network: AgentNetwork, device: torch.device
 ) -> LossPipeline:
     """
     Configures the loss pipeline based on the agent configuration.
@@ -74,7 +74,7 @@ def build_loss_pipeline(
 
 def build_universal_learner(
     config: Any,
-    agent_network: ModularAgentNetwork,
+    agent_network: AgentNetwork,
     device: torch.device,
     target_agent_network: Optional[nn.Module] = None,
     priority_update_fn: Optional[Callable] = None,
