@@ -6,7 +6,7 @@ from modules.agent_nets.base import BaseAgentNetwork
 from modules.world_models.inference_output import (
     InferenceOutput,
 )
-from modules.world_models.muzero_world_model import MuzeroWorldModel
+from modules.world_models.modular_world_model import ModularWorldModel
 from modules.backbones.factory import BackboneFactory
 from modules.heads.policy import PolicyHead
 from modules.heads.value import ValueHead
@@ -70,7 +70,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
         **kwargs,
     ):
         # 1. The Physics Engine
-        world_model_cls = kwargs.get("world_model_cls", MuzeroWorldModel)
+        world_model_cls = kwargs.get("world_model_cls", ModularWorldModel)
         self.components["world_model"] = world_model_cls(
             config, input_shape, num_actions
         )

@@ -67,7 +67,7 @@ This framework is built on **Strict Separation of Concerns and Perfect Polymorph
 - **`obs_inference(obs) -> InferenceOutput`** — Used by Actor/MCTS for real-world root states. Returns semantic objects (expected values, `Distribution` objects). **Never raw logits.**
 - **`learner_inference(batch) -> LearningOutput`** — Used by the Learner for batched/sequential inference. Returns purely mathematical objects (raw logits, C51 atoms) for stable cross-entropy loss.
 
-For MuZero latent stepping, use the `MuzeroWorldModel` directly:
+For MuZero latent stepping, use the `ModularWorldModel` directly:
 - **`world_model.recurrent_inference(state, action) -> WorldModelOutput`** — MCTS latent stepping.
 - **`world_model.representation_inference(obs) -> Dict[str, Tensor]`** — Initial state from observation.
 - **`world_model.unroll_physics(initial_state, actions) -> Dict[str, Tensor]`** — Unroll T steps for learner.

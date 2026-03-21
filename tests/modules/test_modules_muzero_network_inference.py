@@ -9,7 +9,7 @@ import torch
 
 from configs.agents.muzero import MuZeroConfig
 from modules.agent_nets.modular import ModularAgentNetwork
-from modules.world_models.muzero_world_model import MuzeroWorldModel
+from modules.world_models.modular_world_model import ModularWorldModel
 
 
 class MockEnv:
@@ -40,7 +40,7 @@ def _build_muzero_test_config(
     config_dict = copy.deepcopy(rainbow_cartpole_replay_config.config_dict)
     config_dict.update(
         {
-            "world_model_cls": MuzeroWorldModel,
+            "world_model_cls": ModularWorldModel,
             "stochastic": True,
             "num_chance": 10,
             "prediction_backbone": {"type": "identity"},

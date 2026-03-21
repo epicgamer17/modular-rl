@@ -24,7 +24,7 @@ from modules.world_models.components.chance_encoder import ChanceEncoder
 from modules.world_models.world_model import WorldModelOutput
 
 
-class MuzeroWorldModel(WorldModelInterface, nn.Module):
+class ModularWorldModel(WorldModelInterface, nn.Module):
     def __init__(
         self,
         config: MuZeroConfig,
@@ -183,14 +183,14 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
 
         This method is called from two places:
         - ``unroll_physics`` (internal): passes a raw latent Tensor directly.
-        - ``MuZeroNetwork.afterstate_inference`` (MCTS external): passes the
+        - ``ModularAgentNetwork.afterstate_inference`` (MCTS external): passes the
           opaque ``{"dynamics": Tensor, "wm_memory": ...}`` dict.
 
         Both cases are handled gracefully.
 
         Args:
             network_state: A dictionary with 'dynamics' and optional 'wm_memory' —
-                either from ``MuZeroNetwork.afterstate_inference`` (MCTS) or
+                either from ``ModularAgentNetwork.afterstate_inference`` (MCTS) or
                 wrapped by ``unroll_physics`` (learner). Must never be a raw Tensor.
             action: Action taken at this step.
 
@@ -289,7 +289,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             actions_k = actions[:, k]
 
             if self.config.stochastic:
-                # 1. Afterstate Inference — wrap latent in MuZeroNetworkState so the
+                # 1. Afterstate Inference — wrap latent in a recurrent state dictionary so the
                 # method's strict type check passes (it must be a structured object,
                 # never a raw Tensor).
                 afterstate_out = self.afterstate_recurrent_inference(

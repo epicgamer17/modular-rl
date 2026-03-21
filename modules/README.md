@@ -34,7 +34,7 @@ modules/
 │   └── policy_imitation.py
 └── world_models/                # World model implementations
     ├── world_model.py
-    └── muzero_world_model.py
+    └── modular_world_model.py
 ```
 
 ## Core Components
@@ -103,9 +103,9 @@ network = PPONetwork(
 MuZero dynamics model for model-based planning:
 
 ```python
-from modules.world_models.muzero_world_model import MuZeroWorldModel
+from modules.world_models.modular_world_model import ModularWorldModel
 
-model = MuZeroWorldModel(
+model = ModularWorldModel(
     action_space=9,
     hidden_size=256,
     support_size=10

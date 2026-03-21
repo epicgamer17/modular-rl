@@ -6,7 +6,7 @@ from configs.agents.ppo import PPOConfig
 from configs.agents.rainbow_dqn import RainbowConfig
 from configs.agents.muzero import MuZeroConfig
 from modules.agent_nets.modular import ModularAgentNetwork
-from modules.world_models.muzero_world_model import MuzeroWorldModel
+from modules.world_models.modular_world_model import ModularWorldModel
 
 
 def create_mock_game(num_actions: int = 5) -> GameConfig:
@@ -107,7 +107,7 @@ def run_muzero_tests(game: GameConfig, input_shape: Tuple[int, ...], num_actions
     # Deterministic MuZero
     muzero_config = MuZeroConfig(
         {
-            "world_model_cls": MuzeroWorldModel,
+            "world_model_cls": ModularWorldModel,
             "stochastic": False,
             "prediction_backbone": {"type": "identity"},
             "representation_backbone": {"type": "identity"},
@@ -129,7 +129,7 @@ def run_muzero_tests(game: GameConfig, input_shape: Tuple[int, ...], num_actions
     debug_graph_breaks(
         "MuZero hidden_state_inference",
         muzero_net.hidden_state_inference,
-        outputs.network_state,
+        outputs.recurrent_state,
         action_idx,
     )
 
@@ -147,7 +147,7 @@ def run_muzero_tests(game: GameConfig, input_shape: Tuple[int, ...], num_actions
     print("\n--- Stochastic MuZero ---")
     stoch_muzero_config = MuZeroConfig(
         {
-            "world_model_cls": MuzeroWorldModel,
+            "world_model_cls": ModularWorldModel,
             "stochastic": True,
             "num_chance": 10,
             "prediction_backbone": {"type": "identity"},
@@ -170,7 +170,7 @@ def run_muzero_tests(game: GameConfig, input_shape: Tuple[int, ...], num_actions
     debug_graph_breaks(
         "MuZero afterstate_inference",
         stoch_muzero_net.afterstate_inference,
-        stoch_outputs.network_state,
+        stoch_outputs.recurrent_state,
         action_idx,
     )
 

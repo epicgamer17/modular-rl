@@ -6,7 +6,7 @@ import torch
 from agents.trainers.muzero_trainer import MuZeroTrainer
 from configs.agents.muzero import MuZeroConfig
 from configs.games.cartpole import CartPoleConfig
-from modules.world_models.muzero_world_model import MuzeroWorldModel
+from modules.world_models.modular_world_model import ModularWorldModel
 from stats.stats import StatTracker
 
 
@@ -41,7 +41,7 @@ def test_regression_fps_drop():
         },
         "policy_head": {"neck": {"type": "dense", "widths": [8]}},
         "to_play_head": {"neck": {"type": "dense", "widths": [8]}},
-        "world_model_cls": MuzeroWorldModel,
+        "world_model_cls": ModularWorldModel,
     }
 
     game_config = CartPoleConfig()

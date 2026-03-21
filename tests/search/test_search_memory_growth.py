@@ -15,8 +15,8 @@ def _import_legacy_memory_growth_stack():
         ("configs.games.tictactoe", "TicTacToeConfig"),
         ("agents.policies.search_policy", "SearchPolicy"),
         ("search.search_factories", "create_mcts"),
-        ("modules.world_models.muzero_world_model", "MuzeroWorldModel"),
-        ("modules.agent_nets.muzero", "Network"),
+        ("modules.world_models.modular_world_model", "ModularWorldModel"),
+        ("modules.agent_nets.modular", "ModularAgentNetwork"),
         ("configs.agents.muzero", "MuZeroConfig"),
     ]
 
@@ -40,8 +40,8 @@ def test_memory_growth(num_calls=100, num_simulations=10):
     TicTacToeConfig = stack["TicTacToeConfig"]
     SearchPolicy = stack["SearchPolicy"]
     create_mcts = stack["create_mcts"]
-    MuzeroWorldModel = stack["MuzeroWorldModel"]
-    Network = stack["Network"]
+    ModularWorldModel = stack["ModularWorldModel"]
+    ModularAgentNetwork = stack["ModularAgentNetwork"]
     MuZeroConfig = stack["MuZeroConfig"]
 
     game_config = TicTacToeConfig()
@@ -64,7 +64,7 @@ def test_memory_growth(num_calls=100, num_simulations=10):
         "actor_dense_layer_widths": [16],
         "chance_conv_layers": [],
         "chance_dense_layer_widths": [16],
-        "world_model_cls": MuzeroWorldModel,
+        "world_model_cls": ModularWorldModel,
         "lstm_hidden_size": 64,
         "bootstrap_method": "v_mix",
         "support_range": None,
@@ -94,7 +94,7 @@ def test_memory_growth(num_calls=100, num_simulations=10):
     obs_shape = (1, *obs.shape)
     num_actions = env.action_space(env.possible_agents[0]).n
 
-    model = Network(config, num_actions, obs_shape, world_model_cls=MuzeroWorldModel).to(device)
+    model = ModularAgentNetwork(config, num_actions, obs_shape, world_model_cls=ModularWorldModel).to(device)
     search_algo = create_mcts(config, device, num_actions)
     policy = SearchPolicy(model, search_algo, config, device, simple_obs_shape)
 
