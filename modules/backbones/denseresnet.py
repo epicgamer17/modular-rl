@@ -38,10 +38,12 @@ class DenseResNetBackbone(nn.Module):
         self.input_shape = input_shape
 
         # Determine initial width
-        if len(input_shape) == 4:
-            initial_width = input_shape[1] * input_shape[2] * input_shape[3]
+        if len(input_shape) == 3:
+            # Flattened image input (C, H, W)
+            initial_width = input_shape[0] * input_shape[1] * input_shape[2]
         else:
-            initial_width = input_shape[1]
+            # Vector input (D,)
+            initial_width = input_shape[0]
 
         self.layers = nn.ModuleList()
         current_width = initial_width
@@ -68,11 +70,14 @@ class DenseResNetBackbone(nn.Module):
                 )
             )
 
-        self.output_shape = (input_shape[0], current_width)
+        self.output_shape = (current_width,)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if x.dim() == 4:
-            x = x.flatten(1, -1)
+        """Standard forward pass for a feature extraction backbone."""
+        # --- STRICT FEATURE EXTRACTOR CONTRACT ---
+        # Feature extractors always treat (B*, ...) flat batches.
+        # For DenseResNetBackbone, this means (B*, D)
+        assert x.dim() == 2, f"DenseResNetBackbone input must be (Batch, Features), got shape {x.shape}"
 
         for layer in self.layers:
             x = layer(x)

@@ -8,6 +8,8 @@ from modules.world_models.inference_output import (
 )
 from modules.world_models.modular_world_model import ModularWorldModel
 from modules.backbones.factory import BackboneFactory
+from modules.backbones.recurrent import RecurrentBackbone
+from modules.backbones.transformer import TransformerBackbone
 from modules.heads.policy import PolicyHead
 from modules.heads.value import ValueHead
 from modules.heads.q import QHead, DuelingQHead
@@ -248,12 +250,28 @@ class ModularAgentNetwork(BaseAgentNetwork):
             wm_output = self.components["world_model"].initial_inference(obs)
             hidden_state = wm_output.features
 
-            pred_features = self.components["prediction_backbone"](hidden_state)
+            # Prediction Backbone: Memory Core (B, T, D) or Feature Extractor (B*, D)
+            backbone = self.components["prediction_backbone"]
+            h_state = None  # To be managed for recurrent backbones during acting if needed
+            
+            if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
+                # --- MEMORY CORE: Strictly (B, T, D) ---
+                seq_features = hidden_state.unsqueeze(1) # (B, 1, D)
+                seq_memory, next_h = backbone(seq_features, h_state)
+                pred_features = seq_memory.squeeze(1) # (B, H) for terminal heads
+            else:
+                # --- FEATURE EXTRACTOR: Strictly flat (B*, D) ---
+                # obs_inference already provides (B, D) at this stage
+                pred_features = backbone(hidden_state)
+
+            # Heads: Strictly receive flat (B*, D) batches
             raw_value, _, expected_value = self.components["value_head"](pred_features)
             raw_policy, _, policy_dist = self.components["policy_head"](pred_features)
+            
             network_state = {
                 "dynamics": hidden_state,
                 "wm_memory": wm_output.head_state,
+                "backbone_memory": next_h if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)) else None,
             }
 
             return InferenceOutput(
@@ -269,6 +287,10 @@ class ModularAgentNetwork(BaseAgentNetwork):
         # PPO Logic
         # ----------------------------------------
         elif "policy_head" in self.components and "value_head" in self.components:
+            # PPO acting usually has no internal memory in standard ModularAgentNetwork,
+            # but if it did, we'd apply the same B, T logic. 
+            # For now, we assume simple flat observation features.
+            
             policy_logits, _, policy_dist = self.components["policy_head"](obs)
             value_logits, _, expected_value = self.components["value_head"](obs)
 
@@ -278,8 +300,16 @@ class ModularAgentNetwork(BaseAgentNetwork):
         # Rainbow DQN Logic
         # ----------------------------------------
         elif "q_head" in self.components:
-            x = self.components["feature_block"](obs)
-            Q_logits, _, policy_dist = self.components["q_head"](x)
+            # Feature Extraction (Feature Extractor or Memory Core)
+            backbone = self.components["feature_block"]
+            if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
+                seq_features = obs.unsqueeze(1)
+                seq_memory, _ = backbone(seq_features)
+                pred_features = seq_memory.squeeze(1)
+            else:
+                pred_features = backbone(obs)
+                
+            Q_logits, _, policy_dist = self.components["q_head"](pred_features)
 
             q_vals = self.components["q_head"].representation.to_expected_value(Q_logits)
             state_value = q_vals.max(dim=-1)[0]
@@ -292,12 +322,19 @@ class ModularAgentNetwork(BaseAgentNetwork):
         # Supervised/Imitation Logic
         # ----------------------------------------
         elif "policy_head" in self.components:
-            # If we only have a policy head (and maybe a feature block)
-            x = obs
-            if "feature_block" in self.components:
-                x = self.components["feature_block"](obs)
+            # Feature Extraction (Feature Extractor or Memory Core)
+            backbone = self.components.get("feature_block")
+            if backbone:
+                if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
+                    seq_features = obs.unsqueeze(1)
+                    seq_memory, _ = backbone(seq_features)
+                    features = seq_memory.squeeze(1)
+                else:
+                    features = backbone(obs)
+            else:
+                features = obs
 
-            logits, _, dist = self.components["policy_head"](x)
+            logits, _, dist = self.components["policy_head"](features)
             return InferenceOutput(policy=dist)
 
         else:
@@ -348,14 +385,26 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
             stacked_latents = physics_output["latents"]
             B, T_plus_1 = stacked_latents.shape[:2]
-            flat_latents = stacked_latents.reshape(
-                B * T_plus_1, *stacked_latents.shape[2:]
-            )
+            
+            # --- THE EXPLICIT FLAT-BATCH PIPELINE (Learner Inference) ---
+            backbone = self.components["prediction_backbone"]
+            if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
+                # 1. Memory Core: Strictly (B, T, D)
+                seq_memory, _ = backbone(stacked_latents) 
+                # 2. Re-flatten for Behavioral Heads
+                flat_memory = seq_memory.flatten(0, 1) # (B*(T+1), H)
+            else:
+                # 1. Feature Extractor: Strictly flat (B*T, D)
+                flat_latents = stacked_latents.reshape(
+                    B * T_plus_1, *stacked_latents.shape[2:]
+                )
+                flat_memory = backbone(flat_latents)
 
-            pred_features = self.components["prediction_backbone"](flat_latents)
-            raw_values, _, _ = self.components["value_head"](pred_features)
-            raw_policies, _, _ = self.components["policy_head"](pred_features)
+            # Heas Strictly receive flat batches
+            raw_values, _, _ = self.components["value_head"](flat_memory)
+            raw_policies, _, _ = self.components["policy_head"](flat_memory)
 
+            # Unflatten final predictions for the loss function
             raw_values = raw_values.view(B, T_plus_1, -1)
             raw_policies = raw_policies.view(B, T_plus_1, -1)
 
@@ -459,79 +508,130 @@ class ModularAgentNetwork(BaseAgentNetwork):
             return output
 
         # ----------------------------------------
-        # PPO Logic
+        # PPO Logic (Learner)
         # ----------------------------------------
         elif "policy_head" in self.components and "value_head" in self.components:
-            policy_logits, _, _ = self.components["policy_head"](initial_observation)
-            value_logits, _, _ = self.components["value_head"](initial_observation)
+            # 1. Determine structure
+            obs = initial_observation
+            if obs.dim() > len(self.input_shape) + 1:
+                B, T = obs.shape[:2]
+                flat_obs = obs.flatten(0, 1)
+                is_seq = True
+            else:
+                flat_obs = obs
+                is_seq = False
 
-            output = {
-                "values": value_logits.unsqueeze(1),
-                "policies": policy_logits.unsqueeze(1),
-            }
+            # Note: PPO typically routes observations straight to behavioral heads,
+            # which might have their own modular 'necks'.
+            # Terminal Heads strictly receive flat (B*, D) batches.
+            policy_logits, _, _ = self.components["policy_head"](flat_obs)
+            value_logits, _, _ = self.components["value_head"](flat_obs)
+
+            # --- ROUTER UNFLATTENING ---
+            if is_seq:
+                values = value_logits.view(B, T, -1)
+                policies = policy_logits.view(B, T, -1)
+            else:
+                values = value_logits.unsqueeze(1)
+                policies = policy_logits.unsqueeze(1)
+
+            output = {"values": values, "policies": policies}
 
             # --- SHAPE VALIDATION ---
-            # PPO is single-step by default in learner_inference
-            assert (
-                output["values"].ndim == 3
-                and output["values"].shape[1] == 1
-                and output["values"].shape[2] == 1
-            )
-            assert (
-                output["policies"].ndim == 3 and output["policies"].shape[1] == 1
-            ), f"PPO policies shape mismatch: {output['policies'].shape}"
+            assert output["values"].ndim == 3, f"PPO values shape mismatch: {output['values'].shape}"
+            assert output["policies"].ndim == 3, f"PPO policies shape mismatch: {output['policies'].shape}"
 
-            # --- STRICT SYSTEM-WIDE VALIDATION ---
             ShapeValidator(self.config).validate_predictions(output)
-
             return output
 
         # ----------------------------------------
-        # Rainbow DQN Logic
+        # Rainbow DQN Logic (Learner)
         # ----------------------------------------
         elif "q_head" in self.components:
-            # 1. Online Inference at s_t
-            x = self.components["feature_block"](initial_observation)
-            Q_logits, _, _ = self.components["q_head"](x)
+            obs = initial_observation
+            if obs.dim() > len(self.input_shape) + 1:
+                B, T = obs.shape[:2]
+                is_seq = True
+            else:
+                is_seq = False
+
+            # 1. Feature Extraction (Memory Core or Feature Extractor)
+            backbone = self.components["feature_block"]
+            if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
+                if not is_seq:
+                    # Unsqueeze for consistent memory-core contract
+                    obs = obs.unsqueeze(1)
+                seq_memory, _ = backbone(obs)
+                flat_memory = seq_memory.flatten(0, 1)
+            else:
+                flat_obs = obs.flatten(0, 1) if is_seq else obs
+                flat_memory = backbone(flat_obs)
+
+            # 2. Terminal Headsstrictly receive flat batches
+            Q_logits, _, _ = self.components["q_head"](flat_memory)
             q_vals = self.components["q_head"].representation.to_expected_value(Q_logits)
 
+            # --- ROUTER UNFLATTENING ---
+            if is_seq:
+                B, T = (B, T) # already captured
+                q_values_seq = q_vals.view(B, T, -1)
+                q_logits_seq = Q_logits.view(B, T, -1)
+            else:
+                q_values_seq = q_vals.unsqueeze(1)
+                q_logits_seq = Q_logits.unsqueeze(1)
+
             output = {
-                "q_values": q_vals.unsqueeze(1),
-                "q_logits": Q_logits.unsqueeze(1),
+                "q_values": q_values_seq,
+                "q_logits": q_logits_seq,
             }
 
             # --- SHAPE VALIDATION ---
-            assert (
-                output["q_values"].ndim == 3 and output["q_values"].shape[1] == 1
-            ), f"Rainbow q_values shape mismatch: {output['q_values'].shape}"
-            assert (
-                output["q_logits"].ndim >= 3 and output["q_logits"].shape[1] == 1
-            ), f"Rainbow q_logits shape mismatch: {output['q_logits'].shape}"
+            assert output["q_values"].ndim == 3, f"Rainbow q_values shape mismatch: {output['q_values'].shape}"
+            assert output["q_logits"].ndim >= 3, f"Rainbow q_logits shape mismatch: {output['q_logits'].shape}"
 
-            # --- STRICT SYSTEM-WIDE VALIDATION ---
             ShapeValidator(self.config).validate_predictions(output)
-
             return output
 
         # ----------------------------------------
-        # Supervised/Imitation Logic
+        # Supervised/Imitation Logic (Learner)
         # ----------------------------------------
         elif "policy_head" in self.components and "value_head" not in self.components:
-            # SL path
-            x = initial_observation
-            if "feature_block" in self.components:
-                x = self.components["feature_block"](initial_observation)
-            logits, _, _ = self.components["policy_head"](x)
-            output = {"policies": logits.unsqueeze(1)}
+            obs = initial_observation
+            if obs.dim() > len(self.input_shape) + 1:
+                B, T = obs.shape[:2]
+                is_seq = True
+            else:
+                is_seq = False
+
+            # 1. Feature Extraction (Memory Core or Feature Extractor)
+            backbone = self.components.get("feature_block")
+            if backbone:
+                if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
+                    if not is_seq:
+                         obs = obs.unsqueeze(1)
+                    seq_memory, _ = backbone(obs)
+                    flat_memory = seq_memory.flatten(0, 1)
+                else:
+                    flat_obs = obs.flatten(0, 1) if is_seq else obs
+                    flat_memory = backbone(flat_obs)
+            else:
+                flat_memory = obs.flatten(0, 1) if is_seq else obs
+
+            # 2. Terminal Head strictly receives flat batches
+            logits, _, _ = self.components["policy_head"](flat_memory)
+            
+            # --- ROUTER UNFLATTENING ---
+            if is_seq:
+                policies = logits.view(B, T, -1)
+            else:
+                policies = logits.unsqueeze(1)
+                
+            output = {"policies": policies}
 
             # --- SHAPE VALIDATION ---
-            assert (
-                output["policies"].ndim == 3 and output["policies"].shape[1] == 1
-            ), f"Imitation policies shape mismatch: {output['policies'].shape}"
+            assert output["policies"].ndim == 3, f"Imitation policies shape mismatch: {output['policies'].shape}"
 
-            # --- STRICT SYSTEM-WIDE VALIDATION ---
             ShapeValidator(self.config).validate_predictions(output)
-
             return output
 
         else:
@@ -558,13 +658,26 @@ class ModularAgentNetwork(BaseAgentNetwork):
         )
 
         next_hidden = wm_output.features
-        pred_features = self.components["prediction_backbone"](next_hidden)
+        
+        # Prediction Backbone: (B, T, D) OR (B*, D)
+        backbone = self.components["prediction_backbone"]
+        h_state = network_state.get("backbone_memory")
+        
+        if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
+            seq_features = next_hidden.unsqueeze(1) # (B, 1, D)
+            seq_memory, next_h = backbone(seq_features, h_state)
+            pred_features = seq_memory.squeeze(1)
+        else:
+            pred_features = backbone(next_hidden)
+            next_h = None
 
         _, _, expected_value = self.components["value_head"](pred_features)
         _, _, policy_dist = self.components["policy_head"](pred_features)
+        
         next_recurrent_state = {
             "dynamics": next_hidden,
             "wm_memory": wm_output.head_state,
+            "backbone_memory": next_h,
         }
 
         return InferenceOutput(

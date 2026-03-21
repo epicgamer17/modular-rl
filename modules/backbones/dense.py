@@ -32,8 +32,11 @@ class DenseBackbone(nn.Module):
         self.output_shape = (self.stack.output_width,)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if x.dim() == 4:
-            x = x.flatten(1, -1)
+        """Standard forward pass for a feature extraction backbone."""
+        # --- STRICT FEATURE EXTRACTOR CONTRACT ---
+        # Feature extractors always treat (B*, ...) flat batches.
+        # For DenseBackbone, this means (B*, D)
+        assert x.dim() == 2, f"DenseBackbone input must be (Batch, Features), got shape {x.shape}"
         return self.stack(x)
 
 

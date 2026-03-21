@@ -1,4 +1,4 @@
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union, Dict, Any
 import torch
 from torch import nn
 from configs.modules.backbones.recurrent import RecurrentConfig
@@ -36,12 +36,16 @@ class RecurrentBackbone(nn.Module):
         self.output_shape = (config.hidden_size,)
 
     def forward(
-        self, x: torch.Tensor, h: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # x: (B, L, D) or (B, D)
-        if x.dim() == 2:
-            x = x.unsqueeze(1)  # (B, 1, D)
+        self, x: torch.Tensor, h: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]] = None
+    ) -> Tuple[torch.Tensor, Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]:
+        """
+        Recurrent forward pass: memory core always treats (B, T, D) sequence batches.
+        Returns: (output_sequence, last_hidden_state)
+        """
+        # --- STRICT MEMORY CONTRACT ---
+        # Memory cores always process (Batch, Time, Features)
+        assert x.dim() == 3, f"Memory core input must be (B, T, D), got shape {x.shape}"
 
         output, h_n = self.rnn(x, h)
-        return output[:, -1, :], h_n  # Return last output and hidden state
+        return output, h_n
 

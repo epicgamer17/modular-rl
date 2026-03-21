@@ -33,6 +33,10 @@ class ResNetBackbone(nn.Module):
         self.output_shape = (self.stack.output_channels, curr_h, curr_w)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Standard forward pass for a feature extraction backbone."""
+        # --- STRICT FEATURE EXTRACTOR CONTRACT ---
+        # Feature extractors always treat (B*, ...) flat batches.
+        assert x.dim() == len(self.input_shape) + 1, f"ResNetBackbone input must be (Batch, *input_shape), got shape {x.shape}"
         return self.stack(x)
 
 

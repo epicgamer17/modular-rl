@@ -57,13 +57,13 @@ class BaseHead(nn.Module):
         self, x: Tensor, state: Optional[Dict[str, Any]] = None
     ) -> Tuple[Tensor, Dict[str, Any]]:
         """Standard forward pass: neck -> output_layer -> strategy."""
-        x = self.process_input(x)
-        logits = self.output_layer(x)
-        return logits, state if state is not None else {}
+        # --- STRICT HEAD CONTRACT ---
+        # Every Head must strictly expect (B*, D) flat batches.
+        assert x.dim() == 2, f"Head input must be (Batch, Features), got shape {x.shape}"
 
-    def process_input(self, x: Tensor) -> Tensor:
-        """Helper to pass input through neck and flatten it."""
         x = self.neck(x)
         if x.dim() > 2:
             x = x.flatten(1, -1)
-        return x
+
+        logits = self.output_layer(x)
+        return logits, state if state is not None else {}
