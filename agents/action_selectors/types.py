@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 import torch
+from torch import Tensor
+from torch.distributions import Distribution
 from modules.world_models.inference_output import InferenceOutput
 
 
@@ -11,24 +13,38 @@ class InferenceResult:
     Used as the strict input type for all ActionSelectors.
 
     Fields mirror InferenceOutput semantics:
-    - logits: raw pre-softmax policy logits (from network policy head)
-    - probs: normalized probabilities (MCTS visit counts, or softmax of logits)
-    - q_values: Q-value estimates per action
     - value: scalar state-value estimate
+    - q_values: Q-value estimates per action
+    - policy: policy distribution or semantic policy object
+    - action: specific selected action (if any)
     - reward: predicted reward
     - to_play: current player index
+    - extras: logging/debugging dictionary
     """
 
-    value: Optional[torch.Tensor] = None
-    q_values: Optional[torch.Tensor] = None
-    logits: Optional[torch.Tensor] = None
-    probs: Optional[torch.Tensor] = None
-    reward: Optional[torch.Tensor] = None
-    to_play: Optional[torch.Tensor] = None
-    extra_metadata: Dict[str, Any] = field(default_factory=dict)
+    recurrent_state: Any = None
+    value: Optional[Tensor] = None
+    q_values: Optional[Tensor] = None
+    policy: Optional[Union[Distribution, Any]] = None
+    action: Optional[Tensor] = None
+    reward: Optional[Tensor] = None
+    to_play: Optional[Tensor] = None
+    extras: Dict[str, Any] = field(default_factory=dict)
 
     @property
-    def action_dim(self) -> Optional[torch.Tensor]:
+    def logits(self) -> Optional[Tensor]:
+        if hasattr(self.policy, "logits"):
+            return self.policy.logits
+        return None
+
+    @property
+    def probs(self) -> Optional[Tensor]:
+        if hasattr(self.policy, "probs"):
+            return self.policy.probs
+        return None
+
+    @property
+    def action_dim(self) -> Optional[Tensor]:
         """Returns whichever action tensor is available (for shape queries)."""
         if self.q_values is not None:
             return self.q_values
@@ -44,16 +60,10 @@ class InferenceResult:
         Converts a standard InferenceOutput (network results)
         into a standardized InferenceResult for selectors.
         """
+        recurrent_state = getattr(output, "recurrent_state", None)
         q_values = getattr(output, "q_values", None)
-        logits = None
-        probs = None
-
         policy = getattr(output, "policy", None)
-        if policy is not None:
-            logits = getattr(policy, "logits", None)
-            if logits is None:
-                probs = getattr(policy, "probs", None)
-
+        action = getattr(output, "action", None)
         value = getattr(output, "value", None)
         if value is not None and not isinstance(value, torch.Tensor):
             value = torch.tensor([value])
@@ -69,15 +79,16 @@ class InferenceResult:
         extras = getattr(output, "extras", None) or {}
 
         assert (
-            q_values is not None or logits is not None or probs is not None
-        ), "InferenceOutput must contain q_values or a policy with logits/probs"
+            q_values is not None or policy is not None
+        ), "InferenceOutput must contain q_values or a policy distribution"
 
         return cls(
+            recurrent_state=recurrent_state,
             value=value,
             q_values=q_values,
-            logits=logits,
-            probs=probs,
+            policy=policy,
+            action=action,
             reward=reward,
             to_play=to_play,
-            extra_metadata=extras,
+            extras=extras,
         )

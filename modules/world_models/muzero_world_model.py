@@ -14,7 +14,6 @@ from agents.learner.losses.representations import get_representation
 from modules.utils import scale_gradient, kernel_initializer_wrapper
 from modules.world_models.inference_output import (
     WorldModelOutput,
-    PhysicsOutput,
 )
 from modules.world_models.world_model import WorldModelInterface
 
@@ -121,25 +120,6 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             else torch.device("cpu")
         )
 
-    def initialize(
-        self, initializer: Optional[Union[Callable[[Tensor], None], str]] = None
-    ) -> None:
-        """
-        Unified initialization for the World Model.
-        Recursively applies the initializer function to all applicable layers (Conv, Linear).
-        """
-        init_fn = kernel_initializer_wrapper(initializer)
-        if init_fn is None:
-            return
-
-        def init_weights(m):
-            if isinstance(m, (nn.Conv2d, nn.Linear, nn.ConvTranspose2d)):
-                if hasattr(m, "weight") and m.weight is not None:
-                    init_fn(m.weight)
-                if hasattr(m, "bias") and m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-
-        self.apply(init_weights)
 
     def initial_inference(self, observation: Tensor) -> WorldModelOutput:
         # Ensure observation is a tensor
@@ -250,10 +230,10 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         true_chance_codes: Tensor,
         head_state: Any,
         target_observations: Optional[Tensor] = None,
-    ) -> PhysicsOutput:
+    ) -> Dict[str, Tensor]:
         """
         Unrolls the dynamics for K steps given actions.
-        Returns a PhysicsOutput containing STACKED tensors for each step.
+        Returns a dictionary containing STACKED tensors for each step.
         """
         batch_size = actions.shape[0]
         # Use the actual number of provided actions rather than config.unroll_steps
@@ -301,7 +281,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             chance_encoder_onehots = []
 
         # Rewards: MuZero unrolls usually return T rewards for T actions.
-        # PhysicsOutput says rewards: [B, T, ...]
+        # Physics unroll returns rewards: [B, T, ...]
         rewards = []
 
         # --- 4. Unroll Loop ---
@@ -383,7 +363,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
 
         # --- 5. No Padding needed for K steps alignment ---
 
-        # --- 6. Stack and Return PhysicsOutput ---
+        # --- 6. Stack and Return Output ---
         # Stack everything here to avoid returning lists of tensors
         stacked_latents = torch.stack(latent_states, dim=1)
 
@@ -419,17 +399,23 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                     B_target, T_plus_1_target, *target_latents.shape[1:]
                 )
 
-        return PhysicsOutput(
-            latents=stacked_latents,
-            rewards=stacked_rewards,
-            to_plays=stacked_to_plays,
-            latents_afterstates=stacked_afterstates,
-            chance_logits=stacked_chance_logits,
-            afterstate_backbone_features=stacked_backbone,
-            chance_encoder_embeddings=stacked_chance_encoder_embeddings,
-            chance_encoder_onehots=stacked_chance_encoder_onehots,
-            target_latents=stacked_target_latents,
-        )
+        output = {
+            "latents": stacked_latents,
+            "rewards": stacked_rewards,
+            "to_plays": stacked_to_plays,
+        }
+
+        if stacked_afterstates is not None:
+            output["latents_afterstates"] = stacked_afterstates
+            output["chance_logits"] = stacked_chance_logits
+            output["afterstate_backbone_features"] = stacked_backbone
+            output["chance_encoder_embeddings"] = stacked_chance_encoder_embeddings
+            output["chance_encoder_onehots"] = stacked_chance_encoder_onehots
+            
+        if stacked_target_latents is not None:
+            output["target_latents"] = stacked_target_latents
+
+        return output
 
     def get_networks(self) -> Dict[str, nn.Module]:
         return {

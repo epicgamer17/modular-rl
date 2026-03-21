@@ -79,7 +79,7 @@ def test_muzero_network_structure(
     obs = torch.randn(1, *input_shape)
     outputs = net.obs_inference(obs)
     value = outputs.value
-    hidden = outputs.network_state
+    recurrent_state = outputs.recurrent_state
     if isinstance(value, torch.Tensor):
         print(f"Value shape: {value.shape}")
 
@@ -93,7 +93,7 @@ def test_muzero_network_structure(
             torch.tensor([0]), num_classes=config.game.num_actions
         ).float()
 
-    rec_out = net.hidden_state_inference(outputs.network_state, dummy_action_rec)
+    rec_out = net.hidden_state_inference(outputs.recurrent_state, dummy_action_rec)
     if isinstance(rec_out.reward, torch.Tensor):
         print(f"Recurrent Reward shape: {rec_out.reward.shape}")
 
@@ -132,38 +132,38 @@ def test_learner_inference(rainbow_cartpole_replay_config, make_cartpole_config)
     print("Running learner_inference...")
     learning_output = net.learner_inference(batch)
 
-    print(f"Values shape: {learning_output.values.shape}")
-    print(f"Policies shape: {learning_output.policies.shape}")
-    print(f"Rewards shape: {learning_output.rewards.shape}")
-    print(f"Latents shape: {learning_output.latents.shape}")
+    print(f"Values shape: {learning_output['values'].shape}")
+    print(f"Policies shape: {learning_output['policies'].shape}")
+    print(f"Rewards shape: {learning_output['rewards'].shape}")
+    print(f"Latents shape: {learning_output['latents'].shape}")
 
-    assert learning_output.values.shape == (batch_size, unroll_steps + 1, 1)
-    assert learning_output.policies.shape == (
+    assert learning_output["values"].shape == (batch_size, unroll_steps + 1, 1)
+    assert learning_output["policies"].shape == (
         batch_size,
         unroll_steps + 1,
         config.game.num_actions,
     )
-    assert learning_output.rewards.shape == (
+    assert learning_output["rewards"].shape == (
         batch_size,
-        unroll_steps,
+        unroll_steps + 1,
         1,
-    ), f"Expected rewards shape (B, T, 1), got {learning_output.rewards.shape}"
-    assert learning_output.latents.shape == (batch_size, unroll_steps + 1, 4)
+    ), f"Expected rewards shape (B, T+1, 1), got {learning_output['rewards'].shape}"
+    assert learning_output["latents"].shape == (batch_size, unroll_steps + 1, 4)
 
     if config.stochastic:
-        print(f"Latents Afterstates shape: {learning_output.latents_afterstates.shape}")
-        print(f"Chance Logits shape: {learning_output.chance_logits.shape}")
-        print(f"Chance Values shape: {learning_output.chance_values.shape}")
-        assert learning_output.latents_afterstates.shape == (
+        print(f"Latents Afterstates shape: {learning_output['latents_afterstates'].shape}")
+        print(f"Chance Logits shape: {learning_output['chance_logits'].shape}")
+        print(f"Chance Values shape: {learning_output['chance_values'].shape}")
+        assert learning_output["latents_afterstates"].shape == (
             batch_size,
             unroll_steps,
             4,
         )
-        assert learning_output.chance_logits.shape == (
+        assert learning_output["chance_logits"].shape == (
             batch_size,
-            unroll_steps,
+            unroll_steps + 1,
             config.num_chance,
         )
-        assert learning_output.chance_values.shape == (batch_size, unroll_steps, 1)
+        assert learning_output["chance_values"].shape == (batch_size, unroll_steps + 1, 1)
 
     print("learner_inference Test Success!")

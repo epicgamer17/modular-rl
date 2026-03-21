@@ -70,7 +70,7 @@ This framework is built on **Strict Separation of Concerns and Perfect Polymorph
 For MuZero latent stepping, use the `MuzeroWorldModel` directly:
 - **`world_model.recurrent_inference(state, action) -> WorldModelOutput`** — MCTS latent stepping.
 - **`world_model.representation_inference(obs) -> Dict[str, Tensor]`** — Initial state from observation.
-- **`world_model.unroll_physics(initial_state, actions) -> PhysicsOutput`** — Unroll T steps for learner.
+- **`world_model.unroll_physics(initial_state, actions) -> Dict[str, Tensor]`** — Unroll T steps for learner.
 
 Must pack/unpack all sub-module RNN states into the `network_state` field (the Opaque Token).
 
@@ -113,7 +113,6 @@ class WorldModelOutput(NamedTuple):
     afterstate_features: Optional[Tensor] = None
     chance: Optional[Tensor] = None
 
-class PhysicsOutput(NamedTuple):      # [B, T+1, ...]
     latents: Tensor
     rewards: Tensor
     to_plays: Tensor

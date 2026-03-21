@@ -677,7 +677,6 @@ def get_uncompiled_model(model: torch.nn.Module) -> torch.nn.Module:
             "hidden_state_inference",
             "afterstate_inference",
             "learner_inference",
-            "search_afterstate",
             "step",
         ]
         for attr in compiled_methods:

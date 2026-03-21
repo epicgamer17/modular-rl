@@ -148,23 +148,6 @@ class WorldModelOutput(NamedTuple):
     chance: Optional[torch.Tensor] = None  # Chance logits
 
 
-class PhysicsOutput(NamedTuple):
-    """
-    Raw output from unroll_physics (WorldModel).
-    Contains STACKED tensors for the entire unrolled sequence.
-    """
-
-    latents: torch.Tensor  # [B, T+1, ...]
-    rewards: torch.Tensor  # [B, T+1, ...]
-    to_plays: torch.Tensor  # [B, T+1, ...]
-
-    # Stochastic optional fields
-    latents_afterstates: Optional[torch.Tensor] = None
-    chance_logits: Optional[torch.Tensor] = None
-    afterstate_backbone_features: Optional[torch.Tensor] = None
-    chance_encoder_embeddings: Optional[torch.Tensor] = None
-    chance_encoder_onehots: Optional[torch.Tensor] = None
-    target_latents: Optional[torch.Tensor] = None
 
 
 class InferenceOutput(NamedTuple):
@@ -172,11 +155,14 @@ class InferenceOutput(NamedTuple):
     The strict contract for data yielded to MCTS/Actor (Single Step).
     """
 
-    network_state: Any = None  # Generic dictionary (RecurrentState)
+    recurrent_state: Any = None  # Generic dictionary (Opaque Token)
     value: float | torch.Tensor = 0.0
     q_values: Optional[torch.Tensor] = None
     policy: Optional[Distribution | Any] = None
+    action: Optional[torch.Tensor] = None  # Greedy or sampled action
+    extras: Optional[Dict[str, Any]] = None
+
+    # Search-specific fields (Kept for compatibility unless explicitly asked to move to extras)
     reward: Optional[float | torch.Tensor] = None
     chance: Optional[Distribution] = None
     to_play: Optional[int | torch.Tensor] = None
-    extras: Optional[dict] = None

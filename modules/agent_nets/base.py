@@ -61,12 +61,12 @@ class BaseAgentNetwork(nn.Module, ABC):
 
     @abstractmethod
     def hidden_state_inference(
-        self, hidden_state: Any, action: Tensor, **kwargs
+        self, recurrent_state: Any, action: Tensor, **kwargs
     ) -> InferenceOutput:
         """Standard interface for MuZero-style latent rollout (Recurrent Inference)."""
         pass
 
-    def afterstate_inference(self, network_state: Any, action: Tensor) -> InferenceOutput:
+    def afterstate_inference(self, recurrent_state: Any, action: Tensor) -> InferenceOutput:
         """
         Optional interface for Stochastic MuZero (Afterstate Inference).
         If the architecture does not support stochasticity, this will raise NotImplementedError.

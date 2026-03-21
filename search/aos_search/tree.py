@@ -23,7 +23,7 @@ class FlatTree:
     next_alloc_index: torch.Tensor
 
     # Opaque PyTree containing [B, max_nodes, ...] tensors
-    network_state_buffer: Any = None
+    recurrent_state_buffer: Any = None
 
     @classmethod
     def allocate(
@@ -94,5 +94,5 @@ class FlatTree:
             children_rewards=children_rewards,
             children_values=children_values,
             next_alloc_index=next_alloc_index,
-            network_state_buffer=None,
+            recurrent_state_buffer=None,
         )

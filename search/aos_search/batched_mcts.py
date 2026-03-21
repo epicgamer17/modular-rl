@@ -196,7 +196,7 @@ def batched_mcts_step(
                 return tensor
             return tensor[unique_b, unique_n]
 
-        parent_states_unique = pytree.tree_map(gather_unique, tree.network_state_buffer)
+        parent_states_unique = pytree.tree_map(gather_unique, tree.recurrent_state_buffer)
 
         # Vectorized Inference on Unique Requests
         outputs_unique = agent_network.hidden_state_inference(
@@ -214,7 +214,7 @@ def batched_mcts_step(
         full_value = outputs_unique.value[inverse_indices]
         full_reward = outputs_unique.reward[inverse_indices]
         full_to_play = outputs_unique.to_play[inverse_indices]
-        full_net_state = pytree.tree_map(expand_fn, outputs_unique.network_state)
+        full_net_state = pytree.tree_map(expand_fn, outputs_unique.recurrent_state)
 
         # Policy is a special case (Distribution object)
         # We assume the policy data (logits/probs) can be expanded
@@ -234,7 +234,7 @@ def batched_mcts_step(
             value=full_value,
             reward=full_reward,
             to_play=full_to_play,
-            network_state=full_net_state,
+            recurrent_state=full_net_state,
             policy=full_policy,
         )
 
@@ -265,7 +265,7 @@ def batched_mcts_step(
                 return tensor
             return tensor[unique_b, unique_n]
 
-        parent_states_unique = pytree.tree_map(gather_unique, tree.network_state_buffer)
+        parent_states_unique = pytree.tree_map(gather_unique, tree.recurrent_state_buffer)
 
         outputs_unique = agent_network.afterstate_inference(
             parent_states_unique, unique_a
@@ -277,7 +277,7 @@ def batched_mcts_step(
             return tensor[inverse_indices]
 
         full_value = outputs_unique.value[inverse_indices]
-        full_net_state = pytree.tree_map(expand_fn, outputs_unique.network_state)
+        full_net_state = pytree.tree_map(expand_fn, outputs_unique.recurrent_state)
 
         policy_data = (
             outputs_unique.policy.logits
@@ -292,7 +292,7 @@ def batched_mcts_step(
             full_policy = dists.Categorical(probs=full_policy_data)
 
         outputs_chance = InferenceOutput(
-            value=full_value, network_state=full_net_state, policy=full_policy
+            value=full_value, recurrent_state=full_net_state, policy=full_policy
         )
 
     if outputs_decision is not None:
@@ -328,14 +328,14 @@ def batched_mcts_step(
     sample_state = None
     if (
         outputs_decision is not None
-        and getattr(outputs_decision, "network_state", None) is not None
+        and getattr(outputs_decision, "recurrent_state", None) is not None
     ):
-        sample_state = outputs_decision.network_state
+        sample_state = outputs_decision.recurrent_state
     elif (
         outputs_chance is not None
-        and getattr(outputs_chance, "network_state", None) is not None
+        and getattr(outputs_chance, "recurrent_state", None) is not None
     ):
-        sample_state = outputs_chance.network_state
+        sample_state = outputs_chance.recurrent_state
 
     network_state_chunks_pytree = None
     if sample_state is not None:
@@ -357,7 +357,7 @@ def batched_mcts_step(
                     t_tot[is_decision] = t_dec
 
             pytree.tree_map(
-                scatter_dec, network_state_t, outputs_decision.network_state
+                scatter_dec, network_state_t, outputs_decision.recurrent_state
             )
 
         # Scatter Chance States
@@ -367,7 +367,7 @@ def batched_mcts_step(
                 if torch.is_tensor(t_tot) and torch.is_tensor(t_cha):
                     t_tot[is_chance] = t_cha
 
-            pytree.tree_map(scatter_cha, network_state_t, outputs_chance.network_state)
+            pytree.tree_map(scatter_cha, network_state_t, outputs_chance.recurrent_state)
 
         # Chunk the states for Phase 3
         def make_chunks(tensor):
@@ -806,7 +806,7 @@ def _expand_write(
                 if torch.is_tensor(buffer_tensor) and torch.is_tensor(new_tensor):
                     buffer_tensor[alloc_idx, alloc_nodes] = new_tensor[alloc_mask]
 
-            pytree.tree_map(scatter_alloc, tree.network_state_buffer, network_state)
+            pytree.tree_map(scatter_alloc, tree.recurrent_state_buffer, network_state)
 
         # to_plays handling
         if to_plays.dim() > 1:

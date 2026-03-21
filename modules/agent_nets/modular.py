@@ -257,7 +257,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
             }
 
             return InferenceOutput(
-                network_state=network_state,
+                recurrent_state=network_state,
                 value=expected_value,
                 policy=policy_dist,
                 reward=None,
@@ -346,7 +346,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 target_observations=target_observations,
             )
 
-            stacked_latents = physics_output.latents
+            stacked_latents = physics_output["latents"]
             B, T_plus_1 = stacked_latents.shape[:2]
             flat_latents = stacked_latents.reshape(
                 B * T_plus_1, *stacked_latents.shape[2:]
@@ -370,18 +370,18 @@ class ModularAgentNetwork(BaseAgentNetwork):
             dummy_reward = torch.zeros(
                 B,
                 1,
-                *physics_output.rewards.shape[2:],
+                *physics_output["rewards"].shape[2:],
                 device=self.device,
-                dtype=physics_output.rewards.dtype,
+                dtype=physics_output["rewards"].dtype,
             )
-            padded_rewards = torch.cat([dummy_reward, physics_output.rewards], dim=1)
+            padded_rewards = torch.cat([dummy_reward, physics_output["rewards"]], dim=1)
 
             if (
                 getattr(self.config, "stochastic", False)
-                and physics_output.latents_afterstates is not None
+                and physics_output.get("latents_afterstates") is not None
             ):
-                latents_afterstates = physics_output.latents_afterstates
-                stacked_backbone_features = physics_output.afterstate_backbone_features
+                latents_afterstates = physics_output["latents_afterstates"]
+                stacked_backbone_features = physics_output["afterstate_backbone_features"]
                 B_as, T_as = stacked_backbone_features.shape[:2]  # T_as is K
                 flat_backbone = stacked_backbone_features.reshape(
                     B_as * T_as, *stacked_backbone_features.shape[2:]
@@ -404,7 +404,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 )
 
                 # Stochastic Chance Logits: [B, K, num_chance] -> [B, K+1, num_chance]
-                stochastic_chance_logits = physics_output.chance_logits
+                stochastic_chance_logits = physics_output["chance_logits"]
                 dummy_chance_logits = torch.zeros(
                     B_as,
                     1,
@@ -417,7 +417,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 )
 
                 # Stochastic Chance Encoder Embeddings: [B, K, dim] -> [B, K+1, dim]
-                chance_encoder_embeddings = physics_output.chance_encoder_embeddings
+                chance_encoder_embeddings = physics_output["chance_encoder_embeddings"]
                 dummy_chance_embeddings = torch.zeros(
                     B_as,
                     1,
@@ -433,7 +433,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 "values": raw_values,
                 "policies": raw_policies,
                 "rewards": padded_rewards,
-                "to_plays": physics_output.to_plays,
+                "to_plays": physics_output["to_plays"],
                 "latents": stacked_latents,
             }
 
@@ -565,13 +565,13 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
         _, _, expected_value = self.components["value_head"](pred_features)
         _, _, policy_dist = self.components["policy_head"](pred_features)
-        next_network_state = {
+        next_recurrent_state = {
             "dynamics": next_hidden,
             "wm_memory": wm_output.head_state,
         }
 
         return InferenceOutput(
-            network_state=next_network_state,
+            recurrent_state=next_recurrent_state,
             value=expected_value,
             policy=policy_dist,
             reward=wm_output.instant_reward,
@@ -580,15 +580,15 @@ class ModularAgentNetwork(BaseAgentNetwork):
         )
 
     def afterstate_inference(
-        self, network_state: Any, action: Tensor
+        self, recurrent_state: Any, action: Tensor
     ) -> InferenceOutput:
         if "world_model" not in self.components or not getattr(
             self.config, "stochastic", False
         ):
-            return super().afterstate_inference(network_state, action)
+            return super().afterstate_inference(recurrent_state, action)
 
         wm_output = self.components["world_model"].afterstate_recurrent_inference(
-            network_state, action
+            recurrent_state, action
         )
         shared_features = wm_output.features
         chance_logits = wm_output.chance
@@ -596,16 +596,16 @@ class ModularAgentNetwork(BaseAgentNetwork):
         _, _, expected_afterstate_value = self.components["afterstate_value_head"](
             shared_features
         )
-        network_state_after = {
+        recurrent_state_after = {
             "dynamics": wm_output.afterstate_features,
-            "wm_memory": network_state.get("wm_memory"),
+            "wm_memory": recurrent_state.get("wm_memory"),
         }
 
         chance_policy = self.components[
             "world_model"
         ].sigma_head.representation.to_inference(chance_logits)
         return InferenceOutput(
-            network_state=network_state_after,
+            recurrent_state=recurrent_state_after,
             value=expected_afterstate_value,
             policy=chance_policy,
             chance=chance_policy,

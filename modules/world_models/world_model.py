@@ -38,10 +38,10 @@ class WorldModelInterface(ABC):
     @abstractmethod
     def unroll_physics(
         self,
-        actions,
-    ) -> "PhysicsOutput":
+        **kwargs,
+    ) -> Dict[str, Tensor]:
         """
-        Unrolls a sequence of actions from the current hidden state. Returns all network output seqeunces from this unrolling.
+        Unrolls a sequence of actions from the current hidden state. Returns all network output seqeunces from this unrolling as a dictionary.
         """
         pass  # pragma: no cover
 

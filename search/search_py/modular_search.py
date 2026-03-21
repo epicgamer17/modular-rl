@@ -204,7 +204,7 @@ class ModularSearch:
             policy_logits = self._safe_log_probs(policy_probs)
         if policy_logits.dim() == 1:
             policy_logits = policy_logits.unsqueeze(0)
-        network_state = outputs.network_state
+        recurrent_state = outputs.recurrent_state
 
         # 3. Legal Moves
         # TODO: MOVE THE MASKING INTO THE ACTOR
@@ -429,7 +429,7 @@ class ModularSearch:
         if trajectory_actions is None:
             trajectory_actions = [None] * B
 
-        unbatched_states = unbatch_recurrent_state(outputs.network_state)
+        unbatched_states = unbatch_recurrent_state(outputs.recurrent_state)
 
         # Legal Moves
         legal_moves_batch = get_legal_moves(batched_info)
@@ -722,12 +722,12 @@ class ModularSearch:
         if node.is_decision:
             if parent.is_decision:
                 outputs: InferenceOutput = agent_network.hidden_state_inference(
-                    parent.network_state,
+                    parent.recurrent_state,
                     torch.as_tensor([action_or_code], device=self.device),
                 )
 
                 reward = outputs.reward
-                network_state = outputs.network_state
+                recurrent_state = outputs.recurrent_state
                 value = outputs.value
                 policy = outputs.policy.probs
                 if policy is None:
@@ -772,12 +772,12 @@ class ModularSearch:
                 one_hot_code = F.one_hot(action_t, num_classes=num_codes)
 
                 outputs: InferenceOutput = agent_network.hidden_state_inference(
-                    parent.network_state,
+                    parent.recurrent_state,
                     one_hot_code.unsqueeze(0).float(),
                 )
 
                 reward = float(outputs.reward)
-                network_state = outputs.network_state
+                recurrent_state = outputs.recurrent_state
                 value = float(outputs.value)
                 policy = outputs.policy.probs
                 if policy is None:
@@ -817,7 +817,7 @@ class ModularSearch:
             # 2. Sample a Code
             # 3. Get Next State & Reward (Create DecisionNode)
             outputs: InferenceOutput = agent_network.afterstate_inference(
-                parent.network_state,
+                parent.recurrent_state,
                 torch.as_tensor(
                     [action_or_code],
                     device=self.device,
@@ -825,7 +825,7 @@ class ModularSearch:
                 ),
             )
 
-            network_state = outputs.network_state
+            recurrent_state = outputs.recurrent_state
             value = float(outputs.value)
             code_probs = outputs.policy.probs
 
@@ -1095,7 +1095,7 @@ class ModularSearch:
             action = d["action"]
 
             if node.is_decision:
-                state = parent.network_state
+                state = parent.recurrent_state
                 assert (
                     state is not None
                 ), f"Parent node {type(parent)} at search path index {len(d['path'])-2} has network_state=None. Node type: {type(node)}"
@@ -1108,7 +1108,7 @@ class ModularSearch:
                     }
                 )
             elif node.is_chance:
-                state = parent.network_state
+                state = parent.recurrent_state
                 assert (
                     state is not None
                 ), f"Parent node {type(parent)} has network_state=None for ChanceNode expansion. Parent to_play: {parent.to_play}"
@@ -1149,7 +1149,7 @@ class ModularSearch:
             )
 
             # 4. Unbatch everything recursively
-            unbatched_next_states = unbatch_recurrent_state(outputs.network_state)
+            unbatched_next_states = unbatch_recurrent_state(outputs.recurrent_state)
 
             rewards = outputs.reward
             values = outputs.value
@@ -1194,7 +1194,7 @@ class ModularSearch:
             )
 
             # 2. Unbatch opaque states
-            unbatched_afterstates = unbatch_recurrent_state(outputs.network_state)
+            unbatched_afterstates = unbatch_recurrent_state(outputs.recurrent_state)
 
             values = outputs.value
             code_probs_batch = outputs.policy.probs
@@ -1502,10 +1502,10 @@ class ModularSearch:
             action = d["action"]
 
             if node.is_decision:
-                state = parent.network_state
+                state = parent.recurrent_state
                 recurrent_inputs.append({"state": state, "action": action, "idx": i})
             elif node.is_chance:
-                state = parent.network_state
+                state = parent.recurrent_state
                 afterstate_inputs.append({"state": state, "action": action, "idx": i})
 
         if recurrent_inputs:
@@ -1529,7 +1529,7 @@ class ModularSearch:
             outputs: InferenceOutput = agent_network.hidden_state_inference(
                 batched_states, actions
             )
-            unbatched_next_states = unbatch_recurrent_state(outputs.network_state)
+            unbatched_next_states = unbatch_recurrent_state(outputs.recurrent_state)
 
             rewards = outputs.reward
             values = outputs.value
@@ -1566,7 +1566,7 @@ class ModularSearch:
             outputs: InferenceOutput = agent_network.afterstate_inference(
                 batched_after_states, actions
             )
-            unbatched_next_states = outputs.network_state.unbatch()
+            unbatched_next_states = unbatch_recurrent_state(outputs.recurrent_state)
             values = outputs.value
             code_probs_batch = outputs.policy.probs
 
