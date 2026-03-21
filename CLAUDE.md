@@ -29,7 +29,7 @@ Coverage threshold is **80%** (enforced by `pytest.ini` via `--cov-fail-under=80
 This framework is built on **Strict Separation of Concerns and Perfect Polymorphism**. Deep RL systems collapse when neural network math bleeds into game logic, or when optimization math bleeds into tree search logic.
 
 - **The Blind Learner:** `UniversalLearner` must be completely blind to the network's architecture. It calls `learner_inference(batch)`, receives raw math, and routes it to the `LossPipeline`.
-- **The Blind Actor/Tree:** MCTS and Actor treat `network_state` (a `MuZeroNetworkState` NamedTuple) as an **Opaque Token** — they store and pass it back without inspecting it.
+- **The Blind Actor/Tree:** MCTS and Actor treat `network_state` (a generic recurrent state dictionary) as an **Opaque Token** — they store and pass it back without inspecting it.
 - **Game Logic Isolation:** The Neural Network is a pure math function. Action masking and legal move filtering happen strictly *outside* the network (in `BaseActionSelector` subclasses or the Search Tree).
 
 ---
@@ -69,7 +69,7 @@ This framework is built on **Strict Separation of Concerns and Perfect Polymorph
 
 For MuZero latent stepping, use the `MuzeroWorldModel` directly:
 - **`world_model.recurrent_inference(state, action) -> WorldModelOutput`** — MCTS latent stepping.
-- **`world_model.representation_inference(obs) -> MuZeroNetworkState`** — Initial state from observation.
+- **`world_model.representation_inference(obs) -> Dict[str, Tensor]`** — Initial state from observation.
 - **`world_model.unroll_physics(initial_state, actions) -> PhysicsOutput`** — Unroll T steps for learner.
 
 Must pack/unpack all sub-module RNN states into the `network_state` field (the Opaque Token).
@@ -80,7 +80,7 @@ Must pack/unpack all sub-module RNN states into the `network_state` field (the O
 # modules/world_models/inference_output.py
 
 class InferenceOutput(NamedTuple):
-    network_state: Any = None          # Opaque token (MuZeroNetworkState)
+    network_state: Any = None          # Opaque token (Recurrent state dictionary)
     value: float | Tensor = 0.0
     q_values: Optional[Tensor] = None
     policy: Optional[Distribution] = None
@@ -102,10 +102,6 @@ class LearningOutput(NamedTuple):
     chance_values: Optional[Tensor] = None
     target_latents: Optional[Tensor] = None
     chance_encoder_embeddings: Optional[Tensor] = None
-
-class MuZeroNetworkState(NamedTuple):
-    dynamics: Tensor
-    wm_memory: Any = None             # Opaque RNN state
 
 class WorldModelOutput(NamedTuple):
     features: Tensor

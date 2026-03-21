@@ -13,7 +13,6 @@ from modules.heads.reward import RewardHead
 from agents.learner.losses.representations import get_representation
 from modules.utils import scale_gradient, kernel_initializer_wrapper
 from modules.world_models.inference_output import (
-    MuZeroNetworkState,
     WorldModelOutput,
     PhysicsOutput,
 )
@@ -207,22 +206,18 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         - ``MuZeroNetwork.afterstate_inference`` (MCTS external): passes the
           opaque ``{"dynamics": Tensor, "wm_memory": ...}`` dict.
 
-        Both cases are handled gracefully via ``MuZeroNetworkState``.
+        Both cases are handled gracefully.
 
         Args:
-            network_state: A ``MuZeroNetworkState`` — either from
-                ``MuZeroNetwork.afterstate_inference`` (MCTS) or wrapped by
-                ``unroll_physics`` (learner). Must never be a raw Tensor.
+            network_state: A dictionary with 'dynamics' and optional 'wm_memory' —
+                either from ``MuZeroNetwork.afterstate_inference`` (MCTS) or
+                wrapped by ``unroll_physics`` (learner). Must never be a raw Tensor.
             action: Action taken at this step.
 
         Returns:
             WorldModelOutput with afterstate features and chance logits.
         """
-        assert isinstance(network_state, MuZeroNetworkState), (
-            f"network_state must be a MuZeroNetworkState, got {type(network_state)}. "
-            "Wrap raw latent tensors with MuZeroNetworkState(dynamics=latent) before calling."
-        )
-        latent_state = network_state.dynamics
+        latent_state = network_state["dynamics"]
 
         # 1. Transition to Afterstate
         action = action.view(-1).to(latent_state.device)
@@ -318,7 +313,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 # method's strict type check passes (it must be a structured object,
                 # never a raw Tensor).
                 afterstate_out = self.afterstate_recurrent_inference(
-                    MuZeroNetworkState(dynamics=hidden_states), actions_k
+                    {"dynamics": hidden_states}, actions_k
                 )
                 afterstates = afterstate_out.afterstate_features
                 shared_features = afterstate_out.features

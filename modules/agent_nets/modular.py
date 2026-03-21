@@ -5,7 +5,6 @@ from torch import nn, Tensor
 from modules.agent_nets.base import BaseAgentNetwork
 from modules.world_models.inference_output import (
     InferenceOutput,
-    MuZeroNetworkState,
 )
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from modules.backbones.factory import BackboneFactory
@@ -252,10 +251,10 @@ class ModularAgentNetwork(BaseAgentNetwork):
             pred_features = self.components["prediction_backbone"](hidden_state)
             raw_value, _, expected_value = self.components["value_head"](pred_features)
             raw_policy, _, policy_dist = self.components["policy_head"](pred_features)
-            network_state = MuZeroNetworkState(
-                dynamics=hidden_state,
-                wm_memory=wm_output.head_state,
-            )
+            network_state = {
+                "dynamics": hidden_state,
+                "wm_memory": wm_output.head_state,
+            }
 
             return InferenceOutput(
                 network_state=network_state,
@@ -547,13 +546,13 @@ class ModularAgentNetwork(BaseAgentNetwork):
     # SEARCH API (Only relevant for MuZero routing)
     # ==========================================
     def hidden_state_inference(
-        self, network_state: MuZeroNetworkState, action: Tensor
+        self, network_state: Dict[str, Any], action: Tensor
     ) -> InferenceOutput:
         if "world_model" not in self.components:
             return super().hidden_state_inference(network_state, action)
 
-        dynamics_state = network_state.dynamics
-        wm_memory = network_state.wm_memory
+        dynamics_state = network_state["dynamics"]
+        wm_memory = network_state.get("wm_memory")
 
         wm_output = self.components["world_model"].recurrent_inference(
             hidden_state=dynamics_state,
@@ -566,10 +565,10 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
         _, _, expected_value = self.components["value_head"](pred_features)
         _, _, policy_dist = self.components["policy_head"](pred_features)
-        next_network_state = MuZeroNetworkState(
-            dynamics=next_hidden,
-            wm_memory=wm_output.head_state,
-        )
+        next_network_state = {
+            "dynamics": next_hidden,
+            "wm_memory": wm_output.head_state,
+        }
 
         return InferenceOutput(
             network_state=next_network_state,
@@ -597,10 +596,10 @@ class ModularAgentNetwork(BaseAgentNetwork):
         _, _, expected_afterstate_value = self.components["afterstate_value_head"](
             shared_features
         )
-        network_state_after = MuZeroNetworkState(
-            dynamics=wm_output.afterstate_features,
-            wm_memory=network_state.wm_memory,
-        )
+        network_state_after = {
+            "dynamics": wm_output.afterstate_features,
+            "wm_memory": network_state.get("wm_memory"),
+        }
 
         chance_policy = self.components[
             "world_model"

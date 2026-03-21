@@ -146,8 +146,6 @@ def run_test_case(agent_network, batch_size, use_dist, num_steps=50):
 
     def debug_unbatch(batched_state):
         res = original_unbatch(batched_state)
-        # if isinstance(batched_state, MuZeroNetworkState):
-        #     print(f"DEBUG: Unbatching MuZeroNetworkState. Batch size detected: {len(res)}")
         return res
 
     agent_network.unbatch_network_states = debug_unbatch

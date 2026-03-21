@@ -53,7 +53,7 @@ class MockNetworkState(NamedTuple):
 
     Defined as a ``NamedTuple`` so that ``torch.utils._pytree.tree_flatten``
     automatically treats it as a flat sequence of leaves — the same way
-    ``MuZeroNetworkState`` (also a NamedTuple) is handled.  This lets the
+    automatically treats it as a flat sequence of leaves. This lets the
     AOS tree store the ``data`` tensor in its ``node_state_leaves`` buffers
     and reconstruct the state for each expansion via pytree unflatten.
 
@@ -62,12 +62,12 @@ class MockNetworkState(NamedTuple):
         type(state).batch(states)   # class method — batches a list of states
         state.unbatch()             # instance method — splits a batched state
 
-    Fields mirror ``MuZeroNetworkState``: a primary tensor leaf (``data``
+    Fields mirror the MuZero recurrent state: a primary tensor leaf (``data``
     instead of ``dynamics``) and an optional ``wm_memory`` (always ``None``
     in tests, matching the standard non-recurrent MuZero case).
     """
 
-    data: torch.Tensor  # shape [B, D]; corresponds to MuZeroNetworkState.dynamics
+    data: torch.Tensor  # shape [B, D]; corresponds to the latent state
     wm_memory: Optional[torch.Tensor] = None  # always None in tests
 
     @classmethod

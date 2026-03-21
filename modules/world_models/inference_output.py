@@ -1,129 +1,128 @@
 from dataclasses import dataclass
-from typing import NamedTuple, Optional, Any
+from typing import NamedTuple, Optional, Any, Dict, List
 import torch
 from torch import Tensor
 from torch.distributions import Distribution
 
 
-class MuZeroNetworkState(NamedTuple):
+def batch_recurrent_state(states: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Opaque token passed between MuZero's inference calls and the MCTS.
-
-    The search tree stores and forwards this without inspecting it.
-    Only ``MuZeroNetwork`` ever unpacks the fields.
-
-    Attributes:
-        dynamics: The current latent hidden state (from representation or dynamics).
-        wm_memory: Opaque world-model recurrent state (e.g. LSTM hidden for
-                   ValuePrefix). ``None`` when no recurrent state is used.
+    Batches a list of single-agent state dictionaries into one batched dictionary.
+    
+    Handles:
+    - Tensors: Concatenates across batch dimension (Dim 0, or Dim 1 for dim=3).
+    - Tuples: Recursively batches elements (e.g. LSTM (h, c)).
+    - Dicts: Recursively batches keys.
+    - None/Primitives: Preserved from first element.
     """
+    if not states:
+        return {}
 
-    dynamics: Tensor
-    wm_memory: Any = None
+    first = states[0]
+    batched = {}
 
-    @classmethod
-    def batch(cls, states: list["MuZeroNetworkState"]) -> "MuZeroNetworkState":
-        """Batches a list of single-item states into one batched state."""
-        dynamics = torch.cat([s.dynamics for s in states], dim=0)
+    for k in first.keys():
+        vals = [s[k] for s in states]
 
-        # Handle wm_memory which can be None, Tuple (LSTM), or Tensor
-        wm_mem_list = [s.wm_memory for s in states]
-        if wm_mem_list[0] is None:
-            wm_memory = None
-        elif isinstance(wm_mem_list[0], tuple):
-            # E.g. LSTM states: (h_n, c_n), each shape [num_layers, batch, hidden]
-            batched_lstm = []
-            for i in range(len(wm_mem_list[0])):
-                tensors = [mem[i] for mem in wm_mem_list]
-                if tensors[0].dim() == 3 and tensors[0].shape[1] == 1:
-                    batched_lstm.append(torch.cat(tensors, dim=1))
-                else:
-                    batched_lstm.append(torch.cat(tensors, dim=0))
-            wm_memory = tuple(batched_lstm)
-        elif isinstance(wm_mem_list[0], torch.Tensor):
-            wm_memory = torch.cat(wm_mem_list, dim=0)
-        elif isinstance(wm_mem_list[0], dict):
-            batched_dict = {}
-            for k in wm_mem_list[0].keys():
-                tensors = [mem[k] for mem in wm_mem_list]
-                if tensors[0] is None:
-                    batched_dict[k] = None
-                elif isinstance(tensors[0], torch.Tensor):
-                    if tensors[0].dim() == 3 and tensors[0].shape[1] == 1:
-                        batched_dict[k] = torch.cat(tensors, dim=1)
-                    else:
-                        batched_dict[k] = torch.cat(tensors, dim=0)
-                else:
-                    raise ValueError(
-                        f"Unknown wm_memory dict value type: {type(tensors[0])}"
-                    )
-            wm_memory = batched_dict
-        else:
-            raise ValueError(f"Unknown wm_memory type: {type(wm_mem_list[0])}")
-
-        return cls(dynamics=dynamics, wm_memory=wm_memory)
-
-    def unbatch(self) -> list["MuZeroNetworkState"]:
-        """Unbatches this state into a list of single-batch states."""
-        batch_size = self.dynamics.shape[0]
-        unbatched_dynamics = [self.dynamics[i : i + 1] for i in range(batch_size)]
-
-        if self.wm_memory is None:
-            unbatched_memory = [None for _ in range(batch_size)]
-        elif isinstance(self.wm_memory, tuple):
-            unbatched_memory = []
-            for j in range(batch_size):
-                mem_j = []
-                for t in self.wm_memory:
-                    if t.dim() == 3:
-                        mem_j.append(t[:, j : j + 1])
-                    else:
-                        mem_j.append(t[j : j + 1])
-                unbatched_memory.append(tuple(mem_j))
-        elif isinstance(self.wm_memory, torch.Tensor):
-            if self.wm_memory.dim() == 0:
-                unbatched_memory = [self.wm_memory] * batch_size  # Broadcast
+        if vals[0] is None:
+            batched[k] = None
+        elif isinstance(vals[0], torch.Tensor):
+            # Special case for RNN states: [num_layers, batch, hidden]
+            if vals[0].dim() == 3 and vals[0].shape[1] == 1:
+                batched[k] = torch.cat(vals, dim=1)
             else:
-                s_batch = self.wm_memory.shape[0]
-                if s_batch == 1 and batch_size > 1:
-                    unbatched_memory = [self.wm_memory] * batch_size  # Broadcast
-                else:
-                    unbatched_memory = [
-                        self.wm_memory[i : i + 1] for i in range(batch_size)
-                    ]
-        elif isinstance(self.wm_memory, dict):
-            unbatched_memory = [{} for _ in range(batch_size)]
-            for k, v in self.wm_memory.items():
-                if v is None:
-                    for j in range(batch_size):
-                        unbatched_memory[j][k] = None
-                elif isinstance(v, torch.Tensor):
-                    if v.dim() == 0:
-                        for j in range(batch_size):
-                            unbatched_memory[j][k] = v  # Broadcast
+                batched[k] = torch.cat(vals, dim=0)
+        elif isinstance(vals[0], tuple):
+            batched_elements = []
+            for i in range(len(vals[0])):
+                element_list = [v[i] for v in vals]
+                if isinstance(element_list[0], torch.Tensor):
+                    if element_list[0].dim() == 3 and element_list[0].shape[1] == 1:
+                        batched_elements.append(torch.cat(element_list, dim=1))
                     else:
-                        s_batch = v.shape[0] if v.dim() != 3 else v.shape[1]
-                        if s_batch == 1 and batch_size > 1:
-                            for j in range(batch_size):
-                                unbatched_memory[j][k] = v  # Broadcast
-                        else:
-                            for j in range(batch_size):
-                                if v.dim() == 3:
-                                    unbatched_memory[j][k] = v[:, j : j + 1]
-                                else:
-                                    unbatched_memory[j][k] = v[j : j + 1]
+                        batched_elements.append(torch.cat(element_list, dim=0))
                 else:
-                    for j in range(batch_size):
-                        unbatched_memory[j][k] = v
+                    batched_elements.append(element_list[0])
+            batched[k] = tuple(batched_elements)
+        elif isinstance(vals[0], dict):
+            batched[k] = batch_recurrent_state(vals)
         else:
-            raise ValueError(f"Unknown wm_memory type: {type(self.wm_memory)}")
+            batched[k] = vals[0]
 
-        return [
-            MuZeroNetworkState(
-                dynamics=unbatched_dynamics[i], wm_memory=unbatched_memory[i]
-            )
-            for i in range(batch_size)
-        ]
+    return batched
+
+
+def unbatch_recurrent_state(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Unbatches a state dictionary into a list of single-agent state dictionaries.
+    """
+    if not state:
+        return []
+
+    # 1. Determine batch size from the first tensor found
+    batch_size = 0
+    for v in state.values():
+        if isinstance(v, torch.Tensor):
+            if v.dim() == 3:  # [L, B, H]
+                batch_size = v.shape[1]
+            else:  # [B, ...]
+                batch_size = v.shape[0]
+            break
+        elif isinstance(v, dict):
+            # Recurse into dict to find a tensor
+            sub_unbatched = unbatch_recurrent_state(v)
+            if sub_unbatched:
+                batch_size = len(sub_unbatched)
+                break
+    
+    if batch_size == 0:
+        return [state]
+
+    unbatched = [{} for _ in range(batch_size)]
+
+    for k, v in state.items():
+        if v is None:
+            for i in range(batch_size):
+                unbatched[i][k] = None
+        elif isinstance(v, torch.Tensor):
+            if v.dim() == 3:
+                for i in range(batch_size):
+                    unbatched[i][k] = v[:, i : i + 1]
+            else:
+                if v.dim() == 0 or (v.dim() > 0 and v.shape[0] == 1 and batch_size > 1):
+                    for i in range(batch_size):
+                        unbatched[i][k] = v  # Broadcast
+                else:
+                    for i in range(batch_size):
+                        unbatched[i][k] = v[i : i + 1]
+        elif isinstance(v, tuple):
+            tuple_elements_unbatched = []
+            for element in v:
+                if isinstance(element, torch.Tensor):
+                    if element.dim() == 3:
+                        tuple_elements_unbatched.append(
+                            [element[:, i : i + 1] for i in range(batch_size)]
+                        )
+                    else:
+                        tuple_elements_unbatched.append(
+                            [element[i : i + 1] for i in range(batch_size)]
+                        )
+                else:
+                    tuple_elements_unbatched.append([element] * batch_size)
+            
+            for i in range(batch_size):
+                unbatched[i][k] = tuple(
+                    elements[i] for elements in tuple_elements_unbatched
+                )
+        elif isinstance(v, dict):
+            sub_unbatched = unbatch_recurrent_state(v)
+            for i in range(batch_size):
+                unbatched[i][k] = sub_unbatched[i]
+        else:
+            for i in range(batch_size):
+                unbatched[i][k] = v
+
+    return unbatched
 
 
 class WorldModelOutput(NamedTuple):
@@ -140,9 +139,7 @@ class WorldModelOutput(NamedTuple):
     )
     q_values: Optional[torch.Tensor] = None
 
-    # Opaque state (hidden_state, reward_hidden, etc.) passed to next step
-    # The World Model packs all its internal recurrent states into this field.
-    # The AgentNetwork treats this as a black box.
+    # Opaque recurrent state passed to next step
     head_state: Any = None
     instant_reward: Optional[torch.Tensor] = None
 
@@ -155,8 +152,6 @@ class PhysicsOutput(NamedTuple):
     """
     Raw output from unroll_physics (WorldModel).
     Contains STACKED tensors for the entire unrolled sequence.
-    All tensors have shape [B, T+1, ...] where T is the number of unroll steps.
-    Index 0 for transition-based fields (rewards, chance) is a dummy/padding step.
     """
 
     latents: torch.Tensor  # [B, T+1, ...]
@@ -164,30 +159,24 @@ class PhysicsOutput(NamedTuple):
     to_plays: torch.Tensor  # [B, T+1, ...]
 
     # Stochastic optional fields
-    latents_afterstates: Optional[torch.Tensor] = None  # [B, T+1, ...]
-    chance_logits: Optional[torch.Tensor] = None  # [B, T+1, ...]
-    afterstate_backbone_features: Optional[torch.Tensor] = None  # [B, T+1, ...]
-    chance_encoder_embeddings: Optional[torch.Tensor] = None  # [B, T+1, ...]
-    chance_encoder_onehots: Optional[torch.Tensor] = None  # [B, T+1, ...]
-    target_latents: Optional[torch.Tensor] = None  # [B, T+1, ...]
+    latents_afterstates: Optional[torch.Tensor] = None
+    chance_logits: Optional[torch.Tensor] = None
+    afterstate_backbone_features: Optional[torch.Tensor] = None
+    chance_encoder_embeddings: Optional[torch.Tensor] = None
+    chance_encoder_onehots: Optional[torch.Tensor] = None
+    target_latents: Optional[torch.Tensor] = None
 
 
 class InferenceOutput(NamedTuple):
     """
     The strict contract for data yielded to MCTS/Actor (Single Step).
-    Contains semantic, interpreted values (Expected Value, Distributions).
-    Note: Actor does NOT receive raw logits anymore.
     """
 
-    network_state: Any = None  # Opaque state (hidden_state, reward_hidden, etc.)
-    value: float | torch.Tensor = 0.0  # Expected Value (Scalar) V(s)
-    q_values: Optional[torch.Tensor] = None  # Action Values Q(s, a)
-    policy: Optional[Distribution | Any] = None  # Action Distribution
-    reward: Optional[float | torch.Tensor] = None  # Expected Reward (Scalar)
-    chance: Optional[Distribution] = None  # Chance Distribution (for Stochastic MuZero)
-    to_play: Optional[int | torch.Tensor] = None  # To Play (Scalar/Class Index)
-    extras: Optional[dict] = None  # Opaque extras
-
-    # Removed policy_logits as Actor uses Distribution directly.
-
-
+    network_state: Any = None  # Generic dictionary (RecurrentState)
+    value: float | torch.Tensor = 0.0
+    q_values: Optional[torch.Tensor] = None
+    policy: Optional[Distribution | Any] = None
+    reward: Optional[float | torch.Tensor] = None
+    chance: Optional[Distribution] = None
+    to_play: Optional[int | torch.Tensor] = None
+    extras: Optional[dict] = None
