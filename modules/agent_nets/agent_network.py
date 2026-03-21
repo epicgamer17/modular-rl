@@ -40,7 +40,7 @@ class AgentNetwork(nn.Module):
         self.components["behavior_heads"] = nn.ModuleDict()
 
         # 1. Environment Phase (The Physics Engine)
-        if hasattr(config, "representation_backbone") or hasattr(config, "world_model"):
+        if config.world_model is not None:
             from modules.world_models.world_model import WorldModel
             world_model_cls = kwargs.get("world_model_cls", WorldModel)
             self.components["world_model"] = world_model_cls(
@@ -53,12 +53,8 @@ class AgentNetwork(nn.Module):
             current_head_input_shape = input_shape
 
         # 2. Behavior Phase: Feature Extraction (Backbones)
-        backbone_config = getattr(
-            config, "prediction_backbone", getattr(config, "backbone", None)
-        )
-
-        if backbone_config:
-            backbone = BackboneFactory.create(backbone_config, current_head_input_shape)
+        if config.prediction_backbone is not None:
+            backbone = BackboneFactory.create(config.prediction_backbone, current_head_input_shape)
             if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
                 self.components["memory_core"] = backbone
             else:
@@ -66,12 +62,8 @@ class AgentNetwork(nn.Module):
             current_head_input_shape = backbone.output_shape
 
         # 3. Behavior Phase: Behavioral Heads (Policy, Value, Q)
-        if hasattr(config, "policy_head"):
-            pol_rep = (
-                get_representation(config.policy_head.output_strategy)
-                if hasattr(config.policy_head, "output_strategy")
-                else None
-            )
+        if config.policy_head is not None:
+            pol_rep = get_representation(config.policy_head.output_strategy)
             self.components["behavior_heads"]["policy_logits"] = PolicyHead(
                 arch_config=config.arch,
                 input_shape=current_head_input_shape,
@@ -79,7 +71,7 @@ class AgentNetwork(nn.Module):
                 representation=pol_rep,
             )
 
-        if hasattr(config, "value_head"):
+        if config.value_head is not None:
             val_rep = get_representation(config.value_head.output_strategy)
             self.components["behavior_heads"]["state_value"] = ValueHead(
                 arch_config=config.arch,
@@ -88,7 +80,7 @@ class AgentNetwork(nn.Module):
                 neck_config=config.value_head.neck,
             )
 
-        if getattr(config, "stochastic", False):
+        if config.stochastic:
             val_rep = get_representation(config.value_head.output_strategy)
             shared_backbone_output_shape = self.components[
                 "world_model"
@@ -100,9 +92,9 @@ class AgentNetwork(nn.Module):
                 neck_config=config.value_head.neck,
             )
 
-        if hasattr(config, "head") and not hasattr(config, "policy_head"):
+        if config.head is not None and config.policy_head is None:
             representation = get_representation(config.head.output_strategy)
-            if getattr(config, "dueling", False):
+            if config.dueling:
                 self.components["behavior_heads"]["q_logits"] = DuelingQHead(
                     arch_config=config.arch,
                     input_shape=current_head_input_shape,
@@ -122,7 +114,7 @@ class AgentNetwork(nn.Module):
                     neck_config=config.head.neck,
                 )
 
-        if len(self.components["behavior_heads"]) == 0 and backbone_config:
+        if len(self.components["behavior_heads"]) == 0 and config.prediction_backbone is not None:
             from configs.modules.backbones.factory import BackboneConfigFactory
             self.components["behavior_heads"]["policy_logits"] = PolicyHead(
                 arch_config=config.arch,
@@ -133,7 +125,7 @@ class AgentNetwork(nn.Module):
                 ),
             )
 
-        if hasattr(config, "projector"):
+        if config.projector is not None:
             hidden_state_shape = self.components[
                 "world_model"
             ].representation.output_shape

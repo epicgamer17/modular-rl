@@ -36,6 +36,7 @@ class MuZeroConfig(
         if "agent_type" not in config_dict:
             config_dict["agent_type"] = "muzero"
         super(MuZeroConfig, self).__init__(config_dict, game_config)
+        self.world_model = True # Signaling world model usage to AgentNetwork
 
         # Initialize Architecture Config handled by AgentConfig
 
@@ -78,78 +79,77 @@ class MuZeroConfig(
         reward_head_cls = (
             ValuePrefixRewardHeadConfig if self.use_value_prefix else RewardHeadConfig
         )
-        # Inject LSTM params into reward head dict if using Value Prefix
-        # Helper to process reward dict
-        rh_dict = self.parse_field("reward_head", default={}, required=False) or {}
+        # Reward Head Parsing
+        rh_dict = self.parse_field("reward_head", default=None, required=False)
+        if rh_dict is not None:
+            if self.use_value_prefix:
+                if "lstm_hidden_size" not in rh_dict:
+                    rh_dict["lstm_hidden_size"] = self.lstm_hidden_size
+                if "lstm_horizon_len" not in rh_dict:
+                    rh_dict["lstm_horizon_len"] = self.lstm_horizon_len
 
-        if self.use_value_prefix:
-            if "lstm_hidden_size" not in rh_dict:
-                rh_dict["lstm_hidden_size"] = self.lstm_hidden_size
-            if "lstm_horizon_len" not in rh_dict:
-                rh_dict["lstm_horizon_len"] = self.lstm_horizon_len
+            if self.atom_size > 1:
+                rew_strat = rh_dict.get("output_strategy", None)
+                if rew_strat is None:
+                    rew_strat = {"type": "muzero", "support_range": self.support_range}
+                rew_strat["num_classes"] = self.atom_size
+                rew_strat["support_range"] = self.support_range
+                rh_dict["output_strategy"] = rew_strat
 
-        # Enforce strategy if distributional
-        if self.atom_size > 1:
-            rew_strat = rh_dict.get("output_strategy", None)
-            if rew_strat is None:
-                rew_strat = {"type": "muzero", "support_range": self.support_range}
-            # Force num_classes and support_range to match atom_size
-            rew_strat["num_classes"] = self.atom_size
-            rew_strat["support_range"] = self.support_range
-            rh_dict["output_strategy"] = rew_strat
+            self.reward_head = reward_head_cls(rh_dict)
+        else:
+            self.reward_head = None
 
-        self.reward_head: RewardHeadConfig = reward_head_cls(rh_dict)
+        # Value Head Parsing
+        value_dict = self.parse_field("value_head", default=None, required=False)
+        if value_dict is not None:
+            if self.atom_size > 1:
+                val_strat = value_dict.get("output_strategy", None)
+                if val_strat is None:
+                    val_strat = {"type": "muzero", "support_range": self.support_range}
+                val_strat["num_classes"] = self.atom_size
+                val_strat["support_range"] = self.support_range
+                value_dict["output_strategy"] = val_strat
+            self.value_head = ValueHeadConfig(value_dict)
+        else:
+            self.value_head = None
 
-        # Value Head - Enforce strategy if distributional
-        value_dict = self.parse_field("value_head", default={}, required=False) or {}
-        if self.atom_size > 1:
-            val_strat = value_dict.get("output_strategy", None)
-            if val_strat is None:
-                val_strat = {"type": "muzero", "support_range": self.support_range}
-            # Force num_classes and support_range to match atom_size
-            val_strat["num_classes"] = self.atom_size
-            val_strat["support_range"] = self.support_range
-            value_dict["output_strategy"] = val_strat
+        # To Play Head Parsing
+        tp_dict = self.parse_field("to_play_head", default=None, required=False)
+        if tp_dict is not None:
+            if "num_players" not in tp_dict:
+                tp_dict["num_players"] = self.game.num_players
+            tp_strat = tp_dict.get("output_strategy", {"type": "categorical"})
+            if "num_classes" not in tp_strat:
+                tp_strat["num_classes"] = self.game.num_players
+            tp_dict["output_strategy"] = tp_strat
+            self.to_play_head = ToPlayHeadConfig(tp_dict)
+        else:
+            self.to_play_head = None
 
-        self.value_head: ValueHeadConfig = ValueHeadConfig(value_dict)
-        # To Play Head - Custom parsing to inject num_players from game config
-        tp_dict = self.parse_field("to_play_head", default={}, required=False) or {}
-        if "num_players" not in tp_dict:
-            tp_dict["num_players"] = self.game.num_players
+        # Policy Head Parsing
+        poly_dict = self.parse_field("policy_head", default=None, required=False)
+        if poly_dict is not None:
+            num_actions = self.game.num_actions
+            if num_actions is not None:
+                pol_strat = poly_dict.get("output_strategy", {"type": "categorical"})
+                if "num_classes" not in pol_strat:
+                    pol_strat["num_classes"] = num_actions
+                poly_dict["output_strategy"] = pol_strat
+            self.policy_head = PolicyHeadConfig(poly_dict)
+        else:
+            self.policy_head = None
 
-        # Ensure output_strategy has num_classes (needed for CategoricalConfig)
-        tp_strat = tp_dict.get("output_strategy", {"type": "categorical"})
-        if "num_classes" not in tp_strat:
-            tp_strat["num_classes"] = self.game.num_players
-        tp_dict["output_strategy"] = tp_strat
-
-        self.to_play_head: ToPlayHeadConfig = ToPlayHeadConfig(tp_dict)
-        # Policy Head - Inject num_classes from game
-        poly_dict = self.parse_field("policy_head", default={}, required=False) or {}
-        # Determine num_actions dynamically
-        num_actions = self.game.num_actions
-
-        if num_actions is not None:
-            pol_strat = poly_dict.get("output_strategy", {"type": "categorical"})
-            if "num_classes" not in pol_strat:
-                pol_strat["num_classes"] = num_actions
-            poly_dict["output_strategy"] = pol_strat
-
-        self.policy_head: PolicyHeadConfig = PolicyHeadConfig(poly_dict)
-
-        # Chance Probability Head - Inject num_chance
-        chance_dict = (
-            self.parse_field("chance_probability_head", default={}, required=False)
-            or {}
-        )
-        chance_strat = chance_dict.get("output_strategy", {"type": "categorical"})
-        if "num_classes" not in chance_strat:
-            chance_strat["num_classes"] = self.num_chance
-        chance_dict["output_strategy"] = chance_strat
-
-        self.chance_probability_head: ChanceProbabilityHeadConfig = (
-            ChanceProbabilityHeadConfig(chance_dict)
-        )
+        # Chance Probability Head Parsing
+        chance_dict = self.parse_field("chance_probability_head", default=None, required=False)
+        if chance_dict is not None:
+            chance_strat = chance_dict.get("output_strategy", {"type": "categorical"})
+            if "num_classes" not in chance_strat:
+                chance_strat["num_classes"] = self.num_chance
+            chance_dict["output_strategy"] = chance_strat
+            self.chance_probability_head = ChanceProbabilityHeadConfig(chance_dict)
+        else:
+            self.chance_probability_head = None
 
         # Continuation Head
         c_dict = self.parse_field("continuation_head", default=None, required=False)
@@ -278,10 +278,8 @@ class MuZeroConfig(
 
     def parse_head_config(
         self, field_name: str, head_cfg_cls: Type[HeadConfig]
-    ) -> HeadConfig:
+    ) -> Optional[HeadConfig]:
         head_dict = self.parse_field(field_name, default=None, required=False)
         if head_dict is None:
-            # Return a default config for that head type if not specified?
-            # Or just empty dict
-            return head_cfg_cls({})
+            return None
         return head_cfg_cls(head_dict)

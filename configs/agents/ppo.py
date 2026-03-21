@@ -38,36 +38,33 @@ class PPOConfig(AgentConfig, DistributionalConfig, NoisyConfig):
 
         self.critic = critic_config
 
-        # Policy Head - Inject num_classes from game/config
-        policy_dict = self.parse_field("policy_head", default={}, required=False) or {}
+        # Policy Head Parsing
+        policy_dict = self.parse_field("policy_head", default=None, required=False)
+        if policy_dict is not None:
+            num_actions = self.game.num_actions
+            if num_actions is not None:
+                pol_strat = policy_dict.get("output_strategy", {"type": "categorical"})
+                if "num_classes" not in pol_strat:
+                    pol_strat["num_classes"] = num_actions
+                policy_dict["output_strategy"] = pol_strat
+            self.policy_head = PolicyHeadConfig(policy_dict)
+        else:
+            self.policy_head = None
 
-        # Determine num_actions dynamically
-        num_actions = self.game.num_actions
-
-        if num_actions is not None:
-            # Inject into output_strategy
-            pol_strat = policy_dict.get("output_strategy", {"type": "categorical"})
-            if "num_classes" not in pol_strat:
-                pol_strat["num_classes"] = num_actions
-            policy_dict["output_strategy"] = pol_strat
-
-        self.policy_head: PolicyHeadConfig = PolicyHeadConfig(policy_dict)
-
-        # Value Head - Inject num_atoms if distributional
-        value_dict = self.parse_field("value_head", default={}, required=False) or {}
-
-        if self.atom_size > 1:
-            val_strat = value_dict.get("output_strategy", None)
-            if val_strat is None:
-                raise ValueError(
-                    f"Distributional PPO (atom_size={self.atom_size}) requires an explicit output_strategy for the value head."
-                )
-
-            # Force num_classes to be atom_size
-            val_strat["num_classes"] = self.atom_size
-            value_dict["output_strategy"] = val_strat
-
-        self.value_head: ValueHeadConfig = ValueHeadConfig(value_dict)
+        # Value Head Parsing
+        value_dict = self.parse_field("value_head", default=None, required=False)
+        if value_dict is not None:
+            if self.atom_size > 1:
+                val_strat = value_dict.get("output_strategy", None)
+                if val_strat is None:
+                    raise ValueError(
+                        f"Distributional PPO (atom_size={self.atom_size}) requires an explicit output_strategy for the value head."
+                    )
+                val_strat["num_classes"] = self.atom_size
+                value_dict["output_strategy"] = val_strat
+            self.value_head = ValueHeadConfig(value_dict)
+        else:
+            self.value_head = None
 
         self.clip_param = self.parse_field("clip_param", 0.2)
         self.steps_per_epoch = self.parse_field("steps_per_epoch", required=True)
@@ -108,8 +105,8 @@ class PPOConfig(AgentConfig, DistributionalConfig, NoisyConfig):
 
     def parse_head_config(
         self, field_name: str, head_cfg_cls: Type[HeadConfig]
-    ) -> HeadConfig:
+    ) -> Optional[HeadConfig]:
         head_dict = self.parse_field(field_name, default=None, required=False)
         if head_dict is None:
-            return head_cfg_cls({})
+            return None
         return head_cfg_cls(head_dict)

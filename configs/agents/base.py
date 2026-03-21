@@ -29,6 +29,31 @@ class AgentConfig(
     Inherits from various mixins to provide standard capabilities.
     Also manages the 'arch' attribute for modular network components.
     """
+    # --- STRICT COMPONENT CONTRACT ---
+    # These must be initialized (defaulting to None if unused) to avoid hasattr/getattr
+    world_model: Optional[Any] = None
+    feature_extractor: Optional[Any] = None
+    memory_core: Optional[Any] = None
+    prediction_backbone: Optional[Any] = None # Legacy/Bridge name
+    
+    # Behavioral Heads
+    policy_head: Optional[Any] = None
+    value_head: Optional[Any] = None
+    afterstate_value_head: Optional[Any] = None
+    head: Optional[Any] = None # Rainbow style
+    projector: Optional[Any] = None
+    
+    # Internal World Model Components
+    representation_backbone: Optional[Any] = None
+    dynamics_backbone: Optional[Any] = None
+    reward_head: Optional[Any] = None
+    continuation_head: Optional[Any] = None
+    to_play_head: Optional[Any] = None
+    chance_probability_head: Optional[Any] = None
+
+    # Flags
+    stochastic: bool = False
+    dueling: bool = False
 
     def __init__(self, config_dict: dict, game_config: GameConfig) -> None:
         super().__init__(config_dict)

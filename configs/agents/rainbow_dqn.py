@@ -36,6 +36,7 @@ class RainbowConfig(
             self.noisy_sigma = 0.5  # Restore Rainbow Default
 
         self.backbone: BackboneConfig = self.parse_backbone_config("backbone")
+        self.prediction_backbone = self.backbone
 
         # Mixin: Epsilon Greedy
         self.parse_epsilon_greedy_params()
@@ -61,7 +62,8 @@ class RainbowConfig(
             assert self.v_min != None and self.v_max != None
 
         # --- Head Configuration ---
-        head_dict = self.parse_field("head", {}, required=False)
+        head_dict = self.parse_field("head", None, required=False)
+        if head_dict is not None:
 
         # 1. Inject Global Noisy Sigma
         if "noisy_sigma" not in head_dict:
@@ -101,10 +103,13 @@ class RainbowConfig(
                 head_dict["output_strategy"] = {"type": "scalar"}
 
         # 3. Construct Head Config
-        if self.dueling:
-            self.head = DuelingQHeadConfig(head_dict)
+        if head_dict is not None:
+            if self.dueling:
+                self.head = DuelingQHeadConfig(head_dict)
+            else:
+                self.head = QHeadConfig(head_dict)
         else:
-            self.head = QHeadConfig(head_dict)
+            self.head = None
 
     def _verify_game(self):
         assert self.game.is_discrete, "Rainbow only supports discrete action spaces"

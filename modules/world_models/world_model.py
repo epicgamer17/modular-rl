@@ -80,7 +80,7 @@ class WorldModel(nn.Module):
         self.heads = nn.ModuleDict()
         
         from agents.learner.losses.representations import get_representation
-        if getattr(config, "reward_head", None) is not None:
+        if config.reward_head is not None:
             r_rep = get_representation(config.reward_head.output_strategy)
             self.heads["reward_logits"] = HeadFactory.create(
                 config.reward_head,
@@ -89,7 +89,7 @@ class WorldModel(nn.Module):
                 representation=r_rep,
             )
 
-        if getattr(config, "continuation_head", None) is not None:
+        if config.continuation_head is not None:
             c_rep = get_representation(config.continuation_head.output_strategy)
             self.heads["continuation_logits"] = HeadFactory.create(
                 config.continuation_head,
@@ -98,7 +98,7 @@ class WorldModel(nn.Module):
                 representation=c_rep,
             )
 
-        if getattr(config, "to_play_head", None) is not None:
+        if config.to_play_head is not None:
             tp_rep = get_representation(config.to_play_head.output_strategy)
             self.heads["to_play_logits"] = HeadFactory.create(
                 config.to_play_head,
