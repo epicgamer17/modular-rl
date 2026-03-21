@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import NamedTuple, Optional, Any, Dict, List
+from dataclasses import dataclass, field
+from typing import NamedTuple, Optional, Any, Dict, List, Union
 import torch
 from torch import Tensor
 from torch.distributions import Distribution
@@ -198,19 +198,21 @@ class WorldModelOutput(NamedTuple):
 
 
 
-class InferenceOutput(NamedTuple):
-    """
-    The strict contract for data yielded to MCTS/Actor (Single Step).
-    """
-
-    recurrent_state: Any = None  # Generic dictionary (Opaque Token)
-    value: float | torch.Tensor = 0.0
-    q_values: Optional[torch.Tensor] = None
-    policy: Optional[Distribution | Any] = None
-    action: Optional[torch.Tensor] = None  # Greedy or sampled action
-    extras: Optional[Dict[str, Any]] = None
-
-    # Search-specific fields (Kept for compatibility unless explicitly asked to move to extras)
-    reward: Optional[float | torch.Tensor] = None
+@dataclass
+class InferenceOutput:
+    """Strict contract for data yielded to MCTS/Actors."""
+    recurrent_state: Dict[str, Any] = field(default_factory=dict)
+    
+    # Behavior
+    value: Optional[Tensor] = None
+    policy: Optional[Distribution] = None
+    action: Optional[Tensor] = None
+    q_values: Optional[Tensor] = None
+    
+    # Environment (World Model)
+    reward: Optional[Tensor] = None
+    to_play: Optional[Tensor] = None
     chance: Optional[Distribution] = None
-    to_play: Optional[int | torch.Tensor] = None
+    
+    # Anything truly bespoke
+    extras: Dict[str, Any] = field(default_factory=dict)
