@@ -359,11 +359,17 @@ class AgentNetwork(nn.Module):
             behavior_results[name] = head_out.training_tensor.view(B, T, -1)
 
         if "world_model" in self.components and getattr(self.config, "stochastic", False):
-            as_features = env_results["afterstate_backbone_features"]
-            flat_as = as_features.flatten(0, 1)
-            head_out_as = self.components["behavior_heads"]["afterstate_value"](flat_as)
+            as_latents = env_results["latents_afterstates"]
+            flat_as = as_latents.flatten(0, 1)
+            
+            if "feature_extractor" in self.components:
+                as_features = self.components["feature_extractor"](flat_as)
+            else:
+                as_features = flat_as
+                
+            head_out_as = self.components["behavior_heads"]["afterstate_value"](as_features)
 
-            B_as, K_as = as_features.shape[:2]
+            B_as, K_as = as_latents.shape[:2]
             as_values = head_out_as.training_tensor.view(B_as, K_as, -1)
             # Prepend zero value for root
             root_as_values = torch.zeros(B_as, 1, *as_values.shape[2:], device=self.device)
@@ -435,8 +441,13 @@ class AgentNetwork(nn.Module):
             {"dynamics": dynamics_h}, action
         )
         
-        shared_backbone_features = wm_output.features
-        head_out_as = self.components["behavior_heads"]["afterstate_value"](shared_backbone_features)
+        afterstate_latent = wm_output.afterstate_features
+        if "feature_extractor" in self.components:
+            as_features = self.components["feature_extractor"](afterstate_latent)
+        else:
+            as_features = afterstate_latent
+
+        head_out_as = self.components["behavior_heads"]["afterstate_value"](as_features)
         expected_afterstate_value = head_out_as.inference_tensor
 
         recurrent_state_after = self._pack_recurrent_state(

@@ -47,15 +47,10 @@ class WorldModel(nn.Module):
                 config.dynamics_backbone, latent_dimensions
             )
 
-            # Prediction backbone (for chance probability)
-            self.prediction_backbone = BackboneFactory.create(
-                self.config.prediction_backbone, latent_dimensions
-            )
-
             self.sigma_head = HeadFactory.create(
                 self.config.chance_probability_head,
                 self.config.arch,
-                input_shape=self.prediction_backbone.output_shape,
+                input_shape=latent_dimensions,
                 num_chance_codes=self.num_chance,
             )
 
@@ -173,12 +168,10 @@ class WorldModel(nn.Module):
     ) -> Dict[str, Tensor]:
         """Processes a single transition step (Deterministic or Stochastic)."""
         if self.config.stochastic:
-            # 1. Afterstate Phase (Action-conditioned but outcome-agnostic)
             afterstate_out = self.afterstate_recurrent_inference(
                 {"dynamics": current_latent}, action_k
             )
             afterstate = afterstate_out.afterstate_features
-            shared_features = afterstate_out.features
             chance_logits = afterstate_out.chance
 
             # 2. Chance Code Selection (Ground Truth or Learned Encoder)
@@ -208,7 +201,6 @@ class WorldModel(nn.Module):
                 "next_latent": next_latent,
                 "afterstate": afterstate,
                 "chance_logits": chance_logits,
-                "shared_features": shared_features,
             }
         else:
             # Standard Deterministic Dynamics
@@ -227,13 +219,13 @@ class WorldModel(nn.Module):
         fused_latent = self.afterstate_fusion(latent_state, action)
         afterstate_latent = self.afterstate_dynamics(fused_latent)
         afterstate_latent = _normalize_hidden_state(afterstate_latent)
-        shared_features = self.prediction_backbone(afterstate_latent)
-        head_out_sigma = self.sigma_head(shared_features)
+        
+        head_out_sigma = self.sigma_head(afterstate_latent)
         chance_logits = head_out_sigma.training_tensor
 
         return WorldModelOutput(
+            features=torch.empty(0), # Ignored in afterstate path
             afterstate_features=afterstate_latent,
-            features=shared_features,
             chance=chance_logits,
         )
 
@@ -264,7 +256,6 @@ class WorldModel(nn.Module):
         stochastic_sequences = {
             "latents_afterstates": [],
             "chance_logits": [],
-            "afterstate_backbone_features": [],
         } if self.config.stochastic else {}
 
         for k in range(unroll_steps):
@@ -287,9 +278,6 @@ class WorldModel(nn.Module):
                 )
                 stochastic_sequences["chance_logits"].append(
                     step_results["chance_logits"]
-                )
-                stochastic_sequences["afterstate_backbone_features"].append(
-                    step_results["shared_features"]
                 )
 
             # Heads Phase
