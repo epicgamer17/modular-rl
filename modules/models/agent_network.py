@@ -65,25 +65,11 @@ class AgentNetwork(nn.Module):
 
         # 2. Environment Phase (The Physics Engine)
         if world_model_config is not None:
-            from modules.models.world_model import WorldModel
-
-            world_model_cls = kwargs.get("world_model_cls", WorldModel)
-            self.components["world_model"] = world_model_cls(
-                latent_dimensions=current_head_input_shape,
+            self.components["world_model"] = WorldModel(
+                config=world_model_config,
+                latent_dimensions=self.latent_dim,
                 num_actions=num_actions,
-                world_model_config=world_model_config,
-                arch_config=arch_config,
-                stochastic=stochastic,
-                num_players=num_players,
-                num_chance_codes=num_chance_codes,
-                observation_shape=input_shape,
             )
-            # The WorldModel operates purely in latent space. The behavior heads
-            # will attach to either the initial representation or the world model's backbone.
-            if hasattr(self.components["world_model"], "prediction_backbone"):
-                current_head_input_shape = self.components[
-                    "world_model"
-                ].prediction_backbone.output_shape
 
         # 3. Behavior Phase: Temporal Memory (Backbones)
         if (

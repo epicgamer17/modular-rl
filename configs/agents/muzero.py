@@ -36,7 +36,9 @@ class MuZeroConfig(
         if "agent_type" not in config_dict:
             config_dict["agent_type"] = "muzero"
         super(MuZeroConfig, self).__init__(config_dict, game_config)
-        self.world_model = True # Signaling world model usage to AgentNetwork
+        # The WorldModel component for MuZero consumes the root config directly 
+        # to access dynamics backbones and head configurations.
+        self.world_model = self
 
         # Initialize Architecture Config handled by AgentConfig
 

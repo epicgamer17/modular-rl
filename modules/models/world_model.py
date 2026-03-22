@@ -149,54 +149,48 @@ class WorldModel(nn.Module):
 
     def __init__(
         self,
+        config: Any,
         latent_dimensions: Tuple[int, ...],
         num_actions: int,
-        world_model_config: Any,
-        arch_config: Any,
-        stochastic: bool = False,
-        num_players: int = 1,
-        num_chance_codes: int = 0,
-        observation_shape: Tuple[int, ...] = None,
-        use_true_chance_codes: bool = False,
     ):
         super().__init__()
         self.num_actions = num_actions
-        self.stochastic = stochastic
+        self.stochastic = getattr(config, "stochastic", False)
 
         # 1. Dynamics Strategy
-        if stochastic:
+        if self.stochastic:
             self.dynamics_pipeline = StochasticDynamics(
                 latent_dimensions=latent_dimensions,
                 num_actions=num_actions,
-                world_model_config=world_model_config,
-                num_chance=num_chance_codes,
-                arch_config=arch_config,
-                observation_shape=observation_shape,
-                use_true_chance_codes=use_true_chance_codes,
+                world_model_config=config,
+                num_chance=getattr(config, "num_chance", 0),
+                arch_config=config.arch,
+                observation_shape=config.game.observation_shape,
+                use_true_chance_codes=getattr(config, "use_true_chance_codes", False),
             )
         else:
             self.dynamics_pipeline = DeterministicDynamics(
                 latent_dimensions=latent_dimensions,
                 num_actions=num_actions,
-                world_model_config=world_model_config,
+                world_model_config=config,
             )
 
         # 2. Environment Heads
         self.heads = nn.ModuleDict()
 
         # Iterate over configured environment heads
-        if hasattr(world_model_config, "env_heads"):
-            for head_name, head_config in world_model_config.env_heads.items():
+        if hasattr(config, "env_heads"):
+            for head_name, head_config in config.env_heads.items():
                 if head_config is None:
                     continue
 
                 self.heads[head_name] = HeadFactory.create(
                     head_config,
-                    arch_config=arch_config,
+                    arch_config=config.arch,
                     input_shape=self.dynamics_pipeline.output_shape,
-                    num_players=num_players,
+                    num_players=config.game.num_players,
                     num_actions=num_actions,
-                    num_chance_codes=num_chance_codes,
+                    num_chance_codes=getattr(config, "num_chance", 0),
                 )
 
     @property
