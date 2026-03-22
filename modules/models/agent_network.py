@@ -182,8 +182,7 @@ class AgentNetwork(nn.Module):
         for name, head in self.components["behavior_heads"].items():
             head_out = head(features, state=network_state, **kwargs)
             outputs[name] = head_out.inference_tensor
-            if head_out.state:
-                network_state.update(head_out.state)
+            network_state.update(head_out.state)
 
         if wm_output:
             network_state.update(wm_output.next_state)
@@ -314,8 +313,7 @@ class AgentNetwork(nn.Module):
         for name, head in self.components["behavior_heads"].items():
             head_out = head(features, state=network_state, **kwargs)
             outputs[name] = head_out.inference_tensor
-            if head_out.state:
-                next_recurrent_state.update(head_out.state)
+            next_recurrent_state.update(head_out.state)
 
         next_recurrent_state.update(next_h)
 

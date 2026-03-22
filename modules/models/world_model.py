@@ -234,10 +234,7 @@ class WorldModel(nn.Module):
                 new_head_state.update(head_out.state)
 
         # The World Model packs everything it owns into one dictionary
-        new_state = {
-            "dynamics": next_hidden_state,
-            **new_head_state
-        }
+        new_state = {"dynamics": next_hidden_state, **new_head_state}
 
         return WorldModelOutput(
             features=next_hidden_state,
@@ -272,7 +269,7 @@ class WorldModel(nn.Module):
             features=torch.empty(0),
             afterstate_features=res["afterstate_features"],
             chance=res["chance"],
-            next_state=new_state
+            next_state=new_state,
         )
 
     def unroll_physics(
@@ -298,13 +295,10 @@ class WorldModel(nn.Module):
             head_out = head(current_latent, state=current_head_state, **kwargs)
             head_sequences[name].append(head_out.training_tensor)
 
-            if head_out.state:
-                current_head_state.update(head_out.state)
+            current_head_state.update(head_out.state)
 
         stochastic_sequences = (
-            {"latents_afterstates": [], "chance_logits": []}
-            if self.stochastic
-            else {}
+            {"latents_afterstates": [], "chance_logits": []} if self.stochastic else {}
         )
 
         for k in range(unroll_steps):
@@ -335,18 +329,15 @@ class WorldModel(nn.Module):
                 head_out = head(next_latent, state=current_head_state, **kwargs)
                 head_sequences[name].append(head_out.training_tensor)
 
-                if head_out.state:
-                    current_head_state.update(head_out.state)
+                current_head_state.update(head_out.state)
 
             current_latent = next_latent
             latents.append(current_latent)
             current_latent = scale_gradient(current_latent, 0.5)
 
         output = {"latents": torch.stack(latents, dim=1)}
-        for name, seq in head_sequences.items():
-            if seq:
-                output[name] = torch.stack(seq, dim=1)
-        for name, seq in stochastic_sequences.items():
+        # Merge dictionaries and stack uniformly
+        for name, seq in {**head_sequences, **stochastic_sequences}.items():
             if seq:
                 output[name] = torch.stack(seq, dim=1)
 
