@@ -236,19 +236,14 @@ class WorldModel(nn.Module):
         head_sequences = {name: [] for name in self.heads.keys()}
 
         current_latent = initial_latent_state
-        current_head_state = head_state if head_state is not None else {}
+        current_head_state: Dict[str, Any] = head_state if head_state is not None else {}
 
         # Initial head prediction for root
         for name, head in self.heads.items():
-            h_state = (
-                current_head_state.get(name)
-                if isinstance(current_head_state, dict)
-                else None
-            )
+            h_state = current_head_state.get(name)
             head_out = head(current_latent, state=h_state)
             head_sequences[name].append(head_out.training_tensor)
-            if isinstance(current_head_state, dict):
-                current_head_state[name] = head_out.state
+            current_head_state[name] = head_out.state
 
         stochastic_sequences = (
             {
@@ -283,15 +278,10 @@ class WorldModel(nn.Module):
 
             # Heads Phase
             for name, head in self.heads.items():
-                h_state = (
-                    current_head_state.get(name)
-                    if isinstance(current_head_state, dict)
-                    else None
-                )
+                h_state = current_head_state.get(name)
                 head_out = head(next_latent, state=h_state)
                 head_sequences[name].append(head_out.training_tensor)
-                if isinstance(current_head_state, dict):
-                    current_head_state[name] = head_out.state
+                current_head_state[name] = head_out.state
 
             current_latent = next_latent
             latents.append(current_latent)
