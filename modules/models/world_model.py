@@ -28,7 +28,7 @@ class DeterministicDynamics(nn.Module):
         )
         self.output_shape = self.dynamics.output_shape
 
-    def forward(
+    def recurrent_step(
         self, current_latent: Tensor, action: Tensor, **kwargs
     ) -> Dict[str, Tensor]:
         next_latent = self.dynamics_fusion(current_latent, action)
@@ -120,7 +120,7 @@ class StochasticDynamics(nn.Module):
             )
             codes_k = (one_hot - probs).detach() + probs
 
-        next_latent = self.dynamics_inference(afterstate, codes_k)
+        next_latent = self.recurrent_step(afterstate, codes_k)["next_latent"]
 
         return {
             "next_latent": next_latent,
@@ -135,10 +135,10 @@ class StochasticDynamics(nn.Module):
         chance_logits = self.sigma_head(afterstate).training_tensor
         return {"afterstate_features": afterstate, "chance": chance_logits}
 
-    def dynamics_inference(self, state: Tensor, chance_code: Tensor) -> Tensor:
+    def recurrent_step(self, state: Tensor, chance_code: Tensor) -> Dict[str, Tensor]:
         fused = self.dynamics_fusion(state, chance_code)
         next_latent = self.dynamics(fused)
-        return _normalize_hidden_state(next_latent)
+        return {"next_latent": _normalize_hidden_state(next_latent)}
 
 
 class WorldModel(nn.Module):
@@ -214,17 +214,11 @@ class WorldModel(nn.Module):
         **kwargs,
     ) -> WorldModelOutput:
         # 1. Transition Phase (Via Pipeline)
-        if self.stochastic:
-            # In stochastic MCTS, hidden_state passed here is the afterstate
-            # and action is the chance code.
-            next_hidden_state = self.dynamics_pipeline.dynamics_inference(
-                hidden_state, action
-            )
-        else:
-            # Deterministic: hidden_state is latent, action is player action
-            next_hidden_state = self.dynamics_pipeline(hidden_state, action)[
-                "next_latent"
-            ]
+        # The World Model no longer cares if it's stochastic or deterministic!
+        # Both implement the .recurrent_step() contract.
+        next_hidden_state = self.dynamics_pipeline.recurrent_step(hidden_state, action)[
+            "next_latent"
+        ]
 
         # 2. Heads Phase
         predictions = {}
