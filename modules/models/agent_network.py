@@ -36,21 +36,30 @@ class AgentNetwork(nn.Module):
         self.components = nn.ModuleDict()
         self.components["behavior_heads"] = nn.ModuleDict()
 
-        # 1. Environment Phase (The Physics Engine)
+        # 1. Representation Phase (The Encoder)
+        if getattr(config, "representation_backbone", None) is not None:
+            self.components["representation"] = BackboneFactory.create(
+                config.representation_backbone, input_shape
+            )
+            current_head_input_shape = self.components["representation"].output_shape
+        else:
+            current_head_input_shape = input_shape
+
+        # 2. Environment Phase (The Physics Engine)
         if config.world_model is not None:
             from modules.models.world_model import WorldModel
             world_model_cls = kwargs.get("world_model_cls", WorldModel)
             self.components["world_model"] = world_model_cls(
-                config, input_shape, num_actions
+                config, current_head_input_shape, num_actions
             )
-            current_head_input_shape = self.components[
-                "world_model"
-            ].representation.output_shape
-        else:
-            current_head_input_shape = input_shape
+            # The WorldModel operates purely in latent space. The behavior heads
+            # will attach to either the initial representation or the world model's backbone.
+            if hasattr(self.components["world_model"], "prediction_backbone"):
+                current_head_input_shape = self.components["world_model"].prediction_backbone.output_shape
 
-        # 2. Behavior Phase: Feature Extraction (Backbones)
-        if config.prediction_backbone is not None:
+
+        # 3. Behavior Phase: Feature Extraction (Backbones)
+        if config.prediction_backbone is not None and "world_model" not in self.components:
             backbone = BackboneFactory.create(config.prediction_backbone, current_head_input_shape)
             if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
                 self.components["memory_core"] = backbone
@@ -73,10 +82,10 @@ class AgentNetwork(nn.Module):
 
             # Route to correct input shape (Afterstate vs Root)
             # This is currently the only notable "bleed" of logic. 
-            # If a head is an 'afterstate' head, it takes shared_backbone features.
+            # If a head is an 'afterstate' head, it takes the prediction backbone features.
             head_input_shape = current_head_input_shape
             if head_name == "afterstate_value" and "world_model" in self.components:
-                head_input_shape = self.components["world_model"].shared_backbone.output_shape
+                head_input_shape = self.components["world_model"].prediction_backbone.output_shape
 
             self.components["behavior_heads"][head_name] = HeadFactory.create(
                 head_config,
@@ -104,9 +113,7 @@ class AgentNetwork(nn.Module):
             )
 
         if config.projector is not None:
-            hidden_state_shape = self.components[
-                "world_model"
-            ].representation.output_shape
+            hidden_state_shape = current_head_input_shape
             self.flat_hidden_dim = torch.Size(hidden_state_shape).numel()
             self.components["projector"] = Projector(self.flat_hidden_dim, config)
 
@@ -241,12 +248,12 @@ class AgentNetwork(nn.Module):
         if obs.dim() == len(self.input_shape):
             obs = obs.unsqueeze(0)
 
-        if "world_model" in self.components:
-            wm_output = self.components["world_model"].initial_inference(obs)
-            latent = wm_output.features
+        if "representation" in self.components:
+            latent = self.components["representation"](obs)
         else:
             latent = obs
-            wm_output = None
+
+        wm_output = None
 
         # 2. Feature & Memory Phase
         B_val = latent.shape[0]
@@ -288,23 +295,45 @@ class AgentNetwork(nn.Module):
         """Simplified router for batch unrolls during learning."""
         obs = batch["observations"].to(self.device).float()
         
-        # 1. Environment Phase
+        # 1. Representation Phase
+        if "representation" in self.components:
+            B, T = obs.shape[:2]
+            flat_obs = obs.flatten(0, 1)
+            flat_latent = self.components["representation"](flat_obs)
+            latents = flat_latent.view(B, T, *flat_latent.shape[1:])
+        else:
+            latents = obs
+
+        B, T = latents.shape[:2]
+
+        target_latents = None
+        if "world_model" in self.components and getattr(self.config, "consistency_loss_factor", 0) > 0:
+            if "unroll_observations" in batch and "representation" in self.components:
+                target_obs = batch["unroll_observations"].to(self.device).float()
+                B_t, T_t = target_obs.shape[:2]
+                flat_target = target_obs.flatten(0, 1)
+                with torch.no_grad():
+                    flat_target_latent = self.components["representation"](flat_target)
+                    target_latents = flat_target_latent.view(B_t, T_t, *flat_target_latent.shape[1:])
+
+        # 2. Environment Phase
         if "world_model" in self.components:
             # Note: world_model unrolls physics across unroll_steps
+            # It expects initial_latent_state to be the ROOT latent state [B, *D]
+            initial_latent_state = latents[:, 0]
             env_results = self.components["world_model"].unroll_physics(
-                initial_latent_state=self.components["world_model"].initial_inference(obs).features,
+                initial_latent_state=initial_latent_state,
                 actions=batch["actions"],
                 encoder_inputs=(
-                    torch.cat([batch["unroll_observations"][:, :-1], batch["unroll_observations"][:, 1:]], dim=2)
+                    torch.cat([batch["unroll_observations"][:, :-1], batch["unroll_observations"][:, 1:]], dim=2).to(self.device).float()
                     if getattr(self.config, "stochastic", False) else None
                 ),
                 true_chance_codes=batch.get("chance_codes"),
-                target_observations=batch.get("unroll_observations"),
             )
+            # The WorldModel returns the sequence of latents starting from root
             latents = env_results["latents"]
         else:
             env_results = {}
-            latents = obs
 
         # 2. Spatial & Temporal Phase (Routing)
         B, T = latents.shape[:2]
@@ -343,6 +372,8 @@ class AgentNetwork(nn.Module):
 
         # Merge and Validate
         final_output = {**env_results, **behavior_results, "latents": latents}
+        if target_latents is not None:
+            final_output["target_latents"] = target_latents
         ShapeValidator(self.config).validate_predictions(final_output)
         return final_output
 
@@ -453,7 +484,14 @@ class AgentNetwork(nn.Module):
         else:
             proj = proj.detach()
 
-        hidden_state_shape = self.components["world_model"].representation.output_shape
+        # Find latent dimensions for projection reshaping
+        if "representation" in self.components:
+            hidden_state_shape = self.components["representation"].output_shape
+        elif "feature_extractor" in self.components:
+            hidden_state_shape = self.components["feature_extractor"].output_shape
+        else:
+            hidden_state_shape = self.input_shape
+
         num_latent_dims = len(hidden_state_shape)
         new_shape = list(original_shape[:-num_latent_dims]) + [proj.shape[-1]]
         return proj.reshape(new_shape)

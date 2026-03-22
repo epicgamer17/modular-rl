@@ -21,7 +21,7 @@ class WorldModel(nn.Module):
     def __init__(
         self,
         config: MuZeroConfig,
-        observation_dimensions: Tuple[int, ...],
+        latent_dimensions: Tuple[int, ...],
         num_actions: int,
     ):
         super().__init__()
@@ -29,32 +29,27 @@ class WorldModel(nn.Module):
         self.num_actions = num_actions
         self.num_chance = config.num_chance
         
-        # 1. Representation Network (Pure observation backbone)
-        self.representation = BackboneFactory.create(
-            config.representation_backbone, observation_dimensions
-        )
-
-        # 2. Dynamics Networks (Action-conditioned backbones)
+        # 1. Dynamics Networks (Action-conditioned backbones)
         if self.config.stochastic:
             # Afterstate Dynamics: (Latent, Action) -> Afterstate
             self.afterstate_fusion = ActionFusion(
-                self.num_actions, self.config.action_embedding_dim, self.representation.output_shape
+                self.num_actions, self.config.action_embedding_dim, latent_dimensions
             )
             self.afterstate_dynamics = BackboneFactory.create(
-                config.afterstate_dynamics_backbone, self.representation.output_shape
+                config.afterstate_dynamics_backbone, latent_dimensions
             )
 
             # Dynamics: (Afterstate, Chance) -> Next Latent
             self.dynamics_fusion = ActionFusion(
-                self.num_chance, self.config.action_embedding_dim, self.representation.output_shape
+                self.num_chance, self.config.action_embedding_dim, latent_dimensions
             )
             self.dynamics = BackboneFactory.create(
-                config.dynamics_backbone, self.representation.output_shape
+                config.dynamics_backbone, latent_dimensions
             )
 
             # Prediction backbone (for chance probability)
             self.prediction_backbone = BackboneFactory.create(
-                self.config.prediction_backbone, self.representation.output_shape
+                self.config.prediction_backbone, latent_dimensions
             )
 
             self.sigma_head = HeadFactory.create(
@@ -65,7 +60,14 @@ class WorldModel(nn.Module):
             )
 
             # Chance Encoder: (Stacked Obs) -> Chance Codes
-            encoder_input_shape = list(observation_dimensions)
+            # Note: The Chance Encoder works directly on raw observations, normally this
+            # belongs logically in the AgentNetwork's feature extraction, but it's specific
+            # to the stochastic world model's chance generation. For now we leave it here,
+            # but it uses the original observation_dimensions (which are now hidden from init).
+            # We'll extract image sizes dynamically or assume config.observation_dimensions.
+            # *WAIT, the config structure usually contains config.game.observation_shape.
+            # Since we no longer receive it in __init__, we use the config's shape.
+            encoder_input_shape = list(config.game.observation_shape)
             encoder_input_shape[0] *= 2 # Double channels for stacked obs
             self.encoder = BackboneFactory.create(
                 config.chance_encoder_backbone, tuple(encoder_input_shape)
@@ -77,10 +79,10 @@ class WorldModel(nn.Module):
         else:
             # Deterministic Dynamics: (Latent, Action) -> Next Latent
             self.dynamics_fusion = ActionFusion(
-                self.num_actions, self.config.action_embedding_dim, self.representation.output_shape
+                self.num_actions, self.config.action_embedding_dim, latent_dimensions
             )
             self.dynamics = BackboneFactory.create(
-                config.dynamics_backbone, self.representation.output_shape
+                config.dynamics_backbone, latent_dimensions
             )
 
         # 3. Environment Heads (Physics Engine)
@@ -122,14 +124,7 @@ class WorldModel(nn.Module):
         except StopIteration:
             return torch.device("cpu")
 
-    def initial_inference(self, observation: Tensor) -> WorldModelOutput:
-        if not torch.is_tensor(observation):
-            observation = torch.as_tensor(observation, dtype=torch.float32, device=self.device)
-        if observation.dim() == len(self.representation.input_shape):
-            observation = observation.unsqueeze(0)
 
-        hidden_state = self.representation(observation.float())
-        return WorldModelOutput(features=hidden_state)
 
     def recurrent_inference(
         self,
@@ -309,15 +304,7 @@ class WorldModel(nn.Module):
             latents.append(current_latent)
             current_latent = scale_gradient(current_latent, 0.5)
 
-        # Consistency Loss Phase (Optional)
-        target_latents = None
-        if "target_observations" in kwargs and self.config.consistency_loss_factor > 0:
-            target_obs = kwargs["target_observations"]
-            B_t, T_t = target_obs.shape[:2]
-            flat_obs = target_obs.reshape(B_t * T_t, *target_obs.shape[2:])
-            with torch.no_grad():
-                encoded = self.representation(flat_obs.float())
-                target_latents = encoded.view(B_t, T_t, *encoded.shape[1:])
+
 
         output = {"latents": torch.stack(latents, dim=1)}
         for name, seq in head_sequences.items():
@@ -325,14 +312,10 @@ class WorldModel(nn.Module):
         for name, seq in stochastic_sequences.items():
             if seq: output[name] = torch.stack(seq, dim=1)
 
-        if target_latents is not None:
-            output["target_latents"] = target_latents
-
         return output
 
     def get_networks(self) -> Dict[str, nn.Module]:
         return {
-            "representation_network": self.representation,
             "dynamics_fusion": self.dynamics_fusion,
             "dynamics_backbone": self.dynamics,
             "afterstate_fusion": getattr(self, "afterstate_fusion", None),
