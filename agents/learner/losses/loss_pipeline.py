@@ -104,6 +104,10 @@ class LossPipeline:
             total_loss_dict[module.optimizer_name] += total_scalar_loss
             loss_dict[module.name] = total_scalar_loss.item()
 
+        # 5. Extract stateless telemetry from Heads (The "Right to Report")
+        telemetry = predictions.get("telemetry", {})
+        loss_dict.update(telemetry)
+
         # 5. Extract Priorities via standalone computer [B]
         priorities = self.priority_computer.compute(
             all_elementwise_losses, predictions, targets

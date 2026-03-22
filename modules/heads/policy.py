@@ -65,6 +65,7 @@ class PolicyHead(BaseHead):
 
         # 3. Conditionally compute expensive inference distribution
         inference = None
+        metrics = {}
         if is_inference:
             if action_mask is not None:
                 # Apply mask to logits only during inference to produce valid distributions
@@ -81,4 +82,19 @@ class PolicyHead(BaseHead):
             training_tensor=logits,
             inference_tensor=inference,
             state=state if state is not None else {},
+            metrics=self.compute_metrics(logits, inference),
         )
+
+    def compute_metrics(
+        self,
+        training_tensor: torch.Tensor,
+        inference_tensor: Optional[Any] = None,
+    ) -> Dict[str, float]:
+        """Calculates policy-specific diagnostics (e.g., entropy)."""
+        metrics = {}
+        with torch.no_grad():
+            # If inference_tensor isn't provided (e.g., during training), instantiate a temporary distribution
+            dist = inference_tensor if inference_tensor is not None else self.representation.to_inference(training_tensor)
+            if hasattr(dist, "entropy") and callable(dist.entropy):
+                metrics["entropy"] = dist.entropy().mean().item()
+        return metrics

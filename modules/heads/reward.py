@@ -72,13 +72,24 @@ class RewardHead(BaseHead):
 
         # 3. Mathematical Transform
         instant_reward = None
+        metrics = {}
         if is_inference:
             instant_reward = self.representation.to_expected_value(logits)
+
+        # 4. Report telemetry (Even during training for logging!)
+        with torch.no_grad():
+            diag_reward = (
+                instant_reward
+                if instant_reward is not None
+                else self.representation.to_expected_value(logits)
+            )
+            metrics["mean"] = diag_reward.mean().item()
 
         return HeadOutput(
             training_tensor=logits,
             inference_tensor=instant_reward,
             state=state if state is not None else {},
+            metrics=metrics,
         )
 
 
@@ -197,6 +208,7 @@ class ValuePrefixRewardHead(RewardHead):
         logits = self.output_layer(output)
         # GET INSTANT REWARD
         instant_reward = None
+        metrics = {}
         if is_inference:
             expected_cumulative = self.representation.to_expected_value(logits)
             if expected_cumulative.dim() == 1:
@@ -219,4 +231,25 @@ class ValuePrefixRewardHead(RewardHead):
             training_tensor=logits,
             inference_tensor=instant_reward,
             state=new_state,
+            metrics=self.compute_metrics(logits, instant_reward),
         )
+
+    def compute_metrics(
+        self,
+        training_tensor: torch.Tensor,
+        inference_tensor: Optional[Any] = None,
+    ) -> Dict[str, float]:
+        metrics = {}
+        with torch.no_grad():
+            if instant_reward is not None:
+                diag_reward = instant_reward
+            else:
+                # Need to re-compute instant_reward for training stats (with no gradients)
+                diag_expected_cumulative = self.representation.to_expected_value(logits)
+                if diag_expected_cumulative.dim() == 1:
+                    diag_expected_cumulative = diag_expected_cumulative.unsqueeze(-1)
+                diag_reward = (
+                    diag_expected_cumulative - effective_parent_cumulative
+                ).squeeze(-1)
+            metrics["mean"] = diag_reward.mean().item()
+        return metrics

@@ -16,6 +16,7 @@ class HeadOutput:
     training_tensor: torch.Tensor  # e.g., logits, pre-tanh values (for the Learner)
     inference_tensor: Any  # e.g., td.Distribution, argmax action, softmaxed probs (for the Actor)
     state: Dict[str, torch.Tensor] = field(default_factory=dict)  # For recurrent heads
+    metrics: Dict[str, float] = field(default_factory=dict)  # Stateless telemetry from the head
 
 
 class BaseHead(nn.Module, ABC):
@@ -54,3 +55,14 @@ class BaseHead(nn.Module, ABC):
     ) -> HeadOutput:
         """Returns HeadOutput conforming to the (training, inference, state) contract."""
         pass
+
+    def compute_metrics(
+        self,
+        training_tensor: torch.Tensor,
+        inference_tensor: Optional[Any] = None,
+    ) -> Dict[str, float]:
+        """
+        Stateless reporting of head-specific diagnostics.
+        Override this to provide telemetry (e.g., entropy, mean value).
+        """
+        return {}

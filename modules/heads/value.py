@@ -65,6 +65,7 @@ class ValueHead(BaseHead):
 
         # 3. Mathematical Transform (e.g., HL-Gauss for MuZero)
         expected_value = None
+        metrics = {}
         if is_inference:
             expected_value = self.representation.to_expected_value(logits)
 
@@ -72,4 +73,17 @@ class ValueHead(BaseHead):
             training_tensor=logits,
             inference_tensor=expected_value,
             state=state if state is not None else {},
+            metrics=self.compute_metrics(logits, expected_value),
         )
+
+    def compute_metrics(
+        self,
+        training_tensor: torch.Tensor,
+        inference_tensor: Optional[Any] = None,
+    ) -> Dict[str, float]:
+        """Calculates value-specific diagnostics (e.g., mean predicted value)."""
+        metrics = {}
+        with torch.no_grad():
+            val = inference_tensor if inference_tensor is not None else self.representation.to_expected_value(training_tensor)
+            metrics["mean"] = val.mean().item()
+        return metrics

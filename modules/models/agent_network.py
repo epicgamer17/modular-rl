@@ -169,6 +169,7 @@ class AgentNetwork(nn.Module):
         )
 
         outputs = {}
+        extras = {}
         network_state = dict(recurrent_state) if recurrent_state else {}
         network_state["dynamics"] = latent  # Unconditional latent tracking
 
@@ -176,6 +177,10 @@ class AgentNetwork(nn.Module):
             head_out = head(features, state=network_state, is_inference=True, **kwargs)
             outputs[name] = head_out.inference_tensor
             network_state.update(head_out.state)
+
+            # Collect stateless telemetry (The "Right to Report")
+            for m_name, val in head_out.metrics.items():
+                extras[f"{name}/{m_name}"] = val
 
         if wm_output:
             network_state.update(wm_output.next_state)
@@ -194,7 +199,7 @@ class AgentNetwork(nn.Module):
             q_values=q_vals,
             reward=None,
             to_play=wm_output.to_play if wm_output else None,
-            extras={},
+            extras=extras,
         )
 
     def learner_inference(self, batch: Dict[str, Any]) -> Dict[str, Any]:
@@ -247,6 +252,8 @@ class AgentNetwork(nn.Module):
             flat_mask = flat_mask.flatten(0, 1)
 
         behavior_results = {}
+        telemetry_dict = {}
+
         for name, head in self.components["behavior_heads"].items():
             # STRICT ROUTING: No fallback. If config is wrong, crash loudly.
             source = head.input_source
@@ -264,8 +271,17 @@ class AgentNetwork(nn.Module):
             )
             behavior_results[name] = head_out.training_tensor.view(B, T, -1)
 
+            # 5. Extract stateless telemetry from Heads (The "Right to Report")
+            for metric_name, value in head_out.metrics.items():
+                telemetry_dict[f"{name}/{metric_name}"] = value
+
         # Note: chance_logits assignment deleted. It merges automatically below!
-        final_output = {**env_results, **behavior_results, "latents": latents}
+        final_output = {
+            **env_results,
+            **behavior_results,
+            "latents": latents,
+            "telemetry": telemetry_dict,
+        }
 
         return final_output
 
