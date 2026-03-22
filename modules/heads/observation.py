@@ -12,7 +12,7 @@ class ObservationHead(BaseHead):
     Predicts/reconstructs the observation.
     Can be used for Dreamer decoders or general autoencoding/prediction tasks.
     Flexible enough to handle image reconstruction (via neck=DeconvBackbone)
-    or vector reconstruction (via neck=DenseBackbone).
+    or vector reconstruction (via neck=MLPBackbone).
     """
 
     def __init__(

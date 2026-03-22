@@ -15,7 +15,7 @@ pip install -e .
 ```
 modules/
 ├── utils.py                     # Module utilities and helpers
-├── backbones/                   # Feature extraction backbones (ResNet, Conv, Dense)
+├── backbones/                   # Feature extraction backbones (ResNet, Conv, MLP)
 ├── heads/                       # Semantic heads (Policy, Value, Q)
 ├── models/                      # Architectural Routers
 │   ├── agent_network.py         # Unified Agent Network (Switchboard)
@@ -26,25 +26,24 @@ modules/
 
 ## Core Components
 
-### Convolutional Layers (`conv.py`)
-- `ConvBlock` - Conv2d + BatchNorm + Activation ✅
-- `ConvStack` - Stack of convolutional blocks ✅
-- Supports common RL architectures (Nature DQN, IMPALA)
+### Convolutional Layers (`backbones/conv.py`)
+- `ConvBackbone` - Multi-stage Conv2d + BatchNorm + Activation ✅
+- `DeconvBackbone` - ConvTranspose2d for decoding/generation ✅
+- Built natively with `nn.Sequential` for performance.
 
-### Dense Layers (`dense.py`)
-- `MLP` - Multi-layer perceptron with configurable depth/width ✅
+### Dense Layers (`backbones/dense.py`)
+- `MLPBackbone` - Multi-layer perceptron with configurable depth/width ✅
 - `NoisyLinear` - Linear layer with learned noise (Noisy Nets) ✅
-- `DuelingHead` - Separates value and advantage streams ✅
+- Direct construction with `nn.Sequential` eliminates redundant wrappers.
 
-### Residual Blocks (`residual.py`)
-- `ResidualBlock` - Standard residual connection ✅
-- `ResNetStack` - Multiple residual blocks ✅
-- Used in IMPALA-style architectures
+### Residual Blocks (`backbones/resnet.py`)
+- `ResidualBlock` - Standard residual connection with configurable norm ✅
+- `ResNetBackbone` - High-performance residual stack constructed via `nn.Sequential` ✅
 
-### Network Heads (`heads.py`)
-- `PolicyHead` - Outputs action probabilities/logits ✅
-- `ValueHead` - Outputs state value ✅
-- `CategoricalValueHead` - Outputs value distribution (C51) ✅
+### Network Heads (`heads/`)
+- `PolicyHead` - Outputs action probabilities/logits
+- `ValueHead` - Outputs state value
+- `RewardHead` - Predicts environment rewards
 
 ## Logical Routers (`models/`)
 
@@ -79,3 +78,4 @@ world_model = WorldModel(config, observation_dimensions=(3, 96, 96), num_actions
 - Activation function helpers
 - Shape calculation utilities
 - Parameter count functions
+- Mixed-precision/Device helpers

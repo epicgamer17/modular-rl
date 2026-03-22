@@ -3,20 +3,21 @@ import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
 from modules.utils import build_normalization_layer
-from configs.modules.backbones.dense import DenseConfig
+from configs.modules.backbones.mlp import DenseConfig
+
 
 def build_dense(
     in_features: int, out_features: int, sigma: float = 0, bias: bool = True
 ) -> nn.Module:
-    """Helper to create either a standard Linear layer or a NoisyDense layer."""
+    """Helper to create either a standard Linear layer or a NoisyLinear layer."""
     if sigma == 0:
         return nn.Linear(in_features, out_features, bias=bias)
     else:
-        return NoisyDense(in_features, out_features, initial_sigma=sigma, bias=bias)
+        return NoisyLinear(in_features, out_features, initial_sigma=sigma, bias=bias)
 
 
-class NoisyDense(nn.Module):
-    """See https://arxiv.org/pdf/1706.10295."""
+class NoisyLinear(nn.Module):
+    """Noisy linear layer for exploration. See https://arxiv.org/pdf/1706.10295."""
 
     @staticmethod
     def f(x: Tensor):
@@ -40,7 +41,7 @@ class NoisyDense(nn.Module):
         self.mu_w = nn.Parameter(torch.empty(out_features, in_features))
         self.sigma_w = nn.Parameter(torch.empty(out_features, in_features))
         self.register_buffer("eps_w", torch.empty(out_features, in_features))
-        
+
         if self.use_bias:
             self.mu_b = nn.Parameter(torch.empty(out_features))
             self.sigma_b = nn.Parameter(torch.empty(out_features))
@@ -58,11 +59,15 @@ class NoisyDense(nn.Module):
             eps_i = torch.randn(1, self.in_features).to(self.mu_w.device)
             eps_j = torch.randn(self.out_features, 1).to(self.mu_w.device)
             self.eps_w = self.f(eps_j) @ self.f(eps_i)
-            self.eps_b = self.f(eps_j).reshape(self.out_features) if self.use_bias else None
+            self.eps_b = (
+                self.f(eps_j).reshape(self.out_features) if self.use_bias else None
+            )
         else:
             self.eps_w = self.f(torch.randn(self.mu_w.shape)).to(self.mu_w.device)
             if self.use_bias:
-                self.eps_b = self.f(torch.randn(size=self.mu_b.shape)).to(self.mu_w.device)
+                self.eps_b = self.f(torch.randn(size=self.mu_b.shape)).to(
+                    self.mu_w.device
+                )
 
     def remove_noise(self) -> None:
         self.eps_w = torch.zeros_like(self.mu_w).to(self.mu_w.device)
@@ -98,79 +103,63 @@ class NoisyDense(nn.Module):
         return F.linear(input, self.weight, self.bias)
 
 
-class DenseStack(nn.Module):
-    def __init__(
-        self,
-        initial_width: int,
-        widths: List[int],
-        activation: nn.Module = nn.ReLU(),
-        noisy_sigma: float = 0,
-        norm_type: Literal["batch", "layer", "none"] = "none",
-    ):
-        super().__init__()
-        self.activation = activation
-        self.noisy = noisy_sigma != 0
-        self._layers = nn.ModuleList()
-
-        current_input_width = initial_width
-        for width in widths:
-            use_bias = norm_type == "none"
-            if noisy_sigma == 0:
-                dense_layer = nn.Linear(current_input_width, width, bias=use_bias)
-            else:
-                dense_layer = NoisyDense(current_input_width, width, initial_sigma=noisy_sigma, bias=use_bias)
-
-            norm_layer = build_normalization_layer(norm_type, width, dim=1)
-            layer = nn.Sequential(dense_layer, norm_layer)
-            self._layers.append(layer)
-            current_input_width = width
-
-        self.output_width = current_input_width
-
-    def forward(self, inputs: Tensor) -> Tensor:
-        x = inputs
-        for layer in self._layers:
-            x = self.activation(layer(x))
-        return x
-
-    def reset_noise(self) -> None:
-        if not self.noisy:
-            return
-        for layer in self._layers:
-            if hasattr(layer, "reset_noise"):
-                layer.reset_noise()
-
-
-class DenseBackbone(nn.Module):
+class MLPBackbone(nn.Module):
     """Dense (MLP) backbone implementation."""
 
     def __init__(self, config: DenseConfig, input_shape: Tuple[int, ...]):
         super().__init__()
         self.config = config
         self.input_shape = input_shape
+        self.noisy = config.noisy_sigma != 0
 
         # Determine initial width
         if len(input_shape) == 3:
             # Flattened image input (C, H, W)
-            initial_width = input_shape[0] * input_shape[1] * input_shape[2]
+            current_width = input_shape[0] * input_shape[1] * input_shape[2]
         else:
             # Vector input (D,)
-            initial_width = input_shape[0]
+            current_width = input_shape[0]
 
-        self.stack = DenseStack(
-            initial_width=initial_width,
-            widths=config.widths,
-            activation=config.activation,
-            noisy_sigma=config.noisy_sigma,
-            norm_type=config.norm_type,
-        )
+        layers = []
+        for width in config.widths:
+            # Use bias only if not using normalization
+            use_bias = config.norm_type == "none"
 
-        self.output_shape = (self.stack.output_width,)
+            # Linear layer
+            if config.noisy_sigma == 0:
+                layers.append(nn.Linear(current_width, width, bias=use_bias))
+            else:
+                layers.append(
+                    NoisyLinear(
+                        current_width,
+                        width,
+                        initial_sigma=config.noisy_sigma,
+                        bias=use_bias,
+                    )
+                )
+
+            # Normalization
+            if config.norm_type != "none":
+                layers.append(build_normalization_layer(config.norm_type, width, dim=1))
+
+            # Activation
+            layers.append(config.activation)
+
+            current_width = width
+
+        self.model = nn.Sequential(*layers)
+        self.output_shape = (current_width,)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Standard forward pass for a feature extraction backbone."""
-        assert x.dim() == 2, f"DenseBackbone input must be (Batch, Features), got shape {x.shape}"
-        return self.stack(x)
+        assert (
+            x.dim() == 2
+        ), f"MLPBackbone input must be (Batch, Features), got shape {x.shape}"
+        return self.model(x)
 
     def reset_noise(self) -> None:
-        self.stack.reset_noise()
+        if not self.noisy:
+            return
+        for m in self.model.modules():
+            if isinstance(m, NoisyLinear):
+                m.reset_noise()

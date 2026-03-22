@@ -6,7 +6,7 @@ from modules.backbones.factory import BackboneFactory
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.architecture_config import ArchitectureConfig
 from agents.learner.losses.representations import BaseRepresentation
-from modules.backbones.dense import build_dense
+from modules.backbones.mlp import build_dense
 
 
 @dataclass
@@ -14,7 +14,9 @@ class HeadOutput:
     """Strict contract for head outputs."""
 
     training_tensor: torch.Tensor  # e.g., logits, pre-tanh values (for the Learner)
-    inference_tensor: torch.Tensor  # e.g., argmax action, softmaxed probs (for the Actor)
+    inference_tensor: (
+        torch.Tensor
+    )  # e.g., argmax action, softmaxed probs (for the Actor)
     state: Dict[str, torch.Tensor] = field(default_factory=dict)  # For recurrent heads
 
 
@@ -56,7 +58,6 @@ class BaseHead(nn.Module):
             flat *= dim
         return flat
 
-
     def reset_noise(self) -> None:
         if hasattr(self.neck, "reset_noise"):
             self.neck.reset_noise()
@@ -70,9 +71,7 @@ class BaseHead(nn.Module):
             x = x.flatten(1, -1)
         return x
 
-    def forward(
-        self, x: Tensor, state: Optional[Dict[str, Any]] = None
-    ) -> HeadOutput:
+    def forward(self, x: Tensor, state: Optional[Dict[str, Any]] = None) -> HeadOutput:
         """Standard forward pass: neck -> flatten -> output_layer."""
         x = self.process_input(x)
         logits = self.output_layer(x)

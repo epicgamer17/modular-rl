@@ -1,13 +1,13 @@
 from typing import Tuple
 import torch
 from torch import nn
-from modules.backbones.dense import build_dense
-from configs.modules.backbones.denseresnet import DenseResNetConfig
+from modules.backbones.mlp import build_dense
+from configs.modules.backbones.mlpresnet import MLPResNetConfig
 from modules.utils import build_normalization_layer
 
 
-class DenseResidualBlock(nn.Module):
-    """A single Dense Residual Block (Linear + Norm + Skip)."""
+class MLPResidualBlock(nn.Module):
+    """A single MLP Residual Block (Linear + Norm + Skip)."""
 
     def __init__(
         self, size: int, activation: nn.Module, norm_type: str, noisy_sigma: float
@@ -23,35 +23,33 @@ class DenseResidualBlock(nn.Module):
         x = self.norm(x)
         return self.activation(x + residual)
 
-
     def reset_noise(self) -> None:
         if hasattr(self.linear, "reset_noise"):
             self.linear.reset_noise()
 
 
-class DenseResNetBackbone(nn.Module):
-    """DenseResNet backbone implementation (MLP with residual connections)."""
+class MLPResNetBackbone(nn.Module):
+    """MLPResNet backbone implementation (MLP with residual connections)."""
 
-    def __init__(self, config: DenseResNetConfig, input_shape: Tuple[int, ...]):
+    def __init__(self, config: MLPResNetConfig, input_shape: Tuple[int, ...]):
         super().__init__()
         self.config = config
         self.input_shape = input_shape
+        self.noisy = config.noisy_sigma != 0
 
         # Determine initial width
         if len(input_shape) == 3:
             # Flattened image input (C, H, W)
-            initial_width = input_shape[0] * input_shape[1] * input_shape[2]
+            current_width = input_shape[0] * input_shape[1] * input_shape[2]
         else:
             # Vector input (D,)
-            initial_width = input_shape[0]
+            current_width = input_shape[0]
 
-        self.layers = nn.ModuleList()
-        current_width = initial_width
-
+        layers = []
         for width in config.widths:
             # If width changes, add a projection layer before blocks
             if width != current_width:
-                self.layers.append(
+                layers.append(
                     nn.Sequential(
                         build_dense(current_width, width, sigma=config.noisy_sigma),
                         build_normalization_layer(config.norm_type, width, dim=1),
@@ -61,8 +59,8 @@ class DenseResNetBackbone(nn.Module):
                 current_width = width
 
             # Add a residual block
-            self.layers.append(
-                DenseResidualBlock(
+            layers.append(
+                MLPResidualBlock(
                     size=current_width,
                     activation=config.activation,
                     norm_type=config.norm_type,
@@ -70,25 +68,19 @@ class DenseResNetBackbone(nn.Module):
                 )
             )
 
+        self.model = nn.Sequential(*layers)
         self.output_shape = (current_width,)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Standard forward pass for a feature extraction backbone."""
-        # --- STRICT FEATURE EXTRACTOR CONTRACT ---
-        # Feature extractors always treat (B*, ...) flat batches.
-        # For DenseResNetBackbone, this means (B*, D)
-        assert x.dim() == 2, f"DenseResNetBackbone input must be (Batch, Features), got shape {x.shape}"
-
-        for layer in self.layers:
-            x = layer(x)
-        return x
-
+        assert (
+            x.dim() == 2
+        ), f"MLPResNetBackbone input must be (Batch, Features), got shape {x.shape}"
+        return self.model(x)
 
     def reset_noise(self) -> None:
-        for layer in self.layers:
-            if hasattr(layer, "reset_noise"):
-                layer.reset_noise()
-            elif isinstance(layer, nn.Sequential):
-                for sublayer in layer:
-                    if hasattr(sublayer, "reset_noise"):
-                        sublayer.reset_noise()
+        if not self.noisy:
+            return
+        for m in self.model.modules():
+            if hasattr(m, "reset_noise"):
+                m.reset_noise()

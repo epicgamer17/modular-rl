@@ -1,9 +1,10 @@
 import pytest
+
 pytestmark = pytest.mark.unit
 
 import torch
 from modules.backbones.conv import Conv2dStack, ConvTranspose2dStack
-from modules.backbones.dense import DenseStack
+from modules.backbones.mlp import DenseStack
 
 
 def test_bias_rule():

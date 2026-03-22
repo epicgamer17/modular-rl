@@ -7,7 +7,7 @@ from agents.learner.losses.representations import BaseRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.heads.reward import ValuePrefixRewardHeadConfig
-from modules.backbones.dense import build_dense
+from modules.backbones.mlp import build_dense
 
 
 class RewardHead(BaseHead):

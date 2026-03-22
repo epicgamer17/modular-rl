@@ -1,4 +1,4 @@
-from typing import Tuple, Optional, Callable, Dict, Any
+from typing import Tuple, Optional, Callable, Dict, Any, List
 import torch
 from torch import nn, Tensor
 
@@ -6,7 +6,8 @@ from .base import BaseHead, HeadOutput
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
 from agents.learner.losses.representations import BaseRepresentation
-from modules.backbones.dense import DenseStack, build_dense
+from modules.backbones.mlp import MLPBackbone, build_dense, NoisyLinear
+from modules.utils import build_normalization_layer
 
 
 class QHead(BaseHead):
@@ -20,7 +21,7 @@ class QHead(BaseHead):
         arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
-        hidden_widths: list[int],
+        hidden_widths: List[int],
         num_actions: int,
         neck_config: Optional[BackboneConfig] = None,
     ):
@@ -28,31 +29,50 @@ class QHead(BaseHead):
 
         self.num_actions = num_actions
         self.input_dim = self.flat_dim  # From super()
+        self.noisy = self.arch_config.noisy_sigma != 0
 
-        # 1. Hidden Layers
-        self.hidden_layers = DenseStack(
-            initial_width=self.input_dim,
-            widths=hidden_widths,
-            activation=self.arch_config.activation,
-            noisy_sigma=self.arch_config.noisy_sigma,
-            norm_type=self.arch_config.norm_type,
-        )
+        # 1. Hidden Layers constructed directly via nn.Sequential
+        layers = []
+        current_width = self.input_dim
+        for width in hidden_widths:
+            use_bias = self.arch_config.norm_type == "none"
+            layers.append(
+                build_dense(
+                    current_width,
+                    width,
+                    sigma=self.arch_config.noisy_sigma,
+                    bias=use_bias,
+                )
+            )
 
-        # 2. Output Layer (Overwrites BaseHead's output_layer)
-        # Output size: num_actions * atoms
+            if self.arch_config.norm_type != "none":
+                layers.append(
+                    build_normalization_layer(self.arch_config.norm_type, width, dim=1)
+                )
+
+            layers.append(self.arch_config.activation)
+            current_width = width
+
+        self.hidden_layers = nn.Sequential(*layers)
+
+        # 2. Output Layer
         self.output_layer = build_dense(
-            in_features=self.hidden_layers.output_width,
+            in_features=current_width,
             out_features=self.representation.num_features * self.num_actions,
             sigma=self.arch_config.noisy_sigma,
         )
 
     def reset_noise(self) -> None:
         super().reset_noise()
-        self.hidden_layers.reset_noise()
+        if not self.noisy:
+            return
+        for m in self.hidden_layers.modules():
+            if isinstance(m, NoisyLinear):
+                m.reset_noise()
+        if isinstance(self.output_layer, NoisyLinear):
+            self.output_layer.reset_noise()
 
-    def forward(
-        self, x: Tensor, state: Optional[Dict[str, Any]] = None
-    ) -> HeadOutput:
+    def forward(self, x: Tensor, state: Optional[Dict[str, Any]] = None) -> HeadOutput:
         # 1. Neck + Flatten
         x = self.process_input(x)
 
@@ -63,7 +83,7 @@ class QHead(BaseHead):
         logits = self.output_layer(x)
         logits = logits.view(-1, self.num_actions, self.representation.num_features)
 
-        # 4. Standard Return: HeadOutput(logits, inference, state)
+        # 4. Standard Return
         new_state = state if state is not None else {}
         inference = self.representation.to_inference(logits)
 
@@ -88,8 +108,8 @@ class DuelingQHead(BaseHead):
         arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
-        value_hidden_widths: list[int],
-        advantage_hidden_widths: list[int],
+        value_hidden_widths: List[int],
+        advantage_hidden_widths: List[int],
         num_actions: int,
         neck_config: Optional[BackboneConfig] = None,
     ):
@@ -97,53 +117,63 @@ class DuelingQHead(BaseHead):
 
         self.num_actions = num_actions
         self.input_dim = self.flat_dim
+        self.noisy = self.arch_config.noisy_sigma != 0
+
+        # Helper to build a hidden stream
+        def build_stream(widths: List[int]):
+            layers = []
+            curr_w = self.input_dim
+            for w in widths:
+                use_bias = self.arch_config.norm_type == "none"
+                layers.append(
+                    build_dense(
+                        curr_w, w, sigma=self.arch_config.noisy_sigma, bias=use_bias
+                    )
+                )
+                if self.arch_config.norm_type != "none":
+                    layers.append(
+                        build_normalization_layer(self.arch_config.norm_type, w, dim=1)
+                    )
+                layers.append(self.arch_config.activation)
+                curr_w = w
+            return nn.Sequential(*layers), curr_w
 
         # 1. Value Stream
-        self.value_hidden = DenseStack(
-            initial_width=self.input_dim,
-            widths=value_hidden_widths,
-            activation=self.arch_config.activation,
-            noisy_sigma=self.arch_config.noisy_sigma,
-            norm_type=self.arch_config.norm_type,
-        )
+        self.value_hidden, v_width = build_stream(value_hidden_widths)
         self.value_output = build_dense(
-            in_features=self.value_hidden.output_width,
-            out_features=self.representation.num_features,  # 1 value * atoms
+            in_features=v_width,
+            out_features=self.representation.num_features,
             sigma=self.arch_config.noisy_sigma,
         )
 
         # 2. Advantage Stream
-        self.advantage_hidden = DenseStack(
-            initial_width=self.input_dim,
-            widths=advantage_hidden_widths,
-            activation=self.arch_config.activation,
-            noisy_sigma=self.arch_config.noisy_sigma,
-            norm_type=self.arch_config.norm_type,
-        )
+        self.advantage_hidden, a_width = build_stream(advantage_hidden_widths)
         self.advantage_output = build_dense(
-            in_features=self.advantage_hidden.output_width,
-            out_features=self.representation.num_features
-            * self.num_actions,  # N actions * atoms
+            in_features=a_width,
+            out_features=self.representation.num_features * self.num_actions,
             sigma=self.arch_config.noisy_sigma,
         )
 
-        # Remove BaseHead's generic output_layer as we have specialized ones
+        # Remove BaseHead's generic output_layer
         if self.output_layer is not None:
             del self.output_layer
             self.output_layer = None
 
     def reset_noise(self) -> None:
-        super().reset_noise()  # Neck
-        self.value_hidden.reset_noise()
-        self.advantage_hidden.reset_noise()
-        if hasattr(self.value_output, "reset_noise"):
-            self.value_output.reset_noise()
-        if hasattr(self.advantage_output, "reset_noise"):
-            self.advantage_output.reset_noise()
+        super().reset_noise()
+        if not self.noisy:
+            return
 
-    def forward(
-        self, x: Tensor, state: Optional[Dict[str, Any]] = None
-    ) -> HeadOutput:
+        for stream in [self.value_hidden, self.advantage_hidden]:
+            for m in stream.modules():
+                if isinstance(m, NoisyLinear):
+                    m.reset_noise()
+
+        for out in [self.value_output, self.advantage_output]:
+            if isinstance(out, NoisyLinear):
+                out.reset_noise()
+
+    def forward(self, x: Tensor, state: Optional[Dict[str, Any]] = None) -> HeadOutput:
         # Neck
         x = self.process_input(x)
 
@@ -155,9 +185,7 @@ class DuelingQHead(BaseHead):
         # Advantage Stream
         a = self.advantage_hidden(x)
         a = self.advantage_output(a)  # (B, actions * atoms)
-        a = a.view(
-            -1, self.num_actions, self.representation.num_features
-        )  # (B, actions, atoms)
+        a = a.view(-1, self.num_actions, self.representation.num_features)
 
         # Aggregation: Q = V + (A - mean(A))
         a_mean = a.mean(dim=1, keepdim=True)

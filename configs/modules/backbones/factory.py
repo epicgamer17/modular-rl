@@ -1,8 +1,8 @@
 from typing import Type, Dict
 from configs.modules.backbones.resnet import ResNetConfig
 from configs.modules.backbones.deconv import DeconvConfig
-from configs.modules.backbones.denseresnet import DenseResNetConfig
-from configs.modules.backbones.dense import DenseConfig
+from configs.modules.backbones.mlpresnet import MLPResNetConfig
+from configs.modules.backbones.mlp import DenseConfig
 from configs.modules.backbones.conv import ConvConfig
 from configs.modules.backbones.recurrent import RecurrentConfig
 from configs.modules.backbones.transformer import TransformerConfig
@@ -15,7 +15,7 @@ class BackboneConfigFactory:
 
     _configs: Dict[str, Type[BackboneConfig]] = {
         "resnet": ResNetConfig,
-        "denseresnet": DenseResNetConfig,
+        "mlpresnet": MLPResNetConfig,
         "dense": DenseConfig,
         "conv": ConvConfig,
         "recurrent": RecurrentConfig,

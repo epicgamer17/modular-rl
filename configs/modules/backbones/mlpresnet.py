@@ -1,8 +1,8 @@
 from .base import BackboneConfig
 
 
-class DenseResNetConfig(BackboneConfig):
-    """Configuration for DenseResNet backbone (MLP with skip connections)."""
+class MLPResNetConfig(BackboneConfig):
+    """Configuration for MLPResNet backbone (MLP with skip connections)."""
 
     def __init__(self, config_dict: dict):
         super().__init__(config_dict)
