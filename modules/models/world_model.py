@@ -125,15 +125,20 @@ class StochasticDynamics(nn.Module):
         return {
             "next_latent": next_latent,
             "afterstate": afterstate,
-            "chance_logits": afterstate_res["chance"],
+            "chance_logits": afterstate_res["chance_logits"],
         }
 
-    def afterstate_inference(self, latent: Tensor, action: Tensor) -> Dict[str, Tensor]:
+    def afterstate_inference(self, latent: Tensor, action: Tensor) -> Dict[str, Any]:
         fused = self.afterstate_fusion(latent, action)
         afterstate = self.afterstate_dynamics(fused)
         afterstate = _normalize_hidden_state(afterstate)
-        chance_logits = self.sigma_head(afterstate).training_tensor
-        return {"afterstate_features": afterstate, "chance": chance_logits}
+
+        head_out = self.sigma_head(afterstate)
+        return {
+            "afterstate_features": afterstate,
+            "chance_logits": head_out.training_tensor,
+            "chance_dist": head_out.inference_tensor,
+        }
 
     def recurrent_step(self, state: Tensor, chance_code: Tensor) -> Dict[str, Tensor]:
         fused = self.dynamics_fusion(state, chance_code)
@@ -200,11 +205,7 @@ class WorldModel(nn.Module):
         except StopIteration:
             return torch.device("cpu")
 
-    @property
-    def sigma_head(self) -> Optional[nn.Module]:
-        if not self.stochastic:
-            return None
-        return self.dynamics_pipeline.sigma_head
+
 
     def recurrent_inference(
         self,
@@ -268,7 +269,8 @@ class WorldModel(nn.Module):
         return WorldModelOutput(
             features=torch.empty(0),
             afterstate_features=res["afterstate_features"],
-            chance=res["chance"],
+            chance=res["chance_logits"],
+            chance_dist=res["chance_dist"],
             next_state=new_state,
         )
 

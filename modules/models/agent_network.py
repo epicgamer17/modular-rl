@@ -353,9 +353,7 @@ class AgentNetwork(nn.Module):
         expected_afterstate_value = head_out_as.inference_tensor
         recurrent_state_after.update(head_out_as.state)
 
-        chance_policy = self.components[
-            "world_model"
-        ].sigma_head.representation.to_inference(wm_output.chance)
+        chance_policy = wm_output.chance_dist
 
         return InferenceOutput(
             recurrent_state=recurrent_state_after,

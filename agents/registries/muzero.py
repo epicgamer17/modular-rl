@@ -81,7 +81,7 @@ def build_muzero_loss_pipeline(config, agent_network, device):
 
     if config.stochastic:
         as_val_rep = agent_network.components["behavior_heads"]["afterstate_value"].representation
-        sigma_rep = agent_network.components["world_model"].sigma_head.representation
+        sigma_rep = agent_network.components["world_model"].dynamics_pipeline.sigma_head.representation
 
         modules.extend(
             [

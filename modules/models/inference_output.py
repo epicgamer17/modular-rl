@@ -50,6 +50,7 @@ class WorldModelOutput:
     # Stochastic MuZero specific
     afterstate_features: Optional[torch.Tensor] = None
     chance: Optional[torch.Tensor] = None  # Chance logits
+    chance_dist: Optional[Distribution] = None
 
 
 @dataclass
