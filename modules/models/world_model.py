@@ -15,16 +15,16 @@ from modules.models.inference_output import WorldModelOutput
 class DeterministicDynamics(nn.Module):
     def __init__(
         self,
-        config: MuZeroConfig,
         latent_dimensions: Tuple[int, ...],
         num_actions: int,
+        world_model_config: Any,
     ):
         super().__init__()
         self.dynamics_fusion = ActionFusion(
-            num_actions, config.action_embedding_dim, latent_dimensions
+            num_actions, world_model_config.action_embedding_dim, latent_dimensions
         )
         self.dynamics = BackboneFactory.create(
-            config.dynamics_backbone, latent_dimensions
+            world_model_config.dynamics_backbone, latent_dimensions
         )
         self.output_shape = self.dynamics.output_shape
 
@@ -40,45 +40,49 @@ class DeterministicDynamics(nn.Module):
 class StochasticDynamics(nn.Module):
     def __init__(
         self,
-        config: MuZeroConfig,
         latent_dimensions: Tuple[int, ...],
         num_actions: int,
+        world_model_config: Any,
+        num_chance: int,
+        arch_config: Any,
+        observation_shape: Tuple[int, ...],
+        use_true_chance_codes: bool = False,
     ):
         super().__init__()
-        self.config = config
         self.num_actions = num_actions
-        self.num_chance = config.num_chance
+        self.num_chance = num_chance
+        self.use_true_chance_codes = use_true_chance_codes
 
         # 1. Afterstate Phase
         self.afterstate_fusion = ActionFusion(
-            num_actions, config.action_embedding_dim, latent_dimensions
+            num_actions, world_model_config.action_embedding_dim, latent_dimensions
         )
         self.afterstate_dynamics = BackboneFactory.create(
-            config.afterstate_dynamics_backbone, latent_dimensions
+            world_model_config.afterstate_dynamics_backbone, latent_dimensions
         )
 
         # 2. Dynamics Phase
         self.dynamics_fusion = ActionFusion(
-            self.num_chance, config.action_embedding_dim, latent_dimensions
+            self.num_chance, world_model_config.action_embedding_dim, latent_dimensions
         )
         self.dynamics = BackboneFactory.create(
-            config.dynamics_backbone, latent_dimensions
+            world_model_config.dynamics_backbone, latent_dimensions
         )
         self.output_shape = self.dynamics.output_shape
 
         # 3. Chance Prediction
         self.sigma_head = HeadFactory.create(
-            config.chance_probability_head,
-            config.arch,
+            world_model_config.chance_probability_head,
+            arch_config,
             input_shape=latent_dimensions,
             num_chance_codes=self.num_chance,
         )
 
         # 4. Chance Encoder
-        encoder_input_shape = list(config.game.observation_shape)
+        encoder_input_shape = list(observation_shape)
         encoder_input_shape[0] *= 2  # Double channels for stacked obs
         self.encoder = BackboneFactory.create(
-            config.chance_encoder_backbone, tuple(encoder_input_shape)
+            world_model_config.chance_encoder_backbone, tuple(encoder_input_shape)
         )
         # Map flattened backbone output to codes
         flat_dim = 1
@@ -100,7 +104,7 @@ class StochasticDynamics(nn.Module):
         afterstate = afterstate_res["afterstate_features"]
 
         # Chance Selection
-        if self.config.use_true_chance_codes and true_chance_codes is not None:
+        if self.use_true_chance_codes and true_chance_codes is not None:
             codes_k = F.one_hot(
                 true_chance_codes[:, k + 1].squeeze(-1).long(),
                 self.num_chance,
@@ -145,40 +149,55 @@ class WorldModel(nn.Module):
 
     def __init__(
         self,
-        config: MuZeroConfig,
         latent_dimensions: Tuple[int, ...],
         num_actions: int,
+        world_model_config: Any,
+        arch_config: Any,
+        stochastic: bool = False,
+        num_players: int = 1,
+        num_chance_codes: int = 0,
+        observation_shape: Tuple[int, ...] = None,
+        use_true_chance_codes: bool = False,
     ):
         super().__init__()
-        self.config = config
         self.num_actions = num_actions
+        self.stochastic = stochastic
 
         # 1. Dynamics Strategy
-        if config.stochastic:
+        if stochastic:
             self.dynamics_pipeline = StochasticDynamics(
-                config, latent_dimensions, num_actions
+                latent_dimensions=latent_dimensions,
+                num_actions=num_actions,
+                world_model_config=world_model_config,
+                num_chance=num_chance_codes,
+                arch_config=arch_config,
+                observation_shape=observation_shape,
+                use_true_chance_codes=use_true_chance_codes,
             )
         else:
             self.dynamics_pipeline = DeterministicDynamics(
-                config, latent_dimensions, num_actions
+                latent_dimensions=latent_dimensions,
+                num_actions=num_actions,
+                world_model_config=world_model_config,
             )
 
         # 2. Environment Heads
         self.heads = nn.ModuleDict()
 
         # Iterate over configured environment heads
-        for head_name, head_config in getattr(config, "env_heads", {}).items():
-            if head_config is None:
-                continue
+        if hasattr(world_model_config, "env_heads"):
+            for head_name, head_config in world_model_config.env_heads.items():
+                if head_config is None:
+                    continue
 
-            self.heads[head_name] = HeadFactory.create(
-                head_config,
-                arch_config=config.arch,
-                input_shape=self.dynamics_pipeline.output_shape,
-                num_players=config.game.num_players,
-                num_actions=num_actions,
-                num_chance_codes=getattr(config, "num_chance", 0),
-            )
+                self.heads[head_name] = HeadFactory.create(
+                    head_config,
+                    arch_config=arch_config,
+                    input_shape=self.dynamics_pipeline.output_shape,
+                    num_players=num_players,
+                    num_actions=num_actions,
+                    num_chance_codes=num_chance_codes,
+                )
 
     @property
     def device(self) -> torch.device:
@@ -189,7 +208,7 @@ class WorldModel(nn.Module):
 
     @property
     def sigma_head(self) -> Optional[nn.Module]:
-        if not self.config.stochastic:
+        if not self.stochastic:
             return None
         return self.dynamics_pipeline.sigma_head
 
@@ -201,7 +220,7 @@ class WorldModel(nn.Module):
         **kwargs,
     ) -> WorldModelOutput:
         # 1. Transition Phase (Via Pipeline)
-        if self.config.stochastic:
+        if self.stochastic:
             # In stochastic MCTS, hidden_state passed here is the afterstate
             # and action is the chance code.
             next_hidden_state = self.dynamics_pipeline.dynamics_inference(
@@ -242,7 +261,7 @@ class WorldModel(nn.Module):
         network_state: Dict[str, Any],
         action: Tensor,
     ) -> WorldModelOutput:
-        if not self.config.stochastic:
+        if not self.stochastic:
             raise NotImplementedError(
                 "afterstate_recurrent_inference requires a stochastic world_model."
             )
@@ -285,7 +304,7 @@ class WorldModel(nn.Module):
 
         stochastic_sequences = (
             {"latents_afterstates": [], "chance_logits": []}
-            if self.config.stochastic
+            if self.stochastic
             else {}
         )
 

@@ -242,24 +242,36 @@ class NFSPTrainer(BaseTrainer):
         sl_config = config.sl_configs[0]
 
         # Networks (Best Response + Target, and Average Strategy)
-        self.br_agent_network = AgentNetwork(
-            config=rl_config,
-            input_shape=self.obs_dim,
-            num_actions=self.num_actions,
-        ).to(device)
-        self.br_target_agent_network = AgentNetwork(
-            config=rl_config,
-            input_shape=self.obs_dim,
-            num_actions=self.num_actions,
-        ).to(device)
+        network_kwargs = {
+            "input_shape": self.obs_dim,
+            "num_actions": self.num_actions,
+            "arch_config": rl_config.arch,
+            "representation_config": getattr(rl_config, "representation_backbone", None),
+            "heads_config": rl_config.heads,
+            "num_players": self.num_players,
+            "validator_params": {
+                "minibatch_size": rl_config.minibatch_size,
+                "num_actions": self.num_actions,
+                "atom_size": rl_config.atom_size if hasattr(rl_config, "atom_size") else 1,
+            },
+        }
+        self.br_agent_network = AgentNetwork(**network_kwargs).to(device)
+        self.br_target_agent_network = AgentNetwork(**network_kwargs).to(device)
         self.br_target_agent_network.load_state_dict(
             get_clean_state_dict(self.br_agent_network), strict=False
         )
 
         self.avg_agent_network = AgentNetwork(
-            config=sl_config,
             input_shape=self.obs_dim,
             num_actions=self.num_actions,
+            arch_config=sl_config.arch,
+            representation_config=getattr(sl_config, "representation_backbone", None),
+            heads_config=sl_config.heads,
+            num_players=self.num_players,
+            validator_params={
+                "minibatch_size": sl_config.minibatch_size,
+                "num_actions": self.num_actions,
+            },
         ).to(device)
 
         if self.config.multi_process:

@@ -63,7 +63,6 @@ class UniversalLearner:
 
     def __init__(
         self,
-        config,
         agent_network: AgentNetwork,
         device: torch.device,
         num_actions: int,
@@ -77,8 +76,10 @@ class UniversalLearner:
         lr_scheduler: Optional[Union[Any, Dict[str, Any]]] = None,
         callbacks: Optional[List[Callback]] = None,
         clipnorm: Optional[float] = None,
+        gradient_accumulation_steps: int = 1,
+        max_grad_norm: Optional[float] = None,
+        **kwargs,
     ):
-        self.config = config
         self.agent_network = agent_network
         self.device = device
         self.num_actions = num_actions
@@ -88,6 +89,8 @@ class UniversalLearner:
         self.target_builder = target_builder
         self.loss_pipeline = loss_pipeline
         self.clipnorm = clipnorm
+        self.gradient_accumulation_steps = gradient_accumulation_steps
+        self.max_grad_norm = max_grad_norm or clipnorm
 
         # Normalize optimizers and schedulers into dictionaries
         if isinstance(optimizer, dict):
@@ -119,7 +122,7 @@ class UniversalLearner:
         mini-batches across multiple epochs. The learner just processes until
         the iterator is exhausted or a callback raises EarlyStopIteration.
         """
-        accum_steps = getattr(self.config, "gradient_accumulation_steps", 1)
+        accum_steps = self.gradient_accumulation_steps
 
         current_result: Optional[StepResult] = None
         yielded_current_result = False
@@ -151,13 +154,9 @@ class UniversalLearner:
                 if (step_idx + 1) % accum_steps == 0:
 
                     # Optional Gradient Clipping (Global across all parameters)
-                    if self.clipnorm is not None and self.clipnorm > 0:
+                    if self.max_grad_norm is not None and self.max_grad_norm > 0:
                         torch.nn.utils.clip_grad_norm_(
-                            self.agent_network.parameters(), self.clipnorm
-                        )
-                    elif hasattr(self.config, "max_grad_norm"):
-                        torch.nn.utils.clip_grad_norm_(
-                            self.agent_network.parameters(), self.config.max_grad_norm
+                            self.agent_network.parameters(), self.max_grad_norm
                         )
 
                     # Step and clear

@@ -38,9 +38,23 @@ class MuZeroTrainer(BaseTrainer):
 
         # 1. Initialize Network
         self.agent_network = AgentNetwork(
-            config=config,
             input_shape=self.obs_dim,
             num_actions=self.num_actions,
+            arch_config=config.arch,
+            representation_config=getattr(config, "representation_backbone", None),
+            world_model_config=config.world_model,
+            heads_config=config.heads,
+            projector_config=config.projector,
+            stochastic=config.stochastic,
+            consistency_loss_factor=getattr(config, "consistency_loss_factor", 0.0),
+            num_players=config.game.num_players,
+            num_chance_codes=config.num_chance,
+            validator_params={
+                "minibatch_size": config.minibatch_size,
+                "unroll_steps": config.unroll_steps,
+                "num_actions": self.num_actions,
+                "atom_size": (config.support_range * 2) + 1 if hasattr(config, "support_range") and config.support_range else 1,
+            },
         ).to(device)
 
         if config.kernel_initializer is not None:

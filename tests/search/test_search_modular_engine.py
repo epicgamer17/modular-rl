@@ -20,7 +20,7 @@ from modules.models.agent_network import AgentNetwork
 
 
 @pytest.fixture
-def search_setup():
+def search_setup(net_factory):
     def _setup(stochastic=False):
         game_config = TicTacToeConfig()
         num_actions = game_config.num_actions
@@ -141,7 +141,7 @@ def search_setup():
         # Use real lightweight network for compliance
         env = game_config.make_env()
         input_shape = env.observation_space(env.possible_agents[0]).shape
-        network = AgentNetwork(config, input_shape, num_actions)
+        network = net_factory(config, input_shape, num_actions)
 
         env.reset()
         obs = env.observe(env.possible_agents[0])

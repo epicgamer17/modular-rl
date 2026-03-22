@@ -25,7 +25,7 @@ class MockPolicyHead(nn.Module):
         return torch.zeros((*x.shape[:-1], self.num_actions), device=x.device)
 
 
-def test_ppo_kl_propagation_to_callback(make_ppo_config_dict, cartpole_game_config):
+def test_ppo_kl_propagation_to_callback(make_ppo_config_dict, cartpole_game_config, net_factory):
     torch.manual_seed(42)
     device = torch.device("cpu")
 
@@ -37,11 +37,7 @@ def test_ppo_kl_propagation_to_callback(make_ppo_config_dict, cartpole_game_conf
     ppo_config = PPOConfig(config_dict, cartpole_game_config)
 
     # 2. Setup Network and Heads
-    agent_network = AgentNetwork(
-        config=ppo_config,
-        input_shape=(4,),
-        num_actions=2,
-    )
+    agent_network = net_factory(ppo_config, (4,), num_actions=2)
 
     # 3. Setup Target Builder
     target_builder = TargetBuilderPipeline(
@@ -71,7 +67,6 @@ def test_ppo_kl_propagation_to_callback(make_ppo_config_dict, cartpole_game_conf
     # 6. Setup Learner
     optimizer = torch.optim.Adam(agent_network.parameters(), lr=1e-3)
     learner = UniversalLearner(
-        config=ppo_config,
         agent_network=agent_network,
         device=device,
         num_actions=2,

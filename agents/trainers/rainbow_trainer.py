@@ -39,16 +39,22 @@ class RainbowTrainer(BaseTrainer):
         super().__init__(config, env, device, name, stats, test_agents)
 
         # 1. Initialize Networks
-        self.agent_network = AgentNetwork(
-            config=config,
-            num_actions=self.num_actions,
-            input_shape=self.obs_dim,
-        )
-        self.target_agent_network = AgentNetwork(
-            config=config,
-            num_actions=self.num_actions,
-            input_shape=self.obs_dim,
-        )
+        network_kwargs = {
+            "input_shape": self.obs_dim,
+            "num_actions": self.num_actions,
+            "arch_config": config.arch,
+            "representation_config": getattr(config, "representation_backbone", None),
+            "heads_config": config.heads,
+            "num_players": getattr(config.game, "num_players", 1),
+            "validator_params": {
+                "minibatch_size": config.minibatch_size,
+                "unroll_steps": getattr(config, "unroll_steps", 0),
+                "num_actions": self.num_actions,
+                "atom_size": config.atom_size if hasattr(config, "atom_size") else 1,
+            },
+        }
+        self.agent_network = AgentNetwork(**network_kwargs)
+        self.target_agent_network = AgentNetwork(**network_kwargs)
 
         # Initialize weights
         if config.kernel_initializer is not None:

@@ -33,7 +33,7 @@ def _import_legacy_memory_growth_stack():
     return resolved
 
 
-def test_memory_growth(num_calls=100, num_simulations=10):
+def test_memory_growth(net_factory, num_calls=100, num_simulations=10):
     stack = _import_legacy_memory_growth_stack()
     TicTacToeConfig = stack["TicTacToeConfig"]
     SearchPolicy = stack["SearchPolicy"]
@@ -45,39 +45,25 @@ def test_memory_growth(num_calls=100, num_simulations=10):
     game_config = TicTacToeConfig()
     params = {
         "num_simulations": num_simulations,
-        "dense_layer_widths": [64],
-        "residual_layers": [],
-        "conv_layers": [],
-        "representation_residual_layers": [],
-        "representation_conv_layers": [],
-        "dynamics_residual_layers": [],
-        "dynamics_conv_layers": [],
-        "reward_conv_layers": [],
-        "reward_dense_layer_widths": [16],
-        "to_play_conv_layers": [],
-        "to_play_dense_layer_widths": [16],
-        "critic_conv_layers": [],
-        "critic_dense_layer_widths": [16],
-        "actor_conv_layers": [],
-        "actor_dense_layer_widths": [16],
-        "chance_conv_layers": [],
-        "chance_dense_layer_widths": [16],
-        "world_model_cls": WorldModel,
-        "lstm_hidden_size": 64,
-        "bootstrap_method": "v_mix",
-        "support_range": None,
+        "unroll_steps": 5,
+        "discount_factor": 1.0,
         "stochastic": True,
-        "use_value_prefix": False,
+        "num_chance": 10,
+        "learning_rate": 0.001,
+        "optimizer": "adam",
+        "checkpoint_interval": 1000,
         "pb_c_init": 1.25,
         "pb_c_base": 19652,
         "gumbel": False,
-        "gumbel_m": 8,
-        "gumbel_cvisit": 50,
-        "gumbel_cscale": 1.0,
-        "discount_factor": 1.0,
-        "soft_update": False,
-        "min_max_epsilon": 0.01,
-        "search_batch_size": 0,
+        "arch": {"backbone": {"type": "dense", "hidden_dim": 64}},
+        "prediction_backbone": {"type": "dense", "hidden_dim": 64},
+        "world_model": {"latent_dim": 64},
+        "heads": {
+            "state_value": {"output_strategy": {"type": "scalar"}},
+            "policy": {"output_strategy": {"type": "categorical"}},
+            "reward": {"output_strategy": {"type": "scalar"}},
+        },
+        "agent_type": "muzero",
         "action_selector": {"base": {"type": "argmax", "kwargs": {}}},
     }
 
@@ -92,9 +78,7 @@ def test_memory_growth(num_calls=100, num_simulations=10):
     obs_shape = (1, *obs.shape)
     num_actions = env.action_space(env.possible_agents[0]).n
 
-    model = AgentNetwork(config, num_actions, obs_shape, world_model_cls=WorldModel).to(
-        device
-    )
+    model = net_factory(config, obs_shape, num_actions).to(device)
     search_algo = create_mcts(config, device, num_actions)
     policy = SearchPolicy(model, search_algo, config, device, simple_obs_shape)
 

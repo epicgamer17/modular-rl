@@ -23,24 +23,36 @@ class AgentNetwork(nn.Module):
 
     def __init__(
         self,
-        config: Any,
         input_shape: Tuple[int, ...],
         num_actions: int,
+        arch_config: Any,
+        representation_config: Optional[Any] = None,
+        world_model_config: Optional[Any] = None,
+        prediction_backbone_config: Optional[Any] = None,
+        heads_config: Dict[str, Any] = None,
+        projector_config: Optional[Any] = None,
+        stochastic: bool = False,
+        consistency_loss_factor: float = 0.0,
+        num_players: int = 1,
+        num_chance_codes: int = 0,
+        validator_params: Dict[str, Any] = None,
         **kwargs,
     ):
         super().__init__()
-        self.config = config
         self.input_shape = input_shape
         self.num_actions = num_actions
+        self.arch_config = arch_config
+        self.stochastic = stochastic
+        self.consistency_loss_factor = consistency_loss_factor
 
         # --- DYNAMIC ASSEMBLY ---
         self.components = nn.ModuleDict()
         self.components["behavior_heads"] = nn.ModuleDict()
 
         # 1. Representation Phase (The Encoder)
-        if getattr(config, "representation_backbone", None) is not None:
+        if representation_config is not None:
             self.components["representation"] = BackboneFactory.create(
-                config.representation_backbone, input_shape
+                representation_config, input_shape
             )
             current_head_input_shape = self.components["representation"].output_shape
         else:
@@ -52,12 +64,19 @@ class AgentNetwork(nn.Module):
         self.latent_dim = current_head_input_shape
 
         # 2. Environment Phase (The Physics Engine)
-        if config.world_model is not None:
+        if world_model_config is not None:
             from modules.models.world_model import WorldModel
 
             world_model_cls = kwargs.get("world_model_cls", WorldModel)
             self.components["world_model"] = world_model_cls(
-                config, current_head_input_shape, num_actions
+                latent_dimensions=current_head_input_shape,
+                num_actions=num_actions,
+                world_model_config=world_model_config,
+                arch_config=arch_config,
+                stochastic=stochastic,
+                num_players=num_players,
+                num_chance_codes=num_chance_codes,
+                observation_shape=input_shape,
             )
             # The WorldModel operates purely in latent space. The behavior heads
             # will attach to either the initial representation or the world model's backbone.
@@ -68,11 +87,11 @@ class AgentNetwork(nn.Module):
 
         # 3. Behavior Phase: Temporal Memory (Backbones)
         if (
-            getattr(config, "prediction_backbone", None) is not None
+            prediction_backbone_config is not None
             and "world_model" not in self.components
         ):
             backbone = BackboneFactory.create(
-                config.prediction_backbone, current_head_input_shape
+                prediction_backbone_config, current_head_input_shape
             )
             if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
                 self.components["memory_core"] = backbone
@@ -83,24 +102,32 @@ class AgentNetwork(nn.Module):
                 )
 
         # 3. Behavior Phase: Behavioral Heads (Policy, Value, Q, etc.)
-        for head_name, head_config in config.heads.items():
-            if head_config is None:
-                continue
+        if heads_config:
+            for head_name, head_config in heads_config.items():
+                if head_config is None:
+                    continue
 
-            self.components["behavior_heads"][head_name] = HeadFactory.create(
-                head_config,
-                arch_config=config.arch,
-                input_shape=current_head_input_shape,
-                num_actions=self.num_actions,
-                num_players=getattr(config.game, "num_players", 1),
-                num_chance_codes=getattr(config, "num_chance", 0),
-                name=head_name,
-            )
+                self.components["behavior_heads"][head_name] = HeadFactory.create(
+                    head_config,
+                    arch_config=arch_config,
+                    input_shape=current_head_input_shape,
+                    num_actions=self.num_actions,
+                    num_players=num_players,
+                    num_chance_codes=num_chance_codes,
+                    name=head_name,
+                )
 
-        if config.projector is not None:
+        if projector_config is not None:
             hidden_state_shape = current_head_input_shape
             self.flat_hidden_dim = torch.Size(hidden_state_shape).numel()
-            self.components["projector"] = Projector(self.flat_hidden_dim, config)
+            self.components["projector"] = Projector(
+                self.flat_hidden_dim, projector_config
+            )
+
+        # Initialize Validator with passed params
+        self.validator = ShapeValidator(
+            **validator_params if validator_params else {}
+        )
 
     def initialize(
         self, initializer: Optional[Callable[[Tensor], None]] = None
@@ -229,7 +256,7 @@ class AgentNetwork(nn.Module):
         target_latents = None
         if (
             "world_model" in self.components
-            and getattr(self.config, "consistency_loss_factor", 0) > 0
+            and self.consistency_loss_factor > 0
         ):
             if "unroll_observations" in batch:
                 target_obs = batch["unroll_observations"].to(self.device).float()
@@ -269,7 +296,7 @@ class AgentNetwork(nn.Module):
 
         # Pull afterstate features for routing
         flat_as = None
-        if "world_model" in self.components and getattr(self.config, "stochastic", False):
+        if "world_model" in self.components and self.stochastic:
             if "latents_afterstates" in env_results:
                 flat_as = env_results["latents_afterstates"].flatten(0, 1)
 
@@ -312,16 +339,15 @@ class AgentNetwork(nn.Module):
             else:
                 behavior_results[name] = full_seq
 
-        if "world_model" in self.components and getattr(
-            self.config, "stochastic", False
-        ):
+        if "world_model" in self.components and self.stochastic:
             behavior_results["chance_logits"] = env_results.get("chance_logits")
 
         # Merge and Validate
         final_output = {**env_results, **behavior_results, "latents": latents}
         if target_latents is not None:
             final_output["target_latents"] = target_latents
-        ShapeValidator(self.config).validate_predictions(final_output)
+
+        self.validator.validate_predictions(final_output)
         return final_output
 
     def hidden_state_inference(
@@ -375,9 +401,7 @@ class AgentNetwork(nn.Module):
     def afterstate_inference(
         self, recurrent_state: Dict[str, Tensor], action: Tensor
     ) -> InferenceOutput:
-        if "world_model" not in self.components or not getattr(
-            self.config, "stochastic", False
-        ):
+        if "world_model" in self.components or not self.stochastic:
             raise NotImplementedError(
                 "afterstate_inference requires a stochastic world_model."
             )
@@ -429,11 +453,11 @@ class AgentNetwork(nn.Module):
             self.learner_inference, mode=mode, fullgraph=fullgraph
         )
 
-        if self.config.world_model is not None:
+        if "world_model" in self.components:
             self.hidden_state_inference = torch.compile(
                 self.hidden_state_inference, mode=mode, fullgraph=fullgraph
             )
-            if getattr(self.config, "stochastic", False):
+            if self.stochastic:
                 self.afterstate_inference = torch.compile(
                     self.afterstate_inference, mode=mode, fullgraph=fullgraph
                 )

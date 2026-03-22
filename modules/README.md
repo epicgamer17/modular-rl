@@ -56,9 +56,16 @@ The central orchestrator that routes data through Environment, Spatial, and Temp
 from modules.models import AgentNetwork
 from configs.agents.muzero import MuZeroConfig
 
-# Assembled dynamically from config
+# Assembled dynamically from configuration components
 config = MuZeroConfig(...)
-network = AgentNetwork(config, input_shape=(3, 96, 96), num_actions=4)
+network = AgentNetwork(
+    input_shape=(3, 96, 96),
+    num_actions=4,
+    arch_config=config.arch,
+    representation_config=config.representation_backbone,
+    world_model_config=config.world_model,
+    heads_config=config.heads,
+)
 ```
 
 ### WorldModel (`world_model.py`)
@@ -67,8 +74,13 @@ A modular physics engine for model-based planning (MCTS).
 ```python
 from modules.models import WorldModel
 
-# Encapsulates Representation, Dynamics, and Stochastic components
-world_model = WorldModel(config, observation_dimensions=(3, 96, 96), num_actions=4)
+# Encapsulates Representation, Dynamics, and Stochastic components with explicit parameters
+world_model = WorldModel(
+    latent_dimensions=(128,),
+    num_actions=4,
+    world_model_config=config.world_model,
+    arch_config=config.arch,
+)
 ```
 
 ## Utility Functions

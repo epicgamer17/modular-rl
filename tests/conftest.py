@@ -271,6 +271,45 @@ def make_cartpole_config(cartpole_game_config):
     return _builder
 
 
+@pytest.fixture
+def net_factory():
+    """Factory to create an AgentNetwork from a config object."""
+    from modules.models.agent_network import AgentNetwork
+
+    def _builder(config, input_shape, num_actions=None, **kwargs):
+        num_actions = num_actions or config.game.num_actions
+        
+        # Prepare validator params
+        validator_params = {
+            "minibatch_size": getattr(config, "minibatch_size", 1),
+            "unroll_steps": getattr(config, "unroll_steps", 0),
+            "num_actions": num_actions,
+        }
+        if hasattr(config, "support_range") and config.support_range:
+            validator_params["atom_size"] = (config.support_range * 2) + 1
+        elif hasattr(config, "atom_size"):
+            validator_params["atom_size"] = config.atom_size
+
+        return AgentNetwork(
+            input_shape=input_shape,
+            num_actions=num_actions,
+            arch_config=config.arch,
+            representation_config=getattr(config, "representation_backbone", None),
+            world_model_config=getattr(config, "world_model", None),
+            prediction_backbone_config=getattr(config, "prediction_backbone", None),
+            heads_config=config.heads,
+            projector_config=getattr(config, "projector", None),
+            stochastic=getattr(config, "stochastic", False),
+            consistency_loss_factor=getattr(config, "consistency_loss_factor", 0.0),
+            num_players=getattr(config.game, "num_players", 1),
+            num_chance_codes=getattr(config, "num_chance", 0),
+            validator_params=validator_params,
+            **kwargs,
+        )
+
+    return _builder
+
+
 class DummyTargetBuilder(BaseTargetBuilder):
     """
     A simple implementation of BaseTargetBuilder that returns empty dictionaries.

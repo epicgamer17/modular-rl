@@ -19,7 +19,7 @@ from replay_buffers.buffer_factories import create_dqn_buffer
 pytestmark = pytest.mark.integration
 
 
-def test_gym_actor_rollout(make_cartpole_config, make_rainbow_config_dict):
+def test_gym_actor_rollout(make_cartpole_config, make_rainbow_config_dict, net_factory):
     """
     Test real GymActor rollout for a few steps.
     """
@@ -57,11 +57,7 @@ def test_gym_actor_rollout(make_cartpole_config, make_rainbow_config_dict):
     rainbow_config = RainbowConfig(rainbow_config_dict, config)
 
     cartpole_obs_shape = (4,)  # CartPole observation: [pos, vel, angle, angular_vel]
-    network = AgentNetwork(
-        config=rainbow_config,
-        input_shape=cartpole_obs_shape,
-        num_actions=config.num_actions,
-    )
+    network = net_factory(rainbow_config, cartpole_obs_shape)
     selector = SelectorFactory.create(rainbow_config.action_selector)
 
     # 4. Create a dummy buffer (GymActor needs it for play_sequence, but we will call step() directly)
@@ -103,7 +99,7 @@ def test_gym_actor_rollout(make_cartpole_config, make_rainbow_config_dict):
         assert isinstance(transition["done"], bool)
 
 
-def test_tester_worker_rollout(make_cartpole_config, make_rainbow_config_dict):
+def test_tester_worker_rollout(make_cartpole_config, make_rainbow_config_dict, net_factory):
     """
     Test real Tester worker with StandardGymTest.
     """
@@ -135,11 +131,7 @@ def test_tester_worker_rollout(make_cartpole_config, make_rainbow_config_dict):
     )
     rainbow_config = RainbowConfig(rainbow_config_dict, config)
 
-    network = AgentNetwork(
-        config=rainbow_config,
-        input_shape=(4,),  # CartPole observation: [pos, vel, angle, angular_vel]
-        num_actions=config.num_actions,
-    )
+    network = net_factory(rainbow_config, (4,))
     selector = SelectorFactory.create(rainbow_config.action_selector)
 
     # 3. Instantiate Tester

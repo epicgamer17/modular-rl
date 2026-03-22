@@ -16,7 +16,7 @@ from search.root_policies import VisitFrequencyPolicy
 from search.pruners import NoPruning
 
 
-def test_batched_search():
+def test_batched_search(net_factory):
     import numpy as np
 
     torch.manual_seed(42)
@@ -29,11 +29,11 @@ def test_batched_search():
         "unroll_steps": 2,
         "gumbel": False,
         "use_virtual_mean": False,
-        "backbone": {"type": "dense", "hidden_dim": 32},
+        "architecture": {"backbone": {"type": "dense", "hidden_dim": 32}},
         "value_head": {},
         "reward_head": {},
         "policy_head": {},
-        "policy_loss_function": nn.CrossEntropyLoss(),
+        "agent_type": "muzero",
         "action_selector": {"base": {"type": "categorical", "kwargs": {}}},
     }
     config = MuZeroConfig(config_dict, game_config)
@@ -43,7 +43,7 @@ def test_batched_search():
     num_actions = 9
     input_shape = (5, 3, 3)  # Handled by TicTacToe env wrappers
     # Create shared network
-    model = AgentNetwork(config, input_shape, num_actions)
+    model = net_factory(config, input_shape, num_actions)
 
     # 2. Setup Search Algorithm
     search = ModularSearch(

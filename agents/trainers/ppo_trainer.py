@@ -49,14 +49,23 @@ class PPOTrainer(BaseTrainer):
         # New standard: input_shape excludes batch dimension
         input_shape = self.obs_dim
         self.agent_network = AgentNetwork(
-            config=config,
             input_shape=input_shape,
             num_actions=self.num_actions,
+            arch_config=config.arch,
+            representation_config=getattr(config, "representation_backbone", None),
+            prediction_backbone_config=getattr(config, "prediction_backbone", None),
+            heads_config=config.heads,
+            num_players=getattr(config.game, "num_players", 1),
+            validator_params={
+                "minibatch_size": config.minibatch_size,
+                "unroll_steps": getattr(config, "unroll_steps", 0),
+                "num_actions": self.num_actions,
+            },
         )
         self.agent_network.to(device)
 
         # Initialize weights
-        if config.kernel_initializer is not None:
+        if getattr(config, "kernel_initializer", None) is not None:
             self.agent_network.initialize(config.kernel_initializer)
 
         if config.multi_process:

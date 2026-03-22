@@ -57,14 +57,14 @@ def _build_muzero_test_config(
     return MuZeroConfig(config_dict, game)
 
 
-def test_muzero_network_structure(rainbow_cartpole_replay_config, make_cartpole_config):
+def test_muzero_network_structure(rainbow_cartpole_replay_config, make_cartpole_config, net_factory):
     config = _build_muzero_test_config(
         rainbow_cartpole_replay_config, make_cartpole_config
     )
 
     print("Initializing Network...")
     input_shape = (4,)
-    net = AgentNetwork(config, input_shape, config.game.num_actions)
+    net = net_factory(config, input_shape)
 
     print("Parameters check:")
     print(f"Prediction Value Head: {net.components['behavior_heads']['state_value']}")
@@ -105,7 +105,8 @@ def test_muzero_network_structure(rainbow_cartpole_replay_config, make_cartpole_
             print("FAILED: Afterstate Prediction still has 'head' attribute.")
 
         dummy_action = torch.tensor([[0]])
-        as_out = net.afterstate_inference(hidden, dummy_action)
+        # Fix: ensure hidden is defined or use recurrent_state
+        as_out = net.afterstate_inference(recurrent_state, dummy_action)
         as_value = as_out.value
         if isinstance(as_value, torch.Tensor):
             print(f"Afterstate Value shape: {as_value.shape}")
@@ -113,13 +114,13 @@ def test_muzero_network_structure(rainbow_cartpole_replay_config, make_cartpole_
     print("Success!")
 
 
-def test_learner_inference(rainbow_cartpole_replay_config, make_cartpole_config):
+def test_learner_inference(rainbow_cartpole_replay_config, make_cartpole_config, net_factory):
     print("\n--- Testing Learner Inference ---")
     config = _build_muzero_test_config(
         rainbow_cartpole_replay_config, make_cartpole_config
     )
     input_shape = (4,)
-    net = AgentNetwork(config, input_shape, config.game.num_actions)
+    net = net_factory(config, input_shape)
 
     batch_size = 2
     unroll_steps = 3
