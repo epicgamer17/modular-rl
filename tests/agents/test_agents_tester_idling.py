@@ -7,50 +7,11 @@ import time
 from agents.executors.torch_mp_executor import TorchMPExecutor
 from agents.workers.tester import Tester, StandardGymTest
 from agents.action_selectors.selectors import ArgmaxSelector
-
-import types
-
-
-class MockNetwork(torch.nn.Module):
-    def __init__(self, num_actions=2):
-        super().__init__()
-        self.num_actions = num_actions
-        self.param = torch.nn.Parameter(torch.zeros(1))
-
-    def obs_inference(self, obs: torch.Tensor):
-        class Output:
-            def __init__(self, num_actions, batch_size):
-                self.q_values = torch.zeros((batch_size, num_actions))
-                self.q_values[:, 1] = 1.0  # action 1 is better
-
-        return Output(self.num_actions, obs.shape[0])
-
-
-class MockEnv:
-    def __init__(self):
-        self.step_count = 0
-        self.max_steps = 3
-
-    def reset(self, **kwargs):
-        self.step_count = 0
-        return [0.0], {"legal_moves": [[0, 1]]}
-
-    def step(self, action):
-        self.step_count += 1
-        return (
-            [0.0],
-            1.0,
-            self.step_count >= self.max_steps,
-            False,
-            {"legal_moves": [[0, 1]]},
-        )
-
-    def close(self):
-        pass
+from tests.agents.conftest import MockQValueNetwork as MockNetwork, MockGymEnv
 
 
 def make_mock_env():
-    return MockEnv()
+    return MockGymEnv()
 
 
 def _setup_tester_idling_context(

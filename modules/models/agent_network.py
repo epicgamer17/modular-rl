@@ -67,6 +67,7 @@ class AgentNetwork(nn.Module):
                 config=world_model_config,
                 latent_dimensions=self.latent_dim,
                 num_actions=num_actions,
+                env_heads=world_model_config.env_heads,
             )
 
         # 3. Behavior Phase: Temporal Memory (Backbones)

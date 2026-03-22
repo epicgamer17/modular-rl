@@ -152,6 +152,7 @@ class WorldModel(nn.Module):
         config: Any,
         latent_dimensions: Tuple[int, ...],
         num_actions: int,
+        env_heads: Dict[str, Any] = None,
     ):
         super().__init__()
         self.num_actions = num_actions
@@ -179,15 +180,14 @@ class WorldModel(nn.Module):
         self.heads = nn.ModuleDict()
 
         # Iterate over configured environment heads
-        if hasattr(config, "env_heads"):
-            for head_name, head_config in config.env_heads.items():
-                if head_config is None:
-                    continue
+        for head_name, head_config in (env_heads or {}).items():
+            if head_config is None:
+                continue
 
-                self.heads[head_name] = HeadFactory.create(
-                    head_config,
-                    arch_config=config.arch,
-                    input_shape=self.dynamics_pipeline.output_shape,
+            self.heads[head_name] = HeadFactory.create(
+                head_config,
+                arch_config=config.arch,
+                input_shape=self.dynamics_pipeline.output_shape,
                     num_players=config.game.num_players,
                     num_actions=num_actions,
                     num_chance_codes=getattr(config, "num_chance", 0),

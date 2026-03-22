@@ -14,63 +14,10 @@ from agents.workers.tester import (
     NetworkAgent,
 )
 from agents.action_selectors.selectors import ArgmaxSelector
-
-
-class MockNetwork(torch.nn.Module):
-    def __init__(self, num_actions=2):
-        super().__init__()
-        self.num_actions = num_actions
-        self.param = torch.nn.Parameter(torch.zeros(1))
-
-    def obs_inference(self, obs: torch.Tensor):
-        class Output:
-            def __init__(self, num_actions, batch_size):
-                self.q_values = torch.zeros((batch_size, num_actions))
-                self.q_values[:, 1] = 1.0  # action 1 is better
-
-        return Output(self.num_actions, obs.shape[0])
-
-
-class MockEnv:
-    def __init__(self, is_multiplayer=False):
-        self.is_multiplayer = is_multiplayer
-        self.possible_agents = (
-            ["player_0", "player_1"] if is_multiplayer else ["player_0"]
-        )
-        self.agents = self.possible_agents
-        self.agent_selection = self.possible_agents[0]
-        self.rewards = {a: 0.0 for a in self.possible_agents}
-        self.step_count = 0
-        self.max_steps = 5
-
-    def reset(self, **kwargs):
-        self.step_count = 0
-        self.agent_selection = self.possible_agents[0]
-        return np.zeros((4,)), {"legal_moves": [[0, 1]]}
-
-    def last(self):
-        terminated = self.step_count >= self.max_steps
-        return np.zeros((4,)), 0.0, terminated, False, {"legal_moves": [[0, 1]]}
-
-    def agent_iter(self):
-        while True:
-            yield self.agent_selection
-            if self.step_count >= self.max_steps:
-                break
-
-    def step(self, action):
-        self.step_count += 1
-        done = self.step_count >= self.max_steps
-        if self.is_multiplayer:
-            idx = (self.possible_agents.index(self.agent_selection) + 1) % len(
-                self.possible_agents
-            )
-            self.agent_selection = self.possible_agents[idx]
-            self.rewards = {a: 1.0 if done else 0.0 for a in self.possible_agents}
-        return np.zeros((4,)), 1.0, done, False, {"legal_moves": [[0, 1]]}
-
-    def close(self):
-        pass
+from tests.agents.conftest import (
+    MockQValueNetwork as MockNetwork,
+    MockMultiAgentEnv as MockEnv,
+)
 
 
 def _setup_tester_context(rainbow_cartpole_replay_config, make_cartpole_config):
