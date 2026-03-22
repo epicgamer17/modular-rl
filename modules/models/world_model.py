@@ -6,9 +6,9 @@ from torch import Tensor
 
 from configs.agents.muzero import MuZeroConfig
 from modules.backbones.factory import BackboneFactory
-from modules.backbones.conditioned import ConditionedBackbone
+from modules.embeddings.action_fusion import ActionFusion
 from modules.heads.factory import HeadFactory
-from modules.utils import scale_gradient
+from modules.utils import scale_gradient, _normalize_hidden_state
 from modules.models.inference_output import WorldModelOutput
 
 
@@ -37,21 +37,19 @@ class WorldModel(nn.Module):
         # 2. Dynamics Networks (Action-conditioned backbones)
         if self.config.stochastic:
             # Afterstate Dynamics: (Latent, Action) -> Afterstate
-            self.afterstate_dynamics = ConditionedBackbone(
-                config=self.config,
-                input_shape=self.representation.output_shape,
-                num_actions=self.num_actions,
-                action_embedding_dim=self.config.action_embedding_dim,
-                backbone_config=self.config.afterstate_dynamics_backbone,
+            self.afterstate_fusion = ActionFusion(
+                self.num_actions, self.config.action_embedding_dim, self.representation.output_shape
+            )
+            self.afterstate_dynamics = BackboneFactory.create(
+                config.afterstate_dynamics_backbone, self.representation.output_shape
             )
 
             # Dynamics: (Afterstate, Chance) -> Next Latent
-            self.dynamics = ConditionedBackbone(
-                config=self.config,
-                input_shape=self.representation.output_shape,
-                num_actions=self.num_chance,
-                action_embedding_dim=self.config.action_embedding_dim,
-                backbone_config=self.config.dynamics_backbone,
+            self.dynamics_fusion = ActionFusion(
+                self.num_chance, self.config.action_embedding_dim, self.representation.output_shape
+            )
+            self.dynamics = BackboneFactory.create(
+                config.dynamics_backbone, self.representation.output_shape
             )
 
             # Prediction backbone (for chance probability)
@@ -78,12 +76,11 @@ class WorldModel(nn.Module):
             self.chance_projector = nn.Linear(flat_dim, self.num_chance)
         else:
             # Deterministic Dynamics: (Latent, Action) -> Next Latent
-            self.dynamics = ConditionedBackbone(
-                config=self.config,
-                input_shape=self.representation.output_shape,
-                num_actions=self.num_actions,
-                action_embedding_dim=self.config.action_embedding_dim,
-                backbone_config=self.config.dynamics_backbone,
+            self.dynamics_fusion = ActionFusion(
+                self.num_actions, self.config.action_embedding_dim, self.representation.output_shape
+            )
+            self.dynamics = BackboneFactory.create(
+                config.dynamics_backbone, self.representation.output_shape
             )
 
         # 3. Environment Heads (Physics Engine)
@@ -140,8 +137,14 @@ class WorldModel(nn.Module):
         action: Tensor,
         recurrent_state: Any = None,
     ) -> WorldModelOutput:
-        # Action is expected as one-hot for stochastic dynamics, or single-integer for deterministic
-        next_hidden_state = self.dynamics(hidden_state, action)
+        # 1. Action Fusion Phase
+        fused_latent = self.dynamics_fusion(hidden_state, action)
+        
+        # 2. Backbone Transition Phase
+        next_hidden_state = self.dynamics(fused_latent)
+        
+        # 3. MuZero Hidden State Normalization
+        next_hidden_state = _normalize_hidden_state(next_hidden_state)
         
         predictions = {}
         head_state = {} if recurrent_state is None else recurrent_state
@@ -172,7 +175,9 @@ class WorldModel(nn.Module):
     ) -> WorldModelOutput:
         latent_state = network_state["dynamics"]
         
-        afterstate_latent = self.afterstate_dynamics(latent_state, action)
+        fused_latent = self.afterstate_fusion(latent_state, action)
+        afterstate_latent = self.afterstate_dynamics(fused_latent)
+        afterstate_latent = _normalize_hidden_state(afterstate_latent)
         shared_features = self.prediction_backbone(afterstate_latent)
         head_out_sigma = self.sigma_head(shared_features)
         chance_logits = head_out_sigma.training_tensor
@@ -247,9 +252,13 @@ class WorldModel(nn.Module):
                 stochastic_sequences["chance_logits"].append(chance_logits)
                 stochastic_sequences["afterstate_backbone_features"].append(shared_features)
                 
-                next_latent = self.dynamics(afterstate, codes_k)
+                next_latent = self.dynamics_fusion(afterstate, codes_k)
+                next_latent = self.dynamics(next_latent)
+                next_latent = _normalize_hidden_state(next_latent)
             else:
-                next_latent = self.dynamics(current_latent, action_k)
+                next_latent = self.dynamics_fusion(current_latent, action_k)
+                next_latent = self.dynamics(next_latent)
+                next_latent = _normalize_hidden_state(next_latent)
 
             # Heads Phase
             for name, head in self.heads.items():
@@ -287,6 +296,8 @@ class WorldModel(nn.Module):
     def get_networks(self) -> Dict[str, nn.Module]:
         return {
             "representation_network": self.representation,
-            "dynamics_network": self.dynamics,
-            "afterstate_dynamics_network": getattr(self, "afterstate_dynamics", None),
+            "dynamics_fusion": self.dynamics_fusion,
+            "dynamics_backbone": self.dynamics,
+            "afterstate_fusion": getattr(self, "afterstate_fusion", None),
+            "afterstate_backbone": getattr(self, "afterstate_dynamics", None),
         }
