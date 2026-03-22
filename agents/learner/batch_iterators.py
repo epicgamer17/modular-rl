@@ -24,7 +24,12 @@ class SingleBatchIterator:
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         batch = self.replay_buffer.sample()
         yield {
-            k: v.to(self.device) if torch.is_tensor(v) else v for k, v in batch.items()
+            k: (
+                v.to(self.device, non_blocking=True).contiguous()
+                if torch.is_tensor(v)
+                else v
+            )
+            for k, v in batch.items()
         }
 
 
@@ -45,7 +50,11 @@ class RepeatSampleIterator:
         for _ in range(self.num_iterations):
             batch = self.replay_buffer.sample()
             yield {
-                k: v.to(self.device) if torch.is_tensor(v) else v
+                k: (
+                    v.to(self.device, non_blocking=True).contiguous()
+                    if torch.is_tensor(v)
+                    else v
+                )
                 for k, v in batch.items()
             }
 
@@ -81,7 +90,7 @@ class PPOEpochIterator:
                 batch_indices = indices[start:end]
                 sub_batch = {
                     k: (
-                        v[batch_indices].to(self.device)
+                        v[batch_indices].to(self.device, non_blocking=True).contiguous()
                         if torch.is_tensor(v) and v.shape[0] == num_samples
                         else v
                     )

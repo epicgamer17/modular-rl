@@ -213,7 +213,7 @@ class BaseActor(ABC):
             # Convert observation to tensor
             obs_tensor = torch.as_tensor(
                 self._state, dtype=torch.float32, device=self.device
-            )
+            ).contiguous()
 
             # Determine expected input shape
             expected_shape = self.agent_network.input_shape

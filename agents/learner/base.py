@@ -244,10 +244,9 @@ class UniversalLearner:
                 current_targets=targets,  # Mutated in-place!
             )
 
-        # 3. PER weights
         weights = batch.get("weights")
         if weights is not None and torch.is_tensor(weights):
-            weights = weights.to(self.device).float()
+            weights = weights.to(self.device, non_blocking=True).float().contiguous()
 
         # 4. Loss calculation
         loss, loss_dict, priorities = self.loss_pipeline.run(

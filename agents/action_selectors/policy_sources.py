@@ -103,7 +103,9 @@ class SearchPolicySource(BasePolicySource):
 
             probs = torch.stack(
                 [
-                    torch.as_tensor(p, device=obs.device, dtype=torch.float32)
+                    torch.as_tensor(
+                        p, device=obs.device, dtype=torch.float32
+                    ).contiguous()
                     for p in exploratory_policies
                 ]
             )
@@ -120,7 +122,9 @@ class SearchPolicySource(BasePolicySource):
             # Standardize search results to tensors for BaseActor squeezing and PufferActor indexing
             target_policies_tensor = torch.stack(
                 [
-                    torch.as_tensor(p, device=obs.device, dtype=torch.float32)
+                    torch.as_tensor(
+                        p, device=obs.device, dtype=torch.float32
+                    ).contiguous()
                     for p in target_policies
                 ]
             )
@@ -151,17 +155,23 @@ class SearchPolicySource(BasePolicySource):
             ) = res
 
             search_duration = time.time() - start_time
-            probs = exploratory_policy.to(obs.device)
+            probs = exploratory_policy.to(
+                obs.device, non_blocking=True
+            ).contiguous()
             value = torch.tensor([root_value], device=obs.device, dtype=torch.float32)
 
             # If the input was unsqueezed [1, ...], the output should be [1, A]
             if obs.dim() > len(agent_network.input_shape):
                 probs = probs.unsqueeze(0)
                 # value is already [1] which matches [B]
-                target_policies_out = target_policy.unsqueeze(0).to(obs.device)
+                target_policies_out = target_policy.unsqueeze(0).to(
+                    obs.device, non_blocking=True
+                ).contiguous()
                 best_actions_out = torch.tensor([best_action], device=obs.device)
             else:
-                target_policies_out = target_policy.to(obs.device)
+                target_policies_out = target_policy.to(
+                    obs.device, non_blocking=True
+                ).contiguous()
                 best_actions_out = torch.tensor(best_action, device=obs.device)
 
             return InferenceResult(

@@ -199,7 +199,7 @@ class AgentNetwork(nn.Module):
 
     def learner_inference(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         """Simplified router for batch unrolls during learning."""
-        obs = batch["observations"].to(self.device).float()
+        obs = batch["observations"].to(self.device, non_blocking=True).float().contiguous()
 
         # 1. Root Latent (Backbones handle sequence dimensions automatically)
         root_latent = self.components["representation"](obs)
