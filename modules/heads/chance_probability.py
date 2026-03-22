@@ -24,9 +24,10 @@ class ChanceProbabilityHead(BaseHead):
         num_chance_codes: int,
         neck_config: Optional[BackboneConfig] = None,
         name: Optional[str] = None,
+        input_source: str = "default",
     ):
         representation = ClassificationRepresentation(num_classes=num_chance_codes)
-        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name, input_source=input_source)
 
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)

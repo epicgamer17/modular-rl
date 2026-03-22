@@ -30,12 +30,14 @@ class BaseHead(nn.Module, ABC):
         representation: BaseRepresentation,
         neck_config: Optional[BackboneConfig] = None,
         name: Optional[str] = None,
+        input_source: str = "default",
     ):
         super().__init__()
         self.arch_config = arch_config
         self.input_shape = input_shape
         self.representation = representation
         self.name = name or self.__class__.__name__
+        self.input_source = input_source
 
     def _get_flat_dim(self, shape: Tuple[int, ...]) -> int:
         """Utility for heads to calculate their output feature dimension."""

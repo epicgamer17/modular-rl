@@ -23,10 +23,11 @@ class ContinuationHead(BaseHead):
         representation: Optional[BaseRepresentation] = None,
         neck_config: Optional[BackboneConfig] = None,
         name: Optional[str] = None,
+        input_source: str = "default",
     ):
         if representation is None:
             representation = ScalarRepresentation()
-        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name, input_source=input_source)
 
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)

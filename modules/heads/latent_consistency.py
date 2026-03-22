@@ -27,11 +27,12 @@ class LatentConsistencyHead(BaseHead):
         neck_config: Optional[BackboneConfig] = None,
         projection_dim: int = 256,
         name: Optional[str] = None,
+        input_source: str = "default",
     ):
         if representation is None:
             representation = IdentityRepresentation(num_features=projection_dim)
 
-        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name, input_source=input_source)
         self.projection_dim = projection_dim
 
         # 1. Heads now build their own feature architecture (neck)

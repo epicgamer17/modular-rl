@@ -22,8 +22,9 @@ class ValueHead(BaseHead):
         representation: BaseRepresentation,
         neck_config: Optional[BackboneConfig] = None,
         name: Optional[str] = None,
+        input_source: str = "default",
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name, input_source=input_source)
 
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -51,8 +52,7 @@ class ValueHead(BaseHead):
         **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput with (logits, expected_value, state)"""
-        if self.name and "afterstate" in self.name:
-            x = kwargs.get("afterstate_features", x)
+        # Feature routing happens in AgentNetwork via input_source mechanism
 
         # 1. Processing neck -> flatten
         x = self.neck(x)

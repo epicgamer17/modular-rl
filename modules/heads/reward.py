@@ -24,8 +24,9 @@ class RewardHead(BaseHead):
         representation: BaseRepresentation,
         neck_config: Optional[BackboneConfig] = None,
         name: Optional[str] = None,
+        input_source: str = "default",
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name, input_source=input_source)
 
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -85,9 +86,10 @@ class ValuePrefixRewardHead(RewardHead):
         config: ValuePrefixRewardHeadConfig,
         neck_config: Optional[BackboneConfig] = None,
         name: Optional[str] = None,
+        input_source: str = "default",
     ):
         # We call BaseHead init to avoid RewardHead's default output_layer logic
-        BaseHead.__init__(self, arch_config, input_shape, representation, neck_config, name=name)
+        BaseHead.__init__(self, arch_config, input_shape, representation, neck_config, name=name, input_source=input_source)
 
         self.neck = BackboneFactory.create(neck_config, input_shape)
         self.output_shape = self.neck.output_shape

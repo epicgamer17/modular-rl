@@ -25,8 +25,9 @@ class ObservationHead(BaseHead):
         neck_config: Optional[BackboneConfig] = None,
         use_output_layer: bool = True,
         name: Optional[str] = None,
+        input_source: str = "default",
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name, input_source=input_source)
 
         # 1. Image or Vector neck (e.g. Deconv or MLP)
         self.neck = BackboneFactory.create(neck_config, input_shape)

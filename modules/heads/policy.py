@@ -23,8 +23,9 @@ class PolicyHead(BaseHead):
         representation: BaseRepresentation,
         neck_config: Optional[BackboneConfig] = None,
         name: Optional[str] = None,
+        input_source: str = "default",
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name, input_source=input_source)
 
         # 1. Heads now take ownership of their own architectural blocks
         self.neck = BackboneFactory.create(neck_config, input_shape)

@@ -267,26 +267,34 @@ class AgentNetwork(nn.Module):
         B, T = latents.shape[:2]
         flat_memory, _ = self._apply_spatial_temporal(latents, B, T)
 
-        # Pull afterstate features early for unified routing
+        # Pull afterstate features for routing
         flat_as = None
-        if "world_model" in self.components and getattr(
-            self.config, "stochastic", False
-        ):
+        if "world_model" in self.components and getattr(self.config, "stochastic", False):
             if "latents_afterstates" in env_results:
                 flat_as = env_results["latents_afterstates"].flatten(0, 1)
 
-        # 4. Behavior Heads Phase
+        # 4. Feature Pool Phase: Centralize all valid feature streams for routing
+        feature_pool = {
+            "default": flat_memory,
+            "afterstate": flat_as,
+        }
+
+        # 5. Behavior Heads Phase
         mask = batch.get("action_masks")
         flat_mask = mask.flatten(0, 1) if mask is not None else None
 
         initial_state = batch.get("network_state", {})
         behavior_results = {}
         for name, head in self.components["behavior_heads"].items():
+            # Dynamic Routing: The head knows its source, the router provides the "menu"
+            source_features = feature_pool.get(head.input_source, flat_memory)
+            if source_features is None:
+                source_features = flat_memory # Fallback
+
             head_out = head(
-                flat_memory,
+                source_features,
                 state=initial_state,
                 action_mask=flat_mask,
-                afterstate_features=flat_as,
                 **batch,
             )
 

@@ -77,6 +77,7 @@ class HeadFactory:
                 neck_config=config.neck,
                 representation=representation,
                 name=name,
+                input_source=config.input_source,
             )
 
         # PolicyHead
@@ -87,6 +88,7 @@ class HeadFactory:
                 neck_config=config.neck,
                 representation=representation,
                 name=name,
+                input_source=config.input_source,
             )
 
         # ChanceProbabilityHead needs num_chance_codes
@@ -102,6 +104,7 @@ class HeadFactory:
                 num_chance_codes=num_chance_codes,
                 neck_config=config.neck,
                 name=name,
+                input_source=config.input_source,
             )
 
         # ValuePrefixRewardHead takes specific config
@@ -113,6 +116,7 @@ class HeadFactory:
                 config=config,
                 neck_config=config.neck,
                 name=name,
+                input_source=config.input_source,
             )
 
         # LatentConsistencyHead needs projection_dim
@@ -124,6 +128,7 @@ class HeadFactory:
                 neck_config=config.neck,
                 projection_dim=config.projection_dim,
                 name=name,
+                input_source=config.input_source,
             )
 
         # QHead
@@ -139,6 +144,7 @@ class HeadFactory:
                 num_actions=num_actions,
                 neck_config=config.neck,
                 name=name,
+                input_source=config.input_source,
             )
 
         # DuelingQHead
@@ -155,6 +161,7 @@ class HeadFactory:
                 num_actions=num_actions,
                 neck_config=config.neck,
                 name=name,
+                input_source=config.input_source,
             )
 
         return head_cls(
@@ -163,4 +170,5 @@ class HeadFactory:
             representation=representation,
             neck_config=config.neck,
             name=name,
+            input_source=config.input_source,
         )

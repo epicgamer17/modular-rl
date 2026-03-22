@@ -13,6 +13,10 @@ class HeadConfig(ConfigBase):
         self.neck: Optional[BackboneConfig] = self.parse_field(
             "neck", default=None, required=False, wrapper=BackboneConfigFactory.create
         )
+        # Input Source configuration
+        self.input_source: str = self.parse_field(
+            "input_source", default="default", required=False
+        )
         # Output Strategy configuration
         self.output_strategy: Optional[dict] = self.parse_field(
             "output_strategy", default={}, required=False
