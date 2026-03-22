@@ -77,24 +77,13 @@ class AgentNetwork(nn.Module):
             if head_config is None:
                 continue
 
-            # Generate representation dynamically if the head config specifies an output strategy
-            # Note: Some heads (like Q) might need special handling or pre-baked representations.
-            # We default to standard representation generation if 'output_strategy' is present.
-            rep = None
-            if hasattr(head_config, "output_strategy") and head_config.output_strategy is not None:
-                from agents.learner.losses.representations import get_representation
-                rep = get_representation(head_config.output_strategy)
-
-            head_input_shape = current_head_input_shape
-
             self.components["behavior_heads"][head_name] = HeadFactory.create(
                 head_config,
                 arch_config=config.arch,
-                input_shape=head_input_shape,
+                input_shape=current_head_input_shape,
                 num_actions=self.num_actions,
                 num_players=getattr(config.game, "num_players", 1),
                 num_chance_codes=getattr(config, "num_chance", 0),
-                representation=rep,
                 name=head_name,
             )
 

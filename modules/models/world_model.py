@@ -165,18 +165,11 @@ class WorldModel(nn.Module):
 
         # 2. Environment Heads
         self.heads = nn.ModuleDict()
-        from agents.learner.losses.representations import get_representation
 
+        # Iterate over configured environment heads
         for head_name, head_config in getattr(config, "env_heads", {}).items():
             if head_config is None:
                 continue
-
-            rep = None
-            if (
-                hasattr(head_config, "output_strategy")
-                and head_config.output_strategy is not None
-            ):
-                rep = get_representation(head_config.output_strategy)
 
             self.heads[head_name] = HeadFactory.create(
                 head_config,
@@ -185,7 +178,6 @@ class WorldModel(nn.Module):
                 num_players=config.game.num_players,
                 num_actions=num_actions,
                 num_chance_codes=getattr(config, "num_chance", 0),
-                representation=rep,
             )
 
     @property

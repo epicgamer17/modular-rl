@@ -57,9 +57,14 @@ class HeadFactory:
 
         head_cls = cls._heads[config_type]
 
-        # Merge kwargs with config values if needed, or pass them explicitly
-        # For ToPlayHead, we might need num_players
-        if isinstance(config, ToPlayHeadConfig):
+        # REQUISITE: Automatic Representation Resolution
+        # The factory handles building the representation if the config specifies it.
+        # This prevents the router (AgentNetwork/WorldModel) from having to know
+        # about the heads' mathematical format.
+        representation = kwargs.get("representation")
+        if representation is None and hasattr(config, "output_strategy") and config.output_strategy is not None:
+            from agents.learner.losses.representations import get_representation
+            representation = get_representation(config.output_strategy)
             num_players = kwargs.get("num_players", config.num_players)
             if num_players is None:
                 raise ValueError(
@@ -70,7 +75,7 @@ class HeadFactory:
                 input_shape=input_shape,
                 num_players=num_players,
                 neck_config=config.neck,
-                representation=kwargs.get("representation"),
+                representation=representation,
                 name=name,
             )
 
@@ -80,7 +85,7 @@ class HeadFactory:
                 arch_config=arch_config,
                 input_shape=input_shape,
                 neck_config=config.neck,
-                representation=kwargs.get("representation"),
+                representation=representation,
                 name=name,
             )
 
@@ -104,9 +109,7 @@ class HeadFactory:
             return ValuePrefixRewardHead(
                 arch_config=arch_config,
                 input_shape=input_shape,
-                representation=kwargs.get(
-                    "representation"
-                ),  # Representation is usually created outside and passed in
+                representation=representation,  # Representation is resolved by factory
                 config=config,
                 neck_config=config.neck,
                 name=name,
@@ -117,7 +120,7 @@ class HeadFactory:
             return LatentConsistencyHead(
                 arch_config=arch_config,
                 input_shape=input_shape,
-                representation=kwargs.get("representation"),
+                representation=representation,
                 neck_config=config.neck,
                 projection_dim=config.projection_dim,
                 name=name,
@@ -131,7 +134,7 @@ class HeadFactory:
             return QHead(
                 arch_config=arch_config,
                 input_shape=input_shape,
-                representation=kwargs.get("representation"),
+                representation=representation,
                 hidden_backbone_config=config.hidden_backbone,
                 num_actions=num_actions,
                 neck_config=config.neck,
@@ -146,7 +149,7 @@ class HeadFactory:
             return DuelingQHead(
                 arch_config=arch_config,
                 input_shape=input_shape,
-                representation=kwargs.get("representation"),
+                representation=representation,
                 value_hidden_backbone_config=config.value_hidden_backbone,
                 advantage_hidden_backbone_config=config.advantage_hidden_backbone,
                 num_actions=num_actions,
@@ -157,7 +160,7 @@ class HeadFactory:
         return head_cls(
             arch_config=arch_config,
             input_shape=input_shape,
-            representation=kwargs.get("representation"),
+            representation=representation,
             neck_config=config.neck,
             name=name,
         )
