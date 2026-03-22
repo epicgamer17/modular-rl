@@ -12,7 +12,7 @@ from modules.backbones.conv import DeconvBackbone
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.backbones.resnet import ResNetConfig
 from configs.modules.backbones.mlpresnet import MLPResNetConfig
-from configs.modules.backbones.mlp import DenseConfig
+from configs.modules.backbones.mlp import MLPConfig
 from configs.modules.backbones.conv import ConvConfig
 from configs.modules.backbones.recurrent import RecurrentConfig
 from configs.modules.backbones.transformer import TransformerConfig
@@ -26,7 +26,7 @@ class BackboneFactory:
     _backbones: Dict[Type[BackboneConfig], Type[nn.Module]] = {
         ResNetConfig: ResNetBackbone,
         MLPResNetConfig: MLPResNetBackbone,
-        DenseConfig: MLPBackbone,
+        MLPConfig: MLPBackbone,
         ConvConfig: ConvBackbone,
         RecurrentConfig: RecurrentBackbone,
         TransformerConfig: TransformerBackbone,

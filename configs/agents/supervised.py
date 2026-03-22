@@ -8,8 +8,6 @@ from configs.modules.backbones.factory import BackboneConfigFactory
 from configs.modules.architecture_config import ArchitectureConfig
 from modules.utils import (
     prepare_activations,
-    prepare_kernel_initializers,
-    kernel_initializer_wrapper,
 )
 from torch.optim import Optimizer, Adam
 
@@ -49,7 +47,6 @@ class SupervisedConfig(ConfigBase, OptimizationConfig, ReplayConfig):
             "sl_kernel_initializer",
             None,
             required=False,
-            wrapper=kernel_initializer_wrapper,
         )
 
         self.clip_low_prob = self.parse_field("sl_clip_low_prob", 0.00)

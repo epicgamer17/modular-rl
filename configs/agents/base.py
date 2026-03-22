@@ -14,8 +14,6 @@ from configs.base import (
 import torch.nn.functional as F
 from modules.utils import (
     prepare_activations,
-    prepare_kernel_initializers,
-    kernel_initializer_wrapper,
 )
 from configs.games.game import GameConfig
 from configs.selectors import SelectorConfig
@@ -95,13 +93,11 @@ class AgentConfig(
             "kernel_initializer",
             None,
             required=False,
-            wrapper=kernel_initializer_wrapper,
         )
         self.prob_layer_initializer = self.parse_field(
             "prob_layer_initializer",
             None,
             required=False,
-            wrapper=kernel_initializer_wrapper,
         )
 
         # Architecture Config (The 'arch' attribute)

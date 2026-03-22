@@ -1,7 +1,7 @@
 from .base import BackboneConfig
 
 
-class DenseConfig(BackboneConfig):
+class MLPConfig(BackboneConfig):
     """Configuration for Dense (MLP) backbone."""
 
     def __init__(self, config_dict: dict):

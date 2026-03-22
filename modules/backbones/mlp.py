@@ -3,7 +3,7 @@ import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
 from modules.utils import build_normalization_layer
-from configs.modules.backbones.mlp import DenseConfig
+from configs.modules.backbones.mlp import MLPConfig
 
 
 def build_dense(
@@ -106,7 +106,7 @@ class NoisyLinear(nn.Module):
 class MLPBackbone(nn.Module):
     """Dense (MLP) backbone implementation."""
 
-    def __init__(self, config: DenseConfig, input_shape: Tuple[int, ...]):
+    def __init__(self, config: MLPConfig, input_shape: Tuple[int, ...]):
         super().__init__()
         self.config = config
         self.input_shape = input_shape

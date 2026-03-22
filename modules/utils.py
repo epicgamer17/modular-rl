@@ -318,20 +318,8 @@ def scale_gradient(tensor, scale):
     return tensor * scale + tensor.detach() * (1 - scale)
 
 
-def zero_weights_initializer(m: nn.Module) -> None:
-    """Initializes the weights and biases of a layer to zero."""
-    if hasattr(m, "weight") and m.weight is not None:
-        init.constant_(m.weight, 0.0)
-    if hasattr(m, "bias") and m.bias is not None:
-        init.constant_(m.bias, 0.0)
 
 
-def one_hundredth_initializer(m: nn.Module) -> None:
-    """Initializes the weights to uniform(-0.01, 0.01)."""
-    if hasattr(m, "weight") and m.weight is not None:
-        init.uniform_(m.weight, -0.01, 0.01)
-    if hasattr(m, "bias") and m.bias is not None:
-        init.constant_(m.bias, 0.0)
 
 
 _epsilon = 1e-7
@@ -394,53 +382,8 @@ def generate_layer_widths(widths: list[int], max_num_layers: int) -> list[Tuple[
     return width_combinations
 
 
-def prepare_kernel_initializers(kernel_initializer: str, output_layer: bool = False):
-    if kernel_initializer == "pytorch_default":
-        return None
-    if kernel_initializer == "glorot_uniform":
-        return nn.init.xavier_uniform_
-    elif kernel_initializer == "glorot_normal":
-        return nn.init.xavier_normal_
-    elif kernel_initializer == "he_uniform":
-        # return lambda tensor: nn.init.kaiming_uniform_(tensor, nonlinearity="relu")
-        return nn.init.kaiming_uniform_
-    elif kernel_initializer == "he_normal":
-        # return lambda tensor: nn.init.kaiming_normal_(tensor, nonlinearity="relu")
-        return nn.init.kaiming_normal_
-    elif kernel_initializer == "variance_baseline":
-        return VarianceScaling()
-    elif kernel_initializer == "variance_0.1":
-        return VarianceScaling(scale=0.1)
-    elif kernel_initializer == "variance_0.3":
-        return VarianceScaling(scale=0.3)
-    elif kernel_initializer == "variance_0.8":
-        return VarianceScaling(scale=0.8)
-    elif kernel_initializer == "variance_3":
-        return VarianceScaling(scale=3)
-    elif kernel_initializer == "variance_5":
-        return VarianceScaling(scale=5)
-    elif kernel_initializer == "variance_10":
-        return VarianceScaling(scale=10)
-    # TODO
-    # elif kernel_initializer == "lecun_uniform":
-    #     return LecunUniform(seed=np.random.seed())
-    # elif kernel_initializer == "lecun_normal":
-    #     return LecunNormal(seed=np.random.seed())
-    elif kernel_initializer == "orthogonal":
-        return nn.init.orthogonal_
-    elif kernel_initializer == "one_hundredth":
-        return one_hundredth_initializer
-
-    raise ValueError(f"Invalid kernel initializer: {kernel_initializer}")
 
 
-def kernel_initializer_wrapper(x):
-    if x is None:
-        return x
-    if isinstance(x, str):
-        return prepare_kernel_initializers(x)
-    assert callable(x)
-    return x
 
 
 def prepare_activations(activation: str | nn.Module | Callable):
@@ -509,29 +452,6 @@ def calc_units(shape):
         return (c * in_units, c * out_units)
 
 
-class VarianceScaling:
-    def __init__(self, scale=0.1, mode="fan_in", distribution="uniform"):
-        self.scale = scale
-        self.mode = mode
-        self.distribution = distribution
-
-        assert mode == "fan_in" or mode == "fan_out" or mode == "fan_avg"
-        assert distribution == "uniform", "only uniform distribution is supported"
-
-    def __call__(self, tensor: Tensor) -> None:
-        with torch.no_grad():
-            scale = self.scale
-            shape = tensor.shape
-            in_units, out_units = calc_units(shape)
-            if self.mode == "fan_in":
-                scale /= in_units
-            elif self.mode == "fan_out":
-                scale /= out_units
-            else:
-                scale /= (in_units + out_units) / 2
-
-            limit = math.sqrt(3.0 * scale)
-            return tensor.uniform_(-limit, limit)
 
 
 # modules/network_utils.py (New File)

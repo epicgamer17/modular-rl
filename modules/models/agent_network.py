@@ -2,7 +2,6 @@ from typing import Callable, Tuple, Dict, Any, List, Optional, Union
 import torch
 from torch import nn, Tensor
 
-from modules.utils import kernel_initializer_wrapper
 from modules.models.inference_output import (
     InferenceOutput,
 )
@@ -175,17 +174,16 @@ class AgentNetwork(nn.Module):
         return dynamics, wm_head_state, backbone_h
 
     def initialize(
-        self, initializer: Optional[Union[Callable[[Tensor], None], str]] = None
+        self, initializer: Optional[Callable[[Tensor], None]] = None
     ) -> None:
         """Unified initialization for all components."""
-        init_fn = kernel_initializer_wrapper(initializer)
-        if init_fn is None:
+        if initializer is None:
             return
 
         def init_weights(m):
             if isinstance(m, (nn.Conv2d, nn.Linear, nn.ConvTranspose2d)):
                 if hasattr(m, "weight") and m.weight is not None:
-                    init_fn(m.weight)
+                    initializer(m.weight)
                 if hasattr(m, "bias") and m.bias is not None:
                     nn.init.constant_(m.bias, 0)
         self.apply(init_weights)

@@ -2,9 +2,7 @@ import torch
 import yaml
 import os
 from modules.utils import (
-    prepare_kernel_initializers,
     prepare_activations,
-    kernel_initializer_wrapper,
 )
 import torch.nn.functional as F
 from configs.games.game import GameConfig
@@ -345,13 +343,11 @@ class Config(
             "kernel_initializer",
             None,
             required=False,
-            wrapper=kernel_initializer_wrapper,
         )
         self.prob_layer_initializer = self.parse_field(
             "prob_layer_initializer",
             None,
             required=False,
-            wrapper=kernel_initializer_wrapper,
         )
         self.norm_type: str = self.parse_field("norm_type", "none")
         self.replay_interval: int = self.parse_field("replay_interval", 1, wrapper=int)
