@@ -66,3 +66,14 @@ class BaseHead(nn.Module, ABC):
         Override this to provide telemetry (e.g., entropy, mean value).
         """
         return {}
+
+    def init_weights(self) -> None:
+        """
+        Component-owned initialization strategy.
+        Base implementation uses orthogonal initialization (gain=1.0) and zero bias.
+        """
+        for m in self.modules():
+            if isinstance(m, (nn.Linear, nn.Conv2d)):
+                nn.init.orthogonal_(m.weight, gain=1.0)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0.0)

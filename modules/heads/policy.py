@@ -98,3 +98,17 @@ class PolicyHead(BaseHead):
             if hasattr(dist, "entropy") and callable(dist.entropy):
                 metrics["entropy"] = dist.entropy().mean().item()
         return metrics
+
+    def init_weights(self) -> None:
+        """
+        Policy-specific initialization to prevent rapid entropy collapse.
+        Uses gain=0.01 for the final action projection to ensure uniform distribution start.
+        """
+        # Standard init for layers (neck/hidden)
+        super().init_weights()
+        
+        # Strict gain=0.01 for final action projection (standard RL practice)
+        if hasattr(self.output_layer, "weight") and self.output_layer.weight is not None:
+             nn.init.orthogonal_(self.output_layer.weight, gain=0.01)
+             if hasattr(self.output_layer, "bias") and self.output_layer.bias is not None:
+                 nn.init.constant_(self.output_layer.bias, 0.0)

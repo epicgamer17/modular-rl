@@ -25,7 +25,6 @@ from agents.learner.callbacks import (
     EpsilonGreedySchedulerCallback,
 )
 from agents.learner.losses import LossPipeline
-from modules.utils import get_lr_scheduler
 
 if TYPE_CHECKING:
     from modules.models.agent_network import AgentNetwork

@@ -33,7 +33,6 @@ class AgentNetwork(nn.Module):
         stochastic: bool = False,
         num_players: int = 1,
         num_chance_codes: int = 0,
-
         **kwargs,
     ):
         super().__init__()
@@ -101,26 +100,30 @@ class AgentNetwork(nn.Module):
                     name=head_name,
                 )
 
-
         self.register_buffer("_device_indicator", torch.empty(0))
 
+    def initialize(self) -> None:
+        """Unified initialization via component-owned strategies."""
+        # 1. Custom Initializers (Hone-in on components that own their math)
+        for m in self.modules():
+            if hasattr(m, "init_weights") and callable(m.init_weights):
+                if m is not self:
+                    m.init_weights()
+                    # Mark all submodules of this component as initialized to prevent fallback override
+                    for sub in m.modules():
+                        sub._is_initialized = True
 
-
-    def initialize(
-        self, initializer: Optional[Callable[[Tensor], None]] = None
-    ) -> None:
-        """Unified initialization for all components."""
-        if initializer is None:
-            return
-
-        def init_weights(m):
+        # 2. Global Fallback (Standard RL Orthogonal init for generic layers)
+        # TODO: not sure if i love having fallbacks.
+        def fallback_init(m):
             if isinstance(m, (nn.Conv2d, nn.Linear, nn.ConvTranspose2d)):
-                if hasattr(m, "weight") and m.weight is not None:
-                    initializer(m.weight)
-                if hasattr(m, "bias") and m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
+                if not getattr(m, "_is_initialized", False):
+                    nn.init.orthogonal_(m.weight, gain=1.0)
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0.0)
+                    m._is_initialized = True
 
-        self.apply(init_weights)
+        self.apply(fallback_init)
 
     @property
     def device(self) -> torch.device:
@@ -204,7 +207,12 @@ class AgentNetwork(nn.Module):
 
     def learner_inference(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         """Simplified router for batch unrolls during learning."""
-        obs = batch["observations"].to(self.device, non_blocking=True).float().contiguous()
+        obs = (
+            batch["observations"]
+            .to(self.device, non_blocking=True)
+            .float()
+            .contiguous()
+        )
 
         # 1. Root Latent (Backbones handle sequence dimensions automatically)
         root_latent = self.components["representation"](obs)
@@ -369,8 +377,6 @@ class AgentNetwork(nn.Module):
             chance=chance_policy,
             reward=None,
         )
-
-
 
     def project(self, hidden_state: Tensor, grad: bool = True) -> Tensor:
         """

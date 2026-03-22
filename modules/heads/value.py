@@ -87,3 +87,11 @@ class ValueHead(BaseHead):
             val = inference_tensor if inference_tensor is not None else self.representation.to_expected_value(training_tensor)
             metrics["mean"] = val.mean().item()
         return metrics
+
+    def init_weights(self) -> None:
+        """Standard orthogonal initialization for Value prediction."""
+        super().init_weights()
+        if hasattr(self.output_layer, "weight"):
+            nn.init.orthogonal_(self.output_layer.weight, gain=1.0)
+            if self.output_layer.bias is not None:
+                nn.init.constant_(self.output_layer.bias, 0.0)

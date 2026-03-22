@@ -76,21 +76,32 @@ class RewardHead(BaseHead):
         if is_inference:
             instant_reward = self.representation.to_expected_value(logits)
 
-        # 4. Report telemetry (Even during training for logging!)
-        with torch.no_grad():
-            diag_reward = (
-                instant_reward
-                if instant_reward is not None
-                else self.representation.to_expected_value(logits)
-            )
-            metrics["mean"] = diag_reward.mean().item()
-
         return HeadOutput(
             training_tensor=logits,
             inference_tensor=instant_reward,
             state=state if state is not None else {},
-            metrics=metrics,
+            metrics=self.compute_metrics(logits, instant_reward),
         )
+
+    def compute_metrics(
+        self,
+        training_tensor: torch.Tensor,
+        inference_tensor: Optional[Any] = None,
+    ) -> Dict[str, float]:
+        """Calculates reward-specific diagnostics (e.g., mean predicted reward)."""
+        metrics = {}
+        with torch.no_grad():
+            diag_reward = inference_tensor if inference_tensor is not None else self.representation.to_expected_value(training_tensor)
+            metrics["mean"] = diag_reward.mean().item()
+        return metrics
+
+    def init_weights(self) -> None:
+        """Standard orthogonal initialization for Reward prediction."""
+        super().init_weights()
+        if hasattr(self.output_layer, "weight"):
+            nn.init.orthogonal_(self.output_layer.weight, gain=1.0)
+            if self.output_layer.bias is not None:
+                nn.init.constant_(self.output_layer.bias, 0.0)
 
 
 class ValuePrefixRewardHead(RewardHead):
@@ -146,6 +157,21 @@ class ValuePrefixRewardHead(RewardHead):
             self.neck.reset_noise()
         if isinstance(self.output_layer, NoisyLinear):
             self.output_layer.reset_noise()
+
+    def init_weights(self) -> None:
+        """Recurrent Reward initialization."""
+        super().init_weights()
+        # Initialize LSTM weights orthogonally
+        for name, param in self.lstm.named_parameters():
+            if "weight" in name:
+                nn.init.orthogonal_(param, gain=1.0)
+            elif "bias" in name:
+                nn.init.constant_(param, 0.0)
+        
+        if hasattr(self.output_layer, "weight"):
+            nn.init.orthogonal_(self.output_layer.weight, gain=1.0)
+            if self.output_layer.bias is not None:
+                nn.init.constant_(self.output_layer.bias, 0.0)
 
     def forward(
         self,
