@@ -281,42 +281,37 @@ class AgentNetwork(nn.Module):
         )
 
     def learner_inference(self, batch: Dict[str, Any]) -> Dict[str, Any]:
-        obs = batch.get("observations")
-        assert obs is not None, "Batch must contain 'observations'"
-        obs = obs.to(self.device).float()
-
+        """Simplified router for batch unrolls during learning."""
+        obs = batch["observations"].to(self.device).float()
+        
+        # 1. Environment Phase
         if "world_model" in self.components:
+            # Note: world_model unrolls physics across unroll_steps
             env_results = self.components["world_model"].unroll_physics(
-                initial_latent_state=self.components["world_model"]
-                .initial_inference(obs)
-                .features,
+                initial_latent_state=self.components["world_model"].initial_inference(obs).features,
                 actions=batch["actions"],
                 encoder_inputs=(
-                    torch.cat(
-                        [
-                            batch["unroll_observations"][:, :-1],
-                            batch["unroll_observations"][:, 1:],
-                        ],
-                        dim=2,
-                    )
-                    if getattr(self.config, "stochastic", False)
-                    else None
+                    torch.cat([batch["unroll_observations"][:, :-1], batch["unroll_observations"][:, 1:]], dim=2)
+                    if getattr(self.config, "stochastic", False) else None
                 ),
                 true_chance_codes=batch.get("chance_codes"),
                 target_observations=batch.get("unroll_observations"),
             )
             latents = env_results["latents"]
         else:
+            env_results = {}
             latents = obs
-            env_results = {"observations": obs}
 
         B, T = latents.shape[:2]
         flat_latents = latents.flatten(0, 1)
+
+        # 2. Spatial Phase (Feature Extraction)
         if "feature_extractor" in self.components:
             flat_features = self.components["feature_extractor"](flat_latents)
         else:
             flat_features = flat_latents
 
+        # 3. Temporal Phase (RNN Boundary)
         if "memory_core" in self.components:
             seq_features = flat_features.view(B, T, -1)
             seq_memory, _ = self.components["memory_core"](seq_features)
@@ -324,26 +319,32 @@ class AgentNetwork(nn.Module):
         else:
             flat_memory = flat_features
 
+        # 4. Behavior Heads Phase
         behavior_results = {}
         for name, head in self.components["behavior_heads"].items():
+            # Skip afterstate value head as it has its own routing path
             if name == "afterstate_value":
                 continue
-            flat_out, *rest = head(flat_memory)
-            behavior_results[name] = flat_out.view(B, T, -1)
+            flat_out, _ = head(flat_memory)
+            # Use strict naming or plurality based on user preference
+            key = f"{name}s" if not name.endswith("s") else name
+            behavior_results[key] = flat_out.view(B, T, -1)
 
+        # 5. Stochastic Afterstate Phase (Exception Case)
         if "world_model" in self.components and getattr(self.config, "stochastic", False):
             as_features = env_results["afterstate_backbone_features"]
             flat_as = as_features.flatten(0, 1)
-            raw_as_values, *rest = self.components["behavior_heads"]["afterstate_value"](flat_as)
+            raw_as_values, _ = self.components["behavior_heads"]["afterstate_value"](flat_as)
 
             B_as, K_as = as_features.shape[:2]
             as_values = raw_as_values.view(B_as, K_as, -1)
+            # Prepend zero value for root
             root_as_values = torch.zeros(B_as, 1, *as_values.shape[2:], device=self.device)
-            behavior_results["afterstate_value"] = torch.cat([root_as_values, as_values], dim=1)
+            behavior_results["afterstate_values"] = torch.cat([root_as_values, as_values], dim=1)
             behavior_results["chance_logits"] = env_results.get("chance_logits")
 
-        final_output = {**env_results, **behavior_results}
-        final_output["latents"] = latents
+        # Merge and Validate
+        final_output = {**env_results, **behavior_results, "latents": latents}
         ShapeValidator(self.config).validate_predictions(final_output)
         return final_output
 
