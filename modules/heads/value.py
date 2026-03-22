@@ -1,9 +1,12 @@
 from typing import Tuple, Optional, Dict, Any
+import torch
 from torch import Tensor
 from .base import BaseHead, HeadOutput
 from agents.learner.losses.representations import BaseRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
+from modules.backbones.factory import BackboneFactory
+from modules.backbones.mlp import build_dense, NoisyLinear
 
 
 class ValueHead(BaseHead):
@@ -21,16 +24,44 @@ class ValueHead(BaseHead):
     ):
         super().__init__(arch_config, input_shape, representation, neck_config)
 
+        # 1. Heads now build their own feature architecture (neck)
+        self.neck = BackboneFactory.create(neck_config, input_shape)
+        self.output_shape = self.neck.output_shape
+        self.flat_dim = self._get_flat_dim(self.output_shape)
+
+        # 2. Heads now define their own Final Output layer
+        self.output_layer = build_dense(
+            in_features=self.flat_dim,
+            out_features=self.representation.num_features,
+            sigma=self.arch_config.noisy_sigma,
+        )
+
+    def reset_noise(self) -> None:
+        """Propagate noise reset through the head's submodules."""
+        if hasattr(self.neck, "reset_noise"):
+            self.neck.reset_noise()
+        if isinstance(self.output_layer, NoisyLinear):
+            self.output_layer.reset_noise()
+
     def forward(
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
     ) -> HeadOutput:
         """Returns HeadOutput with (logits, expected_value, state)"""
-        head_out = super().forward(x, state)
-        expected_value = self.representation.to_expected_value(head_out.training_tensor)
+        # 1. Processing neck -> flatten
+        x = self.neck(x)
+        if x.dim() > 2:
+            x = x.flatten(1, -1)
+
+        # 2. Final Output Projection
+        logits = self.output_layer(x)
+
+        # 3. Mathematical Transform (e.g., HL-Gauss for MuZero)
+        expected_value = self.representation.to_expected_value(logits)
+
         return HeadOutput(
-            training_tensor=head_out.training_tensor,
+            training_tensor=logits,
             inference_tensor=expected_value,
-            state=head_out.state,
+            state=state if state is not None else {},
         )

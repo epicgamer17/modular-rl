@@ -5,6 +5,8 @@ from .base import BaseHead, HeadOutput
 from agents.learner.losses.representations import BaseRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
+from modules.backbones.factory import BackboneFactory
+from modules.backbones.mlp import build_dense, NoisyLinear
 
 
 class PolicyHead(BaseHead):
@@ -23,6 +25,25 @@ class PolicyHead(BaseHead):
     ):
         super().__init__(arch_config, input_shape, representation, neck_config)
 
+        # 1. Heads now take ownership of their own architectural blocks
+        self.neck = BackboneFactory.create(neck_config, input_shape)
+        self.output_shape = self.neck.output_shape
+        self.flat_dim = self._get_flat_dim(self.output_shape)
+
+        # 2. Explicitly build the policy projection layer
+        self.output_layer = build_dense(
+            in_features=self.flat_dim,
+            out_features=self.representation.num_features,
+            sigma=self.arch_config.noisy_sigma,
+        )
+
+    def reset_noise(self) -> None:
+        """Propagate noise reset through the neck and output layer."""
+        if hasattr(self.neck, "reset_noise"):
+            self.neck.reset_noise()
+        if isinstance(self.output_layer, NoisyLinear):
+            self.output_layer.reset_noise()
+
     def forward(
         self,
         x: Tensor,
@@ -30,26 +51,23 @@ class PolicyHead(BaseHead):
         action_mask: Optional[Tensor] = None,
     ) -> HeadOutput:
         """Returns HeadOutput containing masked logits and/or distribution object."""
-        # 1. Standard processing (neck -> flatten)
-        x = self.process_input(x)
+        # 1. Architectural neck phase -> flatten
+        x = self.neck(x)
+        if x.dim() > 2:
+            x = x.flatten(1, -1)
 
         # 2. Output Projection Layer
         logits = self.output_layer(x)
 
         # 3. Apply Masking Logic (Logit-level)
-        # We apply masking BEFORE packing into HeadOutput so the Learner's
-        # standard CrossEntropy Loss automatically respects the mask.
         if action_mask is not None:
-            # Valid actions remain, invalid shift to -1e8 (prob ~0)
             HUGE_NEG = torch.tensor(-1e8, dtype=logits.dtype, device=logits.device)
             logits = torch.where(action_mask.bool(), logits, HUGE_NEG)
 
-            # Build specialized distribution for the Actor
             from modules.distributions import MaskedCategorical
 
             inference = MaskedCategorical(logits=logits, mask=action_mask)
         else:
-            # Standard path (Gaussian or Categorical via Representation)
             inference = self.representation.to_inference(logits)
 
         return HeadOutput(

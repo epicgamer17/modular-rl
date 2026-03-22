@@ -1,13 +1,14 @@
 from typing import Tuple, Optional, Dict, Any, List
+import torch
 from torch import Tensor
 from torch import nn
-import torch
 from .base import BaseHead, HeadOutput
 from agents.learner.losses.representations import BaseRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.heads.reward import ValuePrefixRewardHeadConfig
-from modules.backbones.mlp import build_dense
+from modules.backbones.factory import BackboneFactory
+from modules.backbones.mlp import build_dense, NoisyLinear
 
 
 class RewardHead(BaseHead):
@@ -25,18 +26,46 @@ class RewardHead(BaseHead):
     ):
         super().__init__(arch_config, input_shape, representation, neck_config)
 
+        # 1. Heads now build their own feature architecture (neck)
+        self.neck = BackboneFactory.create(neck_config, input_shape)
+        self.output_shape = self.neck.output_shape
+        self.flat_dim = self._get_flat_dim(self.output_shape)
+
+        # 2. Heads now define their own Final Output layer
+        self.output_layer = build_dense(
+            in_features=self.flat_dim,
+            out_features=self.representation.num_features,
+            sigma=self.arch_config.noisy_sigma,
+        )
+
+    def reset_noise(self) -> None:
+        """Propagate noise reset through the head's submodules."""
+        if hasattr(self.neck, "reset_noise"):
+            self.neck.reset_noise()
+        if isinstance(self.output_layer, NoisyLinear):
+            self.output_layer.reset_noise()
+
     def forward(
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
     ) -> HeadOutput:
-        """Returns HeadOutput with (logits, instant_reward, state)"""
-        head_out = super().forward(x, state)
-        instant_reward = self.representation.to_expected_value(head_out.training_tensor)
+        """Returns HeadOutput containing logits and projected reward scalar."""
+        # 1. Processing neck -> flatten
+        x = self.neck(x)
+        if x.dim() > 2:
+            x = x.flatten(1, -1)
+
+        # 2. Final Output Projection
+        logits = self.output_layer(x)
+
+        # 3. Mathematical Transform
+        instant_reward = self.representation.to_expected_value(logits)
+
         return HeadOutput(
-            training_tensor=head_out.training_tensor,
+            training_tensor=logits,
             inference_tensor=instant_reward,
-            state=head_out.state,
+            state=state if state is not None else {},
         )
 
 
@@ -54,11 +83,13 @@ class ValuePrefixRewardHead(RewardHead):
         config: ValuePrefixRewardHeadConfig,
         neck_config: Optional[BackboneConfig] = None,
     ):
-        # Pass representation=None to avoid creating the default output layer in BaseHead
-        super().__init__(
-            arch_config, input_shape, representation=None, neck_config=neck_config
-        )
-        self.representation = representation
+        # We call BaseHead init to avoid RewardHead's default output_layer logic
+        BaseHead.__init__(self, arch_config, input_shape, representation, neck_config)
+
+        self.neck = BackboneFactory.create(neck_config, input_shape)
+        self.output_shape = self.neck.output_shape
+        self.flat_dim = self._get_flat_dim(self.output_shape)
+
         self.lstm_hidden_size = config.lstm_hidden_size
         self.lstm_horizon_len = config.lstm_horizon_len
 
@@ -76,6 +107,12 @@ class ValuePrefixRewardHead(RewardHead):
             sigma=self.arch_config.noisy_sigma,
         )
 
+    def reset_noise(self) -> None:
+        if hasattr(self.neck, "reset_noise"):
+            self.neck.reset_noise()
+        if isinstance(self.output_layer, NoisyLinear):
+            self.output_layer.reset_noise()
+
     def forward(
         self,
         x: Tensor,
@@ -83,10 +120,12 @@ class ValuePrefixRewardHead(RewardHead):
     ) -> HeadOutput:
         state = state if state is not None else {}
 
-        # Process neck
-        x = self.process_input(x)  # (B, flat_dim)
+        # 1. Process neck -> flatten
+        x = self.neck(x)
+        if x.dim() > 2:
+            x = x.flatten(1, -1)
 
-        # Prepare for LSTM: (B, Seq=1, Features)
+        # 2. Prepare for LSTM: (B, Seq=1, Features)
         x = x.unsqueeze(1)
 
         # Retrieve state
@@ -113,37 +152,31 @@ class ValuePrefixRewardHead(RewardHead):
         if hidden is not None:
             h, c = hidden
             # Identify indices that need reset
-            # step_count > 0 and step_count % horizon == 0
             reset_mask = (step_count > 0) & (step_count % self.lstm_horizon_len == 0)
 
             if reset_mask.any():
-                # Reset corresponding batch elements in h and c
                 mask_idx = reset_mask.view(-1)
                 h[:, mask_idx] = 0.0
                 c[:, mask_idx] = 0.0
                 hidden = (h, c)
 
-                # USER FIX: Reset effective parent and step count for subtraction/accumulation
                 effective_parent_cumulative[reset_mask] = 0.0
                 effective_step_count[reset_mask] = 0.0
 
         # LSTM step
         output, (h_n, c_n) = self.lstm(x, hidden)
-
-        # Output is (B, 1, Hidden)
         output = output.squeeze(1)
 
         # Final projection: Predicted Cumulative Reward (Value Prefix)
         logits = self.output_layer(output)
         expected_cumulative = self.representation.to_expected_value(logits)
-        # Ensure (B, 1) shape for consistent accumulation with parent_cumulative
         if expected_cumulative.dim() == 1:
             expected_cumulative = expected_cumulative.unsqueeze(-1)
 
-        # GET INSTANT REWARD: subtract (potentially reset) parent cumulative → (B,)
+        # GET INSTANT REWARD
         instant_reward = (expected_cumulative - effective_parent_cumulative).squeeze(-1)
 
-        # New state: Preserve all existing keys and update internal ones
+        # New state
         new_state = state.copy()
         new_state.update(
             {

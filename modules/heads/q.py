@@ -27,16 +27,20 @@ class QHead(BaseHead):
     ):
         super().__init__(arch_config, input_shape, representation, neck_config)
 
+        # 1. Heads now build their own feature architecture (neck)
+        self.neck = BackboneFactory.create(neck_config, input_shape)
+        self.output_shape = self.neck.output_shape
+        self.flat_dim = self._get_flat_dim(self.output_shape)
+
         self.num_actions = num_actions
-        self.input_dim = self.flat_dim  # From super()
         self.noisy = self.arch_config.noisy_sigma != 0
 
-        # 1. Hidden Layers are now a Backbone!
+        # 2. Hidden Layers are now a Backbone!
         self.hidden_layers = BackboneFactory.create(
-            hidden_backbone_config, (self.input_dim,)
+            hidden_backbone_config, (self.flat_dim,)
         )
 
-        # 2. Final Output Layer
+        # 3. Final Output Layer
         self.output_layer = build_dense(
             in_features=self.hidden_layers.output_shape[0],
             out_features=self.representation.num_features * self.num_actions,
@@ -44,17 +48,19 @@ class QHead(BaseHead):
         )
 
     def reset_noise(self) -> None:
-        super().reset_noise()
-        if not self.noisy:
-            return
+        """Propagate noise reset through the neck and output layers."""
+        if hasattr(self.neck, "reset_noise"):
+            self.neck.reset_noise()
         if hasattr(self.hidden_layers, "reset_noise"):
             self.hidden_layers.reset_noise()
         if isinstance(self.output_layer, NoisyLinear):
             self.output_layer.reset_noise()
 
     def forward(self, x: Tensor, state: Optional[Dict[str, Any]] = None) -> HeadOutput:
-        # 1. Neck + Flatten (inherited from BaseHead)
-        x = self.process_input(x)
+        # 1. Processing neck -> flatten
+        x = self.neck(x)
+        if x.dim() > 2:
+            x = x.flatten(1, -1)
 
         # 2. Hidden Backbone Phase
         x = self.hidden_layers(x)
@@ -95,13 +101,17 @@ class DuelingQHead(BaseHead):
     ):
         super().__init__(arch_config, input_shape, representation, neck_config)
 
+        # 1. Heads now build their own feature architecture (neck)
+        self.neck = BackboneFactory.create(neck_config, input_shape)
+        self.output_shape = self.neck.output_shape
+        self.flat_dim = self._get_flat_dim(self.output_shape)
+
         self.num_actions = num_actions
-        self.input_dim = self.flat_dim
         self.noisy = self.arch_config.noisy_sigma != 0
 
-        # 1. Value Stream (Backbone + Output)
+        # 2. Value Stream (Backbone + Output)
         self.value_hidden = BackboneFactory.create(
-            value_hidden_backbone_config, (self.input_dim,)
+            value_hidden_backbone_config, (self.flat_dim,)
         )
         self.value_output = build_dense(
             in_features=self.value_hidden.output_shape[0],
@@ -109,9 +119,9 @@ class DuelingQHead(BaseHead):
             sigma=self.arch_config.noisy_sigma,
         )
 
-        # 2. Advantage Stream (Backbone + Output)
+        # 3. Advantage Stream (Backbone + Output)
         self.advantage_hidden = BackboneFactory.create(
-            advantage_hidden_backbone_config, (self.input_dim,)
+            advantage_hidden_backbone_config, (self.flat_dim,)
         )
         self.advantage_output = build_dense(
             in_features=self.advantage_hidden.output_shape[0],
@@ -119,15 +129,10 @@ class DuelingQHead(BaseHead):
             sigma=self.arch_config.noisy_sigma,
         )
 
-        # Cleanup: Remove BaseHead's generic output_layer
-        if hasattr(self, "output_layer") and self.output_layer is not None:
-            del self.output_layer
-            self.output_layer = None
-
     def reset_noise(self) -> None:
-        super().reset_noise()
-        if not self.noisy:
-            return
+        """Propagate noise reset through the neck and stream streams."""
+        if hasattr(self.neck, "reset_noise"):
+            self.neck.reset_noise()
 
         for stream in [self.value_hidden, self.advantage_hidden]:
             if hasattr(stream, "reset_noise"):
@@ -138,10 +143,12 @@ class DuelingQHead(BaseHead):
                 out.reset_noise()
 
     def forward(self, x: Tensor, state: Optional[Dict[str, Any]] = None) -> HeadOutput:
-        # Neck + Flatten
-        x = self.process_input(x)
+        # 1. Processing neck -> flatten
+        x = self.neck(x)
+        if x.dim() > 2:
+            x = x.flatten(1, -1)
 
-        # Parallel Stream Processing
+        # 2. Parallel Stream Processing
         v = self.value_hidden(x)
         v = self.value_output(v)  # (B, atoms)
         v = v.view(-1, 1, self.representation.num_features)  # (B, 1, atoms)
