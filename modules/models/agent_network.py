@@ -135,14 +135,12 @@ class AgentNetwork(nn.Module):
             return torch.device("cpu")
 
     def reset_noise(self) -> None:
-        """Resamples NoisyNet parameters across all configured components."""
-        for module in self.components.values():
-            if hasattr(module, "reset_noise"):
-                module.reset_noise()
-            if isinstance(module, nn.ModuleDict):
-                for sub in module.values():
-                    if hasattr(sub, "reset_noise"):
-                        sub.reset_noise()
+        """Recursively resamples NoisyNet parameters across all nested components."""
+        for m in self.modules():
+            if hasattr(m, "reset_noise") and callable(m.reset_noise):
+                # Avoid calling our own reset_noise recursively
+                if m is not self:
+                    m.reset_noise()
 
     def _apply_spatial_temporal(
         self, tensor: Tensor, B: int, T: int, state: Any = None
