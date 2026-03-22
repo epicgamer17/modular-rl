@@ -47,6 +47,8 @@ class AgentNetwork(nn.Module):
             ident.output_shape = input_shape
             self.components["representation"] = ident
             current_head_input_shape = input_shape
+        
+        self.latent_dim = current_head_input_shape
 
         # 2. Environment Phase (The Physics Engine)
         if config.world_model is not None:
@@ -391,15 +393,12 @@ class AgentNetwork(nn.Module):
             return
 
         self.obs_inference = torch.compile(self.obs_inference, mode=mode, fullgraph=fullgraph)
-        try:
-            self.hidden_state_inference = torch.compile(self.hidden_state_inference, mode=mode, fullgraph=fullgraph)
-        except (AttributeError, NotImplementedError):
-            pass
         self.learner_inference = torch.compile(self.learner_inference, mode=mode, fullgraph=fullgraph)
-        try:
-            self.afterstate_inference = torch.compile(self.afterstate_inference, mode=mode, fullgraph=fullgraph)
-        except (AttributeError, NotImplementedError):
-            pass
+        
+        if self.config.world_model is not None:
+            self.hidden_state_inference = torch.compile(self.hidden_state_inference, mode=mode, fullgraph=fullgraph)
+            if getattr(self.config, "stochastic", False):
+                self.afterstate_inference = torch.compile(self.afterstate_inference, mode=mode, fullgraph=fullgraph)
 
     def project(self, hidden_state: Tensor, grad=True) -> Tensor:
         if "projector" not in self.components:
@@ -414,14 +413,6 @@ class AgentNetwork(nn.Module):
         else:
             proj = proj.detach()
 
-        # Find latent dimensions for projection reshaping
-        if not isinstance(self.components["representation"], nn.Identity):
-            hidden_state_shape = self.components["representation"].output_shape
-        elif not isinstance(self.components["feature_extractor"], nn.Identity):
-            hidden_state_shape = self.components["feature_extractor"].output_shape
-        else:
-            hidden_state_shape = self.input_shape
-
-        num_latent_dims = len(hidden_state_shape)
+        num_latent_dims = len(self.latent_dim)
         new_shape = list(original_shape[:-num_latent_dims]) + [proj.shape[-1]]
         return proj.reshape(new_shape)
