@@ -184,11 +184,7 @@ class AgentNetwork(nn.Module):
             network_state.update(wm_output.head_state)
             
         if next_h is not None:
-            if isinstance(next_h, tuple):
-                network_state["rnn_0"] = next_h[0]
-                if len(next_h) > 1: network_state["rnn_1"] = next_h[1]
-            else:
-                network_state.update(next_h)
+            network_state.update(next_h)
 
         q_vals = outputs.get("q_logits")
         state_value = (
@@ -332,15 +328,8 @@ class AgentNetwork(nn.Module):
 
         # 2. Feature & Memory Phase
         B_val = latent.shape[0]
-        
-        backbone_h = None
-        if "rnn_0" in network_state:
-            backbone_h = (network_state["rnn_0"], network_state.get("rnn_1"))
-        else:
-            backbone_h = network_state
-            
         features, next_h = self._apply_spatial_temporal(
-            latent.unsqueeze(1), B_val, 1, state=backbone_h
+            latent.unsqueeze(1), B_val, 1, state=network_state
         )
 
         outputs = {}
@@ -357,11 +346,7 @@ class AgentNetwork(nn.Module):
             next_recurrent_state.update(wm_output.head_state)
             
         if next_h is not None:
-            if isinstance(next_h, tuple):
-                next_recurrent_state["rnn_0"] = next_h[0]
-                if len(next_h) > 1: next_recurrent_state["rnn_1"] = next_h[1]
-            else:
-                next_recurrent_state.update(next_h)
+            next_recurrent_state.update(next_h)
 
         return InferenceOutput(
             recurrent_state=next_recurrent_state,
