@@ -169,11 +169,13 @@ class AgentNetwork(nn.Module):
         )
 
         outputs = {}
+        network_state = {}
         for name, head in self.components["behavior_heads"].items():
             head_out = head(features, state={}, **kwargs)
             outputs[name] = head_out.inference_tensor
+            if head_out.state:
+                network_state.update(head_out.state)
 
-        network_state = {}
         if "world_model" in self.components:
             network_state["dynamics"] = latent
         
@@ -329,11 +331,13 @@ class AgentNetwork(nn.Module):
         )
 
         outputs = {}
-        for name, head in self.components["behavior_heads"].items():
-            head_out = head(features, state={}, **kwargs)
-            outputs[name] = head_out.inference_tensor
-
         next_recurrent_state = {"dynamics": latent}
+        for name, head in self.components["behavior_heads"].items():
+            head_out = head(features, state=network_state, **kwargs)
+            outputs[name] = head_out.inference_tensor
+            if head_out.state:
+                next_recurrent_state.update(head_out.state)
+
         if wm_output and hasattr(wm_output, "head_state") and wm_output.head_state:
             next_recurrent_state.update(wm_output.head_state)
             
@@ -363,12 +367,14 @@ class AgentNetwork(nn.Module):
 
         afterstate_head = self.components["behavior_heads"].get("afterstate_value")
         expected_afterstate_value = None
-        if afterstate_head is not None:
-            head_out_as = afterstate_head(afterstate_latent, afterstate_features=afterstate_latent)
-            expected_afterstate_value = head_out_as.inference_tensor
-
         recurrent_state_after = dict(recurrent_state)
         recurrent_state_after["dynamics"] = wm_output.afterstate_features
+
+        if afterstate_head is not None:
+            head_out_as = afterstate_head(afterstate_latent, state=recurrent_state, afterstate_features=afterstate_latent)
+            expected_afterstate_value = head_out_as.inference_tensor
+            if head_out_as.state:
+                recurrent_state_after.update(head_out_as.state)
 
         chance_policy = self.components["world_model"].sigma_head.representation.to_inference(wm_output.chance)
 

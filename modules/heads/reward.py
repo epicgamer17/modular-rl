@@ -132,11 +132,11 @@ class ValuePrefixRewardHead(RewardHead):
         # 2. Prepare for LSTM: (B, Seq=1, Features)
         x = x.unsqueeze(1)
 
-        # Retrieve state
-        hidden = state.get("reward_hidden")
-        step_count = state.get("step_count")
+        # Retrieve state using self.name prefix
+        hidden = state.get(f"{self.name}_reward_hidden")
+        step_count = state.get(f"{self.name}_step_count")
         parent_cumulative = state.get(
-            "cumulative_reward", torch.zeros(x.shape[0], 1, device=x.device)
+            f"{self.name}_cumulative_reward", torch.zeros(x.shape[0], 1, device=x.device)
         )
 
         if hidden is None:
@@ -184,9 +184,9 @@ class ValuePrefixRewardHead(RewardHead):
         new_state = state.copy()
         new_state.update(
             {
-                "reward_hidden": (h_n, c_n),
-                "step_count": effective_step_count + 1,
-                "cumulative_reward": expected_cumulative,
+                f"{self.name}_reward_hidden": (h_n, c_n),
+                f"{self.name}_step_count": effective_step_count + 1,
+                f"{self.name}_cumulative_reward": expected_cumulative,
             }
         )
 

@@ -227,18 +227,12 @@ class WorldModel(nn.Module):
         new_head_state = {}
 
         for name, head in self.heads.items():
-            h_state = {
-                k.replace(f"{name}_", ""): v
-                for k, v in head_state.items()
-                if k.startswith(name)
-            }
-            head_out = head(next_hidden_state, state=h_state if h_state else None, **kwargs)
+            head_out = head(next_hidden_state, state=head_state, **kwargs)
             predictions[name] = head_out.training_tensor
             predictions[f"{name}_extra"] = head_out.inference_tensor
 
             if head_out.state:
-                for k, v in head_out.state.items():
-                    new_head_state[f"{name}_{k}"] = v
+                new_head_state.update(head_out.state)
 
         return WorldModelOutput(
             features=next_hidden_state,
@@ -291,17 +285,11 @@ class WorldModel(nn.Module):
 
         # Initial head prediction for root
         for name, head in self.heads.items():
-            h_state = {
-                k.replace(f"{name}_", ""): v
-                for k, v in current_head_state.items()
-                if k.startswith(name)
-            }
-            head_out = head(current_latent, state=h_state if h_state else None, **kwargs)
+            head_out = head(current_latent, state=current_head_state, **kwargs)
             head_sequences[name].append(head_out.training_tensor)
 
             if head_out.state:
-                for k, v in head_out.state.items():
-                    current_head_state[f"{name}_{k}"] = v
+                current_head_state.update(head_out.state)
 
         stochastic_sequences = (
             {"latents_afterstates": [], "chance_logits": []}
@@ -334,17 +322,11 @@ class WorldModel(nn.Module):
 
             # 3. Heads Phase
             for name, head in self.heads.items():
-                h_state = {
-                    k.replace(f"{name}_", ""): v
-                    for k, v in current_head_state.items()
-                    if k.startswith(name)
-                }
-                head_out = head(next_latent, state=h_state if h_state else None, **kwargs)
+                head_out = head(next_latent, state=current_head_state, **kwargs)
                 head_sequences[name].append(head_out.training_tensor)
 
                 if head_out.state:
-                    for k, v in head_out.state.items():
-                        current_head_state[f"{name}_{k}"] = v
+                    current_head_state.update(head_out.state)
 
             current_latent = next_latent
             latents.append(current_latent)

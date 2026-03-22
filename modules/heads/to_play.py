@@ -95,7 +95,7 @@ class RelativeToPlayHead(ToPlayHead):
         if state is None:
             state = {}
         current_player_idx = state.get(
-            "current_player_idx",
+            f"{self.name}_current_player_idx",
             torch.zeros(x.shape[0], device=x.device, dtype=torch.long),
         )
 
@@ -108,7 +108,7 @@ class RelativeToPlayHead(ToPlayHead):
 
         # 5. Update the opaque state
         new_state = state.copy()
-        new_state["current_player_idx"] = player_idx
+        new_state[f"{self.name}_current_player_idx"] = player_idx
 
         return HeadOutput(
             training_tensor=logits,
