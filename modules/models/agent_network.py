@@ -10,7 +10,7 @@ from modules.backbones.factory import BackboneFactory
 from modules.backbones.recurrent import RecurrentBackbone
 from modules.backbones.transformer import TransformerBackbone
 from modules.heads.factory import HeadFactory
-from modules.projectors.sim_siam import Projector
+
 
 from agents.learner.losses.representations import get_representation
 
@@ -30,7 +30,6 @@ class AgentNetwork(nn.Module):
         world_model_config: Optional[Any] = None,
         prediction_backbone_config: Optional[Any] = None,
         heads_config: Dict[str, Any] = None,
-        projector_config: Optional[Any] = None,
         stochastic: bool = False,
         num_players: int = 1,
         num_chance_codes: int = 0,
@@ -102,12 +101,6 @@ class AgentNetwork(nn.Module):
                     name=head_name,
                 )
 
-        if projector_config is not None:
-            hidden_state_shape = current_head_input_shape
-            self.flat_hidden_dim = torch.Size(hidden_state_shape).numel()
-            self.components["projector"] = Projector(
-                self.flat_hidden_dim, projector_config
-            )
 
         self.register_buffer("_device_indicator", torch.empty(0))
 
@@ -363,19 +356,26 @@ class AgentNetwork(nn.Module):
 
 
 
-    def project(self, hidden_state: Tensor, grad=True) -> Tensor:
-        if "projector" not in self.components:
+    def project(self, hidden_state: Tensor, grad: bool = True) -> Tensor:
+        """
+        Projects hidden state for consistency losses.
+        Now uses the unified 'projector' behavior head.
+        """
+        if "projector" not in self.components["behavior_heads"]:
             raise NotImplementedError("Projector not configured for this architecture.")
 
+        head = self.components["behavior_heads"]["projector"]
+
+        # 1. Forward pass through the head
+        # We use is_inference=not grad to determine if we want the prediction or projection.
+        # SimSiamProjectorHead contract:
+        # training_tensor = prediction
+        # inference_tensor = projection
+        head_out = head(hidden_state, is_inference=not grad)
+        proj = head_out.training_tensor if grad else head_out.inference_tensor
+
+        # 2. Shape handling (preserved from original logic)
         original_shape = hidden_state.shape
-        flat_hidden = hidden_state.reshape(-1, self.flat_hidden_dim)
-        proj = self.components["projector"].projection(flat_hidden)
-
-        if grad:
-            proj = self.components["projector"].projection_head(proj)
-        else:
-            proj = proj.detach()
-
         num_latent_dims = len(self.latent_dim)
         new_shape = list(original_shape[:-num_latent_dims]) + [proj.shape[-1]]
         return proj.reshape(new_shape)

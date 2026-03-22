@@ -1,7 +1,8 @@
 from typing import Tuple, Optional, Dict, Any
 import torch
-from torch import Tensor
+from torch import nn, Tensor
 from .base import BaseHead, HeadOutput
+from configs.modules.heads.latent_consistency import SimSiamProjectorConfig
 from agents.learner.losses.representations import (
     BaseRepresentation,
     IdentityRepresentation,
@@ -12,48 +13,60 @@ from modules.backbones.factory import BackboneFactory
 from modules.backbones.mlp import build_dense, NoisyLinear
 
 
-class LatentConsistencyHead(BaseHead):
+
+
+class SimSiamProjectorHead(BaseHead):
     """
-    Projects latent states into an embedding space for consistency loss.
-    Commonly used in MuZero (projection head) or Dreamer.
-    Typically a small MLP.
+    Consolidated SimSiam/BYOL Projection head.
+    Matches the architecture from modules/projectors/sim_siam.py.
     """
 
     def __init__(
         self,
         arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
+        config: SimSiamProjectorConfig,
         representation: Optional[BaseRepresentation] = None,
         neck_config: Optional[BackboneConfig] = None,
-        projection_dim: int = 256,
         name: Optional[str] = None,
         input_source: str = "default",
     ):
         if representation is None:
-            representation = IdentityRepresentation(num_features=projection_dim)
+            representation = IdentityRepresentation(num_features=config.pred_output_dim)
 
-        super().__init__(arch_config, input_shape, representation, neck_config, name=name, input_source=input_source)
-        self.projection_dim = projection_dim
+        super().__init__(
+            arch_config,
+            input_shape,
+            representation,
+            neck_config,
+            name=name,
+            input_source=input_source,
+        )
 
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)
         self.output_shape = self.neck.output_shape
         self.flat_dim = self._get_flat_dim(self.output_shape)
 
-        # 2. Heads now define their own Final Output layer
-        # For Consistency, this is usually a projection to projection_dim
-        self.output_layer = build_dense(
-            in_features=self.flat_dim,
-            out_features=self.representation.num_features,
-            sigma=self.arch_config.noisy_sigma,
+        # 2. Projection layers (SimSiam/EfficientZero style)
+        self.projection = nn.Sequential(
+            nn.Linear(self.flat_dim, config.proj_hidden_dim),
+            nn.BatchNorm1d(config.proj_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(config.proj_hidden_dim, config.proj_hidden_dim),
+            nn.BatchNorm1d(config.proj_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(config.proj_hidden_dim, config.proj_output_dim),
+            nn.BatchNorm1d(config.proj_output_dim),
         )
 
-    def reset_noise(self) -> None:
-        """Propagate noise reset through the head's submodules."""
-        if hasattr(self.neck, "reset_noise"):
-            self.neck.reset_noise()
-        if isinstance(self.output_layer, NoisyLinear):
-            self.output_layer.reset_noise()
+        # 3. Predictor layers (The 'projection_head' in original code)
+        self.predictor = nn.Sequential(
+            nn.Linear(config.proj_output_dim, config.pred_hidden_dim),
+            nn.BatchNorm1d(config.pred_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(config.pred_hidden_dim, config.pred_output_dim),
+        )
 
     def forward(
         self,
@@ -62,22 +75,20 @@ class LatentConsistencyHead(BaseHead):
         is_inference: bool = False,
         **kwargs,
     ) -> HeadOutput:
-        """Returns HeadOutput with (projected_logits, consistency_embedding, state)"""
-        # 1. Processing neck -> flatten
+        """Returns HeadOutput with (prediction, projection, state)"""
+        # 1. Neck + Flatten
         x = self.neck(x)
         if x.dim() > 2:
             x = x.flatten(1, -1)
 
-        # 2. Final Output Projection
-        logits = self.output_layer(x)
-
-        # 3. Mathematical Transform (Identity for consistency usually)
-        projected_embedding = None
-        if is_inference:
-            projected_embedding = self.representation.to_expected_value(logits)
+        # 2. SimSiam Forward pass
+        # Note: BatchNorm1d requires batch_size > 1.
+        # This is strictly a training-only head in most MuZero variants.
+        projected = self.projection(x)
+        predicted = self.predictor(projected)
 
         return HeadOutput(
-            training_tensor=logits,
-            inference_tensor=projected_embedding,
+            training_tensor=predicted,
+            inference_tensor=projected,  # We store projection in inference_tensor
             state=state if state is not None else {},
         )

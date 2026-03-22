@@ -8,7 +8,7 @@ from .policy import PolicyHead
 from .chance_probability import ChanceProbabilityHead
 from .continuation import ContinuationHead
 from .observation import ObservationHead
-from .latent_consistency import LatentConsistencyHead
+from .latent_consistency import SimSiamProjectorHead
 from .q import QHead, DuelingQHead
 from configs.modules.heads.to_play import ToPlayHeadConfig
 from configs.modules.heads.value import ValueHeadConfig
@@ -17,7 +17,7 @@ from configs.modules.heads.policy import PolicyHeadConfig
 from configs.modules.heads.chance_probability import ChanceProbabilityHeadConfig
 from configs.modules.heads.continuation import ContinuationHeadConfig
 from configs.modules.heads.observation import ObservationHeadConfig
-from configs.modules.heads.latent_consistency import LatentConsistencyHeadConfig
+from configs.modules.heads.latent_consistency import SimSiamProjectorConfig
 from configs.modules.heads.q import QHeadConfig, DuelingQHeadConfig
 from configs.modules.heads.base import HeadConfig
 from configs.modules.architecture_config import ArchitectureConfig
@@ -35,7 +35,7 @@ class HeadFactory:
         ChanceProbabilityHeadConfig: ChanceProbabilityHead,
         ContinuationHeadConfig: ContinuationHead,
         ObservationHeadConfig: ObservationHead,
-        LatentConsistencyHeadConfig: LatentConsistencyHead,
+        SimSiamProjectorConfig: SimSiamProjectorHead,
         QHeadConfig: QHead,
         DuelingQHeadConfig: DuelingQHead,
     }
@@ -119,14 +119,15 @@ class HeadFactory:
                 input_source=config.input_source,
             )
 
-        # LatentConsistencyHead needs projection_dim
-        if isinstance(config, LatentConsistencyHeadConfig):
-            return LatentConsistencyHead(
+
+        # SimSiamProjectorHead takes specific config
+        if isinstance(config, SimSiamProjectorConfig):
+            return SimSiamProjectorHead(
                 arch_config=arch_config,
                 input_shape=input_shape,
+                config=config,
                 representation=representation,
                 neck_config=config.neck,
-                projection_dim=config.projection_dim,
                 name=name,
                 input_source=config.input_source,
             )
