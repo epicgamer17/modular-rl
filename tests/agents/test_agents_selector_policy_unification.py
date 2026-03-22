@@ -14,7 +14,7 @@ from agents.action_selectors.selectors import (
     EpsilonGreedySelector,
 )
 from agents.action_selectors.types import InferenceResult
-from modules.world_models.inference_output import InferenceOutput
+from modules.models.inference_output import InferenceOutput
 
 
 def _make_result():

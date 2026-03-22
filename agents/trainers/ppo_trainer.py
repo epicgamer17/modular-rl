@@ -11,7 +11,7 @@ from agents.action_selectors.policy_sources import NetworkPolicySource
 
 # from agents.workers.actors import get_actor_class # REMOVED as unused
 
-from modules.agent_nets.agent_network import AgentNetwork
+from modules.models.agent_network import AgentNetwork
 
 # from agents.policies.ppo_policy import PPOPolicy # REMOVED
 from stats.stats import StatTracker, PlotType

@@ -4,9 +4,13 @@ import torch.nn as nn
 from agents.learner.base import UniversalLearner
 from agents.learner.callbacks import MetricEarlyStopCallback, EarlyStopIteration
 from agents.learner.losses import LossPipeline, ClippedSurrogateLoss
-from modules.agent_nets.agent_network import AgentNetwork
+from modules.models.agent_network import AgentNetwork
 from configs.agents.ppo import PPOConfig
-from agents.learner.target_builders import TargetBuilderPipeline, PassThroughTargetBuilder, SingleStepFormatter
+from agents.learner.target_builders import (
+    TargetBuilderPipeline,
+    PassThroughTargetBuilder,
+    SingleStepFormatter,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -27,7 +31,9 @@ def test_ppo_kl_propagation_to_callback(make_ppo_config_dict, cartpole_game_conf
 
     # 1. Configuration Setup
     # Ensure minibatch_size matches the test batch size (8) and unroll_steps is 0
-    config_dict = make_ppo_config_dict(steps_per_epoch=8, num_minibatches=1, unroll_steps=0)
+    config_dict = make_ppo_config_dict(
+        steps_per_epoch=8, num_minibatches=1, unroll_steps=0
+    )
     ppo_config = PPOConfig(config_dict, cartpole_game_config)
 
     # 2. Setup Network and Heads
@@ -38,10 +44,14 @@ def test_ppo_kl_propagation_to_callback(make_ppo_config_dict, cartpole_game_conf
     )
 
     # 3. Setup Target Builder
-    target_builder = TargetBuilderPipeline([
-        PassThroughTargetBuilder(keys_to_keep=["actions", "old_log_probs", "advantages"]),
-        SingleStepFormatter()
-    ])
+    target_builder = TargetBuilderPipeline(
+        [
+            PassThroughTargetBuilder(
+                keys_to_keep=["actions", "old_log_probs", "advantages"]
+            ),
+            SingleStepFormatter(),
+        ]
+    )
 
     # 4. Setup Loss Pipeline
     # Extract representation from the head
@@ -86,7 +96,7 @@ def test_ppo_kl_propagation_to_callback(make_ppo_config_dict, cartpole_game_conf
     }
 
     # we need to mock the learner_inference to return a dict with "policies"
-    # SingleStepFormatter will expect [B, 1, A] if it was already formatted, 
+    # SingleStepFormatter will expect [B, 1, A] if it was already formatted,
     # but here compute_step_result calls learner_inference FIRST then build_targets.
     # predictions are checked AFTER learner_inference.
     # So learner_inference MUST return [B, T, A].
@@ -112,8 +122,6 @@ def test_ppo_kl_propagation_to_callback(make_ppo_config_dict, cartpole_game_conf
 
     with pytest.raises(EarlyStopIteration):
         learner.callbacks.on_backward_end(learner, result)
-
-
 
 
 if __name__ == "__main__":

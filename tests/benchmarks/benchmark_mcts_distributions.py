@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from types import SimpleNamespace
 from search.modular_search import ModularSearch
-from modules.agent_nets.agent_network import AgentNetwork
+from modules.models.agent_network import AgentNetwork
 from configs.agents.muzero import MuZeroConfig
 from search.search_selectors import SelectionStrategy
 from search.backpropogation import Backpropagator

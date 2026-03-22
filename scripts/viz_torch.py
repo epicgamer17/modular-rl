@@ -81,7 +81,7 @@ try:
     AgentConfig.__init__ = robust_agent_config_init
     AgentConfig._verify_game = robust_verify_game
 
-    from modules.agent_nets.agent_network import AgentNetwork
+    from modules.models.agent_network import AgentNetwork
     from configs.agents.ppo import PPOConfig
     from configs.agents.muzero import MuZeroConfig
     from configs.agents.rainbow_dqn import RainbowConfig

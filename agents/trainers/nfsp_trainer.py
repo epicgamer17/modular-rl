@@ -31,7 +31,7 @@ from agents.executors.local_executor import LocalExecutor
 from agents.executors.torch_mp_executor import TorchMPExecutor
 from agents.trainers.base_trainer import BaseTrainer
 from agents.workers.actors import GymActor, PettingZooActor
-from modules.agent_nets.agent_network import AgentNetwork
+from modules.models.agent_network import AgentNetwork
 from modules.utils import get_clean_state_dict
 from replay_buffers.sequence import Sequence
 from stats.stats import StatTracker, PlotType
@@ -301,8 +301,13 @@ class NFSPTrainer(BaseTrainer):
         rl_optimizer = create_opt(self.br_agent_network.parameters(), rl_config)
         rl_scheduler = get_lr_scheduler(rl_optimizer, rl_config)
         from agents.learner.target_builders import DistributionalTargetBuilder
+
         is_distributional = getattr(rl_config, "atom_size", 1) > 1
-        builder_cls = DistributionalTargetBuilder if is_distributional else TemporalDifferenceBuilder
+        builder_cls = (
+            DistributionalTargetBuilder
+            if is_distributional
+            else TemporalDifferenceBuilder
+        )
 
         rl_target_builder = builder_cls(
             target_network=self.br_target_agent_network,
@@ -311,7 +316,9 @@ class NFSPTrainer(BaseTrainer):
             bootstrap_on_truncated=getattr(rl_config, "bootstrap_on_truncated", False),
         )
 
-        rl_rep = self.br_agent_network.components["behavior_heads"]["q_logits"].representation
+        rl_rep = self.br_agent_network.components["behavior_heads"][
+            "q_logits"
+        ].representation
         td_loss_module = QBootstrappingLoss(
             device=device,
             representation=rl_rep,
@@ -359,7 +366,9 @@ class NFSPTrainer(BaseTrainer):
 
         sl_optimizer = create_opt(self.avg_agent_network.parameters(), sl_config)
         sl_scheduler = get_lr_scheduler(sl_optimizer, sl_config)
-        sl_rep = self.avg_agent_network.components["behavior_heads"]["policy_logits"].representation
+        sl_rep = self.avg_agent_network.components["behavior_heads"][
+            "policy_logits"
+        ].representation
         sl_loss_pipeline = LossPipeline(
             sl_config,
             [
@@ -371,8 +380,8 @@ class NFSPTrainer(BaseTrainer):
                 )
             ],
         )
-        
-        # SL uses PassThroughTargetBuilder for target_policies -> policies mapping if needed, 
+
+        # SL uses PassThroughTargetBuilder for target_policies -> policies mapping if needed,
         # or just keeping target_policies
         sl_target_builder = PassThroughTargetBuilder(["target_policies"])
 

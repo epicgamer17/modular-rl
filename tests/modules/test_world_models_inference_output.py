@@ -1,6 +1,9 @@
 import pytest
 import torch
-from modules.world_models.inference_output import batch_recurrent_state, unbatch_recurrent_state
+from modules.models.inference_output import (
+    batch_recurrent_state,
+    unbatch_recurrent_state,
+)
 
 pytestmark = pytest.mark.unit
 

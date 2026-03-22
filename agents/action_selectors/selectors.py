@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Tuple, Union
 import torch
 import numpy as np
-from modules.world_models.inference_output import InferenceOutput
+from modules.models.inference_output import InferenceOutput
 from agents.action_selectors.types import InferenceResult
 
 # Constant for default epsilon
@@ -65,15 +65,12 @@ class BaseActionSelector(ABC):
         elif values.dim() == 2:
             # Batch of legal moves: [[...], [...]]
             # Special case: if batch size is 1 and legal_moves is a single list of moves OR a 1D tensor mask
-            if (
-                values.shape[0] == 1
-                and len(legal_moves) > 0
-            ):
+            if values.shape[0] == 1 and len(legal_moves) > 0:
                 # If it's a list, check if the first element is a list to determine nesting
                 is_nested = isinstance(legal_moves[0], (list, np.ndarray)) or (
                     torch.is_tensor(legal_moves) and legal_moves.dim() > 1
                 )
-                
+
                 if not is_nested:
                     mask[0, legal_moves] = True
                 else:

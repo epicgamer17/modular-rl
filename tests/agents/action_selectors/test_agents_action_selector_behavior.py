@@ -14,7 +14,7 @@ from agents.action_selectors.selectors import (
 from agents.action_selectors.factory import SelectorFactory
 from agents.action_selectors.types import InferenceResult
 from configs.selectors import SelectorConfig
-from modules.world_models.inference_output import InferenceOutput
+from modules.models.inference_output import InferenceOutput
 
 
 class MockPolicyDist:
@@ -148,7 +148,10 @@ def test_exploration_override():
     assert action.item() == 1, "exploration=False should pick argmax"
 
     # 2. Test exploration=True (Should sample; run many times to see non-determinism)
-    actions = {selector.select_action(inf_result, {}, exploration=True)[0].item() for _ in range(50)}
+    actions = {
+        selector.select_action(inf_result, {}, exploration=True)[0].item()
+        for _ in range(50)
+    }
     assert 0 in actions, "exploration=True should occasionally sample action 0"
 
 

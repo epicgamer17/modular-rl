@@ -12,7 +12,7 @@ from agents.action_selectors.selectors import (
 from agents.action_selectors.decorators import PPODecorator, TemperatureSelector
 from agents.action_selectors.policy_sources import SearchPolicySource
 from agents.action_selectors.types import InferenceResult
-from modules.world_models.inference_output import InferenceOutput
+from modules.models.inference_output import InferenceOutput
 from utils.schedule import ScheduleConfig
 
 pytestmark = pytest.mark.unit
@@ -95,7 +95,10 @@ def test_categorical_selector_masking():
     action, meta = selector.select_action(inf_result, info)
     assert action.item() == 1, "Should pick action 1 because 0 is masked"
     assert "policy_dist" in meta
-    assert torch.isinf(meta["policy_dist"].logits[0, 0]) and meta["policy_dist"].logits[0, 0] < 0
+    assert (
+        torch.isinf(meta["policy_dist"].logits[0, 0])
+        and meta["policy_dist"].logits[0, 0] < 0
+    )
 
 
 def test_epsilon_greedy_selector_basic():
@@ -307,8 +310,12 @@ def test_temperature_selector_exploration_false():
     selector = TemperatureSelector(inner, config)
 
     for _ in range(10):
-        action, _ = selector.select_action(inf_result, {}, exploration=False, episode_step=0)
-        assert action.item() == 1, "exploration=False forces argmax regardless of schedule"
+        action, _ = selector.select_action(
+            inf_result, {}, exploration=False, episode_step=0
+        )
+        assert (
+            action.item() == 1
+        ), "exploration=False forces argmax regardless of schedule"
 
 
 def test_temperature_selector_from_logits():

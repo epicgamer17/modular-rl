@@ -7,7 +7,7 @@ from agents.learner.base import UniversalLearner
 
 from agents.action_selectors.factory import SelectorFactory
 from agents.workers.actors import get_actor_class
-from modules.agent_nets.agent_network import AgentNetwork
+from modules.models.agent_network import AgentNetwork
 from replay_buffers.transition import TransitionBatch, Transition
 from stats.stats import StatTracker, PlotType
 from utils.schedule import create_schedule
@@ -113,7 +113,6 @@ class RainbowTrainer(BaseTrainer):
         from agents.action_selectors.selectors import ArgmaxSelector
 
         self.training_selector = ArgmaxSelector()
-
 
         self.buffer = create_dqn_buffer(
             observation_dimensions=self.obs_dim,

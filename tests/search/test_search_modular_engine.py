@@ -11,12 +11,12 @@ from search.search_py.modular_search import ModularSearch
 # Sync imports with modular_search.py to ensure same class objects
 from search.nodes import DecisionNode, ChanceNode
 from search.min_max_stats import MinMaxStats
-from modules.world_models.inference_output import InferenceOutput
+from modules.models.inference_output import InferenceOutput
 from configs.agents.muzero import MuZeroConfig
 from configs.games.tictactoe import TicTacToeConfig
 
 
-from modules.agent_nets.agent_network import AgentNetwork
+from modules.models.agent_network import AgentNetwork
 
 
 @pytest.fixture

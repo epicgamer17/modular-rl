@@ -4,7 +4,7 @@ pytestmark = pytest.mark.integration
 
 import torch
 import torch.nn as nn
-from modules.agent_nets.agent_network import AgentNetwork
+from modules.models.agent_network import AgentNetwork
 from configs.agents.muzero import MuZeroConfig
 from configs.games.tictactoe import TicTacToeConfig
 from search import ModularSearch

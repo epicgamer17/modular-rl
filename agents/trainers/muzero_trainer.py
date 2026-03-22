@@ -8,7 +8,7 @@ from replay_buffers.buffer_factories import create_muzero_buffer
 from agents.action_selectors.selectors import CategoricalSelector
 from agents.action_selectors.decorators import TemperatureSelector
 from agents.workers.actors import get_actor_class
-from modules.agent_nets.agent_network import AgentNetwork
+from modules.models.agent_network import AgentNetwork
 from stats.stats import StatTracker, PlotType
 
 

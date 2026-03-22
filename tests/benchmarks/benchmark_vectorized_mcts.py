@@ -7,7 +7,7 @@ import time
 import torch
 import torch.nn as nn
 from search.modular_search import ModularSearch
-from modules.agent_nets.agent_network import AgentNetwork
+from modules.models.agent_network import AgentNetwork
 from configs.agents.muzero import MuZeroConfig
 from configs.games.game import GameConfig
 from search.search_factories import create_mcts

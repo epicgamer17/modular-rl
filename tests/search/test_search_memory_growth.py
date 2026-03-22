@@ -9,14 +9,13 @@ import numpy as np
 import torch
 
 
-
 def _import_legacy_memory_growth_stack():
     required = [
         ("configs.games.tictactoe", "TicTacToeConfig"),
         ("agents.policies.search_policy", "SearchPolicy"),
         ("search.search_factories", "create_mcts"),
-        ("modules.world_models.world_model", "WorldModel"),
-        ("modules.agent_nets.agent_network", "AgentNetwork"),
+        ("modules.models.world_model", "WorldModel"),
+        ("modules.models.agent_network", "AgentNetwork"),
         ("configs.agents.muzero", "MuZeroConfig"),
     ]
 
@@ -32,7 +31,6 @@ def _import_legacy_memory_growth_stack():
             )
 
     return resolved
-
 
 
 def test_memory_growth(num_calls=100, num_simulations=10):
@@ -94,7 +92,9 @@ def test_memory_growth(num_calls=100, num_simulations=10):
     obs_shape = (1, *obs.shape)
     num_actions = env.action_space(env.possible_agents[0]).n
 
-    model = AgentNetwork(config, num_actions, obs_shape, world_model_cls=WorldModel).to(device)
+    model = AgentNetwork(config, num_actions, obs_shape, world_model_cls=WorldModel).to(
+        device
+    )
     search_algo = create_mcts(config, device, num_actions)
     policy = SearchPolicy(model, search_algo, config, device, simple_obs_shape)
 

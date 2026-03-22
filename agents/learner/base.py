@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from agents.learner.target_builders import BaseTargetBuilder
     from agents.learner.losses import LossPipeline
     from agents.learner.callbacks import Callback
-    from modules.agent_nets.agent_network import AgentNetwork
+    from modules.models.agent_network import AgentNetwork
 
 from agents.learner.callbacks import (
     CallbackList,

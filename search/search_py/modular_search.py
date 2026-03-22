@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch.distributions import Categorical
 import math
 from modules.utils import support_to_scalar
-from modules.world_models.inference_output import (
+from modules.models.inference_output import (
     InferenceOutput,
     batch_recurrent_state,
     unbatch_recurrent_state,
@@ -39,7 +39,7 @@ from search.scoring_methods import (
     UCBScoring,
     DeterministicChanceScoring,
 )
-from modules.agent_nets.agent_network import AgentNetwork
+from modules.models.agent_network import AgentNetwork
 from .utils import _safe_log_probs
 
 

@@ -4,7 +4,7 @@ import shutil
 
 from configs.agents.muzero import MuZeroConfig
 from agents.muzero import MuZeroAgent
-from modules.world_models.world_model import WorldModel
+from modules.models.world_model import WorldModel
 from configs.games.cartpole_config import CartPoleConfig
 
 

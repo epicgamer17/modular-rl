@@ -12,7 +12,7 @@ from agents.learner.callbacks import ResetNoiseCallback
 from agents.trainers.base_trainer import BaseTrainer
 from agents.workers.actors import get_actor_class
 from agents.learner.losses import ImitationLoss, LossPipeline
-from modules.agent_nets.agent_network import AgentNetwork
+from modules.models.agent_network import AgentNetwork
 from modules.utils import get_lr_scheduler
 from replay_buffers.buffer_factories import create_nfsp_buffer
 from stats.stats import PlotType, StatTracker

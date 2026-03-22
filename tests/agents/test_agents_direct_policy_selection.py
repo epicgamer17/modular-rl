@@ -11,7 +11,7 @@ from agents.action_selectors.selectors import (
     EpsilonGreedySelector,
 )
 from agents.action_selectors.types import InferenceResult
-from modules.world_models.inference_output import InferenceOutput
+from modules.models.inference_output import InferenceOutput
 
 
 def test_argmax_selector_picks_highest_q_value():
@@ -41,7 +41,9 @@ def test_argmax_selector_respects_legal_moves():
 
 def test_categorical_selector_greedy_mode():
     selector = CategoricalSelector(exploration=True)
-    output = InferenceOutput(policy=Categorical(logits=torch.tensor([[0.0, 2.0, 0.0, 0.0]])))
+    output = InferenceOutput(
+        policy=Categorical(logits=torch.tensor([[0.0, 2.0, 0.0, 0.0]]))
+    )
     inf_result = InferenceResult.from_inference_output(output)
 
     action, _ = selector.select_action(inf_result, {}, exploration=False)

@@ -15,7 +15,7 @@ from search.aos_search.backpropogation import BackpropFn, average_discounted_bac
 from search.aos_search.min_max_stats import VectorizedMinMaxStats
 import torch.utils._pytree as pytree
 import torch.distributions as dists
-from modules.world_models.inference_output import InferenceOutput
+from modules.models.inference_output import InferenceOutput
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -196,7 +196,9 @@ def batched_mcts_step(
                 return tensor
             return tensor[unique_b, unique_n]
 
-        parent_states_unique = pytree.tree_map(gather_unique, tree.recurrent_state_buffer)
+        parent_states_unique = pytree.tree_map(
+            gather_unique, tree.recurrent_state_buffer
+        )
 
         # Vectorized Inference on Unique Requests
         outputs_unique = agent_network.hidden_state_inference(
@@ -265,7 +267,9 @@ def batched_mcts_step(
                 return tensor
             return tensor[unique_b, unique_n]
 
-        parent_states_unique = pytree.tree_map(gather_unique, tree.recurrent_state_buffer)
+        parent_states_unique = pytree.tree_map(
+            gather_unique, tree.recurrent_state_buffer
+        )
 
         outputs_unique = agent_network.afterstate_inference(
             parent_states_unique, unique_a
@@ -367,7 +371,9 @@ def batched_mcts_step(
                 if torch.is_tensor(t_tot) and torch.is_tensor(t_cha):
                     t_tot[is_chance] = t_cha
 
-            pytree.tree_map(scatter_cha, network_state_t, outputs_chance.recurrent_state)
+            pytree.tree_map(
+                scatter_cha, network_state_t, outputs_chance.recurrent_state
+            )
 
         # Chunk the states for Phase 3
         def make_chunks(tensor):

@@ -6,7 +6,7 @@ import torch
 from agents.trainers.muzero_trainer import MuZeroTrainer
 from configs.agents.muzero import MuZeroConfig
 from configs.games.cartpole import CartPoleConfig
-from modules.world_models.world_model import WorldModel
+from modules.models.world_model import WorldModel
 from stats.stats import StatTracker
 
 

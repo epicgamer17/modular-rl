@@ -6,8 +6,8 @@ import numpy as np
 from torch.distributions import Categorical
 
 from agents.action_selectors.types import InferenceResult
-from modules.agent_nets.agent_network import AgentNetwork
-from modules.world_models.inference_output import InferenceOutput
+from modules.models.agent_network import AgentNetwork
+from modules.models.inference_output import InferenceOutput
 
 
 class BasePolicySource(ABC):

@@ -1,5 +1,5 @@
 import torch
-from modules.world_models.inference_output import LearningOutput
+from modules.models.inference_output import LearningOutput
 from replay_buffers.sequence import Sequence
 from replay_buffers.processors import (
     MuZeroSequenceInputProcessor,

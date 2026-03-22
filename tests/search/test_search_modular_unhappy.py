@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from search.search_py.modular_search import ModularSearch
 from configs.agents.muzero import MuZeroConfig
-from modules.world_models.inference_output import InferenceOutput
+from modules.models.inference_output import InferenceOutput
 
 pytestmark = pytest.mark.unit
 

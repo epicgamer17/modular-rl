@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional, Union
 import torch
 from torch import Tensor
 from torch.distributions import Distribution, Categorical
-from modules.world_models.inference_output import InferenceOutput
+from modules.models.inference_output import InferenceOutput
 
 
 @dataclass
