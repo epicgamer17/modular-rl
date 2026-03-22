@@ -92,7 +92,7 @@ class PolicyHead(BaseHead):
     ) -> Dict[str, float]:
         """Calculates policy-specific diagnostics (e.g., entropy)."""
         metrics = {}
-        with torch.no_grad():
+        with torch.inference_mode():
             # If inference_tensor isn't provided (e.g., during training), instantiate a temporary distribution
             dist = inference_tensor if inference_tensor is not None else self.representation.to_inference(training_tensor)
             if hasattr(dist, "entropy") and callable(dist.entropy):

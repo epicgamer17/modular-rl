@@ -83,7 +83,7 @@ class ValueHead(BaseHead):
     ) -> Dict[str, float]:
         """Calculates value-specific diagnostics (e.g., mean predicted value)."""
         metrics = {}
-        with torch.no_grad():
+        with torch.inference_mode():
             val = inference_tensor if inference_tensor is not None else self.representation.to_expected_value(training_tensor)
             metrics["mean"] = val.mean().item()
         return metrics

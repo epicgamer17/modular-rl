@@ -90,7 +90,7 @@ class RewardHead(BaseHead):
     ) -> Dict[str, float]:
         """Calculates reward-specific diagnostics (e.g., mean predicted reward)."""
         metrics = {}
-        with torch.no_grad():
+        with torch.inference_mode():
             diag_reward = inference_tensor if inference_tensor is not None else self.representation.to_expected_value(training_tensor)
             metrics["mean"] = diag_reward.mean().item()
         return metrics
@@ -266,7 +266,7 @@ class ValuePrefixRewardHead(RewardHead):
         inference_tensor: Optional[Any] = None,
     ) -> Dict[str, float]:
         metrics = {}
-        with torch.no_grad():
+        with torch.inference_mode():
             if instant_reward is not None:
                 diag_reward = instant_reward
             else:

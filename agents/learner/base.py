@@ -79,6 +79,7 @@ class UniversalLearner:
         clipnorm: Optional[float] = None,
         gradient_accumulation_steps: int = 1,
         max_grad_norm: Optional[float] = None,
+        validator_params: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         self.agent_network = agent_network
@@ -94,7 +95,7 @@ class UniversalLearner:
         self.max_grad_norm = max_grad_norm or clipnorm
 
         # 5. Validation (Moved from network)
-        self.validator = ShapeValidator(**kwargs.get("validator_params", {}))
+        self.validator = ShapeValidator(**(validator_params or {}))
 
         # Normalize optimizers and schedulers into dictionaries
         if isinstance(optimizer, dict):
@@ -305,11 +306,15 @@ class UniversalLearner:
                 self.lr_schedulers["default"].load_state_dict(state["lr_scheduler"])
 
     def _build_step_metrics(self, step_result: StepResult) -> Dict[str, Any]:
-        metrics = dict(step_result.loss_dict)
-        metrics["loss"] = sum(loss.item() for loss in step_result.loss.values())
+        """Final cleanup of metrics to ensure no tensors leak to the logger."""
+        metrics = {}
+        for k, v in step_result.loss_dict.items():
+            metrics[k] = v.detach().cpu().item() if torch.is_tensor(v) else v
+
+        metrics["loss"] = sum(loss.detach().cpu().item() for loss in step_result.loss.values())
 
         finalized_metrics = finalize_metrics(step_result.meta.setdefault("metrics", {}))
-        if finalized_metrics:
-            metrics["metrics"] = finalized_metrics
+        for k, v in finalized_metrics.items():
+            metrics[k] = v.detach().cpu().item() if torch.is_tensor(v) else v
 
         return metrics

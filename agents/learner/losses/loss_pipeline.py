@@ -21,7 +21,12 @@ class LossPipeline:
         self.config = config
         self.modules = modules
         self.priority_computer = priority_computer or NullPriorityComputer()
-        self.shape_validator = ShapeValidator(config)
+        self.shape_validator = ShapeValidator(
+            minibatch_size=config.minibatch_size,
+            unroll_steps=getattr(config, "unroll_steps", 0),
+            num_actions=config.game.num_actions,
+            atom_size=getattr(config, "atom_size", 1),
+        )
 
     def validate_dependencies(
         self, network_output_keys: set[str], target_keys: set[str]
@@ -88,7 +93,8 @@ class LossPipeline:
             mask = module.get_mask(targets)
 
             # Aggregate metrics from the module
-            loss_dict.update(module_metrics)
+            for k, v in module_metrics.items():
+                loss_dict[k] = v.detach().cpu().item() if torch.is_tensor(v) else v
 
             # Scale by Gradient Scales [1, T] and PER Weights [B, 1]
             scaled_loss = scale_gradient(elementwise_loss, gradient_scales)
@@ -106,9 +112,10 @@ class LossPipeline:
 
         # 5. Extract stateless telemetry from Heads (The "Right to Report")
         telemetry = predictions.get("telemetry", {})
-        loss_dict.update(telemetry)
+        for k, v in telemetry.items():
+            loss_dict[k] = v.detach().cpu().item() if torch.is_tensor(v) else v
 
-        # 5. Extract Priorities via standalone computer [B]
+        # 6. Extract Priorities via standalone computer [B]
         priorities = self.priority_computer.compute(
             all_elementwise_losses, predictions, targets
         )

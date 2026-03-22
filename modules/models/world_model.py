@@ -28,7 +28,7 @@ class DeterministicDynamics(nn.Module):
         )
         self.output_shape = self.dynamics.output_shape
 
-    def recurrent_step(
+    def forward(
         self, current_latent: Tensor, action: Tensor, **kwargs
     ) -> Dict[str, Tensor]:
         next_latent = self.dynamics_fusion(current_latent, action)
@@ -93,12 +93,12 @@ class StochasticDynamics(nn.Module):
         self,
         current_latent: Tensor,
         action: Tensor,
-        k: int,
-        encoder_inputs: Optional[Tensor] = None,
-        true_chance_codes: Optional[Tensor] = None,
         **kwargs,
     ) -> Dict[str, Tensor]:
         # Full transition for Learner unrolls
+        k = kwargs.get("k", 0)
+        encoder_inputs = kwargs.get("encoder_inputs", None)
+        true_chance_codes = kwargs.get("true_chance_codes", None)
         afterstate_res = self.afterstate_inference(current_latent, action)
         afterstate = afterstate_res["afterstate_features"]
 
@@ -123,8 +123,9 @@ class StochasticDynamics(nn.Module):
 
         return {
             "next_latent": next_latent,
-            "afterstate": afterstate,
+            "afterstate_features": afterstate,
             "chance_logits": afterstate_res["chance_logits"],
+            "chance_dist": afterstate_res["chance_dist"],
         }
 
     def afterstate_inference(self, latent: Tensor, action: Tensor) -> Dict[str, Any]:
@@ -132,7 +133,7 @@ class StochasticDynamics(nn.Module):
         afterstate = self.afterstate_dynamics(fused)
         afterstate = _normalize_hidden_state(afterstate)
 
-        head_out = self.sigma_head(afterstate)
+        head_out = self.sigma_head(afterstate, is_inference=True)
         return {
             "afterstate_features": afterstate,
             "chance_logits": head_out.training_tensor,
@@ -213,12 +214,9 @@ class WorldModel(nn.Module):
         recurrent_state: Any = None,
         **kwargs,
     ) -> WorldModelOutput:
-        # 1. Transition Phase (Via Pipeline)
-        # The World Model no longer cares if it's stochastic or deterministic!
-        # Both implement the .recurrent_step() contract.
-        next_hidden_state = self.dynamics_pipeline.recurrent_step(hidden_state, action)[
-            "next_latent"
-        ]
+        # Both implement the forward() contract.
+        step_results = self.dynamics_pipeline(hidden_state, action, **kwargs)
+        next_hidden_state = step_results["next_latent"]
 
         # 2. Heads Phase
         predictions = {}
@@ -320,9 +318,9 @@ class WorldModel(nn.Module):
             next_latent = step_results["next_latent"]
 
             # 2. Metadata Recording
-            if "afterstate" in step_results:
+            if "afterstate_features" in step_results:
                 stochastic_sequences["latents_afterstates"].append(
-                    step_results["afterstate"]
+                    step_results["afterstate_features"]
                 )
             if "chance_logits" in step_results:
                 stochastic_sequences["chance_logits"].append(

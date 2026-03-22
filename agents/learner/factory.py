@@ -82,6 +82,7 @@ def build_universal_learner(
     epsilon_schedule: Optional[Any] = None,
     weight_broadcast_fn: Optional[Callable] = None,
     extra_callbacks: Optional[List[Callback]] = None,
+    validator_params: Optional[Dict[str, Any]] = None,
 ) -> UniversalLearner:
     """
     Establishes a clean factory interface for assembling a UniversalLearner.
@@ -94,6 +95,7 @@ def build_universal_learner(
         target_agent_network: Optional target network for TD-based algorithms.
         priority_update_fn: Optional callable to update PER priorities.
         weight_broadcast_fn: Optional callable to broadcast weights to workers.
+        validator_params: Optional dictionary of parameters for the ShapeValidator.
 
     Returns:
         Constructed UniversalLearner instance.
@@ -196,6 +198,12 @@ def build_universal_learner(
         callbacks=callbacks,
         clipnorm=config.clipnorm,
         target_builder=target_builder,
+        validator_params=validator_params or {
+            "minibatch_size": config.minibatch_size,
+            "unroll_steps": getattr(config, "unroll_steps", 0),
+            "num_actions": config.game.num_actions,
+            "atom_size": getattr(config, "atom_size", 1),
+        },
         gradient_accumulation_steps=getattr(config, "gradient_accumulation_steps", 1),
         max_grad_norm=getattr(config, "max_grad_norm", config.clipnorm),
     )

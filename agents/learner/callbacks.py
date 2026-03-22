@@ -151,24 +151,10 @@ class TargetNetworkSyncCallback(Callback):
         if self.sync_interval > 0 and learner.training_step % self.sync_interval != 0:
             return
 
-        from modules.utils import get_clean_state_dict
-
-        with torch.no_grad():
-            clean_state = get_clean_state_dict(learner.agent_network)
-            if self.soft_update:
-                target_state = self.target_network.state_dict()
-                ema_beta = self.ema_beta
-                for k, v in clean_state.items():
-                    if k not in target_state:
-                        continue
-                    if target_state[k].is_floating_point():
-                        target_state[k].mul_(ema_beta).add_(
-                            v.detach(), alpha=1.0 - ema_beta
-                        )
-                    else:
-                        target_state[k].copy_(v.detach())
-            else:
-                self.target_network.load_state_dict(clean_state, strict=False)
+        from modules.utils import update_target_network
+        
+        tau = (1.0 - self.ema_beta) if self.soft_update else 1.0
+        update_target_network(learner.agent_network, self.target_network, tau=tau)
 
 
 class ResetNoiseCallback(Callback):

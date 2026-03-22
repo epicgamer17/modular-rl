@@ -10,7 +10,7 @@ class ShapeValidator:
 
     def __init__(
         self,
-        minibatch_size: int,
+        minibatch_size: int = 0,
         unroll_steps: int = 0,
         num_actions: int = 0,
         atom_size: int = 1,

@@ -54,7 +54,9 @@ class _NFSPActorMixin:
 
         avg_state = params_dict.get("avg_state_dict")
         if avg_state is not None:
-            self.average_agent_network.load_state_dict(avg_state)
+            from modules.utils import update_target_network
+
+            update_target_network(avg_state, self.average_agent_network)
 
         if params_dict.get("reset_noise"):
             if hasattr(self.average_agent_network, "reset_noise"):
@@ -257,9 +259,9 @@ class NFSPTrainer(BaseTrainer):
         }
         self.br_agent_network = AgentNetwork(**network_kwargs).to(device)
         self.br_target_agent_network = AgentNetwork(**network_kwargs).to(device)
-        self.br_target_agent_network.load_state_dict(
-            get_clean_state_dict(self.br_agent_network), strict=False
-        )
+        from modules.utils import update_target_network
+
+        update_target_network(self.br_agent_network, self.br_target_agent_network)
 
         self.avg_agent_network = AgentNetwork(
             input_shape=self.obs_dim,

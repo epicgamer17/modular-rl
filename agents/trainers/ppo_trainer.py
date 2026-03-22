@@ -174,7 +174,7 @@ class PPOTrainer(BaseTrainer):
         completed_lengths = []
 
         while steps_collected < self.config.steps_per_epoch:
-            with torch.no_grad():
+            with torch.inference_mode():
                 # Get state from environment
                 state, info = self._env.reset()
                 done = False

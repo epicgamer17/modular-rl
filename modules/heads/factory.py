@@ -57,15 +57,23 @@ class HeadFactory:
 
         head_cls = cls._heads[config_type]
 
-        # REQUISITE: Automatic Representation Resolution
+        # 1. Automatic Representation Resolution
         # The factory handles building the representation if the config specifies it.
         # This prevents the router (AgentNetwork/WorldModel) from having to know
         # about the heads' mathematical format.
         representation = kwargs.get("representation")
-        if representation is None and hasattr(config, "output_strategy") and config.output_strategy is not None:
+        if (
+            representation is None
+            and hasattr(config, "output_strategy")
+            and config.output_strategy is not None
+        ):
             from agents.learner.losses.representations import get_representation
+
             representation = get_representation(config.output_strategy)
-            num_players = kwargs.get("num_players", config.num_players)
+
+        # 2. ToPlayHead Specialization
+        if isinstance(config, ToPlayHeadConfig):
+            num_players = kwargs.get("num_players", getattr(config, "num_players", None))
             if num_players is None:
                 raise ValueError(
                     "ToPlayHead requires num_players (either in config or passed to factory)"

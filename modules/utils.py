@@ -7,7 +7,7 @@ from torch import nn, Tensor, optim
 from typing import TYPE_CHECKING, Iterable, Optional, Tuple, Any, Callable
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def get_flat_dim(module: nn.Module, input_shape: Tuple[int, ...]) -> int:
     """Foolproof calculation of flattened output dimension using a dummy pass."""
     dummy_input = torch.zeros(1, *input_shape)
@@ -391,6 +391,41 @@ def get_clean_state_dict(model: torch.nn.Module) -> dict:
     return {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
 
 
+@torch.inference_mode()
+def update_target_network(
+    online: torch.nn.Module | dict[str, torch.Tensor],
+    target_net: torch.nn.Module,
+    tau: float = 1.0,
+) -> None:
+    """
+    Standardized, high-performance target network synchronization.
+    Uses in-place .data.copy_() to avoid memory fragmentation and re-allocation.
+    
+    Args:
+        online: Source module OR state_dict.
+        target_net: Destination network.
+        tau: Sync coefficient. 1.0 = Hard Sync, <1.0 = Soft Sync (EMA).
+    """
+    if isinstance(online, torch.nn.Module):
+        online_state = get_clean_state_dict(online)
+    else:
+        online_state = online
+
+    target_state = target_net.state_dict()
+
+    for k, online_val in online_state.items():
+        if k in target_state:
+            target_val = target_state[k]
+            if tau == 1.0 or not target_val.is_floating_point():
+                # Hard Sync or non-float buffer (e.g. step count)
+                target_val.data.copy_(online_val.data)
+            else:
+                # Soft Sync (EMA): target = tau * online + (1-tau) * target
+                target_val.data.copy_(
+                    tau * online_val.data + (1.0 - tau) * target_val.data
+                )
+
+
 def get_uncompiled_model(model: torch.nn.Module) -> torch.nn.Module:
     """
     Safely extracts the uncompiled base model to allow pickling across processes.
@@ -436,3 +471,27 @@ def get_uncompiled_model(model: torch.nn.Module) -> torch.nn.Module:
         return m_copy
 
     return model
+
+
+def get_lr_scheduler(
+    optimizer: torch.optim.Optimizer, config: Any
+) -> torch.optim.lr_scheduler.LRScheduler:
+    """
+    Returns a learning rate scheduler based on the configuration.
+    """
+    scheduler_type = getattr(config, "lr_scheduler", None)
+    if scheduler_type is None or scheduler_type == "constant":
+        return torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0, total_iters=0)
+
+    if scheduler_type == "linear":
+        # Note: In our framework, we often use training_steps as total_iters
+        total_iters = getattr(config, "training_steps", 1000)
+        return torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=1.0, end_factor=0.1, total_iters=total_iters
+        )
+    elif scheduler_type == "step":
+        return torch.optim.lr_scheduler.StepLR(
+            optimizer, step_size=getattr(config, "lr_step_size", 100), gamma=0.1
+        )
+
+    return torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0, total_iters=0)

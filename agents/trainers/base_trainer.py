@@ -276,7 +276,9 @@ class BaseTrainer:
             if key == "metrics":
                 self._record_structured_metrics(value)
             else:
-                self.stats.append(key, value)
+                # Ensure value is detached and converted to float if it's a scalar tensor
+                val = value.detach().cpu().item() if torch.is_tensor(value) else value
+                self.stats.append(key, val)
 
     def _record_structured_metrics(self, metrics: Optional[Dict[str, Any]]) -> None:
         if not metrics:
@@ -294,9 +296,13 @@ class BaseTrainer:
                     )
             elif isinstance(value, dict):
                 for subkey, subvalue in value.items():
-                    self.stats.set(key, subvalue, subkey=subkey)
+                    # Ensure subvalue is detached and converted to float if it's a scalar tensor
+                    val = subvalue.detach().cpu().item() if torch.is_tensor(subvalue) else subvalue
+                    self.stats.set(key, val, subkey=subkey)
             else:
-                self.stats.append(key, value)
+                # Ensure value is detached and converted to float if it's a scalar tensor
+                val = value.detach().cpu().item() if torch.is_tensor(value) else value
+                self.stats.append(key, val)
 
     @classmethod
     def load_from_checkpoint(

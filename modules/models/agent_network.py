@@ -188,7 +188,8 @@ class AgentNetwork(nn.Module):
         if wm_output:
             network_state.update(wm_output.next_state)
 
-        network_state.update(next_h)
+        if next_h is not None:
+            network_state.update(next_h)
 
         q_vals = outputs.get("q_logits")
         state_value = (
@@ -328,7 +329,8 @@ class AgentNetwork(nn.Module):
             outputs[name] = head_out.inference_tensor
             next_recurrent_state.update(head_out.state)
 
-        next_recurrent_state.update(next_h)
+        if next_h is not None:
+            next_recurrent_state.update(next_h)
 
         return InferenceOutput(
             recurrent_state=next_recurrent_state,

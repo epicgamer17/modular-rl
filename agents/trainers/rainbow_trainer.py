@@ -74,10 +74,9 @@ class RainbowTrainer(BaseTrainer):
             raise ValueError(f"Unsupported optimizer: {config.optimizer}")
 
         # Initialize target network
-        from modules.utils import get_clean_state_dict
-
-        clean_state = get_clean_state_dict(self.agent_network)
-        self.target_agent_network.load_state_dict(clean_state, strict=False)
+        from modules.utils import update_target_network
+        
+        update_target_network(self.agent_network, self.target_agent_network)
         self.agent_network.train()
         self.target_agent_network.eval()
 
