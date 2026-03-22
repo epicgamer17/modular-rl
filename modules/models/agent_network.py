@@ -63,21 +63,14 @@ class AgentNetwork(nn.Module):
                 current_head_input_shape = self.components["world_model"].prediction_backbone.output_shape
 
 
-        # 3. Behavior Phase: Feature Extraction (Backbones)
-        if config.prediction_backbone is not None and "world_model" not in self.components:
+        # 3. Behavior Phase: Temporal Memory (Backbones)
+        if getattr(config, "prediction_backbone", None) is not None and "world_model" not in self.components:
             backbone = BackboneFactory.create(config.prediction_backbone, current_head_input_shape)
             if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
                 self.components["memory_core"] = backbone
-                ident = nn.Identity()
-                ident.output_shape = current_head_input_shape
-                self.components["feature_extractor"] = ident
+                current_head_input_shape = backbone.output_shape
             else:
-                self.components["feature_extractor"] = backbone
-            current_head_input_shape = backbone.output_shape
-        else:
-            ident = nn.Identity()
-            ident.output_shape = current_head_input_shape
-            self.components["feature_extractor"] = ident
+                raise ValueError("prediction_backbone should be an RNN/Transformer. For spatial embedding, use representation_backbone.")
 
         # 3. Behavior Phase: Behavioral Heads (Policy, Value, Q, etc.)
         for head_name, head_config in config.heads.items():
@@ -92,12 +85,7 @@ class AgentNetwork(nn.Module):
                 from agents.learner.losses.representations import get_representation
                 rep = get_representation(head_config.output_strategy)
 
-            # Route to correct input shape (Afterstate vs Root)
-            # This is currently the only notable "bleed" of logic. 
-            # If a head is an 'afterstate' head, it takes the prediction backbone features.
             head_input_shape = current_head_input_shape
-            if head_name == "afterstate_value" and "world_model" in self.components:
-                head_input_shape = self.components["feature_extractor"].output_shape
 
             self.components["behavior_heads"][head_name] = HeadFactory.create(
                 head_config,
@@ -149,33 +137,18 @@ class AgentNetwork(nn.Module):
                 for sub in module.values():
                     if hasattr(sub, "reset_noise"):
                         sub.reset_noise()
-
     def _apply_spatial_temporal(
-        self,
-        tensor: Tensor,
-        B: int,
-        T: int,
-        state: Optional[Any] = None,
-    ) -> Tuple[Tensor, Optional[Any]]:
-        """
-        Routes (B, T, ...) through spatial backbones (flattened)
-        and then temporal cores (sequences).
-        Returns: (flat_features, next_state)
-        """
-        # 1. Spatial Phase (Feature Extraction)
-        # Standard backbones (Conv, MLP) expect a flat batch dimension.
+        self, tensor: Tensor, B: int, T: int, state: Any = None
+    ) -> Tuple[Tensor, Any]:
         flat_x = tensor.flatten(0, 1)
-        flat_x = self.components["feature_extractor"](flat_x)
 
-        # 2. Temporal Phase (Memory Core)
+        next_state = None
         if "memory_core" in self.components:
-            # RNNs and Transformers expect (Batch, Time, Features)
             seq_x = flat_x.view(B, T, -1)
-            seq_x, next_state = self.components["memory_core"](seq_x, state)
-            # Return flattened for the Heads
+            seq_x, next_state = self.components["memory_core"](seq_x, state=state)
             return seq_x.flatten(0, 1), next_state
-
-        return flat_x, None
+            
+        return flat_x, next_state
 
     def obs_inference(
         self, obs: Tensor, action_mask: Optional[Tensor] = None
@@ -320,11 +293,9 @@ class AgentNetwork(nn.Module):
             as_latents = env_results["latents_afterstates"]
             flat_as = as_latents.flatten(0, 1)
             
-            as_features = self.components["feature_extractor"](flat_as)
-            
             afterstate_head = self.components["behavior_heads"].get("afterstate_value")
             if afterstate_head is not None:
-                head_out_as = afterstate_head(as_features)
+                head_out_as = afterstate_head(flat_as)
     
                 B_as, K_as = as_latents.shape[:2]
                 as_values = head_out_as.training_tensor.view(B_as, K_as, -1)
@@ -412,12 +383,11 @@ class AgentNetwork(nn.Module):
         )
         
         afterstate_latent = wm_output.afterstate_features
-        as_features = self.components["feature_extractor"](afterstate_latent)
 
         afterstate_head = self.components["behavior_heads"].get("afterstate_value")
         expected_afterstate_value = None
         if afterstate_head is not None:
-            head_out_as = afterstate_head(as_features)
+            head_out_as = afterstate_head(afterstate_latent)
             expected_afterstate_value = head_out_as.inference_tensor
 
         recurrent_state_after = dict(recurrent_state)
