@@ -239,10 +239,7 @@ class AgentNetwork(nn.Module):
             env_results = self.components["world_model"].unroll_physics(
                 initial_latent_state=initial_latent_state,
                 actions=batch["actions"],
-                encoder_inputs=(
-                    torch.cat([batch["unroll_observations"][:, :-1], batch["unroll_observations"][:, 1:]], dim=2).to(self.device).float()
-                    if getattr(self.config, "stochastic", False) else None
-                ),
+                encoder_inputs=batch.get("chance_encoder_inputs"),
                 true_chance_codes=batch.get("chance_codes"),
             )
             # The WorldModel returns the sequence of latents starting from root

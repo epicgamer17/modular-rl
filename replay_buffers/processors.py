@@ -1129,9 +1129,20 @@ class NStepUnrollProcessor(OutputProcessor):
                     is_absorbing, step - 1
                 ]
 
+        # 8. Chance Encoder Inputs
+        # Stack current and next observations along the channel dimension (dim=2)
+        # resulting in [B, T, 2*C, H, W]
+        chance_encoder_inputs = None
+        if self.unroll_steps > 0:
+            chance_encoder_inputs = torch.cat(
+                [unroll_observations[:, :-1], unroll_observations[:, 1:]], 
+                dim=2
+            )
+
         return dict(
             observations=buffers["observations"][indices_tensor],
             unroll_observations=unroll_observations,
+            chance_encoder_inputs=chance_encoder_inputs,
             has_valid_obs_mask=obs_valid_mask,
             has_valid_action_mask=dynamics_mask[:, : self.unroll_steps + 1],
             rewards=target_rewards,
