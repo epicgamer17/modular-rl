@@ -14,9 +14,7 @@ class HeadOutput:
     """Strict contract for head outputs."""
 
     training_tensor: torch.Tensor  # e.g., logits, pre-tanh values (for the Learner)
-    inference_tensor: (
-        torch.Tensor
-    )  # e.g., argmax action, softmaxed probs (for the Actor)
+    inference_tensor: Any  # e.g., td.Distribution, argmax action, softmaxed probs (for the Actor)
     state: Dict[str, torch.Tensor] = field(default_factory=dict)  # For recurrent heads
 
 

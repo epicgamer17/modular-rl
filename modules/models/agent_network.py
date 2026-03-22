@@ -205,7 +205,9 @@ class AgentNetwork(nn.Module):
                     if hasattr(sub, "reset_noise"):
                         sub.reset_noise()
 
-    def obs_inference(self, obs: Tensor) -> InferenceOutput:
+    def obs_inference(
+        self, obs: Tensor, action_mask: Optional[Tensor] = None
+    ) -> InferenceOutput:
         if not torch.is_tensor(obs):
             obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
         if obs.dim() == len(self.input_shape):
@@ -233,7 +235,11 @@ class AgentNetwork(nn.Module):
 
         outputs = {}
         for name, head in self.components["behavior_heads"].items():
-            head_out = head(features)
+            # Pass action_mask specifically to the policy head
+            if name == "policy_logits" and action_mask is not None:
+                head_out = head(features, action_mask=action_mask)
+            else:
+                head_out = head(features)
             outputs[name] = head_out.inference_tensor
 
         network_state = self._pack_recurrent_state(
@@ -297,12 +303,21 @@ class AgentNetwork(nn.Module):
             flat_memory = flat_features
 
         # 4. Behavior Heads Phase
+        mask = batch.get("action_masks")
+        flat_mask = mask.flatten(0, 1) if mask is not None else None
+
         behavior_results = {}
         for name, head in self.components["behavior_heads"].items():
             # Skip afterstate value head as it has its own routing path
             if name == "afterstate_value":
                 continue
-            head_out = head(flat_memory)
+
+            # Pass action_mask to policy heads
+            if name == "policy_logits" and flat_mask is not None:
+                head_out = head(flat_memory, action_mask=flat_mask)
+            else:
+                head_out = head(flat_memory)
+
             # Use exact head names as keys. Zero string manipulation.
             behavior_results[name] = head_out.training_tensor.view(B, T, -1)
 
@@ -323,7 +338,12 @@ class AgentNetwork(nn.Module):
         ShapeValidator(self.config).validate_predictions(final_output)
         return final_output
 
-    def hidden_state_inference(self, network_state: Dict[str, Tensor], action: Tensor) -> InferenceOutput:
+    def hidden_state_inference(
+        self,
+        network_state: Dict[str, Tensor],
+        action: Tensor,
+        action_mask: Optional[Tensor] = None,
+    ) -> InferenceOutput:
         if "world_model" not in self.components:
             raise NotImplementedError("hidden_state_inference requires a world_model.")
 
@@ -351,7 +371,11 @@ class AgentNetwork(nn.Module):
 
         outputs = {}
         for name, head in self.components["behavior_heads"].items():
-            head_out = head(features)
+            # Pass action_mask specifically to the policy head
+            if name == "policy_logits" and action_mask is not None:
+                head_out = head(features, action_mask=action_mask)
+            else:
+                head_out = head(features)
             outputs[name] = head_out.inference_tensor
 
         next_recurrent_state = self._pack_recurrent_state(
