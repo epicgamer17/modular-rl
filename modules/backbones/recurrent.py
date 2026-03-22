@@ -36,14 +36,19 @@ class RecurrentBackbone(nn.Module):
         self.output_shape = (config.hidden_size,)
 
     def forward(
-        self, x: torch.Tensor, h: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]] = None
+        self,
+        x: torch.Tensor,
+        h: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]] = None,
     ) -> Tuple[torch.Tensor, Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]:
         """
         Recurrent forward pass: memory core always treats (B, T, D) sequence batches.
         Returns: (output_sequence, last_hidden_state)
         """
-        # --- STRICT MEMORY CONTRACT ---
-        # Memory cores always process (Batch, Time, Features)
+        # (Batch, Time, Features) expected. Auto-flatten if (Batch, Time, C, H, W).
+        if x.dim() > 3:
+            # (B, T, C, H, W) -> (B, T, D)
+            x = x.flatten(2, -1)
+
         assert x.dim() == 3, f"Memory core input must be (B, T, D), got shape {x.shape}"
 
         output, h_n = self.rnn(x, h)

@@ -39,7 +39,11 @@ class TransformerBackbone(nn.Module):
         self.output_shape = (config.d_model,)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, L, D) or (B, D)
+        # x: (B, L, D) or (B, D) or (B, L, C, H, W)
+        if x.dim() > 3:
+            # (B, L, C, H, W) -> (B, L, Features)
+            x = x.flatten(2, -1)
+
         if x.dim() == 2:
             x = x.unsqueeze(1)  # (B, 1, D)
 

@@ -137,10 +137,11 @@ class MLPBackbone(nn.Module):
         self.output_shape = (all_dims[-1],)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Standard forward pass for a feature extraction backbone."""
-        assert (
-            x.dim() == 2
-        ), f"MLPBackbone input must be (Batch, Features), got shape {x.shape}"
+        """Standard forward pass with automatic flattening for multi-dim inputs."""
+        if x.dim() > 2:
+            # Flatten everything except batch into a feature vector
+            x = x.flatten(1, -1)
+
         return self.model(x)
 
     def reset_noise(self) -> None:
