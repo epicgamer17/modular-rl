@@ -212,101 +212,73 @@ class AgentNetwork(nn.Module):
     def learner_inference(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         """Simplified router for batch unrolls during learning."""
         obs = batch["observations"].to(self.device).float()
-        # 1. Representation Phase
-        # Validate Shape: Observation must be either [Batch, *input_shape] OR [Batch, Time, *input_shape]
-        expected_dims = len(self.input_shape)
-        obs_dims = obs.dim()
 
-        assert obs_dims in [expected_dims + 1, expected_dims + 2], (
-            f"Expected obs to have {expected_dims + 1} (Root) or {expected_dims + 2} (Sequence) dimensions, "
-            f"got {obs_dims}. Input shape config: {self.input_shape}"
-        )
+        # 1. Root Latent (Backbones handle sequence dimensions automatically)
+        root_latent = self.components["representation"](obs)
 
-        has_time_dim = obs_dims == expected_dims + 2
-
-        if not has_time_dim:
-            # Root Observation Only (e.g. standard MuZero root generation)
-            latent = self.components["representation"](obs)
-            latents = latent.unsqueeze(1)  # [B, 1, *D]
-        else:
-            # Sequence Operations (e.g. Rainbow DQN or explicit unrolls)
-            B, T = obs.shape[:2]
-            flat_obs = obs.flatten(0, 1)
-            flat_latent = self.components["representation"](flat_obs)
-            latents = flat_latent.view(B, T, *flat_latent.shape[1:])
-
-        # 2. Environment Phase
+        # 2. Environment & Temporal Phase
         if "world_model" in self.components:
-            # Note: world_model unrolls physics across unroll_steps
-            # It expects initial_latent_state to be the ROOT latent state [B, *D]
-            initial_latent_state = latents[:, 0]
+            # If obs was [B, T, ...], root_latent is [B, T, *D], and we only unroll from Step 0.
+            # If obs was [B, ...], root_latent is [B, *D], and it's the root.
+            is_seq = root_latent.dim() > (len(self.input_shape) + 1)
+            initial_latent_state = root_latent[:, 0] if is_seq else root_latent
+
             env_results = self.components["world_model"].unroll_physics(
                 initial_latent_state=initial_latent_state,
                 actions=batch["actions"],
                 encoder_inputs=batch.get("chance_encoder_inputs"),
                 true_chance_codes=batch.get("chance_codes"),
             )
-            # The WorldModel returns the sequence of latents starting from root
             latents = env_results["latents"]
+
+            # Extract afterstates immediately if they exist
+            flat_as = env_results.get("latents_afterstates")
+            if flat_as is not None:
+                flat_as = flat_as.flatten(0, 1)
         else:
             env_results = {}
+            # If not using a world model, ensure latents has Batch/Time [B, T, *D]
+            latents = (
+                root_latent.unsqueeze(1)
+                if root_latent.dim() == (len(self.input_shape) + 1)
+                else root_latent
+            )
+            flat_as = None
 
-        # 2. Spatial & Temporal Phase (Routing)
         B, T = latents.shape[:2]
         flat_memory, _ = self._apply_spatial_temporal(latents, B, T)
 
-        # Pull afterstate features for routing
-        flat_as = None
-        if "world_model" in self.components and self.stochastic:
-            if "latents_afterstates" in env_results:
-                flat_as = env_results["latents_afterstates"].flatten(0, 1)
+        # 3. The Feature Pool (Strict Contract, No Fallbacks!)
+        feature_pool = {"default": flat_memory}
+        if flat_as is not None:
+            feature_pool["afterstate"] = flat_as
 
-        # 4. Feature Pool Phase: Centralize all valid feature streams for routing
-        feature_pool = {
-            "default": flat_memory,
-            "afterstate": flat_as,
-        }
+        # 4. Behavior Heads Phase
+        flat_mask = batch.get("action_masks")
+        if flat_mask is not None:
+            flat_mask = flat_mask.flatten(0, 1)
 
-        # 5. Behavior Heads Phase
-        mask = batch.get("action_masks")
-        flat_mask = mask.flatten(0, 1) if mask is not None else None
-
-        initial_state = batch.get("network_state", {})
         behavior_results = {}
         for name, head in self.components["behavior_heads"].items():
-            # Dynamic Routing: The head knows its source, the router provides the "menu"
-            source_features = feature_pool.get(head.input_source, flat_memory)
-            if source_features is None:
-                source_features = flat_memory  # Fallback
+            # STRICT ROUTING: No fallback. If config is wrong, crash loudly.
+            source = head.input_source
+            if source not in feature_pool:
+                raise ValueError(
+                    f"Head '{name}' requested '{source}' features, which are not available."
+                )
 
             head_out = head(
-                source_features,
-                state=initial_state,
+                feature_pool[source],
+                state=batch.get("network_state", {}),
                 action_mask=flat_mask,
                 **batch,
             )
+            behavior_results[name] = head_out.training_tensor.view(B, T, -1)
 
-            # Use exact head names as keys.
-            full_seq = head_out.training_tensor.view(B, T, -1)
-
-            if name == "afterstate_value":
-                # Special handling for afterstate values: prepend zero for root
-                root_as_values = torch.zeros(
-                    B, 1, *full_seq.shape[2:], device=self.device
-                )
-                behavior_results["afterstate_values"] = torch.cat(
-                    [root_as_values, full_seq], dim=1
-                )
-            else:
-                behavior_results[name] = full_seq
-
-        if "world_model" in self.components and self.stochastic:
-            behavior_results["chance_logits"] = env_results.get("chance_logits")
-
-        # Merge and Validate
+        # Note: chance_logits assignment deleted. It merges automatically below!
         final_output = {**env_results, **behavior_results, "latents": latents}
-
         self.validator.validate_predictions(final_output)
+
         return final_output
 
     def hidden_state_inference(
