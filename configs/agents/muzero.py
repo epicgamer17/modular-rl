@@ -79,89 +79,76 @@ class MuZeroConfig(
         reward_head_cls = (
             ValuePrefixRewardHeadConfig if self.use_value_prefix else RewardHeadConfig
         )
-        # Reward Head Parsing
+        self.heads = {}
+        # Reward Head Parsing (Environment Head)
         rh_dict = self.parse_field("reward_head", default=None, required=False)
         if rh_dict is not None:
             if self.use_value_prefix:
-                if "lstm_hidden_size" not in rh_dict:
-                    rh_dict["lstm_hidden_size"] = self.lstm_hidden_size
-                if "lstm_horizon_len" not in rh_dict:
-                    rh_dict["lstm_horizon_len"] = self.lstm_horizon_len
-
+                rh_dict.setdefault("lstm_hidden_size", self.lstm_hidden_size)
+                rh_dict.setdefault("lstm_horizon_len", self.lstm_horizon_len)
             if self.atom_size > 1:
-                rew_strat = rh_dict.get("output_strategy", None)
-                if rew_strat is None:
-                    rew_strat = {"type": "muzero", "support_range": self.support_range}
-                rew_strat["num_classes"] = self.atom_size
-                rew_strat["support_range"] = self.support_range
+                rew_strat = rh_dict.get("output_strategy", {})
+                rew_strat.update({"type": "muzero", "num_classes": self.atom_size, "support_range": self.support_range})
                 rh_dict["output_strategy"] = rew_strat
-
             self.reward_head = reward_head_cls(rh_dict)
         else:
             self.reward_head = None
 
-        # Value Head Parsing
+        # Value Head Parsing (Behavioral Head)
         value_dict = self.parse_field("value_head", default=None, required=False)
         if value_dict is not None:
             if self.atom_size > 1:
-                val_strat = value_dict.get("output_strategy", None)
-                if val_strat is None:
-                    val_strat = {"type": "muzero", "support_range": self.support_range}
-                val_strat["num_classes"] = self.atom_size
-                val_strat["support_range"] = self.support_range
+                val_strat = value_dict.get("output_strategy", {})
+                val_strat.update({"type": "muzero", "num_classes": self.atom_size, "support_range": self.support_range})
                 value_dict["output_strategy"] = val_strat
             self.value_head = ValueHeadConfig(value_dict)
+            self.heads["state_value"] = self.value_head
+            
+            # Afterstate value head for stochastic MuZero
+            if self.stochastic:
+                self.heads["afterstate_value"] = self.value_head
         else:
             self.value_head = None
 
-        # To Play Head Parsing
+        # To Play Head Parsing (Environment Head)
         tp_dict = self.parse_field("to_play_head", default=None, required=False)
         if tp_dict is not None:
-            if "num_players" not in tp_dict:
-                tp_dict["num_players"] = self.game.num_players
+            tp_dict.setdefault("num_players", self.game.num_players)
             tp_strat = tp_dict.get("output_strategy", {"type": "categorical"})
-            if "num_classes" not in tp_strat:
-                tp_strat["num_classes"] = self.game.num_players
+            tp_strat.setdefault("num_classes", self.game.num_players)
             tp_dict["output_strategy"] = tp_strat
             self.to_play_head = ToPlayHeadConfig(tp_dict)
         else:
             self.to_play_head = None
 
-        # Policy Head Parsing
+        # Policy Head Parsing (Behavioral Head)
         poly_dict = self.parse_field("policy_head", default=None, required=False)
         if poly_dict is not None:
-            num_actions = self.game.num_actions
-            if num_actions is not None:
-                pol_strat = poly_dict.get("output_strategy", {"type": "categorical"})
-                if "num_classes" not in pol_strat:
-                    pol_strat["num_classes"] = num_actions
-                poly_dict["output_strategy"] = pol_strat
+            pol_strat = poly_dict.get("output_strategy", {"type": "categorical"})
+            pol_strat.setdefault("num_classes", self.game.num_actions)
+            poly_dict["output_strategy"] = pol_strat
             self.policy_head = PolicyHeadConfig(poly_dict)
+            self.heads["policy_logits"] = self.policy_head
         else:
             self.policy_head = None
 
-        # Chance Probability Head Parsing
+        # Chance Probability Head Parsing (Environment Head)
         chance_dict = self.parse_field("chance_probability_head", default=None, required=False)
         if chance_dict is not None:
             chance_strat = chance_dict.get("output_strategy", {"type": "categorical"})
-            if "num_classes" not in chance_strat:
-                chance_strat["num_classes"] = self.num_chance
+            chance_strat.setdefault("num_classes", self.num_chance)
             chance_dict["output_strategy"] = chance_strat
             self.chance_probability_head = ChanceProbabilityHeadConfig(chance_dict)
         else:
             self.chance_probability_head = None
 
-        # Continuation Head
+        # Continuation Head Parsing (Environment Head)
         c_dict = self.parse_field("continuation_head", default=None, required=False)
         if c_dict is not None:
-            # Inject auto-num_classes for continuation if not provided
             c_strat = c_dict.get("output_strategy", {"type": "categorical"})
-            if "num_classes" not in c_strat:
-                c_strat["num_classes"] = 2
+            c_strat.setdefault("num_classes", 2)
             c_dict["output_strategy"] = c_strat
-            self.continuation_head: Optional[ContinuationHeadConfig] = (
-                ContinuationHeadConfig(c_dict)
-            )
+            self.continuation_head = ContinuationHeadConfig(c_dict)
         else:
             self.continuation_head = None
 

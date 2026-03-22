@@ -36,7 +36,9 @@ class AgentConfig(
     memory_core: Optional[Any] = None
     prediction_backbone: Optional[Any] = None # Legacy/Bridge name
     
-    # Behavioral Heads
+    heads: Dict[str, Any] = {}
+    
+    # Behavioral Heads (Deprecated: Move to 'heads' dict)
     policy_head: Optional[Any] = None
     value_head: Optional[Any] = None
     afterstate_value_head: Optional[Any] = None
@@ -58,6 +60,7 @@ class AgentConfig(
     def __init__(self, config_dict: dict, game_config: GameConfig) -> None:
         super().__init__(config_dict)
         self.game = game_config
+        self.heads = {}
 
         self.agent_type: str = self.parse_field("agent_type", required=True)
         self.results_path: str = self.parse_field("results_path", "results")

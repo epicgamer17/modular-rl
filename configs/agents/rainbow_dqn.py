@@ -91,6 +91,7 @@ class RainbowConfig(
 
         # If user DID NOT define strategy, infer from self.atom_size (Legacy/Fallback)
         else:
+            head_dict = {}
             if self.atom_size > 1:
                 head_dict["output_strategy"] = {
                     "type": "c51",
@@ -101,12 +102,14 @@ class RainbowConfig(
             else:
                 head_dict["output_strategy"] = {"type": "scalar"}
 
+        self.heads = {}
         # 3. Construct Head Config
         if head_dict is not None:
             if self.dueling:
                 self.head = DuelingQHeadConfig(head_dict)
             else:
                 self.head = QHeadConfig(head_dict)
+            self.heads["q_logits"] = self.head
         else:
             self.head = None
 

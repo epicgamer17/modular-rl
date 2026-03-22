@@ -10,12 +10,10 @@ from modules.models.world_model import WorldModel
 from modules.backbones.factory import BackboneFactory
 from modules.backbones.recurrent import RecurrentBackbone
 from modules.backbones.transformer import TransformerBackbone
-from modules.heads.policy import PolicyHead
-from modules.heads.value import ValueHead
-from modules.heads.q import QHead, DuelingQHead
-from agents.learner.losses.representations import get_representation
+from modules.heads.factory import HeadFactory
 from modules.projectors.sim_siam import Projector
 from agents.learner.losses.shape_validator import ShapeValidator
+from agents.learner.losses.representations import get_representation
 
 class AgentNetwork(nn.Module):
     """
@@ -61,61 +59,42 @@ class AgentNetwork(nn.Module):
                 self.components["feature_extractor"] = backbone
             current_head_input_shape = backbone.output_shape
 
-        # 3. Behavior Phase: Behavioral Heads (Policy, Value, Q)
-        if config.policy_head is not None:
-            pol_rep = get_representation(config.policy_head.output_strategy)
-            self.components["behavior_heads"]["policy_logits"] = PolicyHead(
+        # 3. Behavior Phase: Behavioral Heads (Policy, Value, Q, etc.)
+        for head_name, head_config in config.heads.items():
+            if head_config is None:
+                continue
+
+            # Generate representation dynamically if the head config specifies an output strategy
+            # Note: Some heads (like Q) might need special handling or pre-baked representations.
+            # We default to standard representation generation if 'output_strategy' is present.
+            rep = None
+            if hasattr(head_config, "output_strategy") and head_config.output_strategy is not None:
+                from agents.learner.losses.representations import get_representation
+                rep = get_representation(head_config.output_strategy)
+
+            # Route to correct input shape (Afterstate vs Root)
+            # This is currently the only notable "bleed" of logic. 
+            # If a head is an 'afterstate' head, it takes shared_backbone features.
+            head_input_shape = current_head_input_shape
+            if head_name == "afterstate_value" and "world_model" in self.components:
+                head_input_shape = self.components["world_model"].shared_backbone.output_shape
+
+            self.components["behavior_heads"][head_name] = HeadFactory.create(
+                head_config,
                 arch_config=config.arch,
-                input_shape=current_head_input_shape,
-                neck_config=config.policy_head.neck,
-                representation=pol_rep,
+                input_shape=head_input_shape,
+                num_actions=self.num_actions,
+                num_players=getattr(config.game, "num_players", 1),
+                num_chance_codes=getattr(config, "num_chance", 0),
+                representation=rep,
             )
 
-        if config.value_head is not None:
-            val_rep = get_representation(config.value_head.output_strategy)
-            self.components["behavior_heads"]["state_value"] = ValueHead(
-                arch_config=config.arch,
-                input_shape=current_head_input_shape,
-                representation=val_rep,
-                neck_config=config.value_head.neck,
-            )
-
-        if config.stochastic:
-            val_rep = get_representation(config.value_head.output_strategy)
-            shared_backbone_output_shape = self.components[
-                "world_model"
-            ].shared_backbone.output_shape
-            self.components["behavior_heads"]["afterstate_value"] = ValueHead(
-                arch_config=config.arch,
-                input_shape=shared_backbone_output_shape,
-                representation=val_rep,
-                neck_config=config.value_head.neck,
-            )
-
-        if config.head is not None and config.policy_head is None:
-            representation = get_representation(config.head.output_strategy)
-            if config.dueling:
-                self.components["behavior_heads"]["q_logits"] = DuelingQHead(
-                    arch_config=config.arch,
-                    input_shape=current_head_input_shape,
-                    representation=representation,
-                    value_hidden_widths=config.head.value_hidden_widths,
-                    advantage_hidden_widths=config.head.advantage_hidden_widths,
-                    num_actions=num_actions,
-                    neck_config=config.head.neck,
-                )
-            else:
-                self.components["behavior_heads"]["q_logits"] = QHead(
-                    arch_config=config.arch,
-                    input_shape=current_head_input_shape,
-                    representation=representation,
-                    hidden_widths=config.head.hidden_widths,
-                    num_actions=num_actions,
-                    neck_config=config.head.neck,
-                )
-
+        # 4. Fallback: Identity Policy Head (Legacy support for backbone-only tests)
         if len(self.components["behavior_heads"]) == 0 and config.prediction_backbone is not None:
             from configs.modules.backbones.factory import BackboneConfigFactory
+            from agents.learner.losses.representations import get_representation
+            from modules.heads.policy import PolicyHead
+            
             self.components["behavior_heads"]["policy_logits"] = PolicyHead(
                 arch_config=config.arch,
                 input_shape=current_head_input_shape,
@@ -326,9 +305,8 @@ class AgentNetwork(nn.Module):
             if name == "afterstate_value":
                 continue
             flat_out, _ = head(flat_memory)
-            # Use strict naming or plurality based on user preference
-            key = f"{name}s" if not name.endswith("s") else name
-            behavior_results[key] = flat_out.view(B, T, -1)
+            # Use exact head names as keys. Zero string manipulation.
+            behavior_results[name] = flat_out.view(B, T, -1)
 
         # 5. Stochastic Afterstate Phase (Exception Case)
         if "world_model" in self.components and getattr(self.config, "stochastic", False):

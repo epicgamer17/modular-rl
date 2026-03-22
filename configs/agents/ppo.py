@@ -38,6 +38,7 @@ class PPOConfig(AgentConfig, DistributionalConfig, NoisyConfig):
 
         self.critic = critic_config
 
+        self.heads = {}
         # Policy Head Parsing
         policy_dict = self.parse_field("policy_head", default=None, required=False)
         if policy_dict is not None:
@@ -48,6 +49,7 @@ class PPOConfig(AgentConfig, DistributionalConfig, NoisyConfig):
                     pol_strat["num_classes"] = num_actions
                 policy_dict["output_strategy"] = pol_strat
             self.policy_head = PolicyHeadConfig(policy_dict)
+            self.heads["policy_logits"] = self.policy_head
         else:
             self.policy_head = None
 
@@ -55,14 +57,11 @@ class PPOConfig(AgentConfig, DistributionalConfig, NoisyConfig):
         value_dict = self.parse_field("value_head", default=None, required=False)
         if value_dict is not None:
             if self.atom_size > 1:
-                val_strat = value_dict.get("output_strategy", None)
-                if val_strat is None:
-                    raise ValueError(
-                        f"Distributional PPO (atom_size={self.atom_size}) requires an explicit output_strategy for the value head."
-                    )
-                val_strat["num_classes"] = self.atom_size
+                val_strat = value_dict.get("output_strategy", {})
+                val_strat.setdefault("num_classes", self.atom_size)
                 value_dict["output_strategy"] = val_strat
             self.value_head = ValueHeadConfig(value_dict)
+            self.heads["state_value"] = self.value_head
         else:
             self.value_head = None
 

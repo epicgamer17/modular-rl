@@ -9,6 +9,7 @@ from .chance_probability import ChanceProbabilityHead
 from .continuation import ContinuationHead
 from .observation import ObservationHead
 from .latent_consistency import LatentConsistencyHead
+from .q import QHead, DuelingQHead
 from configs.modules.heads.to_play import ToPlayHeadConfig
 from configs.modules.heads.value import ValueHeadConfig
 from configs.modules.heads.reward import RewardHeadConfig, ValuePrefixRewardHeadConfig
@@ -17,6 +18,7 @@ from configs.modules.heads.chance_probability import ChanceProbabilityHeadConfig
 from configs.modules.heads.continuation import ContinuationHeadConfig
 from configs.modules.heads.observation import ObservationHeadConfig
 from configs.modules.heads.latent_consistency import LatentConsistencyHeadConfig
+from configs.modules.heads.q import QHeadConfig, DuelingQHeadConfig
 from configs.modules.heads.base import HeadConfig
 from configs.modules.architecture_config import ArchitectureConfig
 
@@ -34,6 +36,8 @@ class HeadFactory:
         ContinuationHeadConfig: ContinuationHead,
         ObservationHeadConfig: ObservationHead,
         LatentConsistencyHeadConfig: LatentConsistencyHead,
+        QHeadConfig: QHead,
+        DuelingQHeadConfig: DuelingQHead,
     }
 
     @classmethod
@@ -111,6 +115,35 @@ class HeadFactory:
                 representation=kwargs.get("representation"),
                 neck_config=config.neck,
                 projection_dim=config.projection_dim,
+            )
+
+        # QHead
+        if isinstance(config, QHeadConfig):
+            num_actions = kwargs.get("num_actions")
+            if num_actions is None:
+                raise ValueError("QHead requires num_actions to be passed.")
+            return QHead(
+                arch_config=arch_config,
+                input_shape=input_shape,
+                representation=kwargs.get("representation"),
+                hidden_widths=config.hidden_widths,
+                num_actions=num_actions,
+                neck_config=config.neck,
+            )
+
+        # DuelingQHead
+        if isinstance(config, DuelingQHeadConfig):
+            num_actions = kwargs.get("num_actions")
+            if num_actions is None:
+                raise ValueError("DuelingQHead requires num_actions to be passed.")
+            return DuelingQHead(
+                arch_config=arch_config,
+                input_shape=input_shape,
+                representation=kwargs.get("representation"),
+                value_hidden_widths=config.value_hidden_widths,
+                advantage_hidden_widths=config.advantage_hidden_widths,
+                num_actions=num_actions,
+                neck_config=config.neck,
             )
 
         return head_cls(
