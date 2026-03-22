@@ -102,7 +102,7 @@ class WorldModel(nn.Module):
                 head_config,
                 arch_config=config.arch,
                 input_shape=self.dynamics.output_shape,
-                num_players=getattr(config.game, "num_players", 1),
+                num_players=config.game.num_players,
                 num_actions=self.num_actions,
                 num_chance_codes=getattr(config, "num_chance", 0),
                 representation=rep,
@@ -186,11 +186,15 @@ class WorldModel(nn.Module):
         new_head_state = {}
 
         for name, head in self.heads.items():
-            h_state = {k.replace(f"{name}_", ""): v for k, v in head_state.items() if k.startswith(name)}
+            h_state = {
+                k.replace(f"{name}_", ""): v
+                for k, v in head_state.items()
+                if k.startswith(name)
+            }
             head_out = head(next_hidden_state, state=h_state if h_state else None)
             predictions[name] = head_out.training_tensor
             predictions[f"{name}_extra"] = head_out.inference_tensor
-            
+
             if head_out.state:
                 for k, v in head_out.state.items():
                     new_head_state[f"{name}_{k}"] = v
@@ -239,14 +243,20 @@ class WorldModel(nn.Module):
         head_sequences = {name: [] for name in self.heads.keys()}
 
         current_latent = initial_latent_state
-        current_head_state: Dict[str, Any] = head_state if head_state is not None else {}
+        current_head_state: Dict[str, Any] = (
+            head_state if head_state is not None else {}
+        )
 
         # Initial head prediction for root
         for name, head in self.heads.items():
-            h_state = {k.replace(f"{name}_", ""): v for k, v in current_head_state.items() if k.startswith(name)}
+            h_state = {
+                k.replace(f"{name}_", ""): v
+                for k, v in current_head_state.items()
+                if k.startswith(name)
+            }
             head_out = head(current_latent, state=h_state if h_state else None)
             head_sequences[name].append(head_out.training_tensor)
-            
+
             if head_out.state:
                 for k, v in head_out.state.items():
                     current_head_state[f"{name}_{k}"] = v
@@ -284,10 +294,14 @@ class WorldModel(nn.Module):
 
             # Heads Phase
             for name, head in self.heads.items():
-                h_state = {k.replace(f"{name}_", ""): v for k, v in current_head_state.items() if k.startswith(name)}
+                h_state = {
+                    k.replace(f"{name}_", ""): v
+                    for k, v in current_head_state.items()
+                    if k.startswith(name)
+                }
                 head_out = head(next_latent, state=h_state if h_state else None)
                 head_sequences[name].append(head_out.training_tensor)
-                
+
                 if head_out.state:
                     for k, v in head_out.state.items():
                         current_head_state[f"{name}_{k}"] = v

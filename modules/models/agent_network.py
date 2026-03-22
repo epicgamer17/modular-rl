@@ -235,19 +235,39 @@ class AgentNetwork(nn.Module):
     def learner_inference(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         """Simplified router for batch unrolls during learning."""
         obs = batch["observations"].to(self.device).float()
-        
         # 1. Representation Phase
-        B, T = obs.shape[:2]
-        flat_obs = obs.flatten(0, 1)
-        flat_latent = self.components["representation"](flat_obs)
-        latents = flat_latent.view(B, T, *flat_latent.shape[1:])
+        # Validate Shape: Observation must be either [Batch, *input_shape] OR [Batch, Time, *input_shape]
+        expected_dims = len(self.input_shape)
+        obs_dims = obs.dim()
+        
+        assert obs_dims in [expected_dims + 1, expected_dims + 2], (
+            f"Expected obs to have {expected_dims + 1} (Root) or {expected_dims + 2} (Sequence) dimensions, "
+            f"got {obs_dims}. Input shape config: {self.input_shape}"
+        )
 
-        B, T = latents.shape[:2]
+        has_time_dim = (obs_dims == expected_dims + 2)
+        
+        if not has_time_dim:
+            # Root Observation Only (e.g. standard MuZero root generation)
+            latent = self.components["representation"](obs)
+            latents = latent.unsqueeze(1) # [B, 1, *D]
+        else:
+            # Sequence Operations (e.g. Rainbow DQN or explicit unrolls)
+            B, T = obs.shape[:2]
+            flat_obs = obs.flatten(0, 1)
+            flat_latent = self.components["representation"](flat_obs)
+            latents = flat_latent.view(B, T, *flat_latent.shape[1:])
 
         target_latents = None
         if "world_model" in self.components and getattr(self.config, "consistency_loss_factor", 0) > 0:
             if "unroll_observations" in batch:
                 target_obs = batch["unroll_observations"].to(self.device).float()
+                
+                assert target_obs.dim() == expected_dims + 2, (
+                    f"unroll_observations must strictly be a sequence with {expected_dims + 2} dims, "
+                    f"got {target_obs.dim()}"
+                )
+                
                 B_t, T_t = target_obs.shape[:2]
                 flat_target = target_obs.flatten(0, 1)
                 with torch.no_grad():
