@@ -198,12 +198,12 @@ class WorldModel(nn.Module):
                     num_chance_codes=getattr(config, "num_chance", 0),
                 )
 
+        self.register_buffer("_device_indicator", torch.empty(0))
+
     @property
     def device(self) -> torch.device:
-        try:
-            return next(self.parameters()).device
-        except StopIteration:
-            return torch.device("cpu")
+        """Determines the device the world model is currently on using a buffer indicator."""
+        return self._device_indicator.device
 
 
 

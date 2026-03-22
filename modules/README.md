@@ -1,93 +1,97 @@
-# Neural Network Modules
+🧠 RainbowZero Core Modules
+This directory contains the neural network component library for the RainbowZero framework.
 
-Reusable neural network components and building blocks for RL agents. Provides modular architectures that can be composed for different algorithms.
+The architecture has been radically refactored from script-like "God-classes" into a Declarative Component Library. By enforcing strict tensor contracts and absolute separation of concerns, this engine can dynamically assemble networks for PPO, Recurrent PPO, Rainbow DQN, MuZero, and Stochastic MuZero entirely via configuration, without a single if algorithm == ... branch in the forward passes.
 
-## Installation
+🧭 Core Philosophy
+Dumb Components, Smart Routers: Individual neural network layers (Backbones, Heads) do not know anything about RL algorithms, Time dimensions, or sequence lengths. They just do raw math on batches of tensors. The routing logic (AgentNetwork, WorldModel) handles all temporal logic and dictionary merging.
 
-Modules are included in the main package:
+Data Flow over Control Flow: We avoid if hasattr(...) and if stochastic: inside forward passes. Instead, we use the Strategy Pattern (e.g., DeterministicDynamics vs StochasticDynamics) and explicit component instantiation.
 
-```bash
-pip install -e .
-```
+No Magic: We do not dynamically guess shapes during the forward pass. Math is deterministic. Expected shapes are calculated during __init__ and enforced via rigorous assertions.
 
-## Structure
+🏗️ Architecture Overview
+The system is split into two primary routers and three categories of Lego-block components.
 
-```
-modules/
-├── utils.py                     # Module utilities and helpers
-├── backbones/                   # Feature extraction backbones (ResNet, Conv, MLP)
-├── heads/                       # Semantic heads (Policy, Value, Q)
-├── models/                      # Architectural Routers
-│   ├── agent_network.py         # Unified Agent Network (Switchboard)
-│   ├── world_model.py           # Unified World Model (Physics Engine)
-│   └── inference_output.py      # Type-hinted output structures
-└── ...
-```
+The Routers (in models/)
+1. AgentNetwork (The Actor/Learner Core)
+The absolute center of the framework. It acts as the Switchboard between the RL System and the PyTorch Sub-modules.
 
-## Core Components
+Owns: The Representation backbone (Encoder), the Memory Core (RNNs), and all Behavior Heads (Policy, Value, Q-Values).
 
-### Convolutional Layers (`backbones/conv.py`)
-- `ConvBackbone` - Multi-stage Conv2d + BatchNorm + Activation ✅
-- `DeconvBackbone` - ConvTranspose2d for decoding/generation ✅
-- Built natively with `nn.Sequential` for performance.
+Role: Routes raw observations to the latent space, optionally passes them to the World Model to simulate the future, and maps latents to behaviors.
 
-### Dense Layers (`backbones/dense.py`)
-- `MLPBackbone` - Multi-layer perceptron with configurable depth/width ✅
-- `NoisyLinear` - Linear layer with learned noise (Noisy Nets) ✅
-- Direct construction with `nn.Sequential` eliminates redundant wrappers.
+2. WorldModel (The Environment Simulator)
+A self-contained "Simulator in a Box" that can be pre-trained, frozen, or transferred.
 
-### Residual Blocks (`backbones/resnet.py`)
-- `ResidualBlock` - Standard residual connection with configurable norm ✅
-- `ResNetBackbone` - High-performance residual stack constructed via `nn.Sequential` ✅
+Owns: The DynamicsPipeline and all Environment Heads (Reward, To-Play, Continuation).
 
-### Network Heads (`heads/`)
-- `PolicyHead` - Outputs action probabilities/logits
-- `ValueHead` - Outputs state value
-- `RewardHead` - Predicts environment rewards
+Role: Strictly simulates environment physics. It takes a latent state and an action, predicts the next latent state, and predicts the semantics of the environment. It does not know about policy or value.
 
-## Logical Routers (`models/`)
+The Components
+backbones/ (Feature Extractors): Pure PyTorch networks (ResNets, MLPs, Transformers). They map an input tensor to a feature tensor. They do not output semantics.
 
-This framework avoids hardcoded agent-specific architectures (e.g., `RainbowNet.py`). Instead, it uses a dynamic "Switchboard" pattern where backbones and heads are assembled based on configuration.
+heads/ (Semantic Predictors): Terminal layers. They map a feature tensor to a specific RL concept (e.g., ValueHead, PolicyHead). All heads strictly return a standardized HeadOutput.
 
-### AgentNetwork (`agent_network.py`)
-The central orchestrator that routes data through Environment, Spatial, and Temporal phases to produce semantic outputs.
+embeddings/ (Action Translation): Handles the translation of RL actions (discrete or continuous) into dense vectors or spatial planes, and fuses them into latent states.
 
-```python
-from modules.models import AgentNetwork
-from configs.agents.muzero import MuZeroConfig
+📜 Strict Contracts
+To ensure dynamic assembly works without crashing, all modules must adhere to the following strict contracts.
 
-# Assembled dynamically from configuration components
-config = MuZeroConfig(...)
-network = AgentNetwork(
-    input_shape=(3, 96, 96),
-    num_actions=4,
-    arch_config=config.arch,
-    representation_config=config.representation_backbone,
-    world_model_config=config.world_model,
-    heads_config=config.heads,
-)
-```
+1. The Flat-Batching Contract
+PyTorch spatial layers (Convs, Linear) do not natively understand the Time dimension (B,T,...).
 
-### WorldModel (`world_model.py`)
-A modular physics engine for model-based planning (MCTS).
+Backbones and Heads: Must strictly expect purely flat batches: (B∗,Features). They never reshape sequences.
 
-```python
-from modules.models import WorldModel
+The Router: The AgentNetwork explicitly intercepts sequences, flattens them tensor.flatten(0, 1), passes them through spatial backbones, and unflattens them .view(B, T, -1) only at the boundary of a Memory Core (RNN) or just before returning the final loss dictionary.
 
-# Encapsulates Representation, Dynamics, and Stochastic components with explicit parameters
-world_model = WorldModel(
-    latent_dimensions=(128,),
-    num_actions=4,
-    world_model_config=config.world_model,
-    arch_config=config.arch,
-)
-```
+2. The Recurrent State Contract
+A recurrent state is strictly a flat dictionary of PyTorch Tensors: Dict[str, Tensor].
 
-## Utility Functions
+No nested dictionaries. No tuples. No lists.
 
-`utils.py` provides:
-- Layer initialization schemes (orthogonal, xavier)
-- Activation function helpers
-- Shape calculation utilities
-- Parameter count functions
-- Mixed-precision/Device helpers
+If an LSTM outputs a tuple (h, c), it must be packed into the dictionary as {"lstm_h": h, "lstm_c": c} by the Backbone before being returned to the Router.
+
+This ensures that state merging via ** unpacking and state batching is perfectly uniform and branchless.
+
+3. The HeadOutput Contract
+Every BaseHead subclass must return a HeadOutput dataclass:
+
+Python
+@dataclass
+class HeadOutput:
+    training_tensor: torch.Tensor     # The raw logits/values for the Learner's loss function
+    inference_tensor: Optional[Any]   # The argmax / PyTorch Distribution for the Actor
+    state: Dict[str, torch.Tensor]    # Updated memory state (empty {} if stateless)
+Masking: Invalid action masking is handled inside the PolicyHead. It masks the logits to -1e8 before returning the training_tensor, completely isolating the Loss Pipeline from the concept of legal moves.
+
+4. The Action Fusion Contract
+Dynamics models do not accept vague "contexts". Actions are fused explicitly.
+
+ActionFusion takes a (latent, action). It embeds the action via ActionEncoder and concatenates/adds it to the latent before passing it to the raw dynamics backbones.
+
+🛠️ Adding a New Algorithm (Example)
+Because of this modularity, adding complex algorithmic features requires zero changes to the core routing logic.
+
+Want to add an Auxiliary Observation Reconstruction Loss to PPO?
+
+Create ObservationReconstructionHead in heads/observation.py.
+
+Add "reconstruction": ObservationHeadConfig(...) to your PPO configuration's heads dictionary.
+
+You're done. The AgentNetwork will dynamically instantiate the head, route the memory features to it, and output "reconstruction" in the final dictionary for the Loss Pipeline.
+
+Want to swap standard MuZero to Stochastic MuZero?
+
+Set stochastic = True in the config.
+
+The WorldModel dynamically instantiates the StochasticDynamics pipeline instead of the DeterministicDynamics pipeline.
+
+The forward passes automatically generate afterstates and chance codes.
+
+🧹 Technical Debt Zero
+No __init__(self, config) in components: Components accept strict, typed kwargs. They do not depend on massive global configuration objects.
+
+No target_latents in the forward pass: The network only computes predictions. Target construction is strictly delegated to the Learner/TargetBuilder.
+
+No manual .device tracking: Devices are resolved using the native dummy-buffer pattern.

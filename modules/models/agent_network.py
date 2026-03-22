@@ -109,6 +109,8 @@ class AgentNetwork(nn.Module):
                 self.flat_hidden_dim, projector_config
             )
 
+        self.register_buffer("_device_indicator", torch.empty(0))
+
 
 
     def initialize(
@@ -129,10 +131,8 @@ class AgentNetwork(nn.Module):
 
     @property
     def device(self) -> torch.device:
-        try:
-            return next(self.parameters()).device
-        except StopIteration:
-            return torch.device("cpu")
+        """Determines the device the network is currently on using a buffer indicator."""
+        return self._device_indicator.device
 
     def reset_noise(self) -> None:
         """Recursively resamples NoisyNet parameters across all nested components."""
