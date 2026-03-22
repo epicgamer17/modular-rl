@@ -112,43 +112,29 @@ class MLPBackbone(nn.Module):
         self.input_shape = input_shape
         self.noisy = config.noisy_sigma != 0
 
-        # Determine initial width
-        if len(input_shape) == 3:
-            # Flattened image input (C, H, W)
-            current_width = input_shape[0] * input_shape[1] * input_shape[2]
-        else:
-            # Vector input (D,)
-            current_width = input_shape[0]
+        # Calculate dimensions sequence
+        input_dim = torch.Size(input_shape).numel()
+        all_dims = [input_dim] + list(config.widths)
 
         layers = []
-        for width in config.widths:
+        for in_f, out_f in zip(all_dims[:-1], all_dims[1:]):
             # Use bias only if not using normalization
             use_bias = config.norm_type == "none"
 
-            # Linear layer
-            if config.noisy_sigma == 0:
-                layers.append(nn.Linear(current_width, width, bias=use_bias))
-            else:
-                layers.append(
-                    NoisyLinear(
-                        current_width,
-                        width,
-                        initial_sigma=config.noisy_sigma,
-                        bias=use_bias,
-                    )
-                )
+            # Build layer (standard or noisy)
+            layers.append(
+                build_dense(in_f, out_f, sigma=config.noisy_sigma, bias=use_bias)
+            )
 
-            # Normalization
+            # Optional normalization
             if config.norm_type != "none":
-                layers.append(build_normalization_layer(config.norm_type, width, dim=1))
+                layers.append(build_normalization_layer(config.norm_type, out_f, dim=1))
 
             # Activation
             layers.append(config.activation)
 
-            current_width = width
-
         self.model = nn.Sequential(*layers)
-        self.output_shape = (current_width,)
+        self.output_shape = (all_dims[-1],)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Standard forward pass for a feature extraction backbone."""

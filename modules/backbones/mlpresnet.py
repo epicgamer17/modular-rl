@@ -37,31 +37,26 @@ class MLPResNetBackbone(nn.Module):
         self.input_shape = input_shape
         self.noisy = config.noisy_sigma != 0
 
-        # Determine initial width
-        if len(input_shape) == 3:
-            # Flattened image input (C, H, W)
-            current_width = input_shape[0] * input_shape[1] * input_shape[2]
-        else:
-            # Vector input (D,)
-            current_width = input_shape[0]
+        # Sequence of dimensions for residual stream
+        input_dim = torch.Size(input_shape).numel()
+        all_dims = [input_dim] + list(config.widths)
 
         layers = []
-        for width in config.widths:
+        for in_f, out_f in zip(all_dims[:-1], all_dims[1:]):
             # If width changes, add a projection layer before blocks
-            if width != current_width:
+            if in_f != out_f:
                 layers.append(
                     nn.Sequential(
-                        build_dense(current_width, width, sigma=config.noisy_sigma),
-                        build_normalization_layer(config.norm_type, width, dim=1),
+                        build_dense(in_f, out_f, sigma=config.noisy_sigma),
+                        build_normalization_layer(config.norm_type, out_f, dim=1),
                         config.activation,
                     )
                 )
-                current_width = width
 
             # Add a residual block
             layers.append(
                 MLPResidualBlock(
-                    size=current_width,
+                    size=out_f,
                     activation=config.activation,
                     norm_type=config.norm_type,
                     noisy_sigma=config.noisy_sigma,
@@ -69,7 +64,7 @@ class MLPResNetBackbone(nn.Module):
             )
 
         self.model = nn.Sequential(*layers)
-        self.output_shape = (current_width,)
+        self.output_shape = (all_dims[-1],)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Standard forward pass for a feature extraction backbone."""
