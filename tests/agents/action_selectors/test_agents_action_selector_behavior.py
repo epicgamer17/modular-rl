@@ -15,37 +15,11 @@ from agents.action_selectors.factory import SelectorFactory
 from agents.action_selectors.types import InferenceResult
 from configs.selectors import SelectorConfig
 from modules.models.inference_output import InferenceOutput
-
-
-class MockPolicyDist:
-    def __init__(self, probs):
-        self.probs = probs
-
-    def sample(self):
-        return torch.multinomial(self.probs, 1).squeeze(-1)
-
-    def log_prob(self, action):
-        return torch.log(self.probs.gather(-1, action.unsqueeze(-1)).squeeze(-1))
-
-
-class MockInferenceOutput:
-    def __init__(self, value=None, policy=None, logits=None):
-        self.value = value
-        self.policy = policy
-        self.logits = logits
-        self.network_state = None
-
-
-class MockNetwork(nn.Module):
-    def obs_inference(self, obs):
-        return InferenceOutput(
-            value=torch.tensor([0.0]),
-            policy=None,
-            reward=None,
-            to_play=None,
-            network_state=None,
-            q_values=None,
-        )
+from tests.agents.conftest import (
+    MockPolicyDist,
+    MockInferenceOutput,
+    MockInferenceNetwork as MockNetwork,
+)
 
 
 def _setup_action_selector_state():

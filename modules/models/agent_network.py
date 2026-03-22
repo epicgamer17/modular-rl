@@ -180,6 +180,8 @@ class AgentNetwork(nn.Module):
 
         outputs = {}
         network_state = dict(recurrent_state) if recurrent_state else {}
+        network_state["dynamics"] = latent  # Unconditional latent tracking
+
         for name, head in self.components["behavior_heads"].items():
             head_out = head(features, state=network_state, **kwargs)
             outputs[name] = head_out.inference_tensor
@@ -187,10 +189,6 @@ class AgentNetwork(nn.Module):
 
         if wm_output:
             network_state.update(wm_output.next_state)
-        elif "world_model" in self.components:
-            # Fallback for root: if no wm_output (e.g. from observation),
-            # we manually pack the root latent.
-            network_state["dynamics"] = latent
 
         network_state.update(next_h)
 
