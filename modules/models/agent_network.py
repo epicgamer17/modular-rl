@@ -107,20 +107,7 @@ class AgentNetwork(nn.Module):
                 representation=rep,
             )
 
-        # 4. Fallback: Identity Policy Head (Legacy support for backbone-only tests)
-        if len(self.components["behavior_heads"]) == 0 and config.prediction_backbone is not None:
-            from configs.modules.backbones.factory import BackboneConfigFactory
-            from agents.learner.losses.representations import get_representation
-            from modules.heads.policy import PolicyHead
-            
-            self.components["behavior_heads"]["policy_logits"] = PolicyHead(
-                arch_config=config.arch,
-                input_shape=current_head_input_shape,
-                neck_config=BackboneConfigFactory.create({"type": "identity"}),
-                representation=get_representation(
-                    {"type": "classification", "num_classes": num_actions}
-                ),
-            )
+
 
         if config.projector is not None:
             hidden_state_shape = current_head_input_shape
@@ -191,8 +178,7 @@ class AgentNetwork(nn.Module):
     def obs_inference(
         self, obs: Tensor, action_mask: Optional[Tensor] = None
     ) -> InferenceOutput:
-        if not torch.is_tensor(obs):
-            obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+        assert isinstance(obs, Tensor), "AgentNetwork strictly expects PyTorch Tensors."
         if obs.dim() == len(self.input_shape):
             obs = obs.unsqueeze(0)
 
