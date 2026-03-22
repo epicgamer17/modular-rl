@@ -80,6 +80,7 @@ class MuZeroConfig(
             ValuePrefixRewardHeadConfig if self.use_value_prefix else RewardHeadConfig
         )
         self.heads = {}
+        self.env_heads = {}
         # Reward Head Parsing (Environment Head)
         rh_dict = self.parse_field("reward_head", default=None, required=False)
         if rh_dict is not None:
@@ -91,6 +92,7 @@ class MuZeroConfig(
                 rew_strat.update({"type": "muzero", "num_classes": self.atom_size, "support_range": self.support_range})
                 rh_dict["output_strategy"] = rew_strat
             self.reward_head = reward_head_cls(rh_dict)
+            self.env_heads["reward_logits"] = self.reward_head
         else:
             self.reward_head = None
 
@@ -118,6 +120,7 @@ class MuZeroConfig(
             tp_strat.setdefault("num_classes", self.game.num_players)
             tp_dict["output_strategy"] = tp_strat
             self.to_play_head = ToPlayHeadConfig(tp_dict)
+            self.env_heads["to_play_logits"] = self.to_play_head
         else:
             self.to_play_head = None
 
@@ -149,6 +152,7 @@ class MuZeroConfig(
             c_strat.setdefault("num_classes", 2)
             c_dict["output_strategy"] = c_strat
             self.continuation_head = ContinuationHeadConfig(c_dict)
+            self.env_heads["continuation_logits"] = self.continuation_head
         else:
             self.continuation_head = None
 

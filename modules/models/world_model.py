@@ -14,10 +14,11 @@ from modules.models.inference_output import WorldModelOutput
 
 class WorldModel(nn.Module):
     """
-    A modular world model that encapsulates the representation, dynamics, 
-    and environment heads. Everything that extracts features is a Backbone. 
+    A modular world model that encapsulates the representation, dynamics,
+    and environment heads. Everything that extracts features is a Backbone.
     Everything that predicts semantics is a Head.
     """
+
     def __init__(
         self,
         config: MuZeroConfig,
@@ -28,7 +29,7 @@ class WorldModel(nn.Module):
         self.config = config
         self.num_actions = num_actions
         self.num_chance = config.num_chance
-        
+
         # 1. Dynamics Networks (Action-conditioned backbones)
         if self.config.stochastic:
             # Afterstate Dynamics: (Latent, Action) -> Afterstate
@@ -63,13 +64,14 @@ class WorldModel(nn.Module):
             # *WAIT, the config structure usually contains config.game.observation_shape.
             # Since we no longer receive it in __init__, we use the config's shape.
             encoder_input_shape = list(config.game.observation_shape)
-            encoder_input_shape[0] *= 2 # Double channels for stacked obs
+            encoder_input_shape[0] *= 2  # Double channels for stacked obs
             self.encoder = BackboneFactory.create(
                 config.chance_encoder_backbone, tuple(encoder_input_shape)
             )
             # Map flattened backbone output to codes
             flat_dim = 1
-            for d in self.encoder.output_shape: flat_dim *= d
+            for d in self.encoder.output_shape:
+                flat_dim *= d
             self.chance_projector = nn.Linear(flat_dim, self.num_chance)
         else:
             # Deterministic Dynamics: (Latent, Action) -> Next Latent
@@ -82,34 +84,28 @@ class WorldModel(nn.Module):
 
         # 3. Environment Heads (Physics Engine)
         self.heads = nn.ModuleDict()
-        
+
         from agents.learner.losses.representations import get_representation
-        if config.reward_head is not None:
-            r_rep = get_representation(config.reward_head.output_strategy)
-            self.heads["reward_logits"] = HeadFactory.create(
-                config.reward_head,
-                config.arch,
-                input_shape=self.dynamics.output_shape,
-                representation=r_rep,
-            )
 
-        if config.continuation_head is not None:
-            c_rep = get_representation(config.continuation_head.output_strategy)
-            self.heads["continuation_logits"] = HeadFactory.create(
-                config.continuation_head,
-                config.arch,
-                input_shape=self.dynamics.output_shape,
-                representation=c_rep,
-            )
+        for head_name, head_config in getattr(config, "env_heads", {}).items():
+            if head_config is None:
+                continue
 
-        if config.to_play_head is not None:
-            tp_rep = get_representation(config.to_play_head.output_strategy)
-            self.heads["to_play_logits"] = HeadFactory.create(
-                config.to_play_head,
-                config.arch,
+            rep = None
+            if (
+                hasattr(head_config, "output_strategy")
+                and head_config.output_strategy is not None
+            ):
+                rep = get_representation(head_config.output_strategy)
+
+            self.heads[head_name] = HeadFactory.create(
+                head_config,
+                arch_config=config.arch,
                 input_shape=self.dynamics.output_shape,
-                num_players=config.game.num_players,
-                representation=tp_rep,
+                num_players=getattr(config.game, "num_players", 1),
+                num_actions=self.num_actions,
+                num_chance_codes=getattr(config, "num_chance", 0),
+                representation=rep,
             )
 
     @property
@@ -119,8 +115,6 @@ class WorldModel(nn.Module):
         except StopIteration:
             return torch.device("cpu")
 
-
-
     def recurrent_inference(
         self,
         hidden_state: Tensor,
@@ -129,13 +123,13 @@ class WorldModel(nn.Module):
     ) -> WorldModelOutput:
         # 1. Action Fusion Phase
         fused_latent = self.dynamics_fusion(hidden_state, action)
-        
+
         # 2. Backbone Transition Phase
         next_hidden_state = self.dynamics(fused_latent)
-        
+
         # 3. MuZero Hidden State Normalization
         next_hidden_state = _normalize_hidden_state(next_hidden_state)
-        
+
         predictions = {}
         head_state = {} if recurrent_state is None else recurrent_state
         new_head_state = {}
@@ -215,16 +209,16 @@ class WorldModel(nn.Module):
         action: Tensor,
     ) -> WorldModelOutput:
         latent_state = network_state["dynamics"]
-        
+
         fused_latent = self.afterstate_fusion(latent_state, action)
         afterstate_latent = self.afterstate_dynamics(fused_latent)
         afterstate_latent = _normalize_hidden_state(afterstate_latent)
-        
+
         head_out_sigma = self.sigma_head(afterstate_latent)
         chance_logits = head_out_sigma.training_tensor
 
         return WorldModelOutput(
-            features=torch.empty(0), # Ignored in afterstate path
+            features=torch.empty(0),  # Ignored in afterstate path
             afterstate_features=afterstate_latent,
             chance=chance_logits,
         )
@@ -236,27 +230,34 @@ class WorldModel(nn.Module):
         encoder_inputs: Optional[Tensor] = None,
         true_chance_codes: Optional[Tensor] = None,
         head_state: Any = None,
-        **kwargs,
     ) -> Dict[str, Tensor]:
         unroll_steps = actions.shape[1]
         latents = [initial_latent_state]
         head_sequences = {name: [] for name in self.heads.keys()}
-        
+
         current_latent = initial_latent_state
         current_head_state = head_state if head_state is not None else {}
-        
+
         # Initial head prediction for root
         for name, head in self.heads.items():
-            h_state = current_head_state.get(name) if isinstance(current_head_state, dict) else None
+            h_state = (
+                current_head_state.get(name)
+                if isinstance(current_head_state, dict)
+                else None
+            )
             head_out = head(current_latent, state=h_state)
             head_sequences[name].append(head_out.training_tensor)
             if isinstance(current_head_state, dict):
                 current_head_state[name] = head_out.state
 
-        stochastic_sequences = {
-            "latents_afterstates": [],
-            "chance_logits": [],
-        } if self.config.stochastic else {}
+        stochastic_sequences = (
+            {
+                "latents_afterstates": [],
+                "chance_logits": [],
+            }
+            if self.config.stochastic
+            else {}
+        )
 
         for k in range(unroll_steps):
             action_k = actions[:, k]
@@ -282,7 +283,11 @@ class WorldModel(nn.Module):
 
             # Heads Phase
             for name, head in self.heads.items():
-                h_state = current_head_state.get(name) if isinstance(current_head_state, dict) else None
+                h_state = (
+                    current_head_state.get(name)
+                    if isinstance(current_head_state, dict)
+                    else None
+                )
                 head_out = head(next_latent, state=h_state)
                 head_sequences[name].append(head_out.training_tensor)
                 if isinstance(current_head_state, dict):
@@ -292,20 +297,12 @@ class WorldModel(nn.Module):
             latents.append(current_latent)
             current_latent = scale_gradient(current_latent, 0.5)
 
-
-
         output = {"latents": torch.stack(latents, dim=1)}
         for name, seq in head_sequences.items():
-            if seq: output[name] = torch.stack(seq, dim=1)
+            if seq:
+                output[name] = torch.stack(seq, dim=1)
         for name, seq in stochastic_sequences.items():
-            if seq: output[name] = torch.stack(seq, dim=1)
+            if seq:
+                output[name] = torch.stack(seq, dim=1)
 
         return output
-
-    def get_networks(self) -> Dict[str, nn.Module]:
-        return {
-            "dynamics_fusion": self.dynamics_fusion,
-            "dynamics_backbone": self.dynamics,
-            "afterstate_fusion": getattr(self, "afterstate_fusion", None),
-            "afterstate_backbone": getattr(self, "afterstate_dynamics", None),
-        }
