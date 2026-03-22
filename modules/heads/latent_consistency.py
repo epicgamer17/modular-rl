@@ -59,6 +59,7 @@ class LatentConsistencyHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        is_inference: bool = False,
         **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput with (projected_logits, consistency_embedding, state)"""
@@ -71,7 +72,9 @@ class LatentConsistencyHead(BaseHead):
         logits = self.output_layer(x)
 
         # 3. Mathematical Transform (Identity for consistency usually)
-        projected_embedding = self.representation.to_expected_value(logits)
+        projected_embedding = None
+        if is_inference:
+            projected_embedding = self.representation.to_expected_value(logits)
 
         return HeadOutput(
             training_tensor=logits,

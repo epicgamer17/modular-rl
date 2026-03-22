@@ -26,7 +26,14 @@ class RewardHead(BaseHead):
         name: Optional[str] = None,
         input_source: str = "default",
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config, name=name, input_source=input_source)
+        super().__init__(
+            arch_config,
+            input_shape,
+            representation,
+            neck_config,
+            name=name,
+            input_source=input_source,
+        )
 
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -51,6 +58,7 @@ class RewardHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        is_inference: bool = False,
         **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput containing logits and projected reward scalar."""
@@ -63,7 +71,9 @@ class RewardHead(BaseHead):
         logits = self.output_layer(x)
 
         # 3. Mathematical Transform
-        instant_reward = self.representation.to_expected_value(logits)
+        instant_reward = None
+        if is_inference:
+            instant_reward = self.representation.to_expected_value(logits)
 
         return HeadOutput(
             training_tensor=logits,
@@ -89,7 +99,15 @@ class ValuePrefixRewardHead(RewardHead):
         input_source: str = "default",
     ):
         # We call BaseHead init to avoid RewardHead's default output_layer logic
-        BaseHead.__init__(self, arch_config, input_shape, representation, neck_config, name=name, input_source=input_source)
+        BaseHead.__init__(
+            self,
+            arch_config,
+            input_shape,
+            representation,
+            neck_config,
+            name=name,
+            input_source=input_source,
+        )
 
         self.neck = BackboneFactory.create(neck_config, input_shape)
         self.output_shape = self.neck.output_shape
@@ -122,6 +140,7 @@ class ValuePrefixRewardHead(RewardHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        is_inference: bool = False,
         **kwargs,
     ) -> HeadOutput:
         state = state if state is not None else {}
@@ -138,7 +157,8 @@ class ValuePrefixRewardHead(RewardHead):
         hidden = state.get(f"{self.name}_reward_hidden")
         step_count = state.get(f"{self.name}_step_count")
         parent_cumulative = state.get(
-            f"{self.name}_cumulative_reward", torch.zeros(x.shape[0], 1, device=x.device)
+            f"{self.name}_cumulative_reward",
+            torch.zeros(x.shape[0], 1, device=x.device),
         )
 
         if hidden is None:
@@ -175,12 +195,15 @@ class ValuePrefixRewardHead(RewardHead):
 
         # Final projection: Predicted Cumulative Reward (Value Prefix)
         logits = self.output_layer(output)
-        expected_cumulative = self.representation.to_expected_value(logits)
-        if expected_cumulative.dim() == 1:
-            expected_cumulative = expected_cumulative.unsqueeze(-1)
-
         # GET INSTANT REWARD
-        instant_reward = (expected_cumulative - effective_parent_cumulative).squeeze(-1)
+        instant_reward = None
+        if is_inference:
+            expected_cumulative = self.representation.to_expected_value(logits)
+            if expected_cumulative.dim() == 1:
+                expected_cumulative = expected_cumulative.unsqueeze(-1)
+            instant_reward = (
+                expected_cumulative - effective_parent_cumulative
+            ).squeeze(-1)
 
         # New state
         new_state = state.copy()

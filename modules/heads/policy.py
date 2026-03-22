@@ -50,6 +50,7 @@ class PolicyHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        is_inference: bool = False,
         **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput containing masked logits and/or distribution object."""
@@ -62,16 +63,19 @@ class PolicyHead(BaseHead):
         # 2. Output Projection Layer
         logits = self.output_layer(x)
 
-        # 3. Apply Masking Logic (Logit-level)
-        if action_mask is not None:
-            HUGE_NEG = torch.tensor(-1e8, dtype=logits.dtype, device=logits.device)
-            logits = torch.where(action_mask.bool(), logits, HUGE_NEG)
+        # 3. Conditionally compute expensive inference distribution
+        inference = None
+        if is_inference:
+            if action_mask is not None:
+                # Apply mask to logits only during inference to produce valid distributions
+                HUGE_NEG = torch.tensor(-1e8, dtype=logits.dtype, device=logits.device)
+                logits = torch.where(action_mask.bool(), logits, HUGE_NEG)
 
-            from modules.distributions import MaskedCategorical
+                from modules.distributions import MaskedCategorical
 
-            inference = MaskedCategorical(logits=logits, mask=action_mask)
-        else:
-            inference = self.representation.to_inference(logits)
+                inference = MaskedCategorical(logits=logits, mask=action_mask)
+            else:
+                inference = self.representation.to_inference(logits)
 
         return HeadOutput(
             training_tensor=logits,

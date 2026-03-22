@@ -180,7 +180,7 @@ class AgentNetwork(nn.Module):
         network_state["dynamics"] = latent  # Unconditional latent tracking
 
         for name, head in self.components["behavior_heads"].items():
-            head_out = head(features, state=network_state, **kwargs)
+            head_out = head(features, state=network_state, is_inference=True, **kwargs)
             outputs[name] = head_out.inference_tensor
             network_state.update(head_out.state)
 
@@ -266,6 +266,7 @@ class AgentNetwork(nn.Module):
                 feature_pool[source],
                 state=batch.get("network_state", {}),
                 action_mask=flat_mask,
+                is_inference=False,
                 **batch,
             )
             behavior_results[name] = head_out.training_tensor.view(B, T, -1)
@@ -306,7 +307,7 @@ class AgentNetwork(nn.Module):
         next_recurrent_state.update(wm_output.next_state)
 
         for name, head in self.components["behavior_heads"].items():
-            head_out = head(features, state=network_state, **kwargs)
+            head_out = head(features, state=network_state, is_inference=True, **kwargs)
             outputs[name] = head_out.inference_tensor
             next_recurrent_state.update(head_out.state)
 
@@ -345,6 +346,7 @@ class AgentNetwork(nn.Module):
             afterstate_latent,
             state=recurrent_state,
             afterstate_features=afterstate_latent,
+            is_inference=True,
         )
         expected_afterstate_value = head_out_as.inference_tensor
         recurrent_state_after.update(head_out_as.state)

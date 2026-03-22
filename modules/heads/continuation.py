@@ -52,6 +52,7 @@ class ContinuationHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        is_inference: bool = False,
         **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput with (logits, continuation_probability, state)"""
@@ -63,16 +64,18 @@ class ContinuationHead(BaseHead):
         # 2. Final Output Projection
         logits = self.output_layer(x)
 
-        # 3. Mathematical Transform
-        continuation = self.representation.to_expected_value(logits)
+        # 3. Mathematical Transform (Conditionally)
+        continuation = None
+        if is_inference:
+            continuation = self.representation.to_expected_value(logits)
 
-        # Special casing for Dreamer-style binary continuation logic
-        if (
-            isinstance(self.representation, ClassificationRepresentation)
-            and self.representation.num_features == 2
-        ):
-            probs = F.softmax(logits, dim=-1)
-            continuation = probs[..., 1]  # Probability of "continue"
+            # Special casing for Dreamer-style binary continuation logic
+            if (
+                isinstance(self.representation, ClassificationRepresentation)
+                and self.representation.num_features == 2
+            ):
+                probs = F.softmax(logits, dim=-1)
+                continuation = probs[..., 1]  # Probability of "continue"
 
         return HeadOutput(
             training_tensor=logits,

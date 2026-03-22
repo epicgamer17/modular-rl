@@ -62,6 +62,7 @@ class QHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        is_inference: bool = False,
         **kwargs,
     ) -> HeadOutput:
         # 1. Processing neck -> flatten
@@ -78,7 +79,9 @@ class QHead(BaseHead):
 
         # 4. Standard Return
         new_state = state if state is not None else {}
-        inference = self.representation.to_inference(logits)
+        inference = None
+        if is_inference:
+            inference = self.representation.to_inference(logits)
 
         return HeadOutput(
             training_tensor=logits,
@@ -155,6 +158,7 @@ class DuelingQHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        is_inference: bool = False,
         **kwargs,
     ) -> HeadOutput:
         # 1. Processing neck -> flatten
@@ -176,7 +180,9 @@ class DuelingQHead(BaseHead):
         q = v + a - a_mean
 
         new_state = state if state is not None else {}
-        inference = self.representation.to_inference(q)
+        inference = None
+        if is_inference:
+            inference = self.representation.to_inference(q)
 
         return HeadOutput(
             training_tensor=q,

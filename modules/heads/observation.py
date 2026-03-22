@@ -60,6 +60,7 @@ class ObservationHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        is_inference: bool = False,
         **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput with (logits/features, observation_pred, state)"""
@@ -75,8 +76,10 @@ class ObservationHead(BaseHead):
             # If no output layer, the neck output serves as the prediction/features
             logits = x
 
-        # 3. Mathematical Transform (e.g. Pixel normalization or HL-Gauss)
-        observation_pred = self.representation.to_expected_value(logits)
+        # 3. Mathematical Transform (Conditionally)
+        observation_pred = None
+        if is_inference:
+            observation_pred = self.representation.to_expected_value(logits)
 
         return HeadOutput(
             training_tensor=logits,

@@ -53,6 +53,7 @@ class ChanceProbabilityHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        is_inference: bool = False,
         **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput with (chance_logits, distribution, state)"""
@@ -65,7 +66,9 @@ class ChanceProbabilityHead(BaseHead):
         logits = self.output_layer(x)
 
         # 3. Mathematical Transform (Categorical distribution)
-        inference = self.representation.to_inference(logits)
+        inference = None
+        if is_inference:
+            inference = self.representation.to_inference(logits)
 
         return HeadOutput(
             training_tensor=logits,

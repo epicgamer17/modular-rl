@@ -227,7 +227,9 @@ class WorldModel(nn.Module):
         new_head_state = {}
 
         for name, head in self.heads.items():
-            head_out = head(next_hidden_state, state=head_state, **kwargs)
+            head_out = head(
+                next_hidden_state, state=head_state, is_inference=True, **kwargs
+            )
             predictions[name] = head_out.training_tensor
             predictions[f"{name}_extra"] = head_out.inference_tensor
 
@@ -294,7 +296,9 @@ class WorldModel(nn.Module):
 
         # Initial head prediction for root
         for name, head in self.heads.items():
-            head_out = head(current_latent, state=current_head_state, **kwargs)
+            head_out = head(
+                current_latent, state=current_head_state, is_inference=False, **kwargs
+            )
             head_sequences[name].append(head_out.training_tensor)
 
             current_head_state.update(head_out.state)
@@ -328,7 +332,9 @@ class WorldModel(nn.Module):
 
             # 3. Heads Phase
             for name, head in self.heads.items():
-                head_out = head(next_latent, state=current_head_state, **kwargs)
+                head_out = head(
+                    next_latent, state=current_head_state, is_inference=False, **kwargs
+                )
                 head_sequences[name].append(head_out.training_tensor)
 
                 current_head_state.update(head_out.state)

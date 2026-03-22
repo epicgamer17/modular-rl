@@ -29,7 +29,14 @@ class ToPlayHead(BaseHead):
     ):
         if representation is None:
             representation = ClassificationRepresentation(num_classes=num_players)
-        super().__init__(arch_config, input_shape, representation, neck_config, name=name, input_source=input_source)
+        super().__init__(
+            arch_config,
+            input_shape,
+            representation,
+            neck_config,
+            name=name,
+            input_source=input_source,
+        )
 
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -54,6 +61,7 @@ class ToPlayHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        is_inference: bool = False,
         **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput with (logits, player_idx, state)"""
@@ -66,7 +74,9 @@ class ToPlayHead(BaseHead):
         logits = self.output_layer(x)
 
         # 3. Mathematical Transform
-        player_idx = self.representation.to_expected_value(logits).long()
+        player_idx = None
+        if is_inference:
+            player_idx = self.representation.to_expected_value(logits).long()
 
         return HeadOutput(
             training_tensor=logits,
@@ -85,31 +95,31 @@ class RelativeToPlayHead(ToPlayHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        is_inference: bool = False,
         **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput with (logits, next_player_idx, state)"""
-        # 1. Get raw logits from ToPlayHead's projection
-        res = super().forward(x, state)
+        # 1. Get raw logits from ToPlayHead's projection phase
+        res = super().forward(x, state, is_inference=is_inference, **kwargs)
         logits = res.training_tensor
 
-        # 2. Extract current player index from state
-        if state is None:
-            state = {}
-        current_player_idx = state.get(
-            f"{self.name}_current_player_idx",
-            torch.zeros(x.shape[0], device=x.device, dtype=torch.long),
-        )
+        # 3. Conditionally Calculate actual next player index
+        player_idx = None
+        new_state = state.copy() if state is not None else {}
 
-        # 3. Calculate the shift (ΔP)
-        delta_p = self.representation.to_expected_value(logits).long()
-
-        # 4. Calculate actual next player index: (current + shift) % num_players
-        num_players = self.representation.num_features
-        player_idx = (current_player_idx + delta_p) % num_players
-
-        # 5. Update the opaque state
-        new_state = state.copy()
-        new_state[f"{self.name}_current_player_idx"] = player_idx
+        if is_inference:
+            # Extract current player index from state
+            current_player_idx = state.get(
+                f"{self.name}_current_player_idx",
+                torch.zeros(x.shape[0], device=x.device, dtype=torch.long),
+            )
+            # Calculate the shift (ΔP)
+            delta_p = self.representation.to_expected_value(logits).long()
+            # Calculate actual next player index: (current + shift) % num_players
+            num_players = self.representation.num_features
+            player_idx = (current_player_idx + delta_p) % num_players
+            # Update the opaque state
+            new_state[f"{self.name}_current_player_idx"] = player_idx
 
         return HeadOutput(
             training_tensor=logits,

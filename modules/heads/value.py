@@ -49,6 +49,7 @@ class ValueHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        is_inference: bool = False,
         **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput with (logits, expected_value, state)"""
@@ -63,7 +64,9 @@ class ValueHead(BaseHead):
         logits = self.output_layer(x)
 
         # 3. Mathematical Transform (e.g., HL-Gauss for MuZero)
-        expected_value = self.representation.to_expected_value(logits)
+        expected_value = None
+        if is_inference:
+            expected_value = self.representation.to_expected_value(logits)
 
         return HeadOutput(
             training_tensor=logits,

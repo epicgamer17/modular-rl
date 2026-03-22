@@ -47,6 +47,12 @@ class BaseHead(nn.Module, ABC):
         return flat
 
     @abstractmethod
-    def forward(self, x: Tensor, state: Optional[Dict[str, Any]] = None, **kwargs) -> HeadOutput:
+    def forward(
+        self,
+        x: Tensor,
+        state: Optional[Dict[str, Any]] = None,
+        is_inference: bool = False,
+        **kwargs,
+    ) -> HeadOutput:
         """Returns HeadOutput conforming to the (training, inference, state) contract."""
         pass
