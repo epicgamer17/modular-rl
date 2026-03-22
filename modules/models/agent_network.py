@@ -43,6 +43,9 @@ class AgentNetwork(nn.Module):
             )
             current_head_input_shape = self.components["representation"].output_shape
         else:
+            ident = nn.Identity()
+            ident.output_shape = input_shape
+            self.components["representation"] = ident
             current_head_input_shape = input_shape
 
         # 2. Environment Phase (The Physics Engine)
@@ -63,9 +66,16 @@ class AgentNetwork(nn.Module):
             backbone = BackboneFactory.create(config.prediction_backbone, current_head_input_shape)
             if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
                 self.components["memory_core"] = backbone
+                ident = nn.Identity()
+                ident.output_shape = current_head_input_shape
+                self.components["feature_extractor"] = ident
             else:
                 self.components["feature_extractor"] = backbone
             current_head_input_shape = backbone.output_shape
+        else:
+            ident = nn.Identity()
+            ident.output_shape = current_head_input_shape
+            self.components["feature_extractor"] = ident
 
         # 3. Behavior Phase: Behavioral Heads (Policy, Value, Q, etc.)
         for head_name, head_config in config.heads.items():
@@ -85,7 +95,7 @@ class AgentNetwork(nn.Module):
             # If a head is an 'afterstate' head, it takes the prediction backbone features.
             head_input_shape = current_head_input_shape
             if head_name == "afterstate_value" and "world_model" in self.components:
-                head_input_shape = self.components["world_model"].prediction_backbone.output_shape
+                head_input_shape = self.components["feature_extractor"].output_shape
 
             self.components["behavior_heads"][head_name] = HeadFactory.create(
                 head_config,
@@ -166,8 +176,7 @@ class AgentNetwork(nn.Module):
         # 1. Spatial Phase (Feature Extraction)
         # Standard backbones (Conv, MLP) expect a flat batch dimension.
         flat_x = tensor.flatten(0, 1)
-        if "feature_extractor" in self.components:
-            flat_x = self.components["feature_extractor"](flat_x)
+        flat_x = self.components["feature_extractor"](flat_x)
 
         # 2. Temporal Phase (Memory Core)
         if "memory_core" in self.components:
@@ -187,10 +196,7 @@ class AgentNetwork(nn.Module):
         if obs.dim() == len(self.input_shape):
             obs = obs.unsqueeze(0)
 
-        if "representation" in self.components:
-            latent = self.components["representation"](obs)
-        else:
-            latent = obs
+        latent = self.components["representation"](obs)
 
         wm_output = None
 
@@ -235,19 +241,16 @@ class AgentNetwork(nn.Module):
         obs = batch["observations"].to(self.device).float()
         
         # 1. Representation Phase
-        if "representation" in self.components:
-            B, T = obs.shape[:2]
-            flat_obs = obs.flatten(0, 1)
-            flat_latent = self.components["representation"](flat_obs)
-            latents = flat_latent.view(B, T, *flat_latent.shape[1:])
-        else:
-            latents = obs
+        B, T = obs.shape[:2]
+        flat_obs = obs.flatten(0, 1)
+        flat_latent = self.components["representation"](flat_obs)
+        latents = flat_latent.view(B, T, *flat_latent.shape[1:])
 
         B, T = latents.shape[:2]
 
         target_latents = None
         if "world_model" in self.components and getattr(self.config, "consistency_loss_factor", 0) > 0:
-            if "unroll_observations" in batch and "representation" in self.components:
+            if "unroll_observations" in batch:
                 target_obs = batch["unroll_observations"].to(self.device).float()
                 B_t, T_t = target_obs.shape[:2]
                 flat_target = target_obs.flatten(0, 1)
@@ -301,10 +304,7 @@ class AgentNetwork(nn.Module):
             as_latents = env_results["latents_afterstates"]
             flat_as = as_latents.flatten(0, 1)
             
-            if "feature_extractor" in self.components:
-                as_features = self.components["feature_extractor"](flat_as)
-            else:
-                as_features = flat_as
+            as_features = self.components["feature_extractor"](flat_as)
                 
             head_out_as = self.components["behavior_heads"]["afterstate_value"](as_features)
 
@@ -381,10 +381,7 @@ class AgentNetwork(nn.Module):
         )
         
         afterstate_latent = wm_output.afterstate_features
-        if "feature_extractor" in self.components:
-            as_features = self.components["feature_extractor"](afterstate_latent)
-        else:
-            as_features = afterstate_latent
+        as_features = self.components["feature_extractor"](afterstate_latent)
 
         head_out_as = self.components["behavior_heads"]["afterstate_value"](as_features)
         expected_afterstate_value = head_out_as.inference_tensor
@@ -432,9 +429,9 @@ class AgentNetwork(nn.Module):
             proj = proj.detach()
 
         # Find latent dimensions for projection reshaping
-        if "representation" in self.components:
+        if not isinstance(self.components["representation"], nn.Identity):
             hidden_state_shape = self.components["representation"].output_shape
-        elif "feature_extractor" in self.components:
+        elif not isinstance(self.components["feature_extractor"], nn.Identity):
             hidden_state_shape = self.components["feature_extractor"].output_shape
         else:
             hidden_state_shape = self.input_shape
