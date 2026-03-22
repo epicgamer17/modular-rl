@@ -1,7 +1,7 @@
 from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
 import torch
-from .base import BaseHead
+from .base import BaseHead, HeadOutput
 from agents.learner.losses.representations import BaseRepresentation, ScalarRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
@@ -40,8 +40,8 @@ class ObservationHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
-        """Returns: (logits, state, observation_pred)"""
+    ) -> HeadOutput:
+        """Returns HeadOutput with (logits, observation_pred, state)"""
         state = state if state is not None else {}
 
         # Process neck
@@ -58,4 +58,8 @@ class ObservationHead(BaseHead):
         # expected_observation is representation conversion
         observation_pred = self.representation.to_expected_value(logits)
 
-        return logits, state, observation_pred
+        return HeadOutput(
+            training_tensor=logits,
+            inference_tensor=observation_pred,
+            state=state,
+        )

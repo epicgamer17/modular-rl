@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Tuple, Optional, Callable, Dict, Any
 import torch
 from torch import nn, Tensor
@@ -6,6 +7,15 @@ from configs.modules.backbones.base import BackboneConfig
 from configs.modules.architecture_config import ArchitectureConfig
 from agents.learner.losses.representations import BaseRepresentation
 from modules.backbones.dense import build_dense
+
+
+@dataclass
+class HeadOutput:
+    """Strict contract for head outputs."""
+
+    training_tensor: torch.Tensor  # e.g., logits, pre-tanh values (for the Learner)
+    inference_tensor: torch.Tensor  # e.g., argmax action, softmaxed probs (for the Actor)
+    state: Optional[Dict[str, torch.Tensor]] = None  # For recurrent heads
 
 
 class BaseHead(nn.Module):
@@ -62,8 +72,12 @@ class BaseHead(nn.Module):
 
     def forward(
         self, x: Tensor, state: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Tensor, Dict[str, Any]]:
+    ) -> HeadOutput:
         """Standard forward pass: neck -> flatten -> output_layer."""
         x = self.process_input(x)
         logits = self.output_layer(x)
-        return logits, state if state is not None else {}
+        return HeadOutput(
+            training_tensor=logits,
+            inference_tensor=logits,
+            state=state if state is not None else {},
+        )

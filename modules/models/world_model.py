@@ -149,10 +149,10 @@ class WorldModel(nn.Module):
 
         for name, head in self.heads.items():
             h_state = head_state.get(name) if isinstance(head_state, dict) else None
-            logits, n_state, extra = head(next_hidden_state, state=h_state)
-            predictions[name] = logits
-            predictions[f"{name}_extra"] = extra
-            new_head_state[name] = n_state
+            head_out = head(next_hidden_state, state=h_state)
+            predictions[name] = head_out.training_tensor
+            predictions[f"{name}_extra"] = head_out.inference_tensor
+            new_head_state[name] = head_out.state
 
         return WorldModelOutput(
             features=next_hidden_state,
@@ -174,7 +174,8 @@ class WorldModel(nn.Module):
         
         afterstate_latent = self.afterstate_dynamics(latent_state, action)
         shared_features = self.prediction_backbone(afterstate_latent)
-        chance_logits, _, _ = self.sigma_head(shared_features)
+        head_out_sigma = self.sigma_head(shared_features)
+        chance_logits = head_out_sigma.training_tensor
 
         return WorldModelOutput(
             afterstate_features=afterstate_latent,
@@ -201,10 +202,10 @@ class WorldModel(nn.Module):
         # Initial head prediction for root
         for name, head in self.heads.items():
             h_state = current_head_state.get(name) if isinstance(current_head_state, dict) else None
-            logits, n_state, _ = head(current_latent, state=h_state)
-            head_sequences[name].append(logits)
+            head_out = head(current_latent, state=h_state)
+            head_sequences[name].append(head_out.training_tensor)
             if isinstance(current_head_state, dict):
-                current_head_state[name] = n_state
+                current_head_state[name] = head_out.state
 
         stochastic_sequences = {
             "latents_afterstates": [],
@@ -253,10 +254,10 @@ class WorldModel(nn.Module):
             # Heads Phase
             for name, head in self.heads.items():
                 h_state = current_head_state.get(name) if isinstance(current_head_state, dict) else None
-                logits, n_state, _ = head(next_latent, state=h_state)
-                head_sequences[name].append(logits)
+                head_out = head(next_latent, state=h_state)
+                head_sequences[name].append(head_out.training_tensor)
                 if isinstance(current_head_state, dict):
-                    current_head_state[name] = n_state
+                    current_head_state[name] = head_out.state
 
             current_latent = next_latent
             latents.append(current_latent)

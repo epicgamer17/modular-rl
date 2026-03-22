@@ -1,6 +1,7 @@
 from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
-from .base import BaseHead
+import torch.nn.functional as F
+from .base import BaseHead, HeadOutput
 from agents.learner.losses.representations import BaseRepresentation, ScalarRepresentation, ClassificationRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
@@ -29,18 +30,25 @@ class ContinuationHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
-        """Returns: (logits, state, continuation_probability)"""
+    ) -> HeadOutput:
+        """Returns HeadOutput with (logits, continuation_probability, state)"""
         state = state if state is not None else {}
-        logits, _ = super().forward(x, state)
+        head_out = super().forward(x, state)
+        logits = head_out.training_tensor
 
         # continuation is essentially the expected value (probability if classification)
         continuation = self.representation.to_expected_value(logits)
 
         # If it's classification(2), we want the probability of class 1
-        if isinstance(self.representation, ClassificationRepresentation) and self.representation.num_features == 2:
-            import torch.nn.functional as F
+        if (
+            isinstance(self.representation, ClassificationRepresentation)
+            and self.representation.num_features == 2
+        ):
             probs = F.softmax(logits, dim=-1)
             continuation = probs[..., 1]  # Probability of "continue"
 
-        return logits, state, continuation
+        return HeadOutput(
+            training_tensor=logits,
+            inference_tensor=continuation,
+            state=state,
+        )

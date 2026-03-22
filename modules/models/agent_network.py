@@ -235,8 +235,8 @@ class AgentNetwork(nn.Module):
 
         outputs = {}
         for name, head in self.components["behavior_heads"].items():
-            out, *rest = head(features)
-            outputs[name] = rest[1] if len(rest) >= 2 else out
+            head_out = head(features)
+            outputs[name] = head_out.inference_tensor
 
         network_state = self._pack_recurrent_state(
             dynamics_latent=latent if "world_model" in self.components else None,
@@ -304,18 +304,17 @@ class AgentNetwork(nn.Module):
             # Skip afterstate value head as it has its own routing path
             if name == "afterstate_value":
                 continue
-            flat_out, _ = head(flat_memory)
+            head_out = head(flat_memory)
             # Use exact head names as keys. Zero string manipulation.
-            behavior_results[name] = flat_out.view(B, T, -1)
+            behavior_results[name] = head_out.training_tensor.view(B, T, -1)
 
-        # 5. Stochastic Afterstate Phase (Exception Case)
         if "world_model" in self.components and getattr(self.config, "stochastic", False):
             as_features = env_results["afterstate_backbone_features"]
             flat_as = as_features.flatten(0, 1)
-            raw_as_values, _ = self.components["behavior_heads"]["afterstate_value"](flat_as)
+            head_out_as = self.components["behavior_heads"]["afterstate_value"](flat_as)
 
             B_as, K_as = as_features.shape[:2]
-            as_values = raw_as_values.view(B_as, K_as, -1)
+            as_values = head_out_as.training_tensor.view(B_as, K_as, -1)
             # Prepend zero value for root
             root_as_values = torch.zeros(B_as, 1, *as_values.shape[2:], device=self.device)
             behavior_results["afterstate_values"] = torch.cat([root_as_values, as_values], dim=1)
@@ -354,8 +353,8 @@ class AgentNetwork(nn.Module):
 
         outputs = {}
         for name, head in self.components["behavior_heads"].items():
-            out, *rest = head(features)
-            outputs[name] = rest[1] if len(rest) >= 2 else out
+            head_out = head(features)
+            outputs[name] = head_out.inference_tensor
 
         next_recurrent_state = self._pack_recurrent_state(
             dynamics_latent=latent,
@@ -383,8 +382,8 @@ class AgentNetwork(nn.Module):
         )
         
         shared_backbone_features = wm_output.features
-        _, *rest = self.components["behavior_heads"]["afterstate_value"](shared_backbone_features)
-        expected_afterstate_value = rest[-1] if rest else None
+        head_out_as = self.components["behavior_heads"]["afterstate_value"](shared_backbone_features)
+        expected_afterstate_value = head_out_as.inference_tensor
 
         recurrent_state_after = self._pack_recurrent_state(
             dynamics_latent=wm_output.afterstate_features,

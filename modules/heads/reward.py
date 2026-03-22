@@ -2,7 +2,7 @@ from typing import Tuple, Optional, Dict, Any, List
 from torch import Tensor
 from torch import nn
 import torch
-from .base import BaseHead
+from .base import BaseHead, HeadOutput
 from agents.learner.losses.representations import BaseRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
@@ -29,14 +29,15 @@ class RewardHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
-        """Returns: (logits, state, instant_reward)"""
-        state = state if state is not None else {}
-        logits, _ = super().forward(x, state)
-
-        # Default instant reward is representation conversion of logits
-        instant_reward = self.representation.to_expected_value(logits)
-        return logits, state, instant_reward
+    ) -> HeadOutput:
+        """Returns HeadOutput with (logits, instant_reward, state)"""
+        head_out = super().forward(x, state)
+        instant_reward = self.representation.to_expected_value(head_out.training_tensor)
+        return HeadOutput(
+            training_tensor=head_out.training_tensor,
+            inference_tensor=instant_reward,
+            state=head_out.state,
+        )
 
 
 class ValuePrefixRewardHead(RewardHead):
@@ -79,7 +80,7 @@ class ValuePrefixRewardHead(RewardHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
+    ) -> HeadOutput:
         state = state if state is not None else {}
 
         # Process neck
@@ -152,4 +153,8 @@ class ValuePrefixRewardHead(RewardHead):
             }
         )
 
-        return logits, new_state, instant_reward
+        return HeadOutput(
+            training_tensor=logits,
+            inference_tensor=instant_reward,
+            state=new_state,
+        )

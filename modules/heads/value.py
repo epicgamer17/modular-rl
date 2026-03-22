@@ -1,6 +1,6 @@
 from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
-from .base import BaseHead
+from .base import BaseHead, HeadOutput
 from agents.learner.losses.representations import BaseRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
@@ -25,8 +25,12 @@ class ValueHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
-        """Returns: (logits, state, expected_value)"""
-        logits, new_state = super().forward(x, state)
-        expected_value = self.representation.to_expected_value(logits)
-        return logits, new_state, expected_value
+    ) -> HeadOutput:
+        """Returns HeadOutput with (logits, expected_value, state)"""
+        head_out = super().forward(x, state)
+        expected_value = self.representation.to_expected_value(head_out.training_tensor)
+        return HeadOutput(
+            training_tensor=head_out.training_tensor,
+            inference_tensor=expected_value,
+            state=head_out.state,
+        )

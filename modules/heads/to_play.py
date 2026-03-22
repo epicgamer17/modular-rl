@@ -1,7 +1,7 @@
 from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
 import torch
-from .base import BaseHead
+from .base import BaseHead, HeadOutput
 from agents.learner.losses.representations import BaseRepresentation, ClassificationRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
@@ -28,11 +28,15 @@ class ToPlayHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Tensor, Optional[Dict[str, Any]], Tensor]:
-        """Returns: (logits, state, player_idx)"""
-        logits, new_state = super().forward(x, state)
-        player_idx = self.representation.to_expected_value(logits).long()
-        return logits, new_state, player_idx
+    ) -> HeadOutput:
+        """Returns HeadOutput with (logits, player_idx, state)"""
+        head_out = super().forward(x, state)
+        player_idx = self.representation.to_expected_value(head_out.training_tensor).long()
+        return HeadOutput(
+            training_tensor=head_out.training_tensor,
+            inference_tensor=player_idx,
+            state=head_out.state,
+        )
 
 
 class RelativeToPlayHead(ToPlayHead):
@@ -45,10 +49,11 @@ class RelativeToPlayHead(ToPlayHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
-        """Returns: (logits, state, player_idx)"""
+    ) -> HeadOutput:
+        """Returns HeadOutput with (logits, next_player_idx, state)"""
         # 1. Get logits from BaseHead
-        logits, _ = super(ToPlayHead, self).forward(x, state)
+        head_out = super(ToPlayHead, self).forward(x, state)
+        logits = head_out.training_tensor
 
         # 2. Extract current player index from state
         if state is None:
@@ -69,4 +74,8 @@ class RelativeToPlayHead(ToPlayHead):
         new_state = state.copy()
         new_state["current_player_idx"] = player_idx
 
-        return logits, new_state, player_idx
+        return HeadOutput(
+            training_tensor=logits,
+            inference_tensor=player_idx,
+            state=new_state,
+        )

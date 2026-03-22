@@ -1,6 +1,6 @@
 from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
-from .base import BaseHead
+from .base import BaseHead, HeadOutput
 from agents.learner.losses.representations import BaseRepresentation, IdentityRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
@@ -33,7 +33,7 @@ class LatentConsistencyHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
+    ) -> HeadOutput:
         state = state if state is not None else {}
 
         # Apply neck if it exists
@@ -46,4 +46,8 @@ class LatentConsistencyHead(BaseHead):
         # The projected latent
         projected_embedding = self.representation.to_expected_value(logits)
 
-        return logits, state, projected_embedding
+        return HeadOutput(
+            training_tensor=logits,
+            inference_tensor=projected_embedding,
+            state=state,
+        )

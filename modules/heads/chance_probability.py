@@ -1,6 +1,6 @@
 from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
-from .base import BaseHead
+from .base import BaseHead, HeadOutput
 from agents.learner.losses.representations import ClassificationRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
@@ -26,7 +26,12 @@ class ChanceProbabilityHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Tensor, Dict[str, Any], Any]:
-        logits, new_state = super().forward(x, state)
-        inference = self.representation.to_inference(logits)
-        return logits, new_state, inference
+    ) -> HeadOutput:
+        """Returns HeadOutput with (logits, dist_obj, state)"""
+        head_out = super().forward(x, state)
+        inference = self.representation.to_inference(head_out.training_tensor)
+        return HeadOutput(
+            training_tensor=head_out.training_tensor,
+            inference_tensor=inference,
+            state=head_out.state,
+        )

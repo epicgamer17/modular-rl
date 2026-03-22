@@ -2,7 +2,7 @@ from typing import Tuple, Optional, Callable, Dict, Any
 import torch
 from torch import nn, Tensor
 
-from .base import BaseHead
+from .base import BaseHead, HeadOutput
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
 from agents.learner.losses.representations import BaseRepresentation
@@ -46,14 +46,13 @@ class QHead(BaseHead):
             sigma=self.arch_config.noisy_sigma,
         )
 
-
     def reset_noise(self) -> None:
         super().reset_noise()
         self.hidden_layers.reset_noise()
 
     def forward(
         self, x: Tensor, state: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Tensor, Dict[str, Any], Any]:
+    ) -> HeadOutput:
         # 1. Neck + Flatten
         x = self.process_input(x)
 
@@ -64,11 +63,15 @@ class QHead(BaseHead):
         logits = self.output_layer(x)
         logits = logits.view(-1, self.num_actions, self.representation.num_features)
 
-        # 4. Standard Return: (logits, state, inference)
+        # 4. Standard Return: HeadOutput(logits, inference, state)
         new_state = state if state is not None else {}
         inference = self.representation.to_inference(logits)
 
-        return logits, new_state, inference
+        return HeadOutput(
+            training_tensor=logits,
+            inference_tensor=inference,
+            state=new_state,
+        )
 
 
 class DuelingQHead(BaseHead):
@@ -129,7 +132,6 @@ class DuelingQHead(BaseHead):
             del self.output_layer
             self.output_layer = None
 
-
     def reset_noise(self) -> None:
         super().reset_noise()  # Neck
         self.value_hidden.reset_noise()
@@ -141,7 +143,7 @@ class DuelingQHead(BaseHead):
 
     def forward(
         self, x: Tensor, state: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Tensor, Dict[str, Any], Any]:
+    ) -> HeadOutput:
         # Neck
         x = self.process_input(x)
 
@@ -164,4 +166,8 @@ class DuelingQHead(BaseHead):
         new_state = state if state is not None else {}
         inference = self.representation.to_inference(q)
 
-        return q, new_state, inference
+        return HeadOutput(
+            training_tensor=q,
+            inference_tensor=inference,
+            state=new_state,
+        )
