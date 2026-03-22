@@ -22,8 +22,9 @@ class PolicyHead(BaseHead):
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
         neck_config: Optional[BackboneConfig] = None,
+        name: Optional[str] = None,
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
 
         # 1. Heads now take ownership of their own architectural blocks
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -48,9 +49,10 @@ class PolicyHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-        action_mask: Optional[Tensor] = None,
+        **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput containing masked logits and/or distribution object."""
+        action_mask = kwargs.get("action_mask")
         # 1. Architectural neck phase -> flatten
         x = self.neck(x)
         if x.dim() > 2:

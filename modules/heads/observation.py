@@ -24,8 +24,9 @@ class ObservationHead(BaseHead):
         representation: Optional[BaseRepresentation] = None,
         neck_config: Optional[BackboneConfig] = None,
         use_output_layer: bool = True,
+        name: Optional[str] = None,
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
 
         # 1. Image or Vector neck (e.g. Deconv or MLP)
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -58,6 +59,7 @@ class ObservationHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput with (logits/features, observation_pred, state)"""
         # 1. Process neck (Deconv for images, MLP for vectors)

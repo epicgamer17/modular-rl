@@ -206,6 +206,7 @@ class WorldModel(nn.Module):
         hidden_state: Tensor,
         action: Tensor,
         recurrent_state: Any = None,
+        **kwargs,
     ) -> WorldModelOutput:
         # 1. Transition Phase (Via Pipeline)
         if self.config.stochastic:
@@ -231,7 +232,7 @@ class WorldModel(nn.Module):
                 for k, v in head_state.items()
                 if k.startswith(name)
             }
-            head_out = head(next_hidden_state, state=h_state if h_state else None)
+            head_out = head(next_hidden_state, state=h_state if h_state else None, **kwargs)
             predictions[name] = head_out.training_tensor
             predictions[f"{name}_extra"] = head_out.inference_tensor
 
@@ -277,6 +278,7 @@ class WorldModel(nn.Module):
         encoder_inputs: Optional[Tensor] = None,
         true_chance_codes: Optional[Tensor] = None,
         head_state: Any = None,
+        **kwargs,
     ) -> Dict[str, Tensor]:
         unroll_steps = actions.shape[1]
         latents = [initial_latent_state]
@@ -294,7 +296,7 @@ class WorldModel(nn.Module):
                 for k, v in current_head_state.items()
                 if k.startswith(name)
             }
-            head_out = head(current_latent, state=h_state if h_state else None)
+            head_out = head(current_latent, state=h_state if h_state else None, **kwargs)
             head_sequences[name].append(head_out.training_tensor)
 
             if head_out.state:
@@ -337,7 +339,7 @@ class WorldModel(nn.Module):
                     for k, v in current_head_state.items()
                     if k.startswith(name)
                 }
-                head_out = head(next_latent, state=h_state if h_state else None)
+                head_out = head(next_latent, state=h_state if h_state else None, **kwargs)
                 head_sequences[name].append(head_out.training_tensor)
 
                 if head_out.state:

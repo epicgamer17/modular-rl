@@ -95,6 +95,7 @@ class AgentNetwork(nn.Module):
                 num_players=getattr(config.game, "num_players", 1),
                 num_chance_codes=getattr(config, "num_chance", 0),
                 representation=rep,
+                name=head_name,
             )
 
 
@@ -151,7 +152,7 @@ class AgentNetwork(nn.Module):
         return flat_x, next_state
 
     def obs_inference(
-        self, obs: Tensor, action_mask: Optional[Tensor] = None
+        self, obs: Tensor, **kwargs
     ) -> InferenceOutput:
         assert isinstance(obs, Tensor), "AgentNetwork strictly expects PyTorch Tensors."
         if obs.dim() == len(self.input_shape):
@@ -169,11 +170,7 @@ class AgentNetwork(nn.Module):
 
         outputs = {}
         for name, head in self.components["behavior_heads"].items():
-            # Pass action_mask specifically to the policy head
-            if name == "policy_logits" and action_mask is not None:
-                head_out = head(features, action_mask=action_mask)
-            else:
-                head_out = head(features)
+            head_out = head(features, state={}, **kwargs)
             outputs[name] = head_out.inference_tensor
 
         network_state = {}
@@ -266,39 +263,37 @@ class AgentNetwork(nn.Module):
         B, T = latents.shape[:2]
         flat_memory, _ = self._apply_spatial_temporal(latents, B, T)
 
+        # Pull afterstate features early for unified routing
+        flat_as = None
+        if "world_model" in self.components and getattr(self.config, "stochastic", False):
+             if "latents_afterstates" in env_results:
+                 flat_as = env_results["latents_afterstates"].flatten(0, 1)
+
         # 4. Behavior Heads Phase
         mask = batch.get("action_masks")
         flat_mask = mask.flatten(0, 1) if mask is not None else None
 
         behavior_results = {}
         for name, head in self.components["behavior_heads"].items():
-            # Skip afterstate value head as it has its own routing path
+            head_out = head(
+                flat_memory, 
+                state={}, 
+                action_mask=flat_mask,
+                afterstate_features=flat_as,
+                **batch
+            )
+
+            # Use exact head names as keys. 
+            full_seq = head_out.training_tensor.view(B, T, -1)
+            
             if name == "afterstate_value":
-                continue
-
-            # Pass action_mask to policy heads
-            if name == "policy_logits" and flat_mask is not None:
-                head_out = head(flat_memory, action_mask=flat_mask)
+                # Special handling for afterstate values: prepend zero for root
+                root_as_values = torch.zeros(B, 1, *full_seq.shape[2:], device=self.device)
+                behavior_results["afterstate_values"] = torch.cat([root_as_values, full_seq], dim=1)
             else:
-                head_out = head(flat_memory)
-
-            # Use exact head names as keys. Zero string manipulation.
-            behavior_results[name] = head_out.training_tensor.view(B, T, -1)
+                behavior_results[name] = full_seq
 
         if "world_model" in self.components and getattr(self.config, "stochastic", False):
-            as_latents = env_results["latents_afterstates"]
-            flat_as = as_latents.flatten(0, 1)
-            
-            afterstate_head = self.components["behavior_heads"].get("afterstate_value")
-            if afterstate_head is not None:
-                head_out_as = afterstate_head(flat_as)
-    
-                B_as, K_as = as_latents.shape[:2]
-                as_values = head_out_as.training_tensor.view(B_as, K_as, -1)
-                # Prepend zero value for root
-                root_as_values = torch.zeros(B_as, 1, *as_values.shape[2:], device=self.device)
-                behavior_results["afterstate_values"] = torch.cat([root_as_values, as_values], dim=1)
-                
             behavior_results["chance_logits"] = env_results.get("chance_logits")
 
         # Merge and Validate
@@ -312,7 +307,7 @@ class AgentNetwork(nn.Module):
         self,
         network_state: Dict[str, Tensor],
         action: Tensor,
-        action_mask: Optional[Tensor] = None,
+        **kwargs,
     ) -> InferenceOutput:
         if "world_model" not in self.components:
             raise NotImplementedError("hidden_state_inference requires a world_model.")
@@ -323,6 +318,7 @@ class AgentNetwork(nn.Module):
             hidden_state=dynamics_h,
             action=action,
             recurrent_state=network_state,
+            **kwargs,
         )
         latent = wm_output.features
 
@@ -334,11 +330,7 @@ class AgentNetwork(nn.Module):
 
         outputs = {}
         for name, head in self.components["behavior_heads"].items():
-            # Pass action_mask specifically to the policy head
-            if name == "policy_logits" and action_mask is not None:
-                head_out = head(features, action_mask=action_mask)
-            else:
-                head_out = head(features)
+            head_out = head(features, state={}, **kwargs)
             outputs[name] = head_out.inference_tensor
 
         next_recurrent_state = {"dynamics": latent}
@@ -372,7 +364,7 @@ class AgentNetwork(nn.Module):
         afterstate_head = self.components["behavior_heads"].get("afterstate_value")
         expected_afterstate_value = None
         if afterstate_head is not None:
-            head_out_as = afterstate_head(afterstate_latent)
+            head_out_as = afterstate_head(afterstate_latent, afterstate_features=afterstate_latent)
             expected_afterstate_value = head_out_as.inference_tensor
 
         recurrent_state_after = dict(recurrent_state)

@@ -24,10 +24,11 @@ class ToPlayHead(BaseHead):
         num_players: int,
         representation: Optional[BaseRepresentation] = None,
         neck_config: Optional[BackboneConfig] = None,
+        name: Optional[str] = None,
     ):
         if representation is None:
             representation = ClassificationRepresentation(num_classes=num_players)
-        super().__init__(arch_config, input_shape, representation, neck_config)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
 
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -52,6 +53,7 @@ class ToPlayHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput with (logits, player_idx, state)"""
         # 1. Processing neck -> flatten
@@ -82,6 +84,7 @@ class RelativeToPlayHead(ToPlayHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput with (logits, next_player_idx, state)"""
         # 1. Get raw logits from ToPlayHead's projection

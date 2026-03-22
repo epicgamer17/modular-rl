@@ -23,8 +23,9 @@ class RewardHead(BaseHead):
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
         neck_config: Optional[BackboneConfig] = None,
+        name: Optional[str] = None,
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
 
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -49,6 +50,7 @@ class RewardHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput containing logits and projected reward scalar."""
         # 1. Processing neck -> flatten
@@ -82,9 +84,10 @@ class ValuePrefixRewardHead(RewardHead):
         representation: BaseRepresentation,
         config: ValuePrefixRewardHeadConfig,
         neck_config: Optional[BackboneConfig] = None,
+        name: Optional[str] = None,
     ):
         # We call BaseHead init to avoid RewardHead's default output_layer logic
-        BaseHead.__init__(self, arch_config, input_shape, representation, neck_config)
+        BaseHead.__init__(self, arch_config, input_shape, representation, neck_config, name=name)
 
         self.neck = BackboneFactory.create(neck_config, input_shape)
         self.output_shape = self.neck.output_shape
@@ -117,6 +120,7 @@ class ValuePrefixRewardHead(RewardHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> HeadOutput:
         state = state if state is not None else {}
 

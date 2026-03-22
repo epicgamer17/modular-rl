@@ -24,8 +24,9 @@ class QHead(BaseHead):
         hidden_backbone_config: BackboneConfig,
         num_actions: int,
         neck_config: Optional[BackboneConfig] = None,
+        name: Optional[str] = None,
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
 
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -56,7 +57,12 @@ class QHead(BaseHead):
         if isinstance(self.output_layer, NoisyLinear):
             self.output_layer.reset_noise()
 
-    def forward(self, x: Tensor, state: Optional[Dict[str, Any]] = None) -> HeadOutput:
+    def forward(
+        self,
+        x: Tensor,
+        state: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> HeadOutput:
         # 1. Processing neck -> flatten
         x = self.neck(x)
         if x.dim() > 2:
@@ -98,8 +104,9 @@ class DuelingQHead(BaseHead):
         advantage_hidden_backbone_config: BackboneConfig,
         num_actions: int,
         neck_config: Optional[BackboneConfig] = None,
+        name: Optional[str] = None,
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
 
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -142,7 +149,12 @@ class DuelingQHead(BaseHead):
             if isinstance(out, NoisyLinear):
                 out.reset_noise()
 
-    def forward(self, x: Tensor, state: Optional[Dict[str, Any]] = None) -> HeadOutput:
+    def forward(
+        self,
+        x: Tensor,
+        state: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> HeadOutput:
         # 1. Processing neck -> flatten
         x = self.neck(x)
         if x.dim() > 2:

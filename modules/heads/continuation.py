@@ -22,10 +22,11 @@ class ContinuationHead(BaseHead):
         input_shape: Tuple[int, ...],
         representation: Optional[BaseRepresentation] = None,
         neck_config: Optional[BackboneConfig] = None,
+        name: Optional[str] = None,
     ):
         if representation is None:
             representation = ScalarRepresentation()
-        super().__init__(arch_config, input_shape, representation, neck_config)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
 
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -50,6 +51,7 @@ class ContinuationHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput with (logits, continuation_probability, state)"""
         # 1. Processing neck -> flatten

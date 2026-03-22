@@ -21,8 +21,9 @@ class ValueHead(BaseHead):
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
         neck_config: Optional[BackboneConfig] = None,
+        name: Optional[str] = None,
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
 
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -47,8 +48,12 @@ class ValueHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput with (logits, expected_value, state)"""
+        if self.name and "afterstate" in self.name:
+            x = kwargs.get("afterstate_features", x)
+
         # 1. Processing neck -> flatten
         x = self.neck(x)
         if x.dim() > 2:

@@ -23,9 +23,10 @@ class ChanceProbabilityHead(BaseHead):
         input_shape: Tuple[int, ...],
         num_chance_codes: int,
         neck_config: Optional[BackboneConfig] = None,
+        name: Optional[str] = None,
     ):
         representation = ClassificationRepresentation(num_classes=num_chance_codes)
-        super().__init__(arch_config, input_shape, representation, neck_config)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
 
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -51,6 +52,7 @@ class ChanceProbabilityHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput with (chance_logits, distribution, state)"""
         # 1. Processing neck -> flatten

@@ -46,6 +46,7 @@ class HeadFactory:
         config: HeadConfig,
         arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
+        name: Optional[str] = None,
         **kwargs,
     ) -> nn.Module:
         config_type = type(config)
@@ -70,6 +71,7 @@ class HeadFactory:
                 num_players=num_players,
                 neck_config=config.neck,
                 representation=kwargs.get("representation"),
+                name=name,
             )
 
         # PolicyHead
@@ -79,6 +81,7 @@ class HeadFactory:
                 input_shape=input_shape,
                 neck_config=config.neck,
                 representation=kwargs.get("representation"),
+                name=name,
             )
 
         # ChanceProbabilityHead needs num_chance_codes
@@ -93,6 +96,7 @@ class HeadFactory:
                 input_shape=input_shape,
                 num_chance_codes=num_chance_codes,
                 neck_config=config.neck,
+                name=name,
             )
 
         # ValuePrefixRewardHead takes specific config
@@ -105,6 +109,7 @@ class HeadFactory:
                 ),  # Representation is usually created outside and passed in
                 config=config,
                 neck_config=config.neck,
+                name=name,
             )
 
         # LatentConsistencyHead needs projection_dim
@@ -115,6 +120,7 @@ class HeadFactory:
                 representation=kwargs.get("representation"),
                 neck_config=config.neck,
                 projection_dim=config.projection_dim,
+                name=name,
             )
 
         # QHead
@@ -129,6 +135,7 @@ class HeadFactory:
                 hidden_backbone_config=config.hidden_backbone,
                 num_actions=num_actions,
                 neck_config=config.neck,
+                name=name,
             )
 
         # DuelingQHead
@@ -144,6 +151,7 @@ class HeadFactory:
                 advantage_hidden_backbone_config=config.advantage_hidden_backbone,
                 num_actions=num_actions,
                 neck_config=config.neck,
+                name=name,
             )
 
         return head_cls(
@@ -151,4 +159,5 @@ class HeadFactory:
             input_shape=input_shape,
             representation=kwargs.get("representation"),
             neck_config=config.neck,
+            name=name,
         )

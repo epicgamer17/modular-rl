@@ -26,11 +26,12 @@ class LatentConsistencyHead(BaseHead):
         representation: Optional[BaseRepresentation] = None,
         neck_config: Optional[BackboneConfig] = None,
         projection_dim: int = 256,
+        name: Optional[str] = None,
     ):
         if representation is None:
             representation = IdentityRepresentation(num_features=projection_dim)
 
-        super().__init__(arch_config, input_shape, representation, neck_config)
+        super().__init__(arch_config, input_shape, representation, neck_config, name=name)
         self.projection_dim = projection_dim
 
         # 1. Heads now build their own feature architecture (neck)
@@ -57,6 +58,7 @@ class LatentConsistencyHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> HeadOutput:
         """Returns HeadOutput with (projected_logits, consistency_embedding, state)"""
         # 1. Processing neck -> flatten
