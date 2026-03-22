@@ -39,8 +39,8 @@ class WorldModelOutput:
     to_play_logits: Optional[torch.Tensor] = None  # Learner-facing: pre-softmax logits (B, P)
     q_values: Optional[torch.Tensor] = None
 
-    # Opaque recurrent state passed to next step
-    head_state: Dict[str, Tensor] = field(default_factory=dict)
+    # Opaque container for all state owned by the world model (dynamics + env heads)
+    next_state: Dict[str, Tensor] = field(default_factory=dict)
     instant_reward: Optional[torch.Tensor] = None
 
     # Environment predictions

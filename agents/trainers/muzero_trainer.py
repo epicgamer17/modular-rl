@@ -46,7 +46,6 @@ class MuZeroTrainer(BaseTrainer):
             heads_config=config.heads,
             projector_config=config.projector,
             stochastic=config.stochastic,
-            consistency_loss_factor=getattr(config, "consistency_loss_factor", 0.0),
             num_players=config.game.num_players,
             num_chance_codes=config.num_chance,
             validator_params={

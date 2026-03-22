@@ -32,7 +32,6 @@ class AgentNetwork(nn.Module):
         heads_config: Dict[str, Any] = None,
         projector_config: Optional[Any] = None,
         stochastic: bool = False,
-        consistency_loss_factor: float = 0.0,
         num_players: int = 1,
         num_chance_codes: int = 0,
         validator_params: Dict[str, Any] = None,
@@ -43,7 +42,6 @@ class AgentNetwork(nn.Module):
         self.num_actions = num_actions
         self.arch_config = arch_config
         self.stochastic = stochastic
-        self.consistency_loss_factor = consistency_loss_factor
 
         # --- DYNAMIC ASSEMBLY ---
         self.components = nn.ModuleDict()
@@ -111,9 +109,7 @@ class AgentNetwork(nn.Module):
             )
 
         # Initialize Validator with passed params
-        self.validator = ShapeValidator(
-            **validator_params if validator_params else {}
-        )
+        self.validator = ShapeValidator(**validator_params if validator_params else {})
 
     def initialize(
         self, initializer: Optional[Callable[[Tensor], None]] = None
@@ -189,14 +185,14 @@ class AgentNetwork(nn.Module):
             if head_out.state:
                 network_state.update(head_out.state)
 
-        if "world_model" in self.components:
+        if wm_output:
+            network_state.update(wm_output.next_state)
+        elif "world_model" in self.components:
+            # Fallback for root: if no wm_output (e.g. from observation),
+            # we manually pack the root latent.
             network_state["dynamics"] = latent
 
-        if wm_output and hasattr(wm_output, "head_state") and wm_output.head_state:
-            network_state.update(wm_output.head_state)
-
-        if next_h is not None:
-            network_state.update(next_h)
+        network_state.update(next_h)
 
         q_vals = outputs.get("q_logits")
         state_value = (
@@ -238,27 +234,6 @@ class AgentNetwork(nn.Module):
             flat_obs = obs.flatten(0, 1)
             flat_latent = self.components["representation"](flat_obs)
             latents = flat_latent.view(B, T, *flat_latent.shape[1:])
-
-        target_latents = None
-        if (
-            "world_model" in self.components
-            and self.consistency_loss_factor > 0
-        ):
-            if "unroll_observations" in batch:
-                target_obs = batch["unroll_observations"].to(self.device).float()
-
-                assert target_obs.dim() == expected_dims + 2, (
-                    f"unroll_observations must strictly be a sequence with {expected_dims + 2} dims, "
-                    f"got {target_obs.dim()}"
-                )
-
-                B_t, T_t = target_obs.shape[:2]
-                flat_target = target_obs.flatten(0, 1)
-                with torch.no_grad():
-                    flat_target_latent = self.components["representation"](flat_target)
-                    target_latents = flat_target_latent.view(
-                        B_t, T_t, *flat_target_latent.shape[1:]
-                    )
 
         # 2. Environment Phase
         if "world_model" in self.components:
@@ -302,7 +277,7 @@ class AgentNetwork(nn.Module):
             # Dynamic Routing: The head knows its source, the router provides the "menu"
             source_features = feature_pool.get(head.input_source, flat_memory)
             if source_features is None:
-                source_features = flat_memory # Fallback
+                source_features = flat_memory  # Fallback
 
             head_out = head(
                 source_features,
@@ -330,8 +305,6 @@ class AgentNetwork(nn.Module):
 
         # Merge and Validate
         final_output = {**env_results, **behavior_results, "latents": latents}
-        if target_latents is not None:
-            final_output["target_latents"] = target_latents
 
         self.validator.validate_predictions(final_output)
         return final_output
@@ -362,18 +335,17 @@ class AgentNetwork(nn.Module):
         )
 
         outputs = {}
-        next_recurrent_state = {"dynamics": latent}
+        next_recurrent_state = {}
+        # 3. State Propagation (Blindly update from components)
+        next_recurrent_state.update(wm_output.next_state)
+
         for name, head in self.components["behavior_heads"].items():
             head_out = head(features, state=network_state, **kwargs)
             outputs[name] = head_out.inference_tensor
             if head_out.state:
                 next_recurrent_state.update(head_out.state)
 
-        if wm_output and hasattr(wm_output, "head_state") and wm_output.head_state:
-            next_recurrent_state.update(wm_output.head_state)
-
-        if next_h is not None:
-            next_recurrent_state.update(next_h)
+        next_recurrent_state.update(next_h)
 
         return InferenceOutput(
             recurrent_state=next_recurrent_state,
@@ -401,19 +373,16 @@ class AgentNetwork(nn.Module):
         afterstate_latent = wm_output.afterstate_features
 
         afterstate_head = self.components["behavior_heads"].get("afterstate_value")
-        expected_afterstate_value = None
         recurrent_state_after = dict(recurrent_state)
-        recurrent_state_after["dynamics"] = wm_output.afterstate_features
+        recurrent_state_after.update(wm_output.next_state)
 
-        if afterstate_head is not None:
-            head_out_as = afterstate_head(
-                afterstate_latent,
-                state=recurrent_state,
-                afterstate_features=afterstate_latent,
-            )
-            expected_afterstate_value = head_out_as.inference_tensor
-            if head_out_as.state:
-                recurrent_state_after.update(head_out_as.state)
+        head_out_as = afterstate_head(
+            afterstate_latent,
+            state=recurrent_state,
+            afterstate_features=afterstate_latent,
+        )
+        expected_afterstate_value = head_out_as.inference_tensor
+        recurrent_state_after.update(head_out_as.state)
 
         chance_policy = self.components[
             "world_model"

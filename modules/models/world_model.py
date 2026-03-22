@@ -239,6 +239,12 @@ class WorldModel(nn.Module):
             if head_out.state:
                 new_head_state.update(head_out.state)
 
+        # The World Model packs everything it owns into one dictionary
+        new_state = {
+            "dynamics": next_hidden_state,
+            **new_head_state
+        }
+
         return WorldModelOutput(
             features=next_hidden_state,
             reward=predictions.get("reward_logits"),
@@ -246,7 +252,7 @@ class WorldModel(nn.Module):
             to_play=predictions.get("to_play_logits_extra"),
             continuation_logits=predictions.get("continuation_logits"),
             continuation=predictions.get("continuation_logits_extra"),
-            head_state=new_head_state,
+            next_state=new_state,
             instant_reward=predictions.get("reward_logits_extra"),
         )
 
@@ -264,10 +270,15 @@ class WorldModel(nn.Module):
             network_state["dynamics"], action
         )
 
+        new_state = {
+            "dynamics": res["afterstate_features"],
+        }
+
         return WorldModelOutput(
             features=torch.empty(0),
             afterstate_features=res["afterstate_features"],
             chance=res["chance"],
+            next_state=new_state
         )
 
     def unroll_physics(
