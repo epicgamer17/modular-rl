@@ -46,10 +46,6 @@ class ImitationTrainer(BaseTrainer):
             representation_config=getattr(config, "representation_backbone", None),
             heads_config=config.heads,
             num_players=getattr(config.game, "num_players", 1),
-            validator_params={
-                "minibatch_size": config.minibatch_size,
-                "num_actions": self.num_actions,
-            },
         ).to(device)
         if getattr(config, "kernel_initializer", None) is not None:
             self.agent_network.initialize(config.kernel_initializer)
@@ -114,6 +110,10 @@ class ImitationTrainer(BaseTrainer):
             lr_scheduler=lr_scheduler,
             clipnorm=config.clipnorm,
             callbacks=[ResetNoiseCallback()],
+            validator_params={
+                "minibatch_size": config.minibatch_size,
+                "num_actions": self.num_actions,
+            },
         )
         self.learner.replay_buffer = self.buffer
 

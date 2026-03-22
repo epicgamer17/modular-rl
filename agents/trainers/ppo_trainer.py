@@ -56,11 +56,6 @@ class PPOTrainer(BaseTrainer):
             prediction_backbone_config=getattr(config, "prediction_backbone", None),
             heads_config=config.heads,
             num_players=getattr(config.game, "num_players", 1),
-            validator_params={
-                "minibatch_size": config.minibatch_size,
-                "unroll_steps": getattr(config, "unroll_steps", 0),
-                "num_actions": self.num_actions,
-            },
         )
         self.agent_network.to(device)
 
@@ -102,6 +97,10 @@ class PPOTrainer(BaseTrainer):
             agent_network=self.agent_network,
             device=device,
             weight_broadcast_fn=self.executor.update_weights,
+            validator_params={
+                "minibatch_size": config.minibatch_size,
+                "num_actions": self.num_actions,
+            },
         )
 
         # 6. Compile network for the learner (main process)

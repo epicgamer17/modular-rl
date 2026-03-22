@@ -279,17 +279,6 @@ def net_factory():
     def _builder(config, input_shape, num_actions=None, **kwargs):
         num_actions = num_actions or config.game.num_actions
         
-        # Prepare validator params
-        validator_params = {
-            "minibatch_size": getattr(config, "minibatch_size", 1),
-            "unroll_steps": getattr(config, "unroll_steps", 0),
-            "num_actions": num_actions,
-        }
-        if hasattr(config, "support_range") and config.support_range:
-            validator_params["atom_size"] = (config.support_range * 2) + 1
-        elif hasattr(config, "atom_size"):
-            validator_params["atom_size"] = config.atom_size
-
         return AgentNetwork(
             input_shape=input_shape,
             num_actions=num_actions,
@@ -302,7 +291,6 @@ def net_factory():
             stochastic=getattr(config, "stochastic", False),
             num_players=getattr(config.game, "num_players", 1),
             num_chance_codes=getattr(config, "num_chance", 0),
-            validator_params=validator_params,
             **kwargs,
         )
 

@@ -48,12 +48,6 @@ class MuZeroTrainer(BaseTrainer):
             stochastic=config.stochastic,
             num_players=config.game.num_players,
             num_chance_codes=config.num_chance,
-            validator_params={
-                "minibatch_size": config.minibatch_size,
-                "unroll_steps": config.unroll_steps,
-                "num_actions": self.num_actions,
-                "atom_size": (config.support_range * 2) + 1 if hasattr(config, "support_range") and config.support_range else 1,
-            },
         ).to(device)
 
         if config.kernel_initializer is not None:
@@ -105,6 +99,12 @@ class MuZeroTrainer(BaseTrainer):
             device=device,
             priority_update_fn=self.buffer.update_priorities,
             weight_broadcast_fn=self.executor.update_weights,
+            validator_params={
+                "minibatch_size": config.minibatch_size,
+                "unroll_steps": config.unroll_steps,
+                "num_actions": self.num_actions,
+                "atom_size": (config.support_range * 2) + 1 if hasattr(config, "support_range") and config.support_range else 1,
+            },
         )
 
         if config.multi_process:

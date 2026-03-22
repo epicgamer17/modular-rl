@@ -11,7 +11,7 @@ from modules.backbones.recurrent import RecurrentBackbone
 from modules.backbones.transformer import TransformerBackbone
 from modules.heads.factory import HeadFactory
 from modules.projectors.sim_siam import Projector
-from agents.learner.losses.shape_validator import ShapeValidator
+
 from agents.learner.losses.representations import get_representation
 
 
@@ -34,7 +34,7 @@ class AgentNetwork(nn.Module):
         stochastic: bool = False,
         num_players: int = 1,
         num_chance_codes: int = 0,
-        validator_params: Dict[str, Any] = None,
+
         **kwargs,
     ):
         super().__init__()
@@ -109,8 +109,7 @@ class AgentNetwork(nn.Module):
                 self.flat_hidden_dim, projector_config
             )
 
-        # Initialize Validator with passed params
-        self.validator = ShapeValidator(**validator_params if validator_params else {})
+
 
     def initialize(
         self, initializer: Optional[Callable[[Tensor], None]] = None
@@ -275,7 +274,6 @@ class AgentNetwork(nn.Module):
 
         # Note: chance_logits assignment deleted. It merges automatically below!
         final_output = {**env_results, **behavior_results, "latents": latents}
-        self.validator.validate_predictions(final_output)
 
         return final_output
 

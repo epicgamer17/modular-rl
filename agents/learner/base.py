@@ -1,4 +1,5 @@
 from __future__ import annotations
+from agents.learner.losses.shape_validator import ShapeValidator
 
 from dataclasses import dataclass, field
 import time
@@ -91,6 +92,9 @@ class UniversalLearner:
         self.clipnorm = clipnorm
         self.gradient_accumulation_steps = gradient_accumulation_steps
         self.max_grad_norm = max_grad_norm or clipnorm
+
+        # 5. Validation (Moved from network)
+        self.validator = ShapeValidator(**kwargs.get("validator_params", {}))
 
         # Normalize optimizers and schedulers into dictionaries
         if isinstance(optimizer, dict):
@@ -225,7 +229,11 @@ class UniversalLearner:
         # 1. Predictions
         predictions = self.agent_network.learner_inference(batch)
 
-        # 2. Targets (Strict Delegation)
+        # 2. Validation
+        if self.validator is not None:
+            self.validator.validate_predictions(predictions)
+
+        # 3. Targets (Strict Delegation)
         # The TargetBuilder is the ONLY source of truth for the LossPipeline.
         targets: Dict[str, torch.Tensor] = {}
         if self.target_builder is not None:
