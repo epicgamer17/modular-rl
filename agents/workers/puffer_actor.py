@@ -16,7 +16,7 @@ from replay_buffers.sequence import Sequence
 from agents.workers.actors import BaseActor
 from utils.wrappers import AECSequentialWrapper
 from replay_buffers.modular_buffer import ModularReplayBuffer
-from modules.agent_nets.agent_network import AgentNetwork
+from modules.models.agent_network import AgentNetwork
 from agents.action_selectors.selectors import BaseActionSelector
 from agents.action_selectors.types import InferenceResult
 from agents.action_selectors.policy_sources import (

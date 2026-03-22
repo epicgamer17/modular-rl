@@ -13,7 +13,7 @@ from agents.action_selectors.policy_sources import (
 )
 from configs.base import Config
 from replay_buffers.modular_buffer import ModularReplayBuffer
-from modules.agent_nets.agent_network import AgentNetwork
+from modules.models.agent_network import AgentNetwork
 from utils.wrappers import wrap_recording
 import numpy as np
 

@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from configs.agents.rainbow_dqn import RainbowConfig
 from agents.learner.base import UniversalLearner
-from modules.agent_nets.agent_network import AgentNetwork
+from modules.models.agent_network import AgentNetwork
 
 
 class MockGame:

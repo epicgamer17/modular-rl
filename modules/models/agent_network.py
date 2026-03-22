@@ -3,10 +3,10 @@ import torch
 from torch import nn, Tensor
 
 from modules.utils import kernel_initializer_wrapper
-from modules.world_models.inference_output import (
+from modules.models.inference_output import (
     InferenceOutput,
 )
-from modules.world_models.world_model import WorldModel
+from modules.models.world_model import WorldModel
 from modules.backbones.factory import BackboneFactory
 from modules.backbones.recurrent import RecurrentBackbone
 from modules.backbones.transformer import TransformerBackbone
@@ -41,7 +41,7 @@ class AgentNetwork(nn.Module):
 
         # 1. Environment Phase (The Physics Engine)
         if config.world_model is not None:
-            from modules.world_models.world_model import WorldModel
+            from modules.models.world_model import WorldModel
             world_model_cls = kwargs.get("world_model_cls", WorldModel)
             self.components["world_model"] = world_model_cls(
                 config, input_shape, num_actions

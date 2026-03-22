@@ -15,26 +15,13 @@ pip install -e .
 ```
 modules/
 ├── utils.py                     # Module utilities and helpers
-├── conv.py                      # Convolutional layers
-├── dense.py                     # Fully connected layers
-├── residual.py                  # Residual blocks
-├── heads.py                     # Network heads (policy, value)
-├── encoder_decoder.py           # Encoder-decoder architectures
-├── action_encoder.py            # Action encoding utilities
-├── network_block.py             # Generic network blocks
-├── distributions.py             # Distribution utilities
-├── actor.py                     # Actor network component
-├── critic.py                    # Critic network component
-├── base_stack.py                # Base network stack
-├── sim_siam_projector_predictor.py  # Self-supervised learning
-├── agent_nets/                  # Agent-specific networks
-│   ├── rainbow_dqn.py
-│   ├── muzero.py
-│   ├── ppo.py
-│   └── policy_imitation.py
-└── world_models/                # World model implementations
-    ├── world_model.py
-    └── modular_world_model.py
+├── backbones/                   # Feature extraction backbones (ResNet, Conv, Dense)
+├── heads/                       # Semantic heads (Policy, Value, Q)
+├── models/                      # Architectural Routers
+│   ├── agent_network.py         # Unified Agent Network (Switchboard)
+│   ├── world_model.py           # Unified World Model (Physics Engine)
+│   └── inference_output.py      # Type-hinted output structures
+└── ...
 ```
 
 ## Core Components
@@ -59,84 +46,30 @@ modules/
 - `ValueHead` - Outputs state value ✅
 - `CategoricalValueHead` - Outputs value distribution (C51) ✅
 
-## Agent-Specific Networks
+## Logical Routers (`models/`)
 
-### Rainbow DQN Network
+This framework avoids hardcoded agent-specific architectures (e.g., `RainbowNet.py`). Instead, it uses a dynamic "Switchboard" pattern where backbones and heads are assembled based on configuration.
+
+### AgentNetwork (`agent_network.py`)
+The central orchestrator that routes data through Environment, Spatial, and Temporal phases to produce semantic outputs.
+
 ```python
-from modules.agent_nets.rainbow_dqn import RainbowDQNNetwork
+from modules.models import AgentNetwork
+from configs.agents.muzero import MuZeroConfig
 
-network = RainbowDQNNetwork(
-    input_shape=(4, 84, 84),
-    action_space=18,
-    atom_size=51,
-    dueling=True,
-    noisy=True
-)
+# Assembled dynamically from config
+config = MuZeroConfig(...)
+network = AgentNetwork(config, input_shape=(3, 96, 96), num_actions=4)
 ```
 
-### MuZero Network
-```python
-from modules.agent_nets.muzero import MuZeroNetwork
-
-network = MuZeroNetwork(
-    input_shape=(3, 96, 96),
-    action_space=4,
-    support_size=10,
-    hidden_size=256
-)
-```
-
-### PPO Network
-```python
-from modules.agent_nets.ppo import PPONetwork
-
-network = PPONetwork(
-    input_shape=(4,),
-    action_space=2,
-    continuous=True,
-    hidden_dims=[64, 64]
-)
-```
-
-## World Models
-
-MuZero dynamics model for model-based planning:
+### WorldModel (`world_model.py`)
+A modular physics engine for model-based planning (MCTS).
 
 ```python
-from modules.world_models.modular_world_model import ModularWorldModel
+from modules.models import WorldModel
 
-model = ModularWorldModel(
-    action_space=9,
-    hidden_size=256,
-    support_size=10
-)
-
-# Dynamics: (hidden_state, action) -> (new_state, reward)
-next_state, reward_logits = model.dynamics(state, action)
-
-# Prediction: (state) -> (policy_logits, value_logits)
-policy, value = model.prediction(state)
-
-# Representation: (observation) -> (state)
-state = model.representation(obs)
-```
-
-## Building Custom Networks
-
-Compose modules to create custom architectures:
-
-```python
-from modules.conv import ConvStack
-from modules.dense import MLP
-from modules.heads import PolicyHead, ValueHead
-
-class CustomNetwork(nn.Module):
-    def __init__(self, input_shape, action_space):
-        super().__init__()
-        self.encoder = ConvStack(input_shape, channels=[32, 64, 64])
-        self.shared = MLP(input_dim=3136, hidden_dims=[512])
-        self.policy_head = PolicyHead(512, action_space)
-        self.value_head = ValueHead(512)
+# Encapsulates Representation, Dynamics, and Stochastic components
+world_model = WorldModel(config, observation_dimensions=(3, 96, 96), num_actions=4)
 ```
 
 ## Utility Functions

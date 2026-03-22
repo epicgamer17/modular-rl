@@ -5,8 +5,8 @@ from configs.games.game import GameConfig
 from configs.agents.ppo import PPOConfig
 from configs.agents.rainbow_dqn import RainbowConfig
 from configs.agents.muzero import MuZeroConfig
-from modules.agent_nets.agent_network import AgentNetwork
-from modules.world_models.world_model import WorldModel
+from modules.models.agent_network import AgentNetwork
+from modules.models.world_model import WorldModel
 
 
 def create_mock_game(num_actions: int = 5) -> GameConfig:

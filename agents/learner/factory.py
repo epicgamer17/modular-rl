@@ -28,7 +28,7 @@ from agents.learner.losses import LossPipeline
 from modules.utils import get_lr_scheduler
 
 if TYPE_CHECKING:
-    from modules.agent_nets.agent_network import AgentNetwork
+    from modules.models.agent_network import AgentNetwork
 
 
 def build_loss_pipeline(

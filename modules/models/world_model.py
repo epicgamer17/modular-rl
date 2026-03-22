@@ -9,7 +9,7 @@ from modules.backbones.factory import BackboneFactory
 from modules.backbones.conditioned import ConditionedBackbone
 from modules.heads.factory import HeadFactory
 from modules.utils import scale_gradient
-from modules.world_models.inference_output import WorldModelOutput
+from modules.models.inference_output import WorldModelOutput
 
 
 class WorldModel(nn.Module):

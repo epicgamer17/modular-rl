@@ -4,7 +4,7 @@ import numpy as np
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Union, Tuple
 
-from modules.agent_nets.agent_network import AgentNetwork
+from modules.models.agent_network import AgentNetwork
 from agents.action_selectors.selectors import BaseActionSelector
 from agents.action_selectors.types import InferenceResult
 from agents.action_selectors.policy_sources import (

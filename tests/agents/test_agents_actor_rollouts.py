@@ -12,7 +12,7 @@ import gymnasium as gym
 
 from agents.workers.actors import GymActor
 from agents.workers.tester import Tester as TesterWorker, StandardGymTest
-from modules.agent_nets.agent_network import AgentNetwork
+from modules.models.agent_network import AgentNetwork
 from agents.action_selectors.factory import SelectorFactory
 from replay_buffers.buffer_factories import create_dqn_buffer
 
