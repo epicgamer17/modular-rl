@@ -168,6 +168,60 @@ class WorldModel(nn.Module):
             instant_reward=predictions.get("reward_logits_extra"),
         )
 
+    def _step_dynamics(
+        self,
+        current_latent: Tensor,
+        action_k: Tensor,
+        k: int,
+        encoder_inputs: Optional[Tensor] = None,
+        true_chance_codes: Optional[Tensor] = None,
+    ) -> Dict[str, Tensor]:
+        """Processes a single transition step (Deterministic or Stochastic)."""
+        if self.config.stochastic:
+            # 1. Afterstate Phase (Action-conditioned but outcome-agnostic)
+            afterstate_out = self.afterstate_recurrent_inference(
+                {"dynamics": current_latent}, action_k
+            )
+            afterstate = afterstate_out.afterstate_features
+            shared_features = afterstate_out.features
+            chance_logits = afterstate_out.chance
+
+            # 2. Chance Code Selection (Ground Truth or Learned Encoder)
+            if self.config.use_true_chance_codes and true_chance_codes is not None:
+                codes_k = F.one_hot(
+                    true_chance_codes[:, k + 1].squeeze(-1).long(),
+                    self.num_chance,
+                ).float()
+            else:
+                # Straight-Through Estimator logic for backpropping to encoder
+                # Note: k index for encoder matches root=0, k=step
+                x = self.encoder(encoder_inputs[:, k])
+                x = x.flatten(1, -1)
+                logits = self.chance_projector(x)
+                probs = logits.softmax(dim=-1)
+                one_hot = torch.zeros_like(probs).scatter_(
+                    -1, torch.argmax(probs, dim=-1, keepdim=True), 1.0
+                )
+                codes_k = (one_hot - probs).detach() + probs
+
+            # 3. Transition Phase (Complete hidden state update)
+            next_latent = self.dynamics_fusion(afterstate, codes_k)
+            next_latent = self.dynamics(next_latent)
+            next_latent = _normalize_hidden_state(next_latent)
+
+            return {
+                "next_latent": next_latent,
+                "afterstate": afterstate,
+                "chance_logits": chance_logits,
+                "shared_features": shared_features,
+            }
+        else:
+            # Standard Deterministic Dynamics
+            next_latent = self.dynamics_fusion(current_latent, action_k)
+            next_latent = self.dynamics(next_latent)
+            next_latent = _normalize_hidden_state(next_latent)
+            return {"next_latent": next_latent}
+
     def afterstate_recurrent_inference(
         self,
         network_state: Dict[str, Any],
@@ -221,44 +275,27 @@ class WorldModel(nn.Module):
         for k in range(unroll_steps):
             action_k = actions[:, k]
 
+            # 1. Step Dynamics Phase (Deterministic vs Stochastic)
+            step_results = self._step_dynamics(
+                current_latent,
+                action_k,
+                k,
+                encoder_inputs=encoder_inputs,
+                true_chance_codes=true_chance_codes,
+            )
+            next_latent = step_results["next_latent"]
+
+            # 2. Optional Metadata Recording (Stochastic paths only)
             if self.config.stochastic:
-                afterstate_out = self.afterstate_recurrent_inference(
-                    {"dynamics": current_latent}, action_k
+                stochastic_sequences["latents_afterstates"].append(
+                    step_results["afterstate"]
                 )
-                afterstate = afterstate_out.afterstate_features
-                shared_features = afterstate_out.features
-                chance_logits = afterstate_out.chance
-
-                if self.config.use_true_chance_codes and true_chance_codes is not None:
-                    # [B, 1] -> [B, NumChance]
-                    codes_k = F.one_hot(
-                        true_chance_codes[:, k + 1].squeeze(-1).long(),
-                        self.num_chance,
-                    ).float()
-                else:
-                    # Chance Encoder logic: ST-estimator for chance codes
-                    x = self.encoder(encoder_inputs[:, k])
-                    x = x.flatten(1, -1)
-                    logits = self.chance_projector(x)
-                    probs = logits.softmax(dim=-1)
-                    
-                    one_hot = torch.zeros_like(probs).scatter_(
-                        -1, torch.argmax(probs, dim=-1, keepdim=True), 1.0
-                    )
-                    # Straight-Through Estimator
-                    codes_k = (one_hot - probs).detach() + probs
-
-                stochastic_sequences["latents_afterstates"].append(afterstate)
-                stochastic_sequences["chance_logits"].append(chance_logits)
-                stochastic_sequences["afterstate_backbone_features"].append(shared_features)
-                
-                next_latent = self.dynamics_fusion(afterstate, codes_k)
-                next_latent = self.dynamics(next_latent)
-                next_latent = _normalize_hidden_state(next_latent)
-            else:
-                next_latent = self.dynamics_fusion(current_latent, action_k)
-                next_latent = self.dynamics(next_latent)
-                next_latent = _normalize_hidden_state(next_latent)
+                stochastic_sequences["chance_logits"].append(
+                    step_results["chance_logits"]
+                )
+                stochastic_sequences["afterstate_backbone_features"].append(
+                    step_results["shared_features"]
+                )
 
             # Heads Phase
             for name, head in self.heads.items():
