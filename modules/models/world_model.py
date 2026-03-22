@@ -115,43 +115,6 @@ class WorldModel(nn.Module):
         except StopIteration:
             return torch.device("cpu")
 
-    def recurrent_inference(
-        self,
-        hidden_state: Tensor,
-        action: Tensor,
-        recurrent_state: Any = None,
-    ) -> WorldModelOutput:
-        # 1. Action Fusion Phase
-        fused_latent = self.dynamics_fusion(hidden_state, action)
-
-        # 2. Backbone Transition Phase
-        next_hidden_state = self.dynamics(fused_latent)
-
-        # 3. MuZero Hidden State Normalization
-        next_hidden_state = _normalize_hidden_state(next_hidden_state)
-
-        predictions = {}
-        head_state = {} if recurrent_state is None else recurrent_state
-        new_head_state = {}
-
-        for name, head in self.heads.items():
-            h_state = head_state.get(name) if isinstance(head_state, dict) else None
-            head_out = head(next_hidden_state, state=h_state)
-            predictions[name] = head_out.training_tensor
-            predictions[f"{name}_extra"] = head_out.inference_tensor
-            new_head_state[name] = head_out.state
-
-        return WorldModelOutput(
-            features=next_hidden_state,
-            reward=predictions.get("reward_logits"),
-            to_play_logits=predictions.get("to_play_logits"),
-            to_play=predictions.get("to_play_logits_extra"),
-            continuation_logits=predictions.get("continuation_logits"),
-            continuation=predictions.get("continuation_logits_extra"),
-            head_state=new_head_state,
-            instant_reward=predictions.get("reward_logits_extra"),
-        )
-
     def _step_dynamics(
         self,
         current_latent: Tensor,
@@ -202,6 +165,43 @@ class WorldModel(nn.Module):
             next_latent = self.dynamics(next_latent)
             next_latent = _normalize_hidden_state(next_latent)
             return {"next_latent": next_latent}
+
+    def recurrent_inference(
+        self,
+        hidden_state: Tensor,
+        action: Tensor,
+        recurrent_state: Any = None,
+    ) -> WorldModelOutput:
+        # 1. Action Fusion Phase
+        fused_latent = self.dynamics_fusion(hidden_state, action)
+
+        # 2. Backbone Transition Phase
+        next_hidden_state = self.dynamics(fused_latent)
+
+        # 3. MuZero Hidden State Normalization
+        next_hidden_state = _normalize_hidden_state(next_hidden_state)
+
+        predictions = {}
+        head_state = {} if recurrent_state is None else recurrent_state
+        new_head_state = {}
+
+        for name, head in self.heads.items():
+            h_state = head_state.get(name) if isinstance(head_state, dict) else None
+            head_out = head(next_hidden_state, state=h_state)
+            predictions[name] = head_out.training_tensor
+            predictions[f"{name}_extra"] = head_out.inference_tensor
+            new_head_state[name] = head_out.state
+
+        return WorldModelOutput(
+            features=next_hidden_state,
+            reward=predictions.get("reward_logits"),
+            to_play_logits=predictions.get("to_play_logits"),
+            to_play=predictions.get("to_play_logits_extra"),
+            continuation_logits=predictions.get("continuation_logits"),
+            continuation=predictions.get("continuation_logits_extra"),
+            head_state=new_head_state,
+            instant_reward=predictions.get("reward_logits_extra"),
+        )
 
     def afterstate_recurrent_inference(
         self,
