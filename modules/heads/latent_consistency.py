@@ -46,7 +46,7 @@ class SimSiamProjectorHead(BaseHead):
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)
         self.output_shape = self.neck.output_shape
-        self.flat_dim = self._get_flat_dim(self.output_shape)
+        self.flat_dim = self._get_flat_dim(self.neck, input_shape)
 
         # 2. Projection layers (SimSiam/EfficientZero style)
         self.projection = nn.Sequential(

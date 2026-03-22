@@ -38,7 +38,7 @@ class RewardHead(BaseHead):
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)
         self.output_shape = self.neck.output_shape
-        self.flat_dim = self._get_flat_dim(self.output_shape)
+        self.flat_dim = self._get_flat_dim(self.neck, input_shape)
 
         # 2. Heads now define their own Final Output layer
         self.output_layer = build_dense(
@@ -111,7 +111,7 @@ class ValuePrefixRewardHead(RewardHead):
 
         self.neck = BackboneFactory.create(neck_config, input_shape)
         self.output_shape = self.neck.output_shape
-        self.flat_dim = self._get_flat_dim(self.output_shape)
+        self.flat_dim = self._get_flat_dim(self.neck, input_shape)
 
         self.lstm_hidden_size = config.lstm_hidden_size
         self.lstm_horizon_len = config.lstm_horizon_len

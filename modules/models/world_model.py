@@ -84,10 +84,9 @@ class StochasticDynamics(nn.Module):
         self.encoder = BackboneFactory.create(
             world_model_config.chance_encoder_backbone, tuple(encoder_input_shape)
         )
-        # Map flattened backbone output to codes
-        flat_dim = 1
-        for d in self.encoder.output_shape:
-            flat_dim *= d
+        # Map flattened backbone output to codes using a foolproof dummy pass
+        from modules.utils import get_flat_dim
+        flat_dim = get_flat_dim(self.encoder, tuple(encoder_input_shape))
         self.chance_projector = nn.Linear(flat_dim, self.num_chance)
 
     def forward(

@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Tuple, Optional, Dict, Any
 import torch
 from torch import nn, Tensor
+from modules.utils import get_flat_dim
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.architecture_config import ArchitectureConfig
 from agents.learner.losses.representations import BaseRepresentation
@@ -39,12 +40,9 @@ class BaseHead(nn.Module, ABC):
         self.name = name or self.__class__.__name__
         self.input_source = input_source
 
-    def _get_flat_dim(self, shape: Tuple[int, ...]) -> int:
-        """Utility for heads to calculate their output feature dimension."""
-        flat = 1
-        for dim in shape:
-            flat *= dim
-        return flat
+    def _get_flat_dim(self, module: nn.Module, input_shape: Tuple[int, ...]) -> int:
+        """Utility for heads to calculate their output feature dimension using a dummy pass."""
+        return get_flat_dim(module, input_shape)
 
     @abstractmethod
     def forward(

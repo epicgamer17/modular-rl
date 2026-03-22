@@ -30,7 +30,7 @@ class PolicyHead(BaseHead):
         # 1. Heads now take ownership of their own architectural blocks
         self.neck = BackboneFactory.create(neck_config, input_shape)
         self.output_shape = self.neck.output_shape
-        self.flat_dim = self._get_flat_dim(self.output_shape)
+        self.flat_dim = self._get_flat_dim(self.neck, input_shape)
 
         # 2. Explicitly build the policy projection layer
         self.output_layer = build_dense(

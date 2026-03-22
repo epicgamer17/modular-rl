@@ -32,7 +32,7 @@ class ObservationHead(BaseHead):
         # 1. Image or Vector neck (e.g. Deconv or MLP)
         self.neck = BackboneFactory.create(neck_config, input_shape)
         self.output_shape = self.neck.output_shape
-        self.flat_dim = self._get_flat_dim(self.output_shape)
+        self.flat_dim = self._get_flat_dim(self.neck, input_shape)
 
         self.use_output_layer = use_output_layer
         self.output_layer = None

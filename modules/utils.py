@@ -6,74 +6,19 @@ import torch.nn.init as init
 from torch import nn, Tensor, optim
 from typing import TYPE_CHECKING, Iterable, Optional, Tuple, Any, Callable
 
+
+@torch.no_grad()
+def get_flat_dim(module: nn.Module, input_shape: Tuple[int, ...]) -> int:
+    """Foolproof calculation of flattened output dimension using a dummy pass."""
+    dummy_input = torch.zeros(1, *input_shape)
+    dummy_output = module(dummy_input)
+    return dummy_output.flatten(1, -1).shape[1]
+
+
 if TYPE_CHECKING:
     from configs.base import Config
 
-from utils.schedule import ScheduleConfig, Schedule, create_schedule
-
-
-class LinearLR:
-    def __init__(self, training_steps: int):
-        self.training_steps = training_steps
-
-    def __call__(self, current_step: int):
-        return max(
-            0.0,
-            float(self.training_steps - current_step)
-            / float(max(1, self.training_steps)),
-        )
-
-
-class StepWiseLR:
-    def __init__(self, steps: list, values: list, initial_lr: float):
-        self.steps = steps
-        self.values = values
-        self.initial_lr = initial_lr
-
-    def __call__(self, current_step: int):
-        idx = bisect.bisect_right(self.steps, current_step)
-        if idx == 0:
-            return 1.0
-        else:
-            return self.values[idx - 1] / self.initial_lr
-
-
-class ConstantLR:
-    def __call__(self, _):
-        return 1.0
-
-
-class ScheduleLRScheduler(optim.lr_scheduler.LRScheduler):
-    """
-    Wraps a Schedule to work with PyTorch's LR scheduler interface.
-    """
-
-    def __init__(self, optimizer: optim.Optimizer, schedule: Schedule):
-        self.schedule = schedule
-        self._initial_lr = schedule.config.initial
-        super().__init__(optimizer)
-
-    def get_lr(self):
-        if self._initial_lr is None or self._initial_lr == 0:
-            return self.base_lrs
-        factor = self.schedule.get_value() / self._initial_lr
-        return [lr * factor for lr in self.base_lrs]
-
-    def step(self, *args, **kwargs):
-        self.schedule.step()
-        super().step(*args, **kwargs)
-
-
-def get_lr_scheduler(optimizer: optim.Optimizer, config: "Config"):
-    schedule_config = config.lr_schedule
-    if schedule_config is None:
-        return optim.lr_scheduler.LambdaLR(optimizer, ConstantLR())
-
-    schedule = create_schedule(schedule_config)
-    return ScheduleLRScheduler(optimizer, schedule)
-
-
-from torch.optim import Adam, SGD
+from utils.schedule import ScheduleConfig, create_schedule, Schedule
 
 
 def create_optimizer(params, config, sub_config_parent=None):
@@ -203,111 +148,6 @@ def scalar_to_support(x: torch.Tensor | float, support_size: int, eps: float = 0
     return out.view(*original_shape, L)
 
 
-# def support_to_scalar(probabilities, support_size):
-#     """
-#     Transform a categorical representation (1D probs vector)
-#     into a scalar.
-#     """
-#     assert probabilities.dim() == 1, "probabilities must be 1D"
-#     assert probabilities.shape[0] == 2 * support_size + 1, "shape mismatch"
-
-#     # support values from -support_size to +support_size
-#     support = torch.arange(
-#         -support_size,
-#         support_size + 1,
-#         device=probabilities.device,
-#         dtype=torch.float32,
-#     )
-#     x = torch.sum(support * probabilities)
-
-#     # Invert the scaling (from paper appendix)
-#     x = torch.sign(x) * (
-#         ((torch.sqrt(1 + 4 * 0.001 * (torch.abs(x) + 1 + 0.001)) - 1) / (2 * 0.001))
-#         ** 2
-#         - 1
-#     )
-#     return x
-
-
-# def scalar_to_support(x, support_size):
-#     # raise NotImplementedError  # "this is bugged and outputs a uniform instead of a 2-hot"
-#     """
-#     Transform a scalar (float or 0D tensor)
-#     into categorical probs (1D tensor of length 2*support_size+1).
-#     """
-#     if not torch.is_tensor(x):
-#         x = torch.tensor(x, dtype=torch.float32)
-
-#     # Reduce the scale
-#     x = torch.sign(x) * (torch.sqrt(torch.abs(x) + 1) - 1) + 0.001 * x
-
-#     # Clamp into support range
-#     x = torch.clamp(x, -support_size, support_size)
-
-#     floor = torch.floor(x)
-#     prob = x - floor
-
-#     probabilities = torch.zeros(2 * support_size + 1, device=x.device)
-
-#     # distribute mass between floor and floor+1
-#     probabilities[int(floor + support_size)] = 1 - prob
-#     if floor + 1 <= support_size:
-#         probabilities[int(floor + support_size + 1)] = prob
-
-#     # probabilities = torch.softmax(logits, dim=0)
-#     return probabilities
-
-
-# FOR BATCHED INPUTS
-# def support_to_scalar(probabilities, support_size):
-#     """
-#     Transform a categorical representation to a scalar
-#     See paper appendix Network Architecture
-#     """
-#     # Decode to a scalar
-#     # print(probabilities.shape)
-#     support = (
-#         torch.tensor([x for x in range(-support_size, support_size + 1)])
-#         .expand(probabilities.shape)
-#         .float()
-#         .to(device=probabilities.device)
-#     )
-#     x = torch.sum(support * probabilities, dim=1, keepdim=True)
-
-#     # Invert the scaling (defined in https://arxiv.org/abs/1805.11593)
-#     x = torch.sign(x) * (
-#         ((torch.sqrt(1 + 4 * 0.001 * (torch.abs(x) + 1 + 0.001)) - 1) / (2 * 0.001))
-#         ** 2
-#         - 1
-#     )
-#     return x
-
-
-# def scalar_to_support(x, support_size):
-#     """
-#     Transform a scalar to a categorical representation with (2 * support_size + 1) categories
-#     See paper appendix Network Architecture
-#     """
-#     # Reduce the scale (defined in https://arxiv.org/abs/1805.11593)
-#     x = torch.sign(x) * (torch.sqrt(torch.abs(x) + 1) - 1) + 0.001 * x
-
-#     # Encode on a vector
-#     x = torch.clamp(x, -support_size, support_size)
-#     floor = x.floor()
-#     prob = x - floor
-#     logits = torch.zeros(x.shape[0], x.shape[1], 2 * support_size + 1).to(x.device)
-#     logits.scatter_(
-#         2, (floor + support_size).long().unsqueeze(-1), (1 - prob).unsqueeze(-1)
-#     )
-#     indexes = floor + support_size + 1
-#     prob = prob.masked_fill_(2 * support_size < indexes, 0.0)
-#     indexes = indexes.masked_fill_(2 * support_size < indexes, 0.0)
-#     logits.scatter_(2, indexes.long().unsqueeze(-1), prob.unsqueeze(-1))
-#     probabilities = logits.softmax(dim=2)
-#     # print(probabilities.shape)
-#     return probabilities
-
-
 def scale_gradient(tensor, scale):
     """
     Scales the gradient for the backward pass without changing the forward pass.
@@ -316,10 +156,6 @@ def scale_gradient(tensor, scale):
         scale (float): The scaling factor for the gradient.
     """
     return tensor * scale + tensor.detach() * (1 - scale)
-
-
-
-
 
 
 _epsilon = 1e-7
@@ -380,10 +216,6 @@ def generate_layer_widths(widths: list[int], max_num_layers: int) -> list[Tuple[
         width_combinations.extend(itertools.combinations_with_replacement(widths, i))
 
     return width_combinations
-
-
-
-
 
 
 def prepare_activations(activation: str | nn.Module | Callable):
@@ -450,8 +282,6 @@ def calc_units(shape):
         for dim in shape[2:]:
             c *= dim
         return (c * in_units, c * out_units)
-
-
 
 
 # modules/network_utils.py (New File)
