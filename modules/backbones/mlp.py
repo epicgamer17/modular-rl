@@ -55,24 +55,23 @@ class NoisyLinear(nn.Module):
         self.reset_noise()
 
     def reset_noise(self) -> None:
+        device = self.mu_w.device
         if self.use_factorized:
-            eps_i = torch.randn(1, self.in_features).to(self.mu_w.device)
-            eps_j = torch.randn(self.out_features, 1).to(self.mu_w.device)
+            eps_i = torch.randn(1, self.in_features, device=device)
+            eps_j = torch.randn(self.out_features, 1, device=device)
             self.eps_w = self.f(eps_j) @ self.f(eps_i)
             self.eps_b = (
                 self.f(eps_j).reshape(self.out_features) if self.use_bias else None
             )
         else:
-            self.eps_w = self.f(torch.randn(self.mu_w.shape)).to(self.mu_w.device)
+            self.eps_w = self.f(torch.randn(self.mu_w.shape, device=device))
             if self.use_bias:
-                self.eps_b = self.f(torch.randn(size=self.mu_b.shape)).to(
-                    self.mu_w.device
-                )
+                self.eps_b = self.f(torch.randn(size=self.mu_b.shape, device=device))
 
     def remove_noise(self) -> None:
-        self.eps_w = torch.zeros_like(self.mu_w).to(self.mu_w.device)
+        self.eps_w = torch.zeros_like(self.mu_w)
         if self.use_bias:
-            self.eps_b = torch.zeros_like(self.mu_b).to(self.mu_w.device)
+            self.eps_b = torch.zeros_like(self.mu_b)
 
     def reset_parameters(self) -> None:
         p = self.in_features

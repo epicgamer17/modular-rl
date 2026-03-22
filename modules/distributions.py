@@ -24,7 +24,7 @@ class TanhBijector(td.Transform):
         # Formula: 2 * (log(2) - x - softplus(-2x))
         # This matches the TF implementation for numerical stability
         return 2.0 * (
-            torch.log(torch.tensor(2.0).to(x.device)) - x - F.softplus(-2.0 * x)
+            torch.log(torch.tensor(2.0, device=x.device)) - x - F.softplus(-2.0 * x)
         )
 
 

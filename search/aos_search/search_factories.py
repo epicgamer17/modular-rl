@@ -278,10 +278,11 @@ class MCTSPipeline:
 
         # 1. Sample noise if using Gumbel policy
         if self.policy_key == "gumbel":
-            gumbel_dist = torch.distributions.Gumbel(0.0, 1.0)
-            gumbel_noise_sample = gumbel_dist.sample((B, self.num_actions)).to(
-                self.device
+            gumbel_dist = torch.distributions.Gumbel(
+                torch.tensor(0.0, device=self.device),
+                torch.tensor(1.0, device=self.device),
             )
+            gumbel_noise_sample = gumbel_dist.sample((B, self.num_actions))
         else:
             gumbel_noise_sample = None
 

@@ -239,7 +239,7 @@ class PPOTrainer(BaseTrainer):
                     last_value = 0.0
                 else:
                     with torch.inference_mode():
-                        obs = torch.tensor(state).unsqueeze(0).to(self.device)
+                        obs = torch.tensor(state, device=self.device).unsqueeze(0)
                         out = self.agent_network.obs_inference(obs)
                         last_value = out.value.item()
 
