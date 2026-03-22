@@ -38,11 +38,11 @@ class RecurrentBackbone(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        h: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]] = None,
-    ) -> Tuple[torch.Tensor, Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]:
+        state: Optional[Dict[str, torch.Tensor]] = None,
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Recurrent forward pass: memory core always treats (B, T, D) sequence batches.
-        Returns: (output_sequence, last_hidden_state)
+        Returns: (output_sequence, next_state_dict)
         """
         # (Batch, Time, Features) expected. Auto-flatten if (Batch, Time, C, H, W).
         if x.dim() > 3:
@@ -51,6 +51,20 @@ class RecurrentBackbone(nn.Module):
 
         assert x.dim() == 3, f"Memory core input must be (B, T, D), got shape {x.shape}"
 
-        output, h_n = self.rnn(x, h)
-        return output, h_n
+        h = None
+        if state is not None and "rnn_h" in state:
+            if isinstance(self.rnn, nn.LSTM):
+                h = (state["rnn_h"], state["rnn_c"])
+            else:
+                h = state["rnn_h"]
 
+        output, h_n = self.rnn(x, h)
+        
+        next_state = {}
+        if isinstance(self.rnn, nn.LSTM):
+            next_state["rnn_h"] = h_n[0]
+            next_state["rnn_c"] = h_n[1]
+        else:
+            next_state["rnn_h"] = h_n
+
+        return output, next_state
