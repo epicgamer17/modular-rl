@@ -5,6 +5,8 @@ from configs.modules.output_strategies import (
     ScalarStrategyConfig,
     OutputStrategyConfigFactory,
 )
+from configs.modules.backbones.base import BackboneConfig
+from configs.modules.backbones.factory import BackboneConfigFactory
 
 
 class QHeadConfig(HeadConfig):
@@ -18,8 +20,10 @@ class QHeadConfig(HeadConfig):
         self.output_strategy: OutputStrategyConfig = self.parse_output_strategy(
             config_dict
         )
-        self.hidden_widths: List[int] = self.parse_field(
-            "hidden_widths", [512], required=False
+        self.hidden_backbone: BackboneConfig = BackboneConfigFactory.create(
+            self.parse_dict_field(
+                "hidden_backbone", {"type": "mlp", "hidden_widths": [512]}
+            )
         )
         self.noisy_sigma: float = self.parse_field("noisy_sigma", 0.5, required=False)
 
@@ -40,11 +44,15 @@ class DuelingQHeadConfig(HeadConfig):
         self.output_strategy: OutputStrategyConfig = self.parse_output_strategy(
             config_dict
         )
-        self.value_hidden_widths: List[int] = self.parse_field(
-            "value_hidden_widths", [512], required=False
+        self.value_hidden_backbone: BackboneConfig = BackboneConfigFactory.create(
+            self.parse_dict_field(
+                "value_hidden_backbone", {"type": "mlp", "hidden_widths": [512]}
+            )
         )
-        self.advantage_hidden_widths: List[int] = self.parse_field(
-            "advantage_hidden_widths", [512], required=False
+        self.advantage_hidden_backbone: BackboneConfig = BackboneConfigFactory.create(
+            self.parse_dict_field(
+                "advantage_hidden_backbone", {"type": "mlp", "hidden_widths": [512]}
+            )
         )
         self.noisy_sigma: float = self.parse_field("noisy_sigma", 0.5, required=False)
 

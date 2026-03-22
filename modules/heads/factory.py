@@ -126,7 +126,7 @@ class HeadFactory:
                 arch_config=arch_config,
                 input_shape=input_shape,
                 representation=kwargs.get("representation"),
-                hidden_widths=config.hidden_widths,
+                hidden_backbone_config=config.hidden_backbone,
                 num_actions=num_actions,
                 neck_config=config.neck,
             )
@@ -140,8 +140,8 @@ class HeadFactory:
                 arch_config=arch_config,
                 input_shape=input_shape,
                 representation=kwargs.get("representation"),
-                value_hidden_widths=config.value_hidden_widths,
-                advantage_hidden_widths=config.advantage_hidden_widths,
+                value_hidden_backbone_config=config.value_hidden_backbone,
+                advantage_hidden_backbone_config=config.advantage_hidden_backbone,
                 num_actions=num_actions,
                 neck_config=config.neck,
             )

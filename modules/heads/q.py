@@ -1,4 +1,4 @@
-from typing import Tuple, Optional, Callable, Dict, Any, List
+from typing import Tuple, Optional, Dict, Any
 import torch
 from torch import nn, Tensor
 
@@ -6,14 +6,14 @@ from .base import BaseHead, HeadOutput
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
 from agents.learner.losses.representations import BaseRepresentation
-from modules.backbones.mlp import MLPBackbone, build_dense, NoisyLinear
-from modules.utils import build_normalization_layer
+from modules.backbones.factory import BackboneFactory
+from modules.backbones.mlp import build_dense, NoisyLinear
 
 
 class QHead(BaseHead):
     """
-    Standard Q-Network Head.
-    Structure: [Neck (Optional)] -> [Hidden Layers] -> [Output Layer] -> [Strategy (Reshape)]
+    Modular Q-Network Head.
+    Structure: [Neck (Optional)] -> [Hidden Backbone] -> [Output Layer] -> [Strategy (Reshape)]
     """
 
     def __init__(
@@ -21,7 +21,7 @@ class QHead(BaseHead):
         arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
-        hidden_widths: List[int],
+        hidden_backbone_config: BackboneConfig,
         num_actions: int,
         neck_config: Optional[BackboneConfig] = None,
     ):
@@ -31,33 +31,14 @@ class QHead(BaseHead):
         self.input_dim = self.flat_dim  # From super()
         self.noisy = self.arch_config.noisy_sigma != 0
 
-        # 1. Hidden Layers constructed directly via nn.Sequential
-        layers = []
-        current_width = self.input_dim
-        for width in hidden_widths:
-            use_bias = self.arch_config.norm_type == "none"
-            layers.append(
-                build_dense(
-                    current_width,
-                    width,
-                    sigma=self.arch_config.noisy_sigma,
-                    bias=use_bias,
-                )
-            )
+        # 1. Hidden Layers are now a Backbone!
+        self.hidden_layers = BackboneFactory.create(
+            hidden_backbone_config, (self.input_dim,)
+        )
 
-            if self.arch_config.norm_type != "none":
-                layers.append(
-                    build_normalization_layer(self.arch_config.norm_type, width, dim=1)
-                )
-
-            layers.append(self.arch_config.activation)
-            current_width = width
-
-        self.hidden_layers = nn.Sequential(*layers)
-
-        # 2. Output Layer
+        # 2. Final Output Layer
         self.output_layer = build_dense(
-            in_features=current_width,
+            in_features=self.hidden_layers.output_shape[0],
             out_features=self.representation.num_features * self.num_actions,
             sigma=self.arch_config.noisy_sigma,
         )
@@ -66,20 +47,19 @@ class QHead(BaseHead):
         super().reset_noise()
         if not self.noisy:
             return
-        for m in self.hidden_layers.modules():
-            if isinstance(m, NoisyLinear):
-                m.reset_noise()
+        if hasattr(self.hidden_layers, "reset_noise"):
+            self.hidden_layers.reset_noise()
         if isinstance(self.output_layer, NoisyLinear):
             self.output_layer.reset_noise()
 
     def forward(self, x: Tensor, state: Optional[Dict[str, Any]] = None) -> HeadOutput:
-        # 1. Neck + Flatten
+        # 1. Neck + Flatten (inherited from BaseHead)
         x = self.process_input(x)
 
-        # 2. Hidden Layers
+        # 2. Hidden Backbone Phase
         x = self.hidden_layers(x)
 
-        # 3. Output Layer
+        # 3. Output Projection Phase
         logits = self.output_layer(x)
         logits = logits.view(-1, self.num_actions, self.representation.num_features)
 
@@ -96,10 +76,10 @@ class QHead(BaseHead):
 
 class DuelingQHead(BaseHead):
     """
-    Dueling Q-Network Head.
+    Modular Dueling Q-Network Head.
     Structure:
-        [Neck] -> Split -> [Value Hidden] -> [Value Output]
-                        -> [Advantage Hidden] -> [Advantage Output]
+        [Neck] -> Split -> [Value Backbone] -> [Value Output]
+                        -> [Advantage Backbone] -> [Advantage Output]
                -> Aggregation (Q = V + A - mean(A))
     """
 
@@ -108,8 +88,8 @@ class DuelingQHead(BaseHead):
         arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
-        value_hidden_widths: List[int],
-        advantage_hidden_widths: List[int],
+        value_hidden_backbone_config: BackboneConfig,
+        advantage_hidden_backbone_config: BackboneConfig,
         num_actions: int,
         neck_config: Optional[BackboneConfig] = None,
     ):
@@ -119,43 +99,28 @@ class DuelingQHead(BaseHead):
         self.input_dim = self.flat_dim
         self.noisy = self.arch_config.noisy_sigma != 0
 
-        # Helper to build a hidden stream
-        def build_stream(widths: List[int]):
-            layers = []
-            curr_w = self.input_dim
-            for w in widths:
-                use_bias = self.arch_config.norm_type == "none"
-                layers.append(
-                    build_dense(
-                        curr_w, w, sigma=self.arch_config.noisy_sigma, bias=use_bias
-                    )
-                )
-                if self.arch_config.norm_type != "none":
-                    layers.append(
-                        build_normalization_layer(self.arch_config.norm_type, w, dim=1)
-                    )
-                layers.append(self.arch_config.activation)
-                curr_w = w
-            return nn.Sequential(*layers), curr_w
-
-        # 1. Value Stream
-        self.value_hidden, v_width = build_stream(value_hidden_widths)
+        # 1. Value Stream (Backbone + Output)
+        self.value_hidden = BackboneFactory.create(
+            value_hidden_backbone_config, (self.input_dim,)
+        )
         self.value_output = build_dense(
-            in_features=v_width,
+            in_features=self.value_hidden.output_shape[0],
             out_features=self.representation.num_features,
             sigma=self.arch_config.noisy_sigma,
         )
 
-        # 2. Advantage Stream
-        self.advantage_hidden, a_width = build_stream(advantage_hidden_widths)
+        # 2. Advantage Stream (Backbone + Output)
+        self.advantage_hidden = BackboneFactory.create(
+            advantage_hidden_backbone_config, (self.input_dim,)
+        )
         self.advantage_output = build_dense(
-            in_features=a_width,
+            in_features=self.advantage_hidden.output_shape[0],
             out_features=self.representation.num_features * self.num_actions,
             sigma=self.arch_config.noisy_sigma,
         )
 
-        # Remove BaseHead's generic output_layer
-        if self.output_layer is not None:
+        # Cleanup: Remove BaseHead's generic output_layer
+        if hasattr(self, "output_layer") and self.output_layer is not None:
             del self.output_layer
             self.output_layer = None
 
@@ -165,29 +130,27 @@ class DuelingQHead(BaseHead):
             return
 
         for stream in [self.value_hidden, self.advantage_hidden]:
-            for m in stream.modules():
-                if isinstance(m, NoisyLinear):
-                    m.reset_noise()
+            if hasattr(stream, "reset_noise"):
+                stream.reset_noise()
 
         for out in [self.value_output, self.advantage_output]:
             if isinstance(out, NoisyLinear):
                 out.reset_noise()
 
     def forward(self, x: Tensor, state: Optional[Dict[str, Any]] = None) -> HeadOutput:
-        # Neck
+        # Neck + Flatten
         x = self.process_input(x)
 
-        # Value Stream
+        # Parallel Stream Processing
         v = self.value_hidden(x)
         v = self.value_output(v)  # (B, atoms)
         v = v.view(-1, 1, self.representation.num_features)  # (B, 1, atoms)
 
-        # Advantage Stream
         a = self.advantage_hidden(x)
         a = self.advantage_output(a)  # (B, actions * atoms)
         a = a.view(-1, self.num_actions, self.representation.num_features)
 
-        # Aggregation: Q = V + (A - mean(A))
+        # Aggregation Phase: Q = V + (A - mean(A))
         a_mean = a.mean(dim=1, keepdim=True)
         q = v + a - a_mean
 
