@@ -4,23 +4,9 @@ from search.aos_search.backpropogation import (
     average_discounted_backprop,
     minimax_backprop,
 )
+from tests.search.conftest import MockFlatTree
 
 pytestmark = pytest.mark.unit
-
-
-class MockFlatTree:
-    def __init__(self, batch_size, num_nodes, num_edges):
-        self.children_visits = torch.zeros(
-            batch_size, num_nodes, num_edges, dtype=torch.int32
-        )
-        self.children_values = torch.zeros(
-            batch_size, num_nodes, num_edges, dtype=torch.float32
-        )
-        self.node_visits = torch.zeros(batch_size, num_nodes, dtype=torch.int32)
-        self.node_values = torch.zeros(batch_size, num_nodes, dtype=torch.float32)
-        self.children_action_mask = torch.ones(
-            batch_size, num_nodes, num_edges, dtype=torch.bool
-        )
 
 
 def test_aos_average_discounted_backprop():

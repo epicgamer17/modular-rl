@@ -1,40 +1,15 @@
 import pytest
 import torch
 from search.search_py.utils import get_completed_q, get_completed_q_improved_policy
+from tests.search.conftest import DummyMinMaxStats, DummySearchConfig, make_dummy_utils_node
 
 pytestmark = pytest.mark.unit
 
 
-class DummyMinMaxStats:
-    def normalize(self, val):
-        # Identity shift for simple math testing
-        return val / 10.0
-
-
-class DummyNode:
-    def __init__(self):
-        # Action 0: Unvisited, Action 1: Visited, Action 2: Visited
-        self.child_priors = torch.tensor([0.1, 0.7, 0.2])
-        self.network_policy = torch.tensor([0.2, 0.6, 0.2])
-        self.child_visits = torch.tensor([0, 5, 2])
-        self.child_values = torch.tensor([0.0, 5.0, 2.0])
-
-    def get_v_mix(self):
-        return torch.tensor(1.0)
-
-    def get_child_q_for_unvisited(self):
-        return torch.tensor(-1.0)
-
-
-class DummySearchConfig:
-    gumbel_cvisit = 50.0
-    gumbel_cscale = 1.0
-
-
 def test_get_completed_q_visited_and_bootstrap_logic():
     """Verifies unvisited actions get bootstrapped and visited actions use child values."""
-    node = DummyNode()
-    stats = DummyMinMaxStats()
+    node = make_dummy_utils_node()
+    stats = DummyMinMaxStats(normalize_fn=lambda val: val / 10.0)
 
     q_vals = get_completed_q(node, stats)
 
@@ -47,8 +22,8 @@ def test_get_completed_q_visited_and_bootstrap_logic():
 def test_get_completed_q_improved_policy_distribution():
     """Verifies the resulting policy pi0 is a valid, normalized probability distribution."""
     torch.manual_seed(42)
-    node = DummyNode()
-    stats = DummyMinMaxStats()
+    node = make_dummy_utils_node()
+    stats = DummyMinMaxStats(normalize_fn=lambda val: val / 10.0)
     config = DummySearchConfig()
 
     pi0 = get_completed_q_improved_policy(config, node, stats)

@@ -6,16 +6,13 @@ import torch
 from search.nodes import DecisionNode
 from search.search_py.backpropogation import AverageDiscountedReturnBackpropagator
 from types import SimpleNamespace
+from tests.search.conftest import DummyMinMaxStats
 
 pytestmark = pytest.mark.unit
 
 
-class DummyMinMaxStats:
-    def update(self, val):
-        pass
-
-
 def make_search_path(path_config):
+    """Builds a search path of DecisionNodes from a config list of (to_play, reward[, value])."""
     root = DecisionNode(prior=1.0)
     root.to_play = 0
     root.child_visits = torch.zeros(2)

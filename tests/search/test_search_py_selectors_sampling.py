@@ -4,33 +4,19 @@ from search.search_py.search_selectors import SamplingSelection
 
 # Canonical import path required for isinstance() to evaluate to True
 from search.nodes import DecisionNode
+from tests.search.conftest import DummyMinMaxStats, DummyScoringMethod, DummyChild
 
 pytestmark = pytest.mark.unit
 
 
-class DummyMinMaxStats:
-    pass
-
-
-class DummyScoringMethod:
-    def __init__(self, scores):
-        self._scores = scores
-
-    def get_scores(self, node, min_max_stats):
-        return self._scores.clone()
-
-
-class DummyChild:
-    def __init__(self, idx):
-        self.idx = idx
-
-
 class MockDecisionNode(DecisionNode):
+    """DecisionNode subclass with pre-configured children for sampling tests."""
+
     def __init__(self, priors):
         super().__init__(prior=1.0)
         self.to_play = 0
         self.child_priors = torch.tensor(priors)
-        self.children = {i: DummyChild(i) for i in range(len(priors))}
+        self.children = {i: DummyChild(idx=i) for i in range(len(priors))}
 
     def get_child(self, action):
         return self.children[action]

@@ -21,7 +21,13 @@ import pytest
 import numpy as np
 import torch
 from types import SimpleNamespace
-from typing import List, NamedTuple, Optional
+from typing import List, Optional
+
+from tests.search.conftest import (
+    MockNetworkState,
+    MockSearchNetwork as MockNetwork,
+    StateCapturingNetwork,
+)
 
 # --------------------------------------------------------------------------
 # Module-level markers
@@ -42,135 +48,6 @@ except Exception:
     _CPP_AVAILABLE = False
 
 _skip_cpp = pytest.mark.skipif(not _CPP_AVAILABLE, reason="mcts_cpp_backend not built")
-
-# --------------------------------------------------------------------------
-# Mock network state with the required batch / unbatch interface
-# --------------------------------------------------------------------------
-
-
-class MockNetworkState(NamedTuple):
-    """Opaque token compatible with both Python and AOS MCTS backends.
-
-    Defined as a ``NamedTuple`` so that ``torch.utils._pytree.tree_flatten``
-    automatically treats it as a flat sequence of leaves — the same way
-    automatically treats it as a flat sequence of leaves. This lets the
-    AOS tree store the ``data`` tensor in its ``node_state_leaves`` buffers
-    and reconstruct the state for each expansion via pytree unflatten.
-
-    The Python ``run_vectorized`` path requires::
-
-        type(state).batch(states)   # class method — batches a list of states
-        state.unbatch()             # instance method — splits a batched state
-
-    Fields mirror the MuZero recurrent state: a primary tensor leaf (``data``
-    instead of ``dynamics``) and an optional ``wm_memory`` (always ``None``
-    in tests, matching the standard non-recurrent MuZero case).
-    """
-
-    data: torch.Tensor  # shape [B, D]; corresponds to the latent state
-    wm_memory: Optional[torch.Tensor] = None  # always None in tests
-
-    @classmethod
-    def batch(cls, states: list) -> "MockNetworkState":
-        """Stack a list of single-item states into one batched state."""
-        return cls(data=torch.stack([s.data for s in states], dim=0))
-
-    def unbatch(self) -> list:
-        """Split a batched state into a list of single-item states."""
-        return [MockNetworkState(data=self.data[i]) for i in range(self.data.shape[0])]
-
-
-# --------------------------------------------------------------------------
-# Shared deterministic mock network
-# --------------------------------------------------------------------------
-
-
-class MockNetwork(torch.nn.Module):
-    """Stateless deterministic network that returns predictable outputs.
-
-    Produces descending logits [A, A-1, ..., 1] and a constant value so that
-    tree-expansion paths are fully deterministic given the same seed.
-    """
-
-    def __init__(self, num_actions: int, mock_value: float = 0.5):
-        super().__init__()
-        self.num_actions = num_actions
-        self.mock_value = mock_value
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _batch_size(self, state) -> int:
-        if isinstance(state, MockNetworkState):
-            d = state.data
-            return d.shape[0] if d.dim() > 0 else 1
-        if isinstance(state, torch.Tensor):
-            return state.shape[0] if state.dim() > 0 else 1
-        return 1
-
-    def _make_policy_logits(self, B: int) -> torch.Tensor:
-        """Descending logits: [A, A-1, ..., 1] broadcast to [B, A]."""
-        return (
-            torch.arange(self.num_actions, 0, -1, dtype=torch.float32)
-            .unsqueeze(0)
-            .expand(B, -1)
-        )
-
-    def _make_network_state(self, B: int) -> MockNetworkState:
-        return MockNetworkState(data=torch.zeros((B, 1)))
-
-    # ------------------------------------------------------------------
-    # Public interface (mirrors AgentNetwork API)
-    # ------------------------------------------------------------------
-
-    def obs_inference(self, obs):
-        """Root node inference: returns value, policy distribution, opaque state."""
-        B = obs.shape[0] if isinstance(obs, torch.Tensor) and obs.dim() > 1 else 1
-        return SimpleNamespace(
-            value=torch.full((B,), self.mock_value, dtype=torch.float32),
-            policy=torch.distributions.Categorical(
-                logits=self._make_policy_logits(B)
-            ),
-            network_state=self._make_network_state(B),
-        )
-
-    def hidden_state_inference(self, state, action):
-        """Latent step: same deterministic outputs for every (state, action)."""
-        B = self._batch_size(state)
-        return SimpleNamespace(
-            value=torch.full((B,), self.mock_value, dtype=torch.float32),
-            reward=torch.zeros(B, dtype=torch.float32),
-            policy=torch.distributions.Categorical(
-                logits=self._make_policy_logits(B)
-            ),
-            network_state=self._make_network_state(B),
-            to_play=torch.zeros(B, dtype=torch.int32),
-        )
-
-    def afterstate_inference(self, state, action):
-        return self.hidden_state_inference(state, action)
-
-
-# --------------------------------------------------------------------------
-# State-capturing network (used to assert correct state passing)
-# --------------------------------------------------------------------------
-
-
-class StateCapturingNetwork(MockNetwork):
-    """MockNetwork that records every state passed to hidden_state_inference.
-
-    Used to assert that the AOS backend passes a proper ``MockNetworkState``
-    (not a raw node-index tensor) to hidden_state_inference.
-    """
-
-    def __init__(self, num_actions: int, mock_value: float = 0.5):
-        super().__init__(num_actions, mock_value)
-        self.captured_states: list = []
-
-    def hidden_state_inference(self, state, action):
-        self.captured_states.append(state)
-        return super().hidden_state_inference(state, action)
 
 
 # --------------------------------------------------------------------------

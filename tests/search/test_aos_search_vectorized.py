@@ -3,25 +3,9 @@ import torch
 import numpy as np
 from search.aos_search.search_algorithm import ModularSearch
 from configs.agents.muzero import MuZeroConfig
+from tests.search.conftest import MockAOSPipeline
 
 pytestmark = pytest.mark.integration
-
-
-class MockAOSPipeline:
-    """Mocks the compiled search pipeline to return fake vectorized outputs."""
-
-    def __init__(self, batch_size=2):
-        self.batch_size = batch_size
-
-    class FakeSearchOutput:
-        def __init__(self, b):
-            self.root_values = torch.tensor([1.0, 2.0])
-            self.exploratory_policy = torch.ones((b, 2)) * 0.5
-            self.target_policy = torch.ones((b, 2)) * 0.5
-            self.best_actions = torch.tensor([0, 1])
-
-    def __call__(self, obs, info, net, trajectory_actions=None):
-        return self.FakeSearchOutput(self.batch_size)
 
 
 def test_aos_search_vectorized_unbatching(

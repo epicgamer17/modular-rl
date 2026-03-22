@@ -4,20 +4,9 @@ from search.search_py.search_selectors import TopScoreSelection, SamplingSelecti
 
 # FIXED: Using canonical absolute import path to preserve 'isinstance' validity
 from search.nodes import DecisionNode, ChanceNode
+from tests.search.conftest import DummyMinMaxStats, DummyScoringMethod
 
 pytestmark = pytest.mark.unit
-
-
-class DummyMinMaxStats:
-    pass
-
-
-class DummyScoringMethod:
-    def __init__(self, scores):
-        self._scores = scores
-
-    def get_scores(self, node, min_max_stats):
-        return self._scores.clone()
 
 
 def _create_mock_decision_node(priors):

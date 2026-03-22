@@ -5,62 +5,9 @@ from types import SimpleNamespace
 
 from search.aos_search.search_factories import build_search_pipeline
 from search.search_py.search_factories import create_mcts
+from tests.search.conftest import MockSearchNetwork as MockNetwork
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
-
-
-class MockNetwork(torch.nn.Module):
-    """Stateless deterministic dummy network to ensure identical tree expansions."""
-
-    def __init__(self, num_actions, mock_value=0.5):
-        super().__init__()
-        self.num_actions = num_actions
-        self.mock_value = mock_value
-
-    def _get_b(self, state):
-        if hasattr(state, "data") and isinstance(state.data, torch.Tensor):
-            return state.data.shape[0]
-        elif isinstance(state, torch.Tensor):
-            return state.shape[0] if state.dim() > 0 else 1
-        return 1
-
-    def obs_inference(self, obs):
-        B = obs.shape[0] if isinstance(obs, torch.Tensor) and obs.dim() > 1 else 1
-        value = torch.ones(B, dtype=torch.float32) * self.mock_value
-        logits = (
-            torch.arange(self.num_actions, 0, -1, dtype=torch.float32)
-            .unsqueeze(0)
-            .expand(B, -1)
-        )
-        # Use a plain tensor so pytree.tree_map can allocate buffers for it
-        mock_states = torch.zeros((B, 1))
-
-        return SimpleNamespace(
-            value=value,
-            policy=torch.distributions.Categorical(logits=logits),
-            network_state=mock_states,
-        )
-
-    def hidden_state_inference(self, state, action):
-        # state is the opaque network_state token (a plain tensor here)
-        if isinstance(state, torch.Tensor):
-            B = state.shape[0] if state.dim() > 0 else 1
-        else:
-            B = self._get_b(state)
-        return SimpleNamespace(
-            value=torch.ones(B, dtype=torch.float32) * self.mock_value,
-            reward=torch.zeros(B, dtype=torch.float32),
-            policy=torch.distributions.Categorical(
-                logits=torch.arange(self.num_actions, 0, -1, dtype=torch.float32)
-                .unsqueeze(0)
-                .expand(B, -1)
-            ),
-            network_state=torch.zeros((B, 1)),
-            to_play=torch.zeros(B, dtype=torch.int32),
-        )
-
-    def afterstate_inference(self, state, action):
-        return self.hidden_state_inference(state, action)
 
 
 @pytest.fixture

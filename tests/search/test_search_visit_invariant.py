@@ -3,28 +3,10 @@ import pytest
 pytestmark = pytest.mark.unit
 
 import torch
-from types import SimpleNamespace
 from search.aos_search.tree import FlatTree
 from search.aos_search.batched_mcts import batched_mcts_step
 from search.aos_search.backpropogation import average_discounted_backprop
-
-
-class MockNetwork:
-    def hidden_state_inference(self, state, action):
-        B = action.shape[0]
-        return SimpleNamespace(
-            value=torch.ones(B),
-            reward=torch.zeros(B),
-            policy=SimpleNamespace(logits=torch.zeros((B, 4))),
-            to_play=torch.zeros(B, dtype=torch.int32),
-            network_state=None,
-        )
-
-    def obs_inference(self, obs):
-        B = obs.shape[0]
-        return SimpleNamespace(
-            value=torch.zeros(B), policy=SimpleNamespace(logits=torch.zeros((B, 4)))
-        )
+from tests.search.conftest import MockAOSNetwork
 
 
 def test_node_visit_invariant_collision():
@@ -47,7 +29,7 @@ def test_node_visit_invariant_collision():
     # Since priors and values are uniform, they likely will (especially with the noise we added).
     # To be SURE, we can temporarily monkeypatch scoring to return a constant best action.
 
-    net = MockNetwork()
+    net = MockAOSNetwork()
 
     # We use num_simulations=2 and search_batch_size=2
     # This will run 1 call to batched_mcts_step with B_search=2

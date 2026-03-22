@@ -2,25 +2,9 @@ import pytest
 import torch
 from search.search_py.pruners import AlphaBetaPruning
 from search.search_py.nodes import DecisionNode
+from tests.search.conftest import DummyMinMaxStats, DummyChild
 
 pytestmark = pytest.mark.unit
-
-
-class MockMinMaxStats:
-    def normalize(self, val):
-        return val
-
-
-class MockChildNode:
-    def __init__(self, value, visits=1):
-        self.visits = visits
-        self._value = value
-
-    def expanded(self):
-        return True
-
-    def value(self):
-        return self._value
 
 
 def test_alpha_beta_pruning_cutoff():
@@ -29,7 +13,7 @@ def test_alpha_beta_pruning_cutoff():
     # 1. Setup a node with a high-value child
     node = DecisionNode(prior=1.0)
     node.get_child_q_from_parent = lambda child: child.value()
-    node.children = {0: MockChildNode(value=100.0)}  # A suspiciously good move
+    node.children = {0: DummyChild(val=100.0)}  # A suspiciously good move
 
     # 2. Setup an artificially tight state where beta is very low
     # This simulates a scenario where the opponent would never let us reach this node
@@ -43,7 +27,7 @@ def test_alpha_beta_pruning_cutoff():
         node=node,
         state=state,
         config=None,
-        min_max_stats=MockMinMaxStats(),
+        min_max_stats=DummyMinMaxStats(normalize=True),
         current_sim_idx=0,
     )
 

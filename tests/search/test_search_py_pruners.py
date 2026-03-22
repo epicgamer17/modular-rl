@@ -1,32 +1,8 @@
 import pytest
 from search.search_py.pruners import NoPruning, AlphaBetaPruning
+from tests.search.conftest import make_dummy_pruner_node
 
 pytestmark = pytest.mark.unit
-
-
-# --- Pure Python Dummies ---
-class DummyChild:
-    def __init__(self, is_expanded=True, visits=1):
-        self._expanded = is_expanded
-        self.visits = visits
-
-    def expanded(self):
-        return self._expanded
-
-
-class DummyNode:
-    def __init__(self, child_q_values):
-        self.children = {}
-        self.child_q_values = child_q_values  # Mock lookup
-        for action, q in child_q_values.items():
-            self.children[action] = DummyChild()
-
-    def get_child_q_from_parent(self, child):
-        # Reverse lookup for simplicity
-        for act, ch in self.children.items():
-            if ch is child:
-                return self.child_q_values[act]
-        return 0.0
 
 
 def test_no_pruning_behavior():
@@ -53,7 +29,7 @@ def test_alpha_beta_pruning_cutoff():
     # This simulates a branch that is "too good" (opponent wouldn't allow it)
     state["beta"] = 5.0
 
-    node = DummyNode({0: 2.0, 1: 10.0})  # Action 1 has Q=10.0, which > Beta=5.0
+    node = make_dummy_pruner_node({0: 2.0, 1: 10.0})  # Action 1 has Q=10.0, which > Beta=5.0
 
     actions, next_state = pruner.step(
         node, state, config=None, min_max_stats=None, current_sim_idx=0
@@ -70,7 +46,7 @@ def test_alpha_beta_pruning_negamax_flip():
     pruner = AlphaBetaPruning()
     state = {"alpha": 2.0, "beta": 10.0}
 
-    node = DummyNode(
+    node = make_dummy_pruner_node(
         {0: 3.0}
     )  # Child Q = 3.0, bumps alpha to 3.0. Does not exceed beta(10.0).
 

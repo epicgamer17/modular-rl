@@ -300,7 +300,6 @@ def net_factory():
             heads_config=config.heads,
             projector_config=getattr(config, "projector", None),
             stochastic=getattr(config, "stochastic", False),
-            consistency_loss_factor=getattr(config, "consistency_loss_factor", 0.0),
             num_players=getattr(config.game, "num_players", 1),
             num_chance_codes=getattr(config, "num_chance", 0),
             validator_params=validator_params,

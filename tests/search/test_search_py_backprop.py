@@ -5,25 +5,13 @@ from search.search_py.backpropogation import (
     MinimaxBackpropagator,
 )
 from search.search_py.nodes import DecisionNode
+from tests.search.conftest import DummyMinMaxStats, DummyBackpropConfig
 
 pytestmark = pytest.mark.unit
 
 
-class DummyConfig:
-    class Game:
-        num_players = 2
-
-    game = Game()
-    discount_factor = 0.9
-
-
-class DummyMinMaxStats:
-    def update(self, val):
-        pass
-
-
 def test_average_discounted_return_backprop():
-    config = DummyConfig()
+    config = DummyBackpropConfig()
     stats = DummyMinMaxStats()
     backprop = AverageDiscountedReturnBackpropagator()
 
@@ -55,7 +43,7 @@ def test_average_discounted_return_backprop():
 
 
 def test_minimax_backprop_state_updates():
-    config = DummyConfig()
+    config = DummyBackpropConfig()
     stats = DummyMinMaxStats()
     backprop = MinimaxBackpropagator()
 
