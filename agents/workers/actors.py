@@ -127,10 +127,14 @@ class BaseActor(ABC):
             )
 
         if self.config.compilation.enabled:
-            self.agent_network.compile(
-                mode=self.config.compilation.mode,
-                fullgraph=self.config.compilation.fullgraph,
-            )
+            if self.device.type == "mps":
+                print("Skipping torch.compile on Apple Silicon (MPS).")
+            else:
+                self.agent_network = torch.compile(
+                    self.agent_network,
+                    mode=self.config.compilation.mode,
+                    fullgraph=self.config.compilation.fullgraph,
+                )
 
         self._done = True
 

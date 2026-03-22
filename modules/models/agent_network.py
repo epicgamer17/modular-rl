@@ -363,26 +363,7 @@ class AgentNetwork(nn.Module):
             reward=None,
         )
 
-    def compile(self, mode: str = "default", fullgraph: bool = False) -> None:
-        if self.device.type == "mps":
-            print("Skipping torch.compile on Apple Silicon (MPS).")
-            return
 
-        self.obs_inference = torch.compile(
-            self.obs_inference, mode=mode, fullgraph=fullgraph
-        )
-        self.learner_inference = torch.compile(
-            self.learner_inference, mode=mode, fullgraph=fullgraph
-        )
-
-        if "world_model" in self.components:
-            self.hidden_state_inference = torch.compile(
-                self.hidden_state_inference, mode=mode, fullgraph=fullgraph
-            )
-            if self.stochastic:
-                self.afterstate_inference = torch.compile(
-                    self.afterstate_inference, mode=mode, fullgraph=fullgraph
-                )
 
     def project(self, hidden_state: Tensor, grad=True) -> Tensor:
         if "projector" not in self.components:

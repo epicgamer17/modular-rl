@@ -167,13 +167,20 @@ class RainbowTrainer(BaseTrainer):
 
         # 6. Compile networks for the learner (main process)
         if config.compilation.enabled:
-            self.agent_network.compile(
-                mode=config.compilation.mode, fullgraph=config.compilation.fullgraph
-            )
-            # Optionally compile target network
-            self.target_agent_network.compile(
-                mode=config.compilation.mode, fullgraph=config.compilation.fullgraph
-            )
+            if device.type == "mps":
+                print("Skipping torch.compile on Apple Silicon (MPS).")
+            else:
+                self.agent_network = torch.compile(
+                    self.agent_network,
+                    mode=config.compilation.mode,
+                    fullgraph=config.compilation.fullgraph,
+                )
+                # Optionally compile target network
+                self.target_agent_network = torch.compile(
+                    self.target_agent_network,
+                    mode=config.compilation.mode,
+                    fullgraph=config.compilation.fullgraph,
+                )
 
     @property
     def current_epsilon(self) -> float:

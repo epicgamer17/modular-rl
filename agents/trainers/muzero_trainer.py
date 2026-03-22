@@ -127,9 +127,14 @@ class MuZeroTrainer(BaseTrainer):
 
         # 6. Compile network for the learner (main process)
         if config.compilation.enabled:
-            self.agent_network.compile(
-                mode=config.compilation.mode, fullgraph=config.compilation.fullgraph
-            )
+            if device.type == "mps":
+                print("Skipping torch.compile on Apple Silicon (MPS).")
+            else:
+                self.agent_network = torch.compile(
+                    self.agent_network,
+                    mode=config.compilation.mode,
+                    fullgraph=config.compilation.fullgraph,
+                )
 
     def train(self):
         """Main training loop."""

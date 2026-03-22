@@ -106,9 +106,14 @@ class PPOTrainer(BaseTrainer):
 
         # 6. Compile network for the learner (main process)
         if config.compilation.enabled:
-            self.agent_network.compile(
-                mode=config.compilation.mode, fullgraph=config.compilation.fullgraph
-            )
+            if device.type == "mps":
+                print("Skipping torch.compile on Apple Silicon (MPS).")
+            else:
+                self.agent_network = torch.compile(
+                    self.agent_network,
+                    mode=config.compilation.mode,
+                    fullgraph=config.compilation.fullgraph,
+                )
 
         # Note: We do not launch actor workers here because PPOTrainer currently uses an
         # inline data collection loop within `train()`. Launching workers would cause them
