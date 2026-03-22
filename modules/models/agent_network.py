@@ -301,14 +301,17 @@ class AgentNetwork(nn.Module):
             flat_as = as_latents.flatten(0, 1)
             
             as_features = self.components["feature_extractor"](flat_as)
+            
+            afterstate_head = self.components["behavior_heads"].get("afterstate_value")
+            if afterstate_head is not None:
+                head_out_as = afterstate_head(as_features)
+    
+                B_as, K_as = as_latents.shape[:2]
+                as_values = head_out_as.training_tensor.view(B_as, K_as, -1)
+                # Prepend zero value for root
+                root_as_values = torch.zeros(B_as, 1, *as_values.shape[2:], device=self.device)
+                behavior_results["afterstate_values"] = torch.cat([root_as_values, as_values], dim=1)
                 
-            head_out_as = self.components["behavior_heads"]["afterstate_value"](as_features)
-
-            B_as, K_as = as_latents.shape[:2]
-            as_values = head_out_as.training_tensor.view(B_as, K_as, -1)
-            # Prepend zero value for root
-            root_as_values = torch.zeros(B_as, 1, *as_values.shape[2:], device=self.device)
-            behavior_results["afterstate_values"] = torch.cat([root_as_values, as_values], dim=1)
             behavior_results["chance_logits"] = env_results.get("chance_logits")
 
         # Merge and Validate
@@ -391,8 +394,11 @@ class AgentNetwork(nn.Module):
         afterstate_latent = wm_output.afterstate_features
         as_features = self.components["feature_extractor"](afterstate_latent)
 
-        head_out_as = self.components["behavior_heads"]["afterstate_value"](as_features)
-        expected_afterstate_value = head_out_as.inference_tensor
+        afterstate_head = self.components["behavior_heads"].get("afterstate_value")
+        expected_afterstate_value = None
+        if afterstate_head is not None:
+            head_out_as = afterstate_head(as_features)
+            expected_afterstate_value = head_out_as.inference_tensor
 
         recurrent_state_after = dict(recurrent_state)
         recurrent_state_after["dynamics"] = wm_output.afterstate_features
