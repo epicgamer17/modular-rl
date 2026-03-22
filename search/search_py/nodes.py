@@ -33,7 +33,7 @@ class ChanceNode:
         self.to_play = parent.to_play
         # Children are DecisionNodes, indexed by code
         self.children = {}
-        self.recurrent_state = None
+        self.recurrent_state = {}
 
         # Vectorized child stats
         self.child_visits = None
@@ -62,7 +62,7 @@ class ChanceNode:
         Called when the Dynamics Network is run on (parent_state, action).
         """
         self.to_play = to_play
-        self.recurrent_state = network_state
+        self.recurrent_state = network_state if network_state is not None else {}
 
         self.network_value = network_value
         # code_probs should be a dict or array mapping code_index -> probability
@@ -226,9 +226,7 @@ class DecisionNode:
         self.prior = prior
         self.value_sum = 0
         self.children = {}
-        self.value_sum = 0
-        self.children = {}
-        self.recurrent_state = None
+        self.recurrent_state = {}
 
         self.reward = 0
         self.parent = parent
@@ -264,7 +262,7 @@ class DecisionNode:
     ):
         self.to_play = to_play
         self.reward = reward
-        self.recurrent_state = network_state
+        self.recurrent_state = network_state if network_state is not None else {}
 
         self.network_policy = network_policy.cpu()
         self.network_policy_dist = network_policy_dist

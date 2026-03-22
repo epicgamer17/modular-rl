@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Tuple, Optional, Callable, Dict, Any
 import torch
 from torch import nn, Tensor
@@ -15,7 +15,7 @@ class HeadOutput:
 
     training_tensor: torch.Tensor  # e.g., logits, pre-tanh values (for the Learner)
     inference_tensor: torch.Tensor  # e.g., argmax action, softmaxed probs (for the Actor)
-    state: Optional[Dict[str, torch.Tensor]] = None  # For recurrent heads
+    state: Dict[str, torch.Tensor] = field(default_factory=dict)  # For recurrent heads
 
 
 class BaseHead(nn.Module):
