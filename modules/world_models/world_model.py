@@ -1,24 +1,22 @@
-from typing import Callable, List, Optional, Tuple, Dict, Any, Union
-
-from torch import Tensor
+from typing import List, Optional, Tuple, Dict, Any, Union
 import torch
 from torch import nn
 import torch.nn.functional as F
+from torch import Tensor
 
 from configs.agents.muzero import MuZeroConfig
 from modules.backbones.factory import BackboneFactory
+from modules.backbones.conditioned import ConditionedBackbone
 from modules.heads.factory import HeadFactory
 from modules.utils import scale_gradient
 from modules.world_models.inference_output import WorldModelOutput
 
-from modules.world_models.components.representation import Representation
-from modules.world_models.components.dynamics import Dynamics, AfterstateDynamics
-from modules.world_models.components.chance_encoder import ChanceEncoder
 
 class WorldModel(nn.Module):
     """
     A modular world model that encapsulates the representation, dynamics, 
-    and environment heads (Reward, Continuation, To-Play).
+    and environment heads. Everything that extracts features is a Backbone. 
+    Everything that predicts semantics is a Head.
     """
     def __init__(
         self,
@@ -29,51 +27,63 @@ class WorldModel(nn.Module):
         super().__init__()
         self.config = config
         self.num_actions = num_actions
-        
-        # 1. Representation Network
-        self.representation = Representation(config, observation_dimensions)
         self.num_chance = config.num_chance
+        
+        # 1. Representation Network (Pure observation backbone)
+        self.representation = BackboneFactory.create(
+            config.representation_backbone, observation_dimensions
+        )
 
-        # 2. Dynamics Networks
+        # 2. Dynamics Networks (Action-conditioned backbones)
         if self.config.stochastic:
-            self.afterstate_dynamics = AfterstateDynamics(
-                self.config,
-                self.representation.output_shape,
+            # Afterstate Dynamics: (Latent, Action) -> Afterstate
+            self.afterstate_dynamics = ConditionedBackbone(
+                config=self.config,
+                input_shape=self.representation.output_shape,
                 num_actions=self.num_actions,
                 action_embedding_dim=self.config.action_embedding_dim,
+                backbone_config=self.config.afterstate_dynamics_backbone,
             )
 
-            self.dynamics = Dynamics(
-                self.config,
-                self.representation.output_shape,
+            # Dynamics: (Afterstate, Chance) -> Next Latent
+            self.dynamics = ConditionedBackbone(
+                config=self.config,
+                input_shape=self.representation.output_shape,
                 num_actions=self.num_chance,
                 action_embedding_dim=self.config.action_embedding_dim,
+                backbone_config=self.config.dynamics_backbone,
             )
 
-            self.shared_backbone = BackboneFactory.create(
+            # Prediction backbone (for chance probability)
+            self.prediction_backbone = BackboneFactory.create(
                 self.config.prediction_backbone, self.representation.output_shape
             )
 
             self.sigma_head = HeadFactory.create(
                 self.config.chance_probability_head,
                 self.config.arch,
-                input_shape=self.shared_backbone.output_shape,
+                input_shape=self.prediction_backbone.output_shape,
                 num_chance_codes=self.num_chance,
             )
 
+            # Chance Encoder: (Stacked Obs) -> Chance Codes
             encoder_input_shape = list(observation_dimensions)
-            encoder_input_shape[0] *= 2  # Double channels for stacked obs
-            self.encoder = ChanceEncoder(
-                config,
-                tuple(encoder_input_shape),
-                num_codes=self.num_chance,
+            encoder_input_shape[0] *= 2 # Double channels for stacked obs
+            self.encoder = BackboneFactory.create(
+                config.chance_encoder_backbone, tuple(encoder_input_shape)
             )
+            # Map flattened backbone output to codes
+            flat_dim = 1
+            for d in self.encoder.output_shape: flat_dim *= d
+            self.chance_projector = nn.Linear(flat_dim, self.num_chance)
         else:
-            self.dynamics = Dynamics(
-                self.config,
-                self.representation.output_shape,
+            # Deterministic Dynamics: (Latent, Action) -> Next Latent
+            self.dynamics = ConditionedBackbone(
+                config=self.config,
+                input_shape=self.representation.output_shape,
                 num_actions=self.num_actions,
                 action_embedding_dim=self.config.action_embedding_dim,
+                backbone_config=self.config.dynamics_backbone,
             )
 
         # 3. Environment Heads (Physics Engine)
@@ -108,10 +118,6 @@ class WorldModel(nn.Module):
                 representation=tp_rep,
             )
 
-        assert (
-            self.dynamics.output_shape == self.representation.output_shape
-        ), f"{self.dynamics.output_shape} != {self.representation.output_shape}"
-
     @property
     def device(self) -> torch.device:
         try:
@@ -134,10 +140,7 @@ class WorldModel(nn.Module):
         action: Tensor,
         recurrent_state: Any = None,
     ) -> WorldModelOutput:
-        if not self.config.stochastic:
-            action = action.view(-1).to(hidden_state.device)
-            action = F.one_hot(action.long(), num_classes=self.num_actions).float().to(hidden_state.device)
-
+        # Action is expected as one-hot for stochastic dynamics, or single-integer for deterministic
         next_hidden_state = self.dynamics(hidden_state, action)
         
         predictions = {}
@@ -154,10 +157,10 @@ class WorldModel(nn.Module):
         return WorldModelOutput(
             features=next_hidden_state,
             reward=predictions.get("reward_logits"),
-            to_play=predictions.get("to_play_logits_extra"),
             to_play_logits=predictions.get("to_play_logits"),
-            continuation=predictions.get("continuation_logits_extra"),
+            to_play=predictions.get("to_play_logits_extra"),
             continuation_logits=predictions.get("continuation_logits"),
+            continuation=predictions.get("continuation_logits_extra"),
             head_state=new_head_state,
             instant_reward=predictions.get("reward_logits_extra"),
         )
@@ -168,11 +171,9 @@ class WorldModel(nn.Module):
         action: Tensor,
     ) -> WorldModelOutput:
         latent_state = network_state["dynamics"]
-        action = action.view(-1).to(latent_state.device)
-        action = F.one_hot(action.long(), num_classes=self.num_actions).float().to(latent_state.device)
-
+        
         afterstate_latent = self.afterstate_dynamics(latent_state, action)
-        shared_features = self.shared_backbone(afterstate_latent)
+        shared_features = self.prediction_backbone(afterstate_latent)
         chance_logits, _, _ = self.sigma_head(shared_features)
 
         return WorldModelOutput(
@@ -190,13 +191,14 @@ class WorldModel(nn.Module):
         head_state: Any = None,
         **kwargs,
     ) -> Dict[str, Tensor]:
-        batch_size, unroll_steps = actions.shape[:2]
+        unroll_steps = actions.shape[1]
         latents = [initial_latent_state]
         head_sequences = {name: [] for name in self.heads.keys()}
         
         current_latent = initial_latent_state
         current_head_state = head_state if head_state is not None else {}
         
+        # Initial head prediction for root
         for name, head in self.heads.items():
             h_state = current_head_state.get(name) if isinstance(current_head_state, dict) else None
             logits, n_state, _ = head(current_latent, state=h_state)
@@ -222,12 +224,23 @@ class WorldModel(nn.Module):
                 chance_logits = afterstate_out.chance
 
                 if self.config.use_true_chance_codes and true_chance_codes is not None:
+                    # [B, 1] -> [B, NumChance]
                     codes_k = F.one_hot(
                         true_chance_codes[:, k + 1].squeeze(-1).long(),
-                        self.config.num_chance,
+                        self.num_chance,
                     ).float()
                 else:
-                    _, codes_k = self.encoder(encoder_inputs[:, k])
+                    # Chance Encoder logic: ST-estimator for chance codes
+                    x = self.encoder(encoder_inputs[:, k])
+                    x = x.flatten(1, -1)
+                    logits = self.chance_projector(x)
+                    probs = logits.softmax(dim=-1)
+                    
+                    one_hot = torch.zeros_like(probs).scatter_(
+                        -1, torch.argmax(probs, dim=-1, keepdim=True), 1.0
+                    )
+                    # Straight-Through Estimator
+                    codes_k = (one_hot - probs).detach() + probs
 
                 stochastic_sequences["latents_afterstates"].append(afterstate)
                 stochastic_sequences["chance_logits"].append(chance_logits)
@@ -235,10 +248,9 @@ class WorldModel(nn.Module):
                 
                 next_latent = self.dynamics(afterstate, codes_k)
             else:
-                action_k_vec = action_k.view(-1).long()
-                action_onehot = F.one_hot(action_k_vec, num_classes=self.num_actions).float()
-                next_latent = self.dynamics(current_latent, action_onehot)
+                next_latent = self.dynamics(current_latent, action_k)
 
+            # Heads Phase
             for name, head in self.heads.items():
                 h_state = current_head_state.get(name) if isinstance(current_head_state, dict) else None
                 logits, n_state, _ = head(next_latent, state=h_state)
@@ -250,6 +262,7 @@ class WorldModel(nn.Module):
             latents.append(current_latent)
             current_latent = scale_gradient(current_latent, 0.5)
 
+        # Consistency Loss Phase (Optional)
         target_latents = None
         if "target_observations" in kwargs and self.config.consistency_loss_factor > 0:
             target_obs = kwargs["target_observations"]

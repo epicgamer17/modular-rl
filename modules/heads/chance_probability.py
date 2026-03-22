@@ -26,7 +26,7 @@ class ChanceProbabilityHead(BaseHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Tensor, Dict[str, Any]]:
+    ) -> Tuple[Tensor, Dict[str, Any], Any]:
         logits, new_state = super().forward(x, state)
         inference = self.representation.to_inference(logits)
         return logits, new_state, inference

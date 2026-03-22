@@ -1,4 +1,4 @@
-from typing import Type
+from typing import Type, Optional
 from .base import AgentConfig
 from configs.base import DistributionalConfig, NoisyConfig
 from configs.modules.heads.policy import PolicyHeadConfig

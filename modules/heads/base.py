@@ -5,7 +5,7 @@ from modules.backbones.factory import BackboneFactory
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.architecture_config import ArchitectureConfig
 from agents.learner.losses.representations import BaseRepresentation
-from modules.blocks.dense import build_dense
+from modules.backbones.dense import build_dense
 
 
 class BaseHead(nn.Module):

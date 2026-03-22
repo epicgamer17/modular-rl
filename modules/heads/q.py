@@ -6,7 +6,7 @@ from .base import BaseHead
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
 from agents.learner.losses.representations import BaseRepresentation
-from modules.blocks.dense import DenseStack, build_dense
+from modules.backbones.dense import DenseStack, build_dense
 
 
 class QHead(BaseHead):

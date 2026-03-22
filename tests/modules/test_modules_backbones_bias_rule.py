@@ -2,8 +2,8 @@ import pytest
 pytestmark = pytest.mark.unit
 
 import torch
-from modules.blocks.conv import Conv2dStack, ConvTranspose2dStack
-from modules.blocks.dense import DenseStack
+from modules.backbones.conv import Conv2dStack, ConvTranspose2dStack
+from modules.backbones.dense import DenseStack
 
 
 def test_bias_rule():
@@ -54,8 +54,8 @@ def test_bias_rule():
 
     # Test DenseStack
     dstack = DenseStack(initial_width=10, widths=[20], norm_type="batch")
-    # DenseStack structure: Sequential(Dense/NoisyDense, Norm)
-    dense = dstack._layers[0][0].layer
+    # DenseStack structure: Sequential(Linear, Norm)
+    dense = dstack._layers[0][0]
     assert (
         dense.bias is None
     ), "DenseStack should have bias=False when norm_type='batch'"

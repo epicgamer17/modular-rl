@@ -64,19 +64,18 @@ class RainbowConfig(
         # --- Head Configuration ---
         head_dict = self.parse_field("head", None, required=False)
         if head_dict is not None:
+            # 1. Inject Global Noisy Sigma
+            if "noisy_sigma" not in head_dict:
+                head_dict["noisy_sigma"] = self.noisy_sigma
 
-        # 1. Inject Global Noisy Sigma
-        if "noisy_sigma" not in head_dict:
-            head_dict["noisy_sigma"] = self.noisy_sigma
-
-        # 2. Handle Output Strategy & Sync Atom Size
-        # If user defines strategy in head, we prioritize it and sync back to self.atom_size
-        if "output_strategy" in head_dict:
-            strat = head_dict["output_strategy"]
-            if strat.get("type") == "c51":
-                # Check for atom_size update
-                if "num_atoms" in strat:
-                    self.atom_size = strat["num_atoms"]
+            # 2. Handle Output Strategy & Sync Atom Size
+            # If user defines strategy in head, we prioritize it and sync back to self.atom_size
+            if "output_strategy" in head_dict:
+                strat = head_dict["output_strategy"]
+                if strat.get("type") == "c51":
+                    # Check for atom_size update
+                    if "num_atoms" in strat:
+                        self.atom_size = strat["num_atoms"]
 
                 # Check for bounds update (Sync Game Defaults -> Strategy)
                 if "v_min" not in strat and self.v_min is not None:
