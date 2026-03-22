@@ -205,6 +205,34 @@ class AgentNetwork(nn.Module):
                     if hasattr(sub, "reset_noise"):
                         sub.reset_noise()
 
+    def _apply_spatial_temporal(
+        self,
+        tensor: Tensor,
+        B: int,
+        T: int,
+        state: Optional[Any] = None,
+    ) -> Tuple[Tensor, Optional[Any]]:
+        """
+        Routes (B, T, ...) through spatial backbones (flattened)
+        and then temporal cores (sequences).
+        Returns: (flat_features, next_state)
+        """
+        # 1. Spatial Phase (Feature Extraction)
+        # Standard backbones (Conv, MLP) expect a flat batch dimension.
+        flat_x = tensor.flatten(0, 1)
+        if "feature_extractor" in self.components:
+            flat_x = self.components["feature_extractor"](flat_x)
+
+        # 2. Temporal Phase (Memory Core)
+        if "memory_core" in self.components:
+            # RNNs and Transformers expect (Batch, Time, Features)
+            seq_x = flat_x.view(B, T, -1)
+            seq_x, next_state = self.components["memory_core"](seq_x, state)
+            # Return flattened for the Heads
+            return seq_x.flatten(0, 1), next_state
+
+        return flat_x, None
+
     def obs_inference(
         self, obs: Tensor, action_mask: Optional[Tensor] = None
     ) -> InferenceOutput:
@@ -220,18 +248,11 @@ class AgentNetwork(nn.Module):
             latent = obs
             wm_output = None
 
-        features = (
-            self.components["feature_extractor"](latent)
-            if "feature_extractor" in self.components
-            else latent
+        # 2. Feature & Memory Phase
+        B_val = latent.shape[0]
+        features, next_h = self._apply_spatial_temporal(
+            latent.unsqueeze(1), B_val, 1, state=None
         )
-
-        if "memory_core" in self.components:
-            seq_features = features.unsqueeze(1)
-            seq_memory, next_h = self.components["memory_core"](seq_features, None)
-            features = seq_memory.squeeze(1)
-        else:
-            next_h = None
 
         outputs = {}
         for name, head in self.components["behavior_heads"].items():
@@ -285,22 +306,9 @@ class AgentNetwork(nn.Module):
             env_results = {}
             latents = obs
 
+        # 2. Spatial & Temporal Phase (Routing)
         B, T = latents.shape[:2]
-        flat_latents = latents.flatten(0, 1)
-
-        # 2. Spatial Phase (Feature Extraction)
-        if "feature_extractor" in self.components:
-            flat_features = self.components["feature_extractor"](flat_latents)
-        else:
-            flat_features = flat_latents
-
-        # 3. Temporal Phase (RNN Boundary)
-        if "memory_core" in self.components:
-            seq_features = flat_features.view(B, T, -1)
-            seq_memory, _ = self.components["memory_core"](seq_features)
-            flat_memory = seq_memory.flatten(0, 1)
-        else:
-            flat_memory = flat_features
+        flat_memory, _ = self._apply_spatial_temporal(latents, B, T)
 
         # 4. Behavior Heads Phase
         mask = batch.get("action_masks")
@@ -356,18 +364,11 @@ class AgentNetwork(nn.Module):
         )
         latent = wm_output.features
 
-        features = (
-            self.components["feature_extractor"](latent)
-            if "feature_extractor" in self.components
-            else latent
+        # 2. Feature & Memory Phase
+        B_val = latent.shape[0]
+        features, next_h = self._apply_spatial_temporal(
+            latent.unsqueeze(1), B_val, 1, state=backbone_h
         )
-
-        if "memory_core" in self.components:
-            seq_features = features.unsqueeze(1)
-            seq_memory, next_h = self.components["memory_core"](seq_features, backbone_h)
-            features = seq_memory.squeeze(1)
-        else:
-            next_h = None
 
         outputs = {}
         for name, head in self.components["behavior_heads"].items():
