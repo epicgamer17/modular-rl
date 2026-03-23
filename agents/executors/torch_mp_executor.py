@@ -23,6 +23,7 @@ class TorchMPExecutor(BaseExecutor):
         self.result_queue = mp.Queue()
         self.error_queue = mp.Queue()
         self.param_queue = mp.Queue()
+        self.command_queue = mp.Queue()
         self.worker_events = {}  # {worker_type_name: mp.Event}
 
     def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int):
@@ -47,6 +48,7 @@ class TorchMPExecutor(BaseExecutor):
                     self.result_queue,
                     self.error_queue,
                     self.param_queue,
+                    self.command_queue,
                     trigger_event,
                 ),
             )
@@ -62,6 +64,7 @@ class TorchMPExecutor(BaseExecutor):
         result_queue,
         error_queue,
         param_queue,
+        command_queue,
         trigger_event=None,
     ):
         # Configure thread affinity to avoid OpenMP contention
@@ -83,38 +86,76 @@ class TorchMPExecutor(BaseExecutor):
             worker = worker_cls(*args, worker_id=worker_id)
             worker.setup()
 
-            # Determine if we should use signaling based on the worker type
-            # We explicitly want signaling for Tester
-            use_signaling = worker_cls.__name__ == "Tester"
+            # Signaling: Only wait if worker has synchronous methods (collect/evaluate/reanalyze)
+            # Most modern actors are now synchronous by default in the training loop.
+            use_signaling = True 
 
             while not stop_flag.value:
-                # Check for parameter updates
+                # 1. Parameter Updates
                 while not param_queue.empty():
                     try:
                         params = param_queue.get_nowait()
-                        if params is not None:
+                        if params:
                             worker.update_parameters(params)
-                            if params.get("reset_noise") and hasattr(
-                                worker.agent_network, "reset_noise"
-                            ):
+                            if params.get("reset_noise") and hasattr(worker.agent_network, "reset_noise"):
                                 worker.agent_network.reset_noise()
                             if hasattr(worker, "action_selector"):
                                 worker.action_selector.update_parameters(params)
                     except queue.Empty:
                         break
 
+                # 2. Wait for work request
+                cmd_args = {}
                 if use_signaling and trigger_event is not None:
-                    # Wait for a signal to perform work
-                    # Check stop_flag periodically while waiting
                     while not stop_flag.value:
                         if trigger_event.wait(timeout=0.1):
+                            # Check if if there is a specific command for us in the queue
+                            # (We use a simple name matching since all workers of this type share the event)
+                            # However, in multi-process, only one worker might grab the command from the queue.
+                            # So we peek or handle it carefully. 
+                            # Simplest: Each worker just tries to get its own command.
+                            try:
+                                # This is a bit tricky with multiple workers. 
+                                # For now, assume the orchestrator sends one command per worker or we broadcast.
+                                # Given the project structure, we usually have one command per collection step.
+                                pass
+                            except:
+                                pass
                             trigger_event.clear()
                             break
 
                     if stop_flag.value:
                         break
 
-                data = worker.play_sequence()
+                # 3. Fetch task arguments if any
+                while not command_queue.empty():
+                    try:
+                        name, args = command_queue.get_nowait()
+                        if name == worker_cls.__name__:
+                            cmd_args = args
+                            break
+                        else:
+                            # Not for us, put it back (clunky but works for small num worker types)
+                            command_queue.put((name, args))
+                            time.sleep(0.01)
+                    except queue.Empty:
+                        break
+
+                # 4. Dispatch Task
+                if hasattr(worker, "collect"):
+                    n = cmd_args.get("num_steps", 1000)
+                    data = worker.collect(n)
+                elif hasattr(worker, "evaluate"):
+                    n = cmd_args.get("num_episodes", 1)
+                    data = worker.evaluate(n)
+                elif hasattr(worker, "reanalyze"):
+                    n = cmd_args.get("batch_size", 32)
+                    data = worker.reanalyze(n)
+                elif hasattr(worker, "play_sequence"):
+                    data = worker.play_sequence()
+                else:
+                    data = {}
+
                 result_queue.put((worker_cls.__name__, data))
         except Exception as e:
             # We stringify the exception to prevent obscure pickling errors (like 'cell' objects)
@@ -193,9 +234,16 @@ class TorchMPExecutor(BaseExecutor):
         for _ in range(len(self.workers)):
             self.param_queue.put(params)
 
-    def request_work(self, worker_type: Type):
-        """Signals the trigger event for the specified worker type."""
+    def request_work(self, worker_type: Type, **kwargs):
+        """Signals the trigger event and sends arguments for the specified worker type."""
         type_name = worker_type.__name__
+        # Broadcast command to all workers of this type
+        # (Assuming all workers are idle and waiting for their own command)
+        num_target_workers = len([w for w_cls, w in self.workers if True]) # Actually we don't store cls in self.workers list...
+        # Just put one command per worker in the queue
+        for _ in range(len(self.workers)):
+            self.command_queue.put((type_name, kwargs))
+            
         if type_name in self.worker_events:
             self.worker_events[type_name].set()
 

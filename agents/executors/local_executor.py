@@ -20,22 +20,24 @@ class LocalExecutor(BaseExecutor):
         self.workers.extend(new_workers)
 
     def _fetch_available_results(self) -> List[Any]:
-        # For local executor, we run one episode per worker synchronously
-        # to simulate "fetching available results"
         results = []
         for worker_cls, worker in self.workers:
             type_name = worker_cls.__name__
 
-            # Use signaling for Tester to prevent running it continuously
-            use_signaling = type_name == "Tester"
-
-            if use_signaling:
-                if self.worker_signals.get(type_name, False):
+            if self.worker_signals.get(type_name, False):
+                if hasattr(worker, "collect"):
+                    num_steps = self.worker_signals.pop(f"{type_name}_num_steps", 1000)
+                    results.append((type_name, worker.collect(num_steps)))
+                elif hasattr(worker, "evaluate"):
+                    num_episodes = self.worker_signals.pop(f"{type_name}_num_episodes", 1)
+                    results.append((type_name, worker.evaluate(num_episodes)))
+                elif hasattr(worker, "reanalyze"):
+                    batch_size = self.worker_signals.pop(f"{type_name}_batch_size", 32)
+                    results.append((type_name, worker.reanalyze(batch_size)))
+                elif hasattr(worker, "play_sequence"):
                     results.append((type_name, worker.play_sequence()))
-                    # Reset tester signal after running
-                    self.worker_signals[type_name] = False
-            else:
-                results.append((type_name, worker.play_sequence()))
+                
+                self.worker_signals[type_name] = False
 
         return results
 
@@ -50,10 +52,12 @@ class LocalExecutor(BaseExecutor):
                 w.action_selector.update_parameters(params)
             w.update_parameters(params)
 
-    def request_work(self, worker_type: Type):
-        """Signals the trigger event for the specified worker type."""
+    def request_work(self, worker_type: Type, **kwargs):
+        """Signals the trigger event and stores arguments for the specified worker type."""
         type_name = worker_type.__name__
         self.worker_signals[type_name] = True
+        for k, v in kwargs.items():
+            self.worker_signals[f"{type_name}_{k}"] = v
 
     def stop(self):
         self.workers = []

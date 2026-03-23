@@ -103,7 +103,27 @@ class PPOTrainer(BaseTrainer):
             },
         )
 
-        # 6. Compile network for the learner (main process)
+        # 6. Initialize Workers
+        from agents.workers.actors import RolloutActor
+        from agents.environments.adapters import GymAdapter
+
+        # Prepare worker args
+        # For PPO, we use the GymAdapter for the environment
+        worker_args = (
+            GymAdapter,
+            (self.env_factory,), # env_factory is a lambda in BaseTrainer
+            self.agent_network,
+            self.policy_source,
+            self.action_selector,
+            config,
+            self.replay_buffer,
+        )
+        
+        # Launch rollout workers
+        num_workers = config.num_workers if hasattr(config, "num_workers") else 1
+        self.executor.launch_workers(RolloutActor, worker_args, num_workers=num_workers)
+
+        # 7. Compile network for the learner (main process)
         if config.compilation.enabled:
             if device.type == "mps":
                 print("Skipping torch.compile on Apple Silicon (MPS).")
@@ -113,11 +133,6 @@ class PPOTrainer(BaseTrainer):
                     mode=config.compilation.mode,
                     fullgraph=config.compilation.fullgraph,
                 )
-
-        # Note: We do not launch actor workers here because PPOTrainer currently uses an
-        # inline data collection loop within `train()`. Launching workers would cause them
-        # to execute `play_sequence()`, which PPOLearner's buffer does not currently support
-        # (raises NotImplementedError for sequence processing).
 
     def train(self) -> None:
         """
@@ -167,103 +182,27 @@ class PPOTrainer(BaseTrainer):
         """
         Single training step for PPO: collects a full epoch of data and optimizes.
         """
-        # 1. Collect trajectory data (steps_per_epoch transitions)
-        steps_collected = 0
-        trajectory_start_index = 0
-        completed_scores = []
-        completed_lengths = []
+        # 1. Update weights before collection
+        self.executor.update_weights(self.agent_network.state_dict())
 
-        while steps_collected < self.config.steps_per_epoch:
-            with torch.inference_mode():
-                # Get state from environment
-                state, info = self._env.reset()
-                done = False
-                current_episode_score = 0.0
-                current_episode_length = 0
+        # 2. Collect trajectory data via actor
+        from agents.workers.actors import RolloutActor
+        
+        # collect_data will request 'steps_per_epoch' from RolloutActor
+        # Results is a list of dicts (one per worker)
+        results, collection_stats = self.executor.collect_data(
+            num_steps=self.config.steps_per_epoch,
+            worker_type=RolloutActor
+        )
 
-                while not done and steps_collected < self.config.steps_per_epoch:
-                    obs_tensor = torch.tensor(
-                        state, dtype=torch.float32, device=self.device
-                    ).unsqueeze(0)
-                    result = self.policy_source.get_inference(obs=obs_tensor, info=info)
-                    action, metadata = self.action_selector.select_action(
-                        result=result,
-                        info=info,
-                        exploration=True,
-                    )
+        # 3. Log collection stats
+        for res in results:
+            if res.get("episodes_completed", 0) > 0:
+                # We can't perfectly recover individual scores here if we aggregate in actor,
+                # but we can log the averages.
+                self.stats.append("score", float(res["avg_score"]))
+                self.stats.append("episode_length", float(res["avg_length"]))
 
-                    log_prob = metadata.get("log_prob")
-                    value = metadata.get("value")
-
-                    assert (
-                        log_prob is not None
-                    ), f"log_prob is None. Metadata: {metadata}"
-                    assert value is not None, f"value is None. Metadata: {metadata}"
-
-                    action_val = action.item()
-
-                    # Environment step
-                    next_state, reward, terminated, truncated, next_info = (
-                        self._env.step(action_val)
-                    )
-                    done = terminated or truncated
-
-                    # Store transition
-                    self.replay_buffer.store(
-                        observations=state,
-                        actions=action_val,
-                        values=float(value.item() if torch.is_tensor(value) else value),
-                        old_log_probs=float(
-                            log_prob.item() if torch.is_tensor(log_prob) else log_prob
-                        ),
-                        rewards=reward,
-                        dones=done,
-                        info=info,
-                    )
-
-                    state = next_state
-                    info = next_info
-                    current_episode_score += reward
-                    current_episode_length += 1
-                    steps_collected += 1
-
-                    if done:
-                        completed_scores.append(current_episode_score)
-                        completed_lengths.append(current_episode_length)
-                        # reset for next episode in same epoch
-                        current_episode_score = 0.0
-                        current_episode_length = 0
-
-                # Finish trajectory with bootstrap value
-                if terminated:
-                    last_value = 0.0
-                else:
-                    with torch.inference_mode():
-                        obs = torch.tensor(state, device=self.device).unsqueeze(0)
-                        out = self.agent_network.obs_inference(obs)
-                        last_value = out.value.item()
-
-                trajectory_end_index = self.replay_buffer.size
-                trajectory_slice = slice(trajectory_start_index, trajectory_end_index)
-
-                if trajectory_end_index > trajectory_start_index:
-                    input_processor = self.replay_buffer.input_processor
-                    result = input_processor.finish_trajectory(
-                        self.replay_buffer.buffers,
-                        trajectory_slice,
-                        last_value=last_value,
-                    )
-                    if result:
-                        for key, value in result.items():
-                            self.replay_buffer.buffers[key][trajectory_slice] = value
-
-                trajectory_start_index = trajectory_end_index
-
-        # Log collection stats
-        if completed_scores:
-            for s, l in zip(completed_scores, completed_lengths):
-                self.stats.append("score", float(s))
-                self.stats.append("episode_length", float(l))
 
         # 3. Learning step
         from agents.learner.batch_iterators import PPOEpochIterator

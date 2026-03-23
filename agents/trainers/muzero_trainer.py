@@ -89,10 +89,9 @@ class MuZeroTrainer(BaseTrainer):
         )
         # 5. Initialize Executor
         from agents.executors.factory import create_executor
-
         self.executor = create_executor(config)
 
-        # 4. The Orchestrator (Universal Learner)
+        # 7. The Orchestrator (Universal Learner)
         self.learner = build_universal_learner(
             config=config,
             agent_network=self.agent_network,
@@ -114,20 +113,47 @@ class MuZeroTrainer(BaseTrainer):
         if config.multi_process:
             self.buffer.share_memory()
 
-        # Launch workers
-        num_workers = config.num_workers
-        worker_args = (
-            config.game.env_factory,
+        # 8. Initialize Workers
+        from agents.workers.actors import RolloutActor
+        from agents.workers.specialized_actors import ReanalyzeActor
+        from agents.environments.adapters import GymAdapter, VectorAdapter
+        from agents.action_selectors.policy_sources import NetworkPolicySource, SearchPolicySource
+
+        # Policy sources
+        self.policy_source = NetworkPolicySource(self.agent_network)
+        # MuZero uses MCTS for rollout
+        self.search_policy_source = SearchPolicySource(self.agent_network, config)
+        
+        # Decide between single and vector adapter
+        num_envs = getattr(config, "num_envs", 1)
+        adapter_cls = VectorAdapter if num_envs > 1 else GymAdapter
+        # self.env_factory is a lambda in BaseTrainer
+        adapter_args = (self.env_factory,)
+
+        # Rollout Worker Args
+        rollout_args = (
+            adapter_cls,
+            adapter_args,
             self.agent_network,
+            self.search_policy_source,
             self.action_selector,
-            self.buffer,
-            config.game.num_players,
             config,
-            device,
-            self.name,
+            self.buffer,
         )
-        self.actor_cls = get_actor_class(env, config)
-        self.executor.launch(self.actor_cls, worker_args, num_workers)
+        
+        num_rollout_workers = config.num_workers if hasattr(config, "num_workers") else 1
+        self.executor.launch_workers(RolloutActor, rollout_args, num_workers=num_rollout_workers)
+
+        # Reanalyze Worker Args (if enabled)
+        if getattr(config, "use_reanalyze", False):
+            reanalyze_args = (
+                self.agent_network,
+                self.search_policy_source,
+                self.buffer,
+                config,
+            )
+            num_reanalyze_workers = getattr(config, "num_reanalyze_workers", 1)
+            self.executor.launch_workers(ReanalyzeActor, reanalyze_args, num_workers=num_reanalyze_workers)
 
         # 6. Compile network for the learner (main process)
         if config.compilation.enabled:
@@ -167,14 +193,29 @@ class MuZeroTrainer(BaseTrainer):
 
     def train_step(self) -> Dict[str, Any]:
         """Perform one training step (batch of gradients)."""
-        # 1. Wait for data to be collected
-        _, collect_stats = self.executor.collect_data(
-            min_samples=None, worker_type=self.actor_cls
+        # 1. Update weights and trigger work
+        self.executor.update_weights(self.agent_network.state_dict())
+        
+        # 2. Collect data via actor
+        from agents.workers.actors import RolloutActor
+        from agents.workers.specialized_actors import ReanalyzeActor
+        
+        # Request re-analysis if enabled (non-blocking if num_steps is None, 
+        # but here we might want to trigger it)
+        if getattr(self.config, "use_reanalyze", False):
+            self.executor.request_work(ReanalyzeActor, batch_size=self.config.minibatch_size)
+
+        # Collect 'replay_interval' steps
+        results, collection_stats = self.executor.collect_data(
+            num_steps=getattr(self.config, "replay_interval", 1),
+            worker_type=RolloutActor
         )
 
-        # 2. Log collection stats
-        for key, val in collect_stats.items():
-            self.stats.append(key, val)
+        # 3. Log collection stats
+        for res in results:
+            if res.get("episodes_completed", 0) > 0:
+                self.stats.append("score", float(res["avg_score"]))
+                self.stats.append("episode_length", float(res["avg_length"]))
 
         # 3. Learning step
         if self.buffer.size >= self.config.min_replay_buffer_size:
@@ -185,9 +226,8 @@ class MuZeroTrainer(BaseTrainer):
 
             self.training_step += 1
 
-            # 4. Update workers (if needed)
-            if self.training_step % self.config.transfer_interval == 0:
-                self.executor.update_weights(self.agent_network.state_dict())
+            # 4. Periodic Weight Synchronization handled in train_step or via callback
+            # self.executor.update_weights handled at start of train_step now.
 
             # 5. Periodic checkpointing
             if self.training_step % self.checkpoint_interval == 0:

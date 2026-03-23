@@ -149,20 +149,31 @@ class RainbowTrainer(BaseTrainer):
 
         self.executor = create_executor(config)
 
-        num_workers = config.num_workers
-        worker_args = (
-            config.game.env_factory,
-            self.agent_network,
-            self.action_selector,
-            self.buffer,
-            config.game.num_players,
-            config,
-            device,
-            self.name,
-        )
-        self.actor_cls = get_actor_class(env, config)
+        # 6. Initialize Workers
+        from agents.workers.actors import RolloutActor
+        from agents.environments.adapters import GymAdapter, VectorAdapter
+        from agents.action_selectors.policy_sources import NetworkPolicySource
 
-        self.executor.launch(self.actor_cls, worker_args, num_workers)
+        self.policy_source = NetworkPolicySource(self.agent_network)
+        
+        # Decide between single and vector adapter
+        num_envs = getattr(config, "num_envs", 1)
+        adapter_cls = VectorAdapter if num_envs > 1 else GymAdapter
+        # self.env_factory is a lambda in BaseTrainer
+        adapter_args = (self.env_factory,)
+
+        worker_args = (
+            adapter_cls,
+            adapter_args,
+            self.agent_network,
+            self.policy_source,
+            self.action_selector,
+            config,
+            self.buffer,
+        )
+        
+        num_workers = config.num_workers if hasattr(config, "num_workers") else 1
+        self.executor.launch_workers(RolloutActor, worker_args, num_workers=num_workers)
 
         # 6. Compile networks for the learner (main process)
         if config.compilation.enabled:
@@ -217,21 +228,27 @@ class RainbowTrainer(BaseTrainer):
 
     def train_step(self) -> None:
         """Single training step for Rainbow: update epsilon, collect, and optimize."""
-        # 2. Broadcast weights and epsilon to workers
+        # 1. Update weights and epsilon before collection
         self.executor.update_weights(
             self.agent_network.state_dict(),
             params={"epsilon": self.current_epsilon},
         )
 
-        # 3. Wait for data to be collected
-        # The actors push directly to the buffer.
-        _, collect_stats = self.executor.collect_data(
-            min_samples=None, worker_type=self.actor_cls
+        # 2. Collect data via actor
+        from agents.workers.actors import RolloutActor
+        
+        # We collected 'replay_interval' steps per training iteration
+        # If asynchronous, we might want to collect as much as possible
+        results, collection_stats = self.executor.collect_data(
+            num_steps=getattr(self.config, "replay_interval", 4),
+            worker_type=RolloutActor
         )
 
-        # 4. Log collection stats
-        for key, val in collect_stats.items():
-            self.stats.append(key, val)
+        # 3. Log collection stats
+        for res in results:
+            if res.get("episodes_completed", 0) > 0:
+                self.stats.append("score", float(res["avg_score"]))
+                self.stats.append("episode_length", float(res["avg_length"]))
 
         # 5. Learning step
         if self.buffer.size >= self.config.min_replay_buffer_size:
