@@ -151,35 +151,39 @@ class TemporalDifferenceBuilder(BaseTargetBuilder):
         with torch.inference_mode():
             # Double DQN: Use online network for action selection
             online_next_out = network.learner_inference({"observations": next_obs})
-            next_q_values = online_next_out["q_logits"]
+            # Handle potential variation in Q-value naming
+            next_q = online_next_out.get("q_values", online_next_out.get("q_logits"))
+
+            # Cleanly strip temporal dimension if present: [B, 1, Actions] -> [B, Actions]
+            if next_q.dim() == 3 and next_q.shape[1] == 1:
+                next_q = next_q.squeeze(1)
+
+            if next_masks is not None:
+                if next_masks.dim() == 3 and next_masks.shape[1] == 1:
+                    next_masks = next_masks.squeeze(1)
+                next_q = next_q.masked_fill(~next_masks.bool(), -float("inf"))
+
+            next_actions = next_q.argmax(dim=-1)
 
             # Use target network for value estimation
             target_out = self.target_network.learner_inference(
                 {"observations": next_obs}
             )
-            target_q_values = target_out["q_logits"]
+            target_q = target_out.get("q_values", target_out.get("q_logits"))
+            if target_q.dim() == 3 and target_q.shape[1] == 1:
+                target_q = target_q.squeeze(1)
 
-        # Ensure shapes are [B, Actions]
-        if next_q_values.dim() == 3:
-            next_q_values = next_q_values.squeeze(1)
-        if target_q_values.dim() == 3:
-            target_q_values = target_q_values.squeeze(1)
-
-        if next_masks is not None:
-            next_q_values = next_q_values.masked_fill(~next_masks.bool(), -float("inf"))
-
-        next_actions = next_q_values.argmax(dim=-1)
-        max_next_q = target_q_values[
+        max_next_q = target_q[
             torch.arange(batch_size, device=rewards.device), next_actions
         ]
 
-        target_q = rewards + (1 - terminal_mask.float()) * discount * max_next_q
+        target_q_val = rewards + (1 - terminal_mask.float()) * discount * max_next_q
 
-        # Whitelist the mathematical labels required for the loss
-        if "values" in current_targets:
-            raise RuntimeError("Collision on 'values' in TemporalDifferenceBuilder.")
+        # Whitelist the mathematical labels required for the loss pipeline
+        if "q_values" in current_targets:
+            raise RuntimeError("Collision on 'q_values' in TemporalDifferenceBuilder.")
 
-        current_targets["values"] = target_q
+        current_targets["q_values"] = target_q_val
         current_targets["rewards"] = rewards
         current_targets["dones"] = terminal_mask.float()
         current_targets["next_actions"] = next_actions
@@ -222,43 +226,52 @@ class DistributionalTargetBuilder(BaseTargetBuilder):
         batch_size = rewards.shape[0]
         discount = self.gamma**self.n_step
 
+        # We need the representation to compute expected Q-values for action selection
+        representation = network.components["behavior_heads"]["q_logits"].representation
+
         with torch.inference_mode():
-            # Double DQN: Use online network for action selection (argmax a' over Q)
-            # Use learner_inference to get [B, Actions] q_values
+            # Double DQN: Use online network for action selection
             online_next_out = network.learner_inference({"observations": next_obs})
-            next_q_values = online_next_out["q_logits"]
-            if next_q_values.ndim == 3:
-                next_q_values = next_q_values.squeeze(1)
+            next_q_logits = online_next_out["q_logits"]
+
+            # Cleanly strip temporal dimension if present: [B, 1, Actions, Atoms] -> [B, Actions, Atoms]
+            if next_q_logits.dim() == 4 and next_q_logits.shape[1] == 1:
+                next_q_logits = next_q_logits.squeeze(1)
+
+            # Get Expected Q-Values for argmax (resolves the bug of argmaxing the atoms dim)
+            expected_next_q = representation.to_expected_value(next_q_logits)
 
             if next_masks is not None:
-                next_q_values = next_q_values.masked_fill(
+                if next_masks.dim() == 3 and next_masks.shape[1] == 1:
+                    next_masks = next_masks.squeeze(1)
+                expected_next_q = expected_next_q.masked_fill(
                     ~next_masks.bool(), -float("inf")
                 )
-            next_actions = next_q_values.argmax(dim=-1)
+
+            # Argmax over expected values: [B, Actions] -> [B]
+            next_actions = expected_next_q.argmax(dim=-1)
 
             # Target network evaluation: Get probabilities of atoms for the chosen action
             target_out = self.target_network.learner_inference(
                 {"observations": next_obs}
             )
-            next_q_logits = target_out["q_logits"]  # [B, 1, Actions, Atoms]
-            if next_q_logits.ndim == 4:
-                next_q_logits = next_q_logits.squeeze(1)
+            target_next_logits = target_out["q_logits"]
 
-            # [B, Actions, Atoms] -> [B, Atoms]
-            next_probs = torch.softmax(
-                next_q_logits[
-                    torch.arange(batch_size, device=rewards.device), next_actions
-                ],
-                dim=-1,
-            )
+            if target_next_logits.dim() == 4 and target_next_logits.shape[1] == 1:
+                target_next_logits = target_next_logits.squeeze(1)
+
+            # Extract logits for chosen actions: [B, Actions, Atoms] -> [B, Atoms]
+            chosen_next_logits = target_next_logits[
+                torch.arange(batch_size, device=rewards.device), next_actions
+            ]
+
+            # Compute probabilities for the projected atoms
+            next_probs = torch.softmax(chosen_next_logits, dim=-1)
 
         # 2. Get the base grid geometry from the network's representation
-        # It MUST be a C51Representation (or similar with support)
-        representation = network.components["behavior_heads"]["q_logits"].representation
         assert hasattr(
             representation, "project_onto_grid"
-        )
-
+        ), "Distributional targets require a C51Representation."
         base_support = representation.support.to(rewards.device)
 
         # 3. Do the MDP Math: Shift the support! (Tz = r + gamma * z)

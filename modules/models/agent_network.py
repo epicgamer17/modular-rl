@@ -309,7 +309,9 @@ class AgentNetwork(nn.Module):
                 is_inference=False,
                 **batch,
             )
-            behavior_results[name] = head_out.training_tensor.view(B, T, -1)
+            # THE FIX: Dynamically preserve ALL trailing dimensions from the Head!
+            tail_shape = head_out.training_tensor.shape[1:]
+            behavior_results[name] = head_out.training_tensor.view(B, T, *tail_shape)
 
             # 5. Extract stateless telemetry from Heads (The "Right to Report")
             for metric_name, value in head_out.metrics.items():
