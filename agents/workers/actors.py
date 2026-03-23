@@ -325,7 +325,7 @@ class RolloutActor(BaseActor):
                     if final_values.dim() > 0
                     else final_values.item()
                 )
-                self.buffer.store_aggregate(seq, last_value=v)
+                self.buffer.store_aggregate(seq, bootstrap_value=v)
 
             # 7. Seed the NEXT chunk starting with this observation
             # (Ensures the first transition of the next collect() has s_0)

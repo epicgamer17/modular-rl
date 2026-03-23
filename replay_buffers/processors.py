@@ -28,6 +28,21 @@ class InputProcessor(ABC):
 
     def process_sequence(self, sequence, **kwargs):
         """Optional hook for processing entire sequence objects."""
+        # Fail-fast: Ensure that if an actor flushes an unfinished chunk, they provide a bootstrap_value.
+        # Failing to do so will result in GAE calculating a future return of 0.0, destroying the value network.
+        if (
+            sequence is not None
+            and hasattr(sequence, "terminated_history")
+            and len(sequence.terminated_history) > 0
+        ):
+            if (
+                not sequence.terminated_history[-1]
+                and not sequence.truncated_history[-1]
+            ):
+                assert (
+                    "bootstrap_value" in kwargs or "last_value" in kwargs
+                ), f"[Fail-Fast] Unfinished sequence (len={len(sequence)}) flushed without a bootstrap_value!"
+
         # Default behavior: iterate over transitions and apply process_single
         transitions = kwargs.get("transitions")
         if transitions is None:
@@ -892,7 +907,7 @@ class GAEProcessor(InputProcessor):
         # GAE requires a bootstrap value for the final next state.
         # 1. Use external bootstrap from kwargs (RolloutActor force-flush)
         # 2. Fallback to sequence history (if it's n+1 long - i.e. finished trajectory)
-        last_value = kwargs.get("last_value", 0.0)
+        last_value = kwargs.get("bootstrap_value", kwargs.get("last_value", 0.0))
 
         if (
             sequence is not None
@@ -949,20 +964,20 @@ class GAEProcessor(InputProcessor):
 
         return {"transitions": transitions}
 
-    def finish_trajectory(self, buffers, trajectory_slice, last_value=0):
+    def finish_trajectory(self, buffers, trajectory_slice, bootstrap_value=0):
         """
         Compute GAE advantages and returns for a trajectory segment in old single-step mode.
         """
         rewards = torch.cat(
             (
                 buffers["rewards"][trajectory_slice],
-                torch.tensor([last_value], dtype=torch.float32),
+                torch.tensor([bootstrap_value], dtype=torch.float32),
             )
         )
         values = torch.cat(
             (
                 buffers["values"][trajectory_slice],
-                torch.tensor([last_value], dtype=torch.float32),
+                torch.tensor([bootstrap_value], dtype=torch.float32),
             )
         )
 

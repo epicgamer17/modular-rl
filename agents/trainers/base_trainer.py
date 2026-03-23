@@ -127,7 +127,7 @@ class BaseTrainer:
             # We only care about the most recent test result for logging
             # The result from EvaluatorActor.evaluate is a dict with 'score', etc.
             # BaseExecutor.collect_data returns (worker_type_name, result_data) tuples for each worker
-            for _, res in results:
+            for res in results:
                 self._process_test_results(res, self._tester_step)
 
     def stop_test(self):
