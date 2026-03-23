@@ -1,6 +1,7 @@
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple, Type
+import torch
 
 
 class BaseExecutor(ABC):

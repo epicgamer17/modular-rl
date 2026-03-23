@@ -220,7 +220,6 @@ class RainbowTrainer(BaseTrainer):
                 )
 
         self.stop_test()
-        self.executor.stop()
         self._save_checkpoint()
         print("Training finished.")
 

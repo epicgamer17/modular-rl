@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple, Type
 from .base import BaseExecutor
+import torch
 
 
 class LocalExecutor(BaseExecutor):
@@ -29,14 +30,16 @@ class LocalExecutor(BaseExecutor):
                     num_steps = self.worker_signals.pop(f"{type_name}_num_steps", 1000)
                     results.append((type_name, worker.collect(num_steps)))
                 elif hasattr(worker, "evaluate"):
-                    num_episodes = self.worker_signals.pop(f"{type_name}_num_episodes", 1)
+                    num_episodes = self.worker_signals.pop(
+                        f"{type_name}_num_episodes", 1
+                    )
                     results.append((type_name, worker.evaluate(num_episodes)))
                 elif hasattr(worker, "reanalyze"):
                     batch_size = self.worker_signals.pop(f"{type_name}_batch_size", 32)
                     results.append((type_name, worker.reanalyze(batch_size)))
                 elif hasattr(worker, "play_sequence"):
                     results.append((type_name, worker.play_sequence()))
-                
+
                 self.worker_signals[type_name] = False
 
         return results

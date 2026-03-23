@@ -4,6 +4,7 @@ import traceback
 import time
 from typing import Any, Dict, List, Optional, Tuple, Type
 from .base import BaseExecutor
+import torch
 
 
 class TorchMPExecutor(BaseExecutor):
@@ -28,7 +29,8 @@ class TorchMPExecutor(BaseExecutor):
 
     def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int):
         self.stop_flag.value = 0
-        self.workers = []
+        if not hasattr(self, "workers"):
+            self.workers = []
 
         # Create a trigger event for this worker type if it doesn't exist
         type_name = worker_cls.__name__
@@ -53,7 +55,7 @@ class TorchMPExecutor(BaseExecutor):
                 ),
             )
             p.start()
-            self.workers.append(p)
+            self.workers.append((worker_cls, p))
 
     @staticmethod
     def _worker_loop(
@@ -84,7 +86,7 @@ class TorchMPExecutor(BaseExecutor):
                 if hasattr(potential_config, "compilation"):
                     config = potential_config
                     break
-        
+
         if config and config.compilation.enabled:
             time.sleep(worker_id * 1.0)
         elif worker_id > 0:
@@ -96,7 +98,7 @@ class TorchMPExecutor(BaseExecutor):
 
             # Signaling: Only wait if worker has synchronous methods (collect/evaluate/reanalyze)
             # Most modern actors are now synchronous by default in the training loop.
-            use_signaling = True 
+            use_signaling = True
 
             while not stop_flag.value:
                 # 1. Parameter Updates
@@ -106,7 +108,7 @@ class TorchMPExecutor(BaseExecutor):
                         if update_dict:
                             worker.update_parameters(
                                 weights=update_dict.get("weights"),
-                                hyperparams=update_dict.get("hyperparams")
+                                hyperparams=update_dict.get("hyperparams"),
                             )
                     except queue.Empty:
                         break
@@ -119,10 +121,10 @@ class TorchMPExecutor(BaseExecutor):
                             # Check if if there is a specific command for us in the queue
                             # (We use a simple name matching since all workers of this type share the event)
                             # However, in multi-process, only one worker might grab the command from the queue.
-                            # So we peek or handle it carefully. 
+                            # So we peek or handle it carefully.
                             # Simplest: Each worker just tries to get its own command.
                             try:
-                                # This is a bit tricky with multiple workers. 
+                                # This is a bit tricky with multiple workers.
                                 # For now, assume the orchestrator sends one command per worker or we broadcast.
                                 # Given the project structure, we usually have one command per collection step.
                                 pass
@@ -210,7 +212,7 @@ class TorchMPExecutor(BaseExecutor):
             raise err
 
         # 2. Check if all workers are still alive
-        for i, w in enumerate(self.workers):
+        for i, (_, w) in enumerate(self.workers):
             if not w.is_alive():
                 # Check if it exited with code 0 (clean stop) or not
                 if (
@@ -236,10 +238,7 @@ class TorchMPExecutor(BaseExecutor):
         # Signal noise reset if this is a learning update
         # hyperparams["reset_noise"] = True # No longer needed here, handled in Actor
 
-        update_dict = {
-            "weights": weights,
-            "hyperparams": hyperparams
-        }
+        update_dict = {"weights": weights, "hyperparams": hyperparams}
 
         # Send to all workers via the queue
         for _ in range(len(self.workers)):
@@ -250,11 +249,13 @@ class TorchMPExecutor(BaseExecutor):
         type_name = worker_type.__name__
         # Broadcast command to all workers of this type
         # (Assuming all workers are idle and waiting for their own command)
-        num_target_workers = len([w for w_cls, w in self.workers if True]) # Actually we don't store cls in self.workers list...
+        num_target_workers = len(
+            [w for w_cls, w in self.workers if w_cls == worker_type]
+        )
         # Just put one command per worker in the queue
-        for _ in range(len(self.workers)):
+        for _ in range(num_target_workers):
             self.command_queue.put((type_name, kwargs))
-            
+
         if type_name in self.worker_events:
             self.worker_events[type_name].set()
 
@@ -264,7 +265,7 @@ class TorchMPExecutor(BaseExecutor):
         # Give workers a moment to see the stop flag
         time.sleep(0.1)
 
-        for w in self.workers:
+        for _, w in self.workers:
             if w.is_alive():
                 # For some environments, join() might hang if the queue is full
                 # terminate() is safer but join() is still needed to clean up

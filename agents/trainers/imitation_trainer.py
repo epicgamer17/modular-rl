@@ -196,7 +196,6 @@ class ImitationTrainer(BaseTrainer):
                 self.trigger_test(self.agent_network.state_dict(), self.training_step)
 
         self.stop_test()
-        self.executor.stop()
         self._save_checkpoint()
         print("Training finished.")
 

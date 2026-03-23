@@ -66,6 +66,7 @@ class BaseTrainer:
         """Initializes the EvaluatorActor via an Executor."""
         from agents.workers.actors import EvaluatorActor
         from agents.environments.adapters import GymAdapter
+        from agents.action_selectors.selectors import ArgmaxSelector
 
         # 1. Initialize Executor if not already done
         if self.executor is None:
@@ -80,8 +81,9 @@ class BaseTrainer:
             (env_factory,),
             self.agent_network,
             self.policy_source,
-            None,                # Index 4 (buffer placeholder)
-            self.config,         # Index 5
+            None,  # Index 4 (buffer placeholder)
+            self.config,  # Index 5
+            ArgmaxSelector(),  # Index 6 (action_selector)
         )
 
         # 3. Launch EvaluatorActor

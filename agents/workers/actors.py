@@ -318,9 +318,10 @@ class EvaluatorActor(BaseActor):
         adapter_args: Tuple[Any, ...],
         network: AgentNetwork,
         policy_source: BasePolicySource,
-        buffer: Optional[ModularReplayBuffer], # Index 4 (ignored by EvaluatorActor)
-        config: Any,                            # Index 5
-        worker_id: int = 0,
+        buffer: Optional[ModularReplayBuffer],  # Index 4 (ignored by EvaluatorActor)
+        config: Any,  # Index 5
+        action_selector: Optional[BaseActionSelector] = None,  # Index 6
+        worker_id: int = 0,  # Index 7
     ):
         """
         Initializes the EvaluatorActor.
@@ -333,6 +334,7 @@ class EvaluatorActor(BaseActor):
             buffer: Placeholder for argument consistency (not used).
             config: Algorithm configuration.
             worker_id: Worker identifier.
+            action_selector: Optional action selection provider for evaluation.
         """
         self.worker_id = worker_id
         device = torch.device("cpu")
@@ -343,6 +345,7 @@ class EvaluatorActor(BaseActor):
 
         self.agent_network = network
         self.policy_source = policy_source
+        self.action_selector = action_selector
         self.num_envs = self.adapter.num_envs
 
         self.total_reward = 0.0
@@ -386,10 +389,23 @@ class EvaluatorActor(BaseActor):
             )
 
             # Determine greedy action
-            if result.action is not None:
-                actions = result.action
+            if self.action_selector is not None:
+                actions, _ = self.action_selector.select_action(
+                    result, info, exploration=False
+                )
             else:
-                actions = result.probs.argmax(dim=-1)
+                # Fallback to result check (deprecated but safe for simple cases)
+                if result.action is not None:
+                    actions = result.action
+                elif result.probs is not None:
+                    actions = result.probs.argmax(dim=-1)
+                elif result.logits is not None:
+                    actions = result.logits.argmax(dim=-1)
+                else:
+                    raise AttributeError(
+                        "EvaluatorActor failed to determine action: "
+                        "no action_selector provided and results lack actions/probs/logits."
+                    )
 
             next_obs, rewards, terminals, truncations, infos = self.adapter.step(
                 actions
