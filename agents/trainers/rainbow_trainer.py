@@ -6,7 +6,6 @@ from agents.trainers.base_trainer import BaseTrainer
 from agents.learner.base import UniversalLearner
 
 from agents.action_selectors.factory import SelectorFactory
-from agents.workers.actors import get_actor_class
 from modules.models.agent_network import AgentNetwork
 from replay_buffers.transition import TransitionBatch, Transition
 from stats.stats import StatTracker, PlotType
@@ -156,20 +155,19 @@ class RainbowTrainer(BaseTrainer):
 
         self.policy_source = NetworkPolicySource(self.agent_network)
         
-        # Decide between single and vector adapter
+        # Decisions between single and vector adapter
         num_envs = getattr(config, "num_envs", 1)
         adapter_cls = VectorAdapter if num_envs > 1 else GymAdapter
-        # self.env_factory is a lambda in BaseTrainer
-        adapter_args = (self.env_factory,)
-
+        env_factory = config.game.env_factory
+        adapter_args = (env_factory,)
         worker_args = (
             adapter_cls,
             adapter_args,
             self.agent_network,
             self.policy_source,
-            self.action_selector,
-            config,
             self.buffer,
+            config,
+            self.action_selector,
         )
         
         num_workers = config.num_workers if hasattr(config, "num_workers") else 1

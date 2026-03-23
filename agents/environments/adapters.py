@@ -69,16 +69,21 @@ class GymAdapter(BaseAdapter):
     Wraps standard single-player Gymnasium environments.
     Handles dimension expansion for observations and rewards to shape [1, ...].
     """
-    def __init__(self, env: gym.Env, device: torch.device, num_actions: Optional[int] = None):
+    def __init__(self, env_or_factory: Any, device: torch.device, num_actions: Optional[int] = None):
         super().__init__(device)
-        self.env = env
+        if callable(env_or_factory):
+            self.env = env_or_factory()
+        else:
+            self.env = env_or_factory
+        
         # Try to infer num_actions for the legal_moves_mask
         if num_actions is not None:
             self.num_actions = num_actions
-        elif hasattr(env.action_space, "n"):
-            self.num_actions = env.action_space.n
+        elif hasattr(self.env.action_space, "n"):
+            self.num_actions = self.env.action_space.n
         else:
             self.num_actions = None
+        self.num_envs = 1
 
     def reset(self) -> Tuple[torch.Tensor, Dict[str, Any]]:
         res = self.env.reset()
@@ -103,6 +108,14 @@ class GymAdapter(BaseAdapter):
             
         obs, reward, terminated, truncated, info = self.env.step(action)
         
+        # Auto-reset logic: if episode ends, reset and return fresh obs for next step
+        if terminated or truncated:
+            new_obs, reset_info = self.env.reset()
+            if reset_info:
+                info.update(reset_info)
+            # We return the new_obs so the Actor can start the next episode immediately
+            obs = new_obs
+            
         return (
             self._to_tensor(obs).unsqueeze(0),
             self._to_tensor([reward], dtype=torch.float32),
@@ -137,11 +150,14 @@ class VectorAdapter(BaseAdapter):
     Wraps native batched environments (PufferLib or Gym Vector).
     Acts as a pass-through, casting NumPy arrays to PyTorch tensors.
     """
-    def __init__(self, vec_env: Any, device: torch.device, num_actions: int):
+    def __init__(self, vec_env_or_factory: Any, device: torch.device, num_actions: int):
         super().__init__(device)
-        self.vec_env = vec_env
+        if callable(vec_env_or_factory):
+            self.vec_env = vec_env_or_factory()
+        else:
+            self.vec_env = vec_env_or_factory
         self.num_actions = num_actions
-        self.num_envs = getattr(vec_env, "num_envs", 1)
+        self.num_envs = getattr(self.vec_env, "num_envs", 1)
 
     def reset(self) -> Tuple[torch.Tensor, Dict[str, Any]]:
         result = self.vec_env.reset()
@@ -214,22 +230,27 @@ class PettingZooAdapter(BaseAdapter):
     Wraps multi-agent AEC or Parallel environments.
     Exposes current player_id as a tensor and aligns rewards.
     """
-    def __init__(self, env: Any, device: torch.device, num_actions: Optional[int] = None):
+    def __init__(self, env_or_factory: Any, device: torch.device, num_actions: Optional[int] = None):
         super().__init__(device)
-        self.env = env
+        if callable(env_or_factory):
+            self.env = env_or_factory()
+        else:
+            self.env = env_or_factory
         
         # Detect environment type
-        self.is_aec = hasattr(env, "agent_selection")
-        if not self.is_aec and hasattr(env, "unwrapped"):
-            self.is_aec = hasattr(env.unwrapped, "agent_selection")
+        self.is_aec = hasattr(self.env, "agent_selection")
+        if not self.is_aec and hasattr(self.env, "unwrapped"):
+            self.is_aec = hasattr(self.env.unwrapped, "agent_selection")
             
-        self.agents = env.possible_agents
+        self.agents = self.env.possible_agents
         # Try to infer num_actions
         if num_actions is not None:
             self.num_actions = num_actions
         else:
-            first_space = env.action_space(self.agents[0])
+            first_space = self.env.action_space(self.agents[0])
             self.num_actions = first_space.n if hasattr(first_space, "n") else None
+        
+        self.num_envs = 1 if self.is_aec else len(self.agents)
 
     def reset(self) -> Tuple[torch.Tensor, Dict[str, Any]]:
         if self.is_aec:
@@ -253,6 +274,15 @@ class PettingZooAdapter(BaseAdapter):
             reward = float(self.env.rewards.get(acting_player, 0.0))
             
             obs, _, term, trunc, info = self.env.last()
+
+            # Auto-reset for AEC: if episode is over, reset and get fresh root state
+            # In AEC, we usually reset when agent_selection is None or via flags
+            if term or trunc:
+                self.env.reset()
+                new_obs, _, _, _, reset_info = self.env.last()
+                obs = new_obs
+                if reset_info:
+                    info.update(reset_info)
             
             return (
                 self._to_tensor(obs).unsqueeze(0),
@@ -269,6 +299,15 @@ class PettingZooAdapter(BaseAdapter):
             }
             obs_dict, reward_dict, term_dict, trunc_dict, info_dict = self.env.step(action_dict)
             
+            # Auto-reset for Parallel API
+            # Standard PettingZoo Parallel environments return 'done' for all agents when episode ends
+            episode_over = any(term_dict.values()) or any(trunc_dict.values())
+            if episode_over:
+                new_obs_dict, reset_info_dict = self.env.reset()
+                obs_dict = new_obs_dict
+                if reset_info_dict:
+                    info_dict.update(reset_info_dict)
+
             obs_list = [obs_dict[a] for a in self.agents]
             reward_list = [reward_dict[a] for a in self.agents]
             term_list = [term_dict[a] for a in self.agents]

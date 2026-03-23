@@ -9,7 +9,7 @@ from agents.executors.torch_mp_executor import TorchMPExecutor
 from agents.action_selectors.factory import SelectorFactory
 from agents.action_selectors.policy_sources import NetworkPolicySource
 
-# from agents.workers.actors import get_actor_class # REMOVED as unused
+
 
 from modules.models.agent_network import AgentNetwork
 
@@ -67,9 +67,11 @@ class PPOTrainer(BaseTrainer):
             self.agent_network.share_memory()
 
         # 2. Initialize Action Selector and Policy Source
-        self.action_selector = SelectorFactory.create(
+        from agents.action_selectors.decorators import PPODecorator
+        raw_selector = SelectorFactory.create(
             config.action_selector.config_dict
         )
+        self.action_selector = PPODecorator(raw_selector)
         self.policy_source = NetworkPolicySource(self.agent_network)
 
         # 3. Initialize Replay Buffer
@@ -109,14 +111,16 @@ class PPOTrainer(BaseTrainer):
 
         # Prepare worker args
         # For PPO, we use the GymAdapter for the environment
+        env_factory = config.game.env_factory
+        
         worker_args = (
             GymAdapter,
-            (self.env_factory,), # env_factory is a lambda in BaseTrainer
+            (env_factory,),
             self.agent_network,
             self.policy_source,
-            self.action_selector,
-            config,
             self.replay_buffer,
+            config,
+            self.action_selector,
         )
         
         # Launch rollout workers

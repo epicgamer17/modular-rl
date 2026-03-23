@@ -76,8 +76,16 @@ class TorchMPExecutor(BaseExecutor):
         torch.set_num_threads(1)
 
         # Stagger start times to avoid overwhelming the compiler (and avoid race conditions in Triton cache)
-        config = args[5]
-        if config.compilation.enabled:
+        # We try to find the config object in args (usually at index 3, 4 or 5)
+        config = None
+        for idx in [3, 4, 5]:
+            if len(args) > idx:
+                potential_config = args[idx]
+                if hasattr(potential_config, "compilation"):
+                    config = potential_config
+                    break
+        
+        if config and config.compilation.enabled:
             time.sleep(worker_id * 1.0)
         elif worker_id > 0:
             time.sleep(worker_id * 0.1)

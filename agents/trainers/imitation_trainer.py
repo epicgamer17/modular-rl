@@ -10,7 +10,6 @@ from agents.learner.base import UniversalLearner
 from agents.learner.batch_iterators import RepeatSampleIterator
 from agents.learner.callbacks import ResetNoiseCallback
 from agents.trainers.base_trainer import BaseTrainer
-from agents.workers.actors import get_actor_class
 from agents.learner.losses import ImitationLoss, LossPipeline
 from modules.models.agent_network import AgentNetwork
 from modules.utils import get_lr_scheduler
@@ -119,31 +118,48 @@ class ImitationTrainer(BaseTrainer):
 
         # Executor + actors
         from agents.executors.factory import create_executor
+        from agents.workers.actors import RolloutActor
+        from agents.environments.adapters import GymAdapter, VectorAdapter
+        from agents.action_selectors.policy_sources import NetworkPolicySource
 
         self.executor = create_executor(config)
-        self.actor_cls = get_actor_class(env, config)
+        self.policy_source = NetworkPolicySource(self.agent_network)
+
+        # Decide between single and vector adapter
+        num_envs = getattr(config, "num_envs", 1)
+        adapter_cls = VectorAdapter if num_envs > 1 else GymAdapter
+        env_factory = config.game.env_factory
+        adapter_args = (env_factory,)
+
         worker_args = (
-            config.game.env_factory,
+            adapter_cls,
+            adapter_args,
             self.agent_network,
-            self.action_selector,
-            self.buffer,
-            config.game.num_players,
+            self.policy_source,
             config,
-            device,
-            self.name,
+            self.buffer,
         )
-        self.executor.launch(self.actor_cls, worker_args, config.num_workers)
+        
+        num_workers = config.num_workers if hasattr(config, "num_workers") else 1
+        self.executor.launch_workers(RolloutActor, worker_args, num_workers=num_workers)
 
     def train_step(self) -> None:
         # 1) Broadcast weights
         self.executor.update_weights(self.agent_network.state_dict())
 
-        # 2) Collect data (actors push directly to the buffer)
-        _, collect_stats = self.executor.collect_data(
-            min_samples=None, worker_type=self.actor_cls
+        # 2) Collect data via actor
+        from agents.workers.actors import RolloutActor
+        
+        results, collection_stats = self.executor.collect_data(
+            num_steps=getattr(self.config, "replay_interval", 1),
+            worker_type=RolloutActor
         )
-        for key, val in collect_stats.items():
-            self.stats.append(key, val)
+        
+        # 3) Log collection stats
+        for res in results:
+            if res.get("episodes_completed", 0) > 0:
+                self.stats.append("score", float(res["avg_score"]))
+                self.stats.append("episode_length", float(res["avg_length"]))
 
         # 3) Learner updates
         if self.buffer.size >= self.config.min_replay_buffer_size:

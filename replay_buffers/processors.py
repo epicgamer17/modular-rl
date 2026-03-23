@@ -82,6 +82,11 @@ class InputProcessor(ABC):
                     if i + 1 < len(sequence.legal_moves_history)
                     else None
                 ),
+                "log_prob": (
+                    sequence.log_prob_history[i]
+                    if i < len(sequence.log_prob_history)
+                    else None
+                ),
             }
             # Add next_infos if available (usually not in Sequence but for completeness)
             if hasattr(sequence, "next_infos") and i < len(sequence.next_infos):
@@ -914,10 +919,30 @@ class GAEProcessor(InputProcessor):
 
         adv_list = advantages.tolist()
         ret_list = returns.tolist()
+
         for t, adv, ret in zip(transitions, adv_list, ret_list):
             t["advantages"] = adv
             t["returns"] = ret
-            t["old_log_probs"] = t["policies"]
+
+            # Extract scalar log_prob for PPO
+            if t.get("policy") is not None:
+                pol = t["policy"]
+                if np.isscalar(pol) or (hasattr(pol, "ndim") and pol.ndim == 0):
+                    t["log_prob"] = float(pol)
+                elif isinstance(pol, (np.ndarray, torch.Tensor)) and pol.ndim == 1:
+                    # Fallback: if it's a distribution and we have the action, compute log_prob
+                    # Assuming policy is probs
+                    action = t.get("actions")
+                    if action is not None:
+                        idx = int(action)
+                        # Avoid log(0)
+                        prob = float(pol[idx])
+                        t["log_prob"] = float(np.log(max(prob, 1e-10)))
+            elif t.get("policies") is not None:
+                # Handle plural naming consistency
+                pol = t["policies"]
+                if np.isscalar(pol) or (hasattr(pol, "ndim") and pol.ndim == 0):
+                    t["log_prob"] = float(pol)
 
         return {"transitions": transitions}
 
@@ -1135,8 +1160,7 @@ class NStepUnrollProcessor(OutputProcessor):
         chance_encoder_inputs = None
         if self.unroll_steps > 0:
             chance_encoder_inputs = torch.cat(
-                [unroll_observations[:, :-1], unroll_observations[:, 1:]], 
-                dim=2
+                [unroll_observations[:, :-1], unroll_observations[:, 1:]], dim=2
             )
 
         return dict(

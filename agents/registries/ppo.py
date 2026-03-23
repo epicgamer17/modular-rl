@@ -86,7 +86,7 @@ def build_ppo(config: Any, agent_network: Any, device: torch.device) -> Dict[str
     from agents.learner.target_builders import PassThroughTargetBuilder, TargetBuilderPipeline, SingleStepFormatter
     target_builder = TargetBuilderPipeline([
         PassThroughTargetBuilder(
-            ["values", "returns", "actions", "old_log_probs", "advantages"]
+            ["values", "returns", "actions", "log_prob", "advantages"]
         ),
         SingleStepFormatter()
     ])

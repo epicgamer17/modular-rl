@@ -63,55 +63,36 @@ class BaseTrainer:
         self._setup_stats()
 
     def setup_tester(self):
-        """Initializes the Tester using the TestFactory and launched via an Executor."""
-        from agents.workers.tester import TestFactory, Tester
-        from agents.executors.local_executor import LocalExecutor
-        from agents.executors.torch_mp_executor import TorchMPExecutor
+        """Initializes the EvaluatorActor via an Executor."""
+        from agents.workers.actors import EvaluatorActor
+        from agents.environments.adapters import GymAdapter
 
         # 1. Initialize Executor if not already done
         if self.executor is None:
             from agents.executors.factory import create_executor
-
             self.executor = create_executor(self.config)
 
-        # 2. Prepare test types
-        test_types = TestFactory.create_default_test_types(
-            self.config, num_trials=self.test_trials
+        # 2. Prepare worker args
+        # EvaluatorActor takes: adapter_cls, adapter_args, network, policy_source, buffer, config
+        env_factory = self.config.game.env_factory
+        worker_args = (
+            GymAdapter,
+            (env_factory,),
+            self.agent_network,
+            self.policy_source,
+            None,                # Index 4 (buffer placeholder)
+            self.config,         # Index 5
         )
-        from agents.workers.tester import VsAgentTest
 
-        for agent in self.test_agents:
-            for player_idx in range(self.num_players):
-                test_types.append(
-                    VsAgentTest(
-                        name=f"vs_{agent.name}_p{player_idx}",
-                        num_trials=self.test_trials,
-                        opponent=agent,
-                        player_idx=player_idx,
-                    )
-                )
-
-        # 3. Launch Tester
-        # 1. Safely unwrap the network before passing across process boundaries
-        uncompiled_network = get_uncompiled_model(self.agent_network)
-
-        # 2. Launch Tester
-        launch_args = TestFactory.get_launch_args(
-            config=self.config,
-            agent_network=uncompiled_network,  # Pass the uncompiled version!
-            action_selector=self.action_selector,
-            device=torch.device("cpu"),
-            name=f"{self.name}_tester",
-            test_types=test_types,
-        )
-        self.executor.launch(Tester, launch_args, num_workers=1)
+        # 3. Launch EvaluatorActor
+        self.executor.launch_workers(EvaluatorActor, worker_args, num_workers=1)
 
     def trigger_test(self, state_dict: Dict[str, Any], step: int):
         """
         Triggers evaluation. For LocalExecutor, this runs immediately.
         For TorchMPExecutor, it ensures weights are synced.
         """
-        from agents.workers.tester import Tester
+        from agents.workers.actors import EvaluatorActor
 
         if not self._tester_launched:
             self.setup_tester()
@@ -122,28 +103,30 @@ class BaseTrainer:
         # Update step (weights are shared via shared_memory if multi_process=True)
         self._tester_step = step
 
-        # Signal executor to run test (both local and multi-process need this now)
-        self.executor.request_work(Tester)
+        # Signal executor to run test
+        self.executor.request_work(EvaluatorActor, num_episodes=self.test_trials)
 
         # If local, run synchronously now
         if not self.config.multi_process:
-            # LocalExecutor._fetch_available_results runs play_sequence
-            results, _ = self.executor.collect_data(min_samples=1, worker_type=Tester)
+            results, _ = self.executor.collect_data(num_steps=None, worker_type=EvaluatorActor)
             for res in results:
                 self._process_test_results(res, step)
 
     def poll_test(self):
         """Polls for background test results from the executor."""
-        from agents.workers.tester import Tester
+        from agents.workers.actors import EvaluatorActor
 
         if self.executor is None or not self.config.multi_process:
             return
 
-        # Fetch whatever is available in the result queue for Tester
-        results, _ = self.executor.collect_data(min_samples=None, worker_type=Tester)
+        # Fetch whatever is available in the result queue for EvaluatorActor
+        results, _ = self.executor.collect_data(num_steps=None, worker_type=EvaluatorActor)
         if results:
             # We only care about the most recent test result for logging
-            self._process_test_results(results[-1], self._tester_step)
+            # The result from EvaluatorActor.evaluate is a dict with 'score', etc.
+            # BaseExecutor.collect_data returns (worker_type_name, result_data) tuples for each worker
+            for _, res in results:
+                self._process_test_results(res, self._tester_step)
 
     def stop_test(self):
         """Stops the executor (stops everything)."""
@@ -151,45 +134,11 @@ class BaseTrainer:
             self.executor.stop()
             self.executor = None
 
-    def _process_test_results(self, all_results: Dict[str, Dict[str, Any]], step: int):
-        """Logs results from all test types."""
-        for test_name, res in all_results.items():
-            # Standard evaluation (e.g., standard, self_play)
-            if test_name == "self_play":
-                # Only log p0_score for self_play to show consistent training progress
-                if "p0_score" in res:
-                    self.stats.append("test_score", res["p0_score"], subkey="p0")
-                elif "score" in res:
-                    self.stats.append("test_score", res["score"], subkey="avg")
-
-            elif test_name == "standard":
-                if "score" in res:
-                    self.stats.append("test_score", res["score"], subkey="avg")
-
-            # Vs Agent evaluations (e.g., vs_Random_p0, vs_Random_p1)
-            elif test_name.startswith("vs_"):
-                # Parse base agent name (e.g., vs_Random_p0 -> vs_Random)
-                parts = test_name.split("_")
-                # Expected format: vs_{agent_name}_p{idx}
-                if (
-                    len(parts) >= 3
-                    and parts[-1].startswith("p")
-                    and parts[-1][1:].isdigit()
-                ):
-                    agent_name = "_".join(parts[:-1])  # e.g. vs_Random
-                    player_idx = parts[-1]  # e.g. p0
-
-                    if "score" in res:
-                        # Group by agent name, use player_idx as subkey
-                        self.stats.append(
-                            f"{agent_name}_score", res["score"], subkey=player_idx
-                        )
-                else:
-                    # Fallback for non-indexed vs tests
-                    if "score" in res:
-                        self.stats.append(f"{test_name}_score", res["score"])
-
-            print(f"[{test_name}] score: {res.get('score', 0):.3f} (step {step})")
+    def _process_test_results(self, res: Dict[str, Any], step: int):
+        """Logs results from EvaluatorActor."""
+        if "score" in res:
+            self.stats.append("test_score", res["score"], subkey="avg")
+            print(f"[test] score: {res['score']:.3f} (step {step})")
 
     def _detect_player_id(self, env) -> str:
         if self.config.game.num_players > 1:

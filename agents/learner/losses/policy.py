@@ -73,7 +73,7 @@ class ClippedSurrogateLoss(BaseLoss):
         """PPO Policy Loss: returns [B, T]"""
         policy_logits = predictions[self.pred_key]
         actions = targets["actions"]
-        old_log_probs = targets["old_log_probs"]
+        old_log_probs = targets["log_prob"]
         advantages = targets["advantages"]
 
         # 1. Capture and Validate
@@ -89,7 +89,7 @@ class ClippedSurrogateLoss(BaseLoss):
         log_probs = dist.log_prob(actions)
         assert (
             log_probs.shape == old_log_probs.shape
-        ), f"ClippedSurrogateLoss: shape mismatch between log_probs {log_probs.shape} and old_log_probs {old_log_probs.shape}"
+        ), f"ClippedSurrogateLoss: shape mismatch between log_probs {log_probs.shape} and log_prob target {old_log_probs.shape}"
         ratio = torch.exp(log_probs - old_log_probs)
 
         assert (

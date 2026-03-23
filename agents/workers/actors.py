@@ -2,19 +2,22 @@ import torch
 import numpy as np
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 from modules.models.agent_network import AgentNetwork
 from agents.action_selectors.policy_sources import BasePolicySource
 from agents.environments.adapters import BaseAdapter
 from agents.workers.state_management import SequenceManager
 from replay_buffers.modular_buffer import ModularReplayBuffer
+from agents.action_selectors.selectors import BaseActionSelector
+
 
 class BaseActor(ABC):
     """
     Abstract base class for all primary actors.
     Provides a standardized API for Orchestrators and Executors.
     """
+
     @abstractmethod
     def setup(self) -> None:
         """Initializes the actor and its internal state."""
@@ -30,70 +33,105 @@ class BaseActor(ABC):
         """Returns the current state/metrics of the actor."""
         pass
 
+
 class RolloutActor(BaseActor):
     """
     The main worker for data collection.
     Iterates between inference and environment stepping, storing results locally
     via a SequenceManager before flushing them to a centralized ReplayBuffer.
     """
+
     def __init__(
         self,
-        adapter: BaseAdapter,
+        adapter_cls: Type[BaseAdapter],
+        adapter_args: Tuple[Any, ...],
         network: AgentNetwork,
         policy_source: BasePolicySource,
-        buffer: ModularReplayBuffer,
-        num_players: int = 1
+        buffer: ModularReplayBuffer,        # Index 4
+        config: Any,                         # Index 5
+        action_selector: Optional[BaseActionSelector] = None, # Index 6
+        worker_id: int = 0,
     ):
         """
         Initializes the RolloutActor.
 
         Args:
-            adapter: The EnvironmentAdapter instance.
+            adapter_cls: The EnvironmentAdapter class.
+            adapter_args: Arguments for the adapter class (e.g. env_factory).
             network: Neural network for value/policy estimation.
             policy_source: Strategy for retrieving InferenceResults.
             buffer: Replay Buffer reference for storing completed sequences.
-            num_players: Number of players in the environment.
+            config: Algorithm configuration.
+            action_selector: Optional action selector.
+            worker_id: Unique ID for this worker.
         """
-        self.adapter = adapter
-        self.network = network
+        self.worker_id = worker_id
+        # 1. Build the adapter for this worker
+        # Most adapters take (env_factory, device, num_actions)
+        device = torch.device("cpu")  # Rollout always on CPU
+        num_actions = getattr(config.game, "num_actions", None)
+
+        self.adapter = adapter_cls(
+            *adapter_args, device=device, num_actions=num_actions
+        )
+        self.agent_network = network
         self.policy_source = policy_source
+        self.action_selector = action_selector
         self.buffer = buffer
-        
-        self.num_envs = adapter.num_envs
+
+        num_players = getattr(config.game, "num_players", 1)
+        self.num_envs = self.adapter.num_envs
         self.seq_manager = SequenceManager(num_players, self.num_envs)
-        
+
         # Internal state for the collection loop
         self.obs, self.info = self.adapter.reset()
-        
+
         # Seed the initial state for each environment sequence
         # Sequence contract: len(obs) == len(action) + 1
         for i in range(self.num_envs):
             player_id = 0
             if "player_id" in self.info:
                 p_id_batch = self.info["player_id"]
-                player_id = p_id_batch[i].item() if torch.is_tensor(p_id_batch) else p_id_batch[i]
+                player_id = (
+                    p_id_batch[i].item()
+                    if torch.is_tensor(p_id_batch)
+                    else p_id_batch[i]
+                )
 
-            self.seq_manager.append(i, {
-                "observation": self.obs[i].cpu().numpy(),
-                "terminated": False,
-                "truncated": False,
-                "player_id": player_id
-            })
-            
+            self.seq_manager.append(
+                i,
+                {
+                    "observation": self.obs[i].cpu().numpy(),
+                    "terminated": False,
+                    "truncated": False,
+                    "player_id": player_id,
+                },
+            )
+
         self.total_steps = 0
         self.episodes_completed = 0
-        self.total_reward = 0.0
+        self.completed_scores = []
+        self.completed_lengths = []
+
+        # Track current episode progress across envs
+        self.current_scores = np.zeros(self.num_envs)
+        self.current_lengths = np.zeros(self.num_envs)
 
     def setup(self) -> None:
         """Prepares the network for rollout (eval mode)."""
-        self.network.eval()
+        self.agent_network.eval()
 
     def update_parameters(self, state_dict: Dict[str, Any]) -> None:
         """Updates network weights (from state_dict) and/or selector hyperparameters."""
+        if state_dict is None or not state_dict:
+            return
+
         if any(isinstance(v, (torch.Tensor, dict)) for v in state_dict.values()):
             # Handle potentially compiled model state dicts
-            clean_params = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
-            self.network.load_state_dict(clean_params, strict=False)
+            clean_params = {
+                k.replace("_orig_mod.", ""): v for k, v in state_dict.items()
+            }
+            self.agent_network.load_state_dict(clean_params, strict=False)
         else:
             # hyperparameters update (e.g. epsilon, temperature)
             # This relies on policy_source or search engines having an update_parameters method if needed.
@@ -105,8 +143,12 @@ class RolloutActor(BaseActor):
         return {
             "total_steps": self.total_steps,
             "episodes_completed": self.episodes_completed,
-            "total_reward": self.total_reward,
-            "average_reward": self.total_reward / max(1, self.episodes_completed)
+            "avg_score": (
+                np.mean(self.completed_scores) if self.completed_scores else 0.0
+            ),
+            "avg_length": (
+                np.mean(self.completed_lengths) if self.completed_lengths else 0.0
+            ),
         }
 
     @torch.inference_mode()
@@ -117,27 +159,43 @@ class RolloutActor(BaseActor):
         """
         steps_this_call = 0
         start_time = time.time()
-        
+
         while steps_this_call < num_steps:
             # 1. Unified Inference Pass
-            result = self.policy_source.get_inference(self.obs, self.info, agent_network=self.network)
-            
+            result = self.policy_source.get_inference(
+                self.obs, self.info, agent_network=self.agent_network
+            )
+
             # 2. Resilient Action Extraction
-            if result.action is not None:
+            if self.action_selector is not None:
+                # Use standard action selector (handles masking, temperature, etc)
+                actions, metadata = self.action_selector.select_action(
+                    result, self.info, exploration=True
+                )
+            elif result.action is not None:
                 actions = result.action
+                metadata = result.extras
             elif result.probs is not None:
                 # Sample from policy if specific action not provided
                 actions = torch.multinomial(result.probs, num_samples=1).squeeze(-1)
+                metadata = result.extras
             elif "best_actions" in result.extras:
                 actions = result.extras["best_actions"]
+                metadata = result.extras
             else:
                 # Greedy fallback
                 actions = result.probs.argmax(dim=-1)
-                
+                metadata = result.extras
+
             # 3. Step the Adapter (Hides messy environment library logic)
-            next_obs, rewards, terminals, truncations, infos = self.adapter.step(actions)
-            
+            next_obs, rewards, terminals, truncations, infos = self.adapter.step(
+                actions
+            )
+
             # 4. Route Transitions to SequenceManager
+            self.current_scores += rewards.cpu().numpy()
+            self.current_lengths += 1
+
             for i in range(self.num_envs):
                 transition = {
                     "observation": next_obs[i].cpu().numpy(),
@@ -146,61 +204,95 @@ class RolloutActor(BaseActor):
                     "terminated": terminals[i].item(),
                     "truncated": truncations[i].item(),
                 }
-                
+
                 # Enrich with inference math (targets for learner)
                 if result.value is not None:
                     # Search value is usually (B,)
-                    val = result.value[i].item() if result.value.dim() > 0 else result.value.item()
+                    val = (
+                        result.value[i].item()
+                        if result.value.dim() > 0
+                        else result.value.item()
+                    )
                     transition["value"] = val
                 if result.probs is not None:
+                    # [num_actions]
                     transition["policy"] = result.probs[i].cpu().numpy()
-                
+
+                # 4.5 Capture Log Probs (Essential for PPO)
+                # Check metadata from ActionSelector first
+                if "log_prob" in metadata:
+                    lp = metadata["log_prob"]
+                    transition["log_prob"] = lp[i].item() if torch.is_tensor(lp) else lp
+                elif result.policy is not None and hasattr(result.policy, "log_prob"):
+                    # Compute manually from distribution if selector didn't provide it
+                    lp = result.policy.log_prob(actions).cpu().numpy()
+                    transition["log_prob"] = lp[i]
+
                 # Enrich with environment metadata
                 if "player_id" in self.info:
                     p_id = self.info["player_id"]
-                    transition["player_id"] = p_id[i].item() if torch.is_tensor(p_id) else p_id[i]
-                
+                    transition["player_id"] = (
+                        p_id[i].item() if torch.is_tensor(p_id) else p_id[i]
+                    )
+
                 if "legal_moves_mask" in self.info:
                     mask = self.info["legal_moves_mask"][i]
-                    transition["legal_moves"] = torch.where(mask)[0].cpu().numpy().tolist()
+                    transition["legal_moves"] = (
+                        torch.where(mask)[0].cpu().numpy().tolist()
+                    )
 
                 self.seq_manager.append(i, transition)
-                
+
                 # 5. Boundary Logic: Flush and Reseed
                 if terminals[i] or truncations[i]:
                     completed_seq = self.seq_manager.flush(i)
                     self.buffer.store_aggregate(completed_seq)
-                    
+
                     self.episodes_completed += 1
-                    
+                    self.completed_scores.append(self.current_scores[i])
+                    self.completed_lengths.append(self.current_lengths[i])
+                    self.current_scores[i] = 0.0
+                    self.current_lengths[i] = 0
+
+                    if len(self.completed_scores) > 100:
+                        self.completed_scores.pop(0)
+                        self.completed_lengths.pop(0)
+
                     # Seed the START of the new episode (hidden in next_obs for auto-resetting envs)
                     new_p_id = 0
                     if "player_id" in infos:
                         next_p_ids = infos["player_id"]
-                        new_p_id = next_p_ids[i].item() if torch.is_tensor(next_p_ids) else next_p_ids[i]
+                        new_p_id = (
+                            next_p_ids[i].item()
+                            if torch.is_tensor(next_p_ids)
+                            else next_p_ids[i]
+                        )
 
-                    self.seq_manager.append(i, {
-                        "observation": next_obs[i].cpu().numpy(),
-                        "terminated": False,
-                        "truncated": False,
-                        "player_id": new_p_id
-                    })
-                    
+                    self.seq_manager.append(
+                        i,
+                        {
+                            "observation": next_obs[i].cpu().numpy(),
+                            "terminated": False,
+                            "truncated": False,
+                            "player_id": new_p_id,
+                        },
+                    )
+
             self.obs = next_obs
             self.info = infos
-            
+
             # Record metrics
             batch_steps = self.num_envs
             steps_this_call += batch_steps
             self.total_steps += batch_steps
-            self.total_reward += rewards.sum().item()
-            
+
         return {
             **self.get_state(),
             "steps_this_call": steps_this_call,
             "duration": time.time() - start_time,
-            "steps_per_second": steps_this_call / (time.time() - start_time)
+            "steps_per_second": steps_this_call / (time.time() - (start_time + 1e-6)),
         }
+
 
 class EvaluatorActor(BaseActor):
     """
@@ -208,36 +300,61 @@ class EvaluatorActor(BaseActor):
     Runs greedy episodes without a Replay Buffer or Sequence Manager.
     Accumulates internal metrics for averaged reporting.
     """
-    def __init__(self, adapter: BaseAdapter, network: AgentNetwork, policy_source: BasePolicySource):
+
+    def __init__(
+        self,
+        adapter_cls: Type[BaseAdapter],
+        adapter_args: Tuple[Any, ...],
+        network: AgentNetwork,
+        policy_source: BasePolicySource,
+        buffer: Optional[ModularReplayBuffer], # Index 4 (ignored by EvaluatorActor)
+        config: Any,                            # Index 5
+        worker_id: int = 0,
+    ):
         """
         Initializes the EvaluatorActor.
 
         Args:
-            adapter: EnvironmentAdapter instance.
+            adapter_cls: EnvironmentAdapter class.
+            adapter_args: Arguments for the adapter class.
             network: Greedy network for performance evaluation.
-            policy_source: Inference provider (will be forced to exploration=False).
+            policy_source: Inference provider.
+            buffer: Placeholder for argument consistency (not used).
+            config: Algorithm configuration.
+            worker_id: Worker identifier.
         """
-        self.adapter = adapter
-        self.network = network
+        self.worker_id = worker_id
+        device = torch.device("cpu")
+        num_actions = getattr(config.game, "num_actions", None)
+        self.adapter = adapter_cls(
+            *adapter_args, device=device, num_actions=num_actions
+        )
+
+        self.agent_network = network
         self.policy_source = policy_source
-        self.num_envs = adapter.num_envs
-        
+        self.num_envs = self.adapter.num_envs
+
         self.total_reward = 0.0
         self.episodes_completed = 0
 
     def setup(self) -> None:
-        self.network.eval()
+        self.agent_network.eval()
 
     def update_parameters(self, state_dict: Dict[str, Any]) -> None:
+        if state_dict is None or not state_dict:
+            return
+
         if any(isinstance(v, (torch.Tensor, dict)) for v in state_dict.values()):
-            clean_params = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
-            self.network.load_state_dict(clean_params, strict=False)
+            clean_params = {
+                k.replace("_orig_mod.", ""): v for k, v in state_dict.items()
+            }
+            self.agent_network.load_state_dict(clean_params, strict=False)
 
     def get_state(self) -> Dict[str, Any]:
         return {
             "episodes_completed": self.episodes_completed,
             "total_reward": self.total_reward,
-            "average_reward": self.total_reward / max(1, self.episodes_completed)
+            "average_reward": self.total_reward / max(1, self.episodes_completed),
         }
 
     @torch.inference_mode()
@@ -249,20 +366,24 @@ class EvaluatorActor(BaseActor):
         obs, info = self.adapter.reset()
         current_rewards = torch.zeros(self.num_envs)
         finished_rewards = []
-        
+
         while len(finished_rewards) < num_episodes:
             # Force greedy behavior via exploration=False
-            result = self.policy_source.get_inference(obs, info, agent_network=self.network, exploration=False)
-            
+            result = self.policy_source.get_inference(
+                obs, info, agent_network=self.agent_network, exploration=False
+            )
+
             # Determine greedy action
             if result.action is not None:
                 actions = result.action
             else:
                 actions = result.probs.argmax(dim=-1)
-                
-            next_obs, rewards, terminals, truncations, infos = self.adapter.step(actions)
+
+            next_obs, rewards, terminals, truncations, infos = self.adapter.step(
+                actions
+            )
             current_rewards += rewards
-            
+
             for i in range(self.num_envs):
                 if terminals[i] or truncations[i]:
                     reward_val = current_rewards[i].item()
@@ -270,12 +391,14 @@ class EvaluatorActor(BaseActor):
                     self.total_reward += reward_val
                     self.episodes_completed += 1
                     current_rewards[i] = 0.0
-                    
+
             obs, info = next_obs, infos
-            
-        avg_score = sum(finished_rewards) / len(finished_rewards) if finished_rewards else 0.0
+
+        avg_score = (
+            sum(finished_rewards) / len(finished_rewards) if finished_rewards else 0.0
+        )
         return {
             "score": avg_score,
             "num_episodes": len(finished_rewards),
-            "total_reward_accumulated": self.total_reward
+            "total_reward_accumulated": self.total_reward,
         }

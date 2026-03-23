@@ -7,7 +7,6 @@ from agents.learner.batch_iterators import SingleBatchIterator
 from replay_buffers.buffer_factories import create_muzero_buffer
 from agents.action_selectors.selectors import CategoricalSelector
 from agents.action_selectors.decorators import TemperatureSelector
-from agents.workers.actors import get_actor_class
 from modules.models.agent_network import AgentNetwork
 from stats.stats import StatTracker, PlotType
 
@@ -127,8 +126,8 @@ class MuZeroTrainer(BaseTrainer):
         # Decide between single and vector adapter
         num_envs = getattr(config, "num_envs", 1)
         adapter_cls = VectorAdapter if num_envs > 1 else GymAdapter
-        # self.env_factory is a lambda in BaseTrainer
-        adapter_args = (self.env_factory,)
+        env_factory = config.game.env_factory
+        adapter_args = (env_factory,)
 
         # Rollout Worker Args
         rollout_args = (
@@ -136,9 +135,9 @@ class MuZeroTrainer(BaseTrainer):
             adapter_args,
             self.agent_network,
             self.search_policy_source,
-            self.action_selector,
-            config,
             self.buffer,
+            config,
+            self.action_selector,
         )
         
         num_rollout_workers = config.num_workers if hasattr(config, "num_workers") else 1

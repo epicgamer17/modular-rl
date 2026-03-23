@@ -42,7 +42,7 @@ class BaseExecutor(ABC):
         """
         pass  # pragma: no cover
 
-    def launch(self, worker_cls: Type, args: Tuple, num_workers: int):
+    def launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int):
         """Initializes and starts a group of workers. Appends to existing workers."""
         self._launch_workers(worker_cls, args, num_workers)
 
