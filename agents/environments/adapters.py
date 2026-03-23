@@ -69,7 +69,7 @@ class GymAdapter(BaseAdapter):
         if info is None:
             info = {}
             
-        obs_tensor = torch.as_tensor(obs, device=self.device).unsqueeze(0)
+        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
         processed_info = self._process_info(info)
         return obs_tensor, processed_info
 
@@ -91,7 +91,7 @@ class GymAdapter(BaseAdapter):
             obs = new_obs
             
         return (
-            torch.as_tensor(obs, device=self.device).unsqueeze(0),
+            torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0),
             torch.tensor([reward], dtype=torch.float32, device=self.device),
             torch.tensor([terminated], dtype=torch.bool, device=self.device),
             torch.tensor([truncated], dtype=torch.bool, device=self.device),
@@ -141,7 +141,7 @@ class VectorAdapter(BaseAdapter):
             obs = result
             info = {}
             
-        return torch.as_tensor(obs, device=self.device), self._process_info(info)
+        return torch.as_tensor(obs, dtype=torch.float32, device=self.device), self._process_info(info)
 
     def step(self, actions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
         # Map actions back to NumPy for the vectorized environment
@@ -152,7 +152,7 @@ class VectorAdapter(BaseAdapter):
         obs, rewards, terminals, truncs, infos = ans[:5]
         
         return (
-            torch.as_tensor(obs, device=self.device),
+            torch.as_tensor(obs, dtype=torch.float32, device=self.device),
             torch.as_tensor(rewards, dtype=torch.float32, device=self.device),
             torch.as_tensor(terminals, dtype=torch.bool, device=self.device),
             torch.as_tensor(truncs, dtype=torch.bool, device=self.device),
@@ -230,12 +230,12 @@ class PettingZooAdapter(BaseAdapter):
         if self.is_aec:
             self.env.reset()
             obs, reward, term, trunc, info = self.env.last()
-            return torch.as_tensor(obs, device=self.device).unsqueeze(0), self._process_info_aec(info)
+            return torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0), self._process_info_aec(info)
         else:
             # Parallel API
             obs_dict, info_dict = self.env.reset()
             obs_list = np.stack([obs_dict[a] for a in self.agents])
-            return torch.as_tensor(obs_list, device=self.device), self._process_info_parallel(info_dict)
+            return torch.as_tensor(obs_list, dtype=torch.float32, device=self.device), self._process_info_parallel(info_dict)
 
     def step(self, actions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
         if self.is_aec:
@@ -259,7 +259,7 @@ class PettingZooAdapter(BaseAdapter):
                     info.update(reset_info)
             
             return (
-                torch.as_tensor(obs, device=self.device).unsqueeze(0),
+                torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0),
                 torch.tensor([reward], dtype=torch.float32, device=self.device),
                 torch.tensor([term], dtype=torch.bool, device=self.device),
                 torch.tensor([trunc], dtype=torch.bool, device=self.device),
@@ -288,7 +288,7 @@ class PettingZooAdapter(BaseAdapter):
             trunc_list = [trunc_dict[a] for a in self.agents]
             
             return (
-                torch.as_tensor(obs_list, device=self.device),
+                torch.as_tensor(obs_list, dtype=torch.float32, device=self.device),
                 torch.tensor(reward_list, dtype=torch.float32, device=self.device),
                 torch.tensor(term_list, dtype=torch.bool, device=self.device),
                 torch.tensor(trunc_list, dtype=torch.bool, device=self.device),

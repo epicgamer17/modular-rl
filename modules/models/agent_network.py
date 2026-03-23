@@ -184,6 +184,12 @@ class AgentNetwork(nn.Module):
         Root inference for initial observation (e.g. MCTS root or Actor step).
         """
         assert isinstance(obs, Tensor), "AgentNetwork strictly expects PyTorch Tensors."
+        assert (
+            obs.dtype == torch.float32
+        ), f"[Fail-Fast] Expected float32 obs, got {obs.dtype}. Cast in Adapter!"
+        assert (
+            obs.dim() >= 2
+        ), f"[Fail-Fast] Expected batched obs [B, ...], got shape {obs.shape}."
         if obs.dim() == len(self.input_shape):
             obs = obs.unsqueeze(0)
 
