@@ -16,7 +16,7 @@ class BackboneConfigFactory:
     _configs: Dict[str, Type[BackboneConfig]] = {
         "resnet": ResNetConfig,
         "mlpresnet": MLPResNetConfig,
-        "dense": MLPConfig,
+        "mlp": MLPConfig,
         "conv": ConvConfig,
         "recurrent": RecurrentConfig,
         "transformer": TransformerConfig,
@@ -34,7 +34,7 @@ class BackboneConfigFactory:
             if "filters" in config_dict:
                 bb_type = "resnet"
             elif "widths" in config_dict:
-                bb_type = "dense"
+                bb_type = "mlp"
             else:
                 raise ValueError(
                     "Backbone config must contain 'type' or identifiable fields."
