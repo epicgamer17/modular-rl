@@ -37,32 +37,6 @@ class BaseAdapter(ABC):
         """
         pass
 
-    def _to_tensor(self, data: Any, dtype: Optional[torch.dtype] = None) -> torch.Tensor:
-        """Helper to move data to the correct device/dtype and ensure leading dimension."""
-        if isinstance(data, list):
-            try:
-                # Handle lists of numbers or booleans
-                if all(isinstance(x, (bool, int, float, np.bool_, type(None))) for x in data):
-                    # Filter out None and convert
-                    clean_data = [x if x is not None else 0 for x in data]
-                    data = np.array(clean_data)
-                else:
-                    # Possibly a list of numpy arrays (like observations in vector env)
-                    if all(isinstance(x, np.ndarray) for x in data):
-                        data = np.stack(data)
-            except (ValueError, TypeError):
-                pass
-                
-        if isinstance(data, (np.ndarray, float, int, bool, np.bool_)):
-            return torch.tensor(data, device=self.device, dtype=dtype)
-        elif isinstance(data, torch.Tensor):
-            t = data.to(self.device)
-            if dtype is not None:
-                t = t.to(dtype)
-            return t
-        
-        # Fallback for complex nesting or other types
-        return torch.as_tensor(data, device=self.device, dtype=dtype)
 
 class GymAdapter(BaseAdapter):
     """
@@ -95,7 +69,7 @@ class GymAdapter(BaseAdapter):
         if info is None:
             info = {}
             
-        obs_tensor = self._to_tensor(obs).unsqueeze(0) 
+        obs_tensor = torch.as_tensor(obs, device=self.device).unsqueeze(0)
         processed_info = self._process_info(info)
         return obs_tensor, processed_info
 
@@ -117,17 +91,17 @@ class GymAdapter(BaseAdapter):
             obs = new_obs
             
         return (
-            self._to_tensor(obs).unsqueeze(0),
-            self._to_tensor([reward], dtype=torch.float32),
-            self._to_tensor([terminated], dtype=torch.bool),
-            self._to_tensor([truncated], dtype=torch.bool),
+            torch.as_tensor(obs, device=self.device).unsqueeze(0),
+            torch.tensor([reward], dtype=torch.float32, device=self.device),
+            torch.tensor([terminated], dtype=torch.bool, device=self.device),
+            torch.tensor([truncated], dtype=torch.bool, device=self.device),
             self._process_info(info)
         )
 
     def _process_info(self, info: Dict[str, Any]) -> Dict[str, Any]:
         processed = info.copy()
         # Standardize player_id for Actor/Search consumption
-        processed["player_id"] = self._to_tensor([0], dtype=torch.int64)
+        processed["player_id"] = torch.tensor([0], dtype=torch.int64, device=self.device)
         
         # Expand legal_moves into a boolean mask [1, num_actions]
         if "legal_moves" in processed and self.num_actions is not None:
@@ -167,7 +141,7 @@ class VectorAdapter(BaseAdapter):
             obs = result
             info = {}
             
-        return self._to_tensor(obs), self._process_info(info)
+        return torch.as_tensor(obs, device=self.device), self._process_info(info)
 
     def step(self, actions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
         # Map actions back to NumPy for the vectorized environment
@@ -178,10 +152,10 @@ class VectorAdapter(BaseAdapter):
         obs, rewards, terminals, truncs, infos = ans[:5]
         
         return (
-            self._to_tensor(obs),
-            self._to_tensor(rewards, dtype=torch.float32),
-            self._to_tensor(terminals, dtype=torch.bool),
-            self._to_tensor(truncs, dtype=torch.bool),
+            torch.as_tensor(obs, device=self.device),
+            torch.as_tensor(rewards, dtype=torch.float32, device=self.device),
+            torch.as_tensor(terminals, dtype=torch.bool, device=self.device),
+            torch.as_tensor(truncs, dtype=torch.bool, device=self.device),
             self._process_info(infos)
         )
 
@@ -219,7 +193,7 @@ class VectorAdapter(BaseAdapter):
             
         # Standardize player indexing
         if "player" in processed:
-            processed["player_id"] = self._to_tensor(processed["player"], dtype=torch.int64)
+            processed["player_id"] = torch.as_tensor(processed["player"], dtype=torch.int64, device=self.device)
         else:
             processed["player_id"] = torch.zeros(self.num_envs, dtype=torch.int64, device=self.device)
             
@@ -256,12 +230,12 @@ class PettingZooAdapter(BaseAdapter):
         if self.is_aec:
             self.env.reset()
             obs, reward, term, trunc, info = self.env.last()
-            return self._to_tensor(obs).unsqueeze(0), self._process_info_aec(info)
+            return torch.as_tensor(obs, device=self.device).unsqueeze(0), self._process_info_aec(info)
         else:
             # Parallel API
             obs_dict, info_dict = self.env.reset()
-            obs_list = [obs_dict[a] for a in self.agents]
-            return self._to_tensor(obs_list), self._process_info_parallel(info_dict)
+            obs_list = np.stack([obs_dict[a] for a in self.agents])
+            return torch.as_tensor(obs_list, device=self.device), self._process_info_parallel(info_dict)
 
     def step(self, actions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
         if self.is_aec:
@@ -285,10 +259,10 @@ class PettingZooAdapter(BaseAdapter):
                     info.update(reset_info)
             
             return (
-                self._to_tensor(obs).unsqueeze(0),
-                self._to_tensor([reward], dtype=torch.float32),
-                self._to_tensor([term], dtype=torch.bool),
-                self._to_tensor([trunc], dtype=torch.bool),
+                torch.as_tensor(obs, device=self.device).unsqueeze(0),
+                torch.tensor([reward], dtype=torch.float32, device=self.device),
+                torch.tensor([term], dtype=torch.bool, device=self.device),
+                torch.tensor([trunc], dtype=torch.bool, device=self.device),
                 self._process_info_aec(info)
             )
         else:
@@ -308,16 +282,16 @@ class PettingZooAdapter(BaseAdapter):
                 if reset_info_dict:
                     info_dict.update(reset_info_dict)
 
-            obs_list = [obs_dict[a] for a in self.agents]
+            obs_list = np.stack([obs_dict[a] for a in self.agents])
             reward_list = [reward_dict[a] for a in self.agents]
             term_list = [term_dict[a] for a in self.agents]
             trunc_list = [trunc_dict[a] for a in self.agents]
             
             return (
-                self._to_tensor(obs_list),
-                self._to_tensor(reward_list, dtype=torch.float32),
-                self._to_tensor(term_list, dtype=torch.bool),
-                self._to_tensor(trunc_list, dtype=torch.bool),
+                torch.as_tensor(obs_list, device=self.device),
+                torch.tensor(reward_list, dtype=torch.float32, device=self.device),
+                torch.tensor(term_list, dtype=torch.bool, device=self.device),
+                torch.tensor(trunc_list, dtype=torch.bool, device=self.device),
                 self._process_info_parallel(info_dict)
             )
 
@@ -325,7 +299,7 @@ class PettingZooAdapter(BaseAdapter):
         info = (info or {}).copy()
         agent = self.env.agent_selection
         idx = self.agents.index(agent) if agent in self.agents else 0
-        info["player_id"] = self._to_tensor([idx], dtype=torch.int64)
+        info["player_id"] = torch.tensor([idx], dtype=torch.int64, device=self.device)
         
         if "legal_moves" in info and self.num_actions is not None:
             mask = torch.zeros((1, self.num_actions), dtype=torch.bool, device=self.device)
@@ -343,7 +317,7 @@ class PettingZooAdapter(BaseAdapter):
     def _process_info_parallel(self, info_dict: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         """Aggregates per-agent info from Parallel environments into batched tensors."""
         processed = {
-            "player_id": self._to_tensor(list(range(len(self.agents))), dtype=torch.int64)
+            "player_id": torch.tensor(list(range(len(self.agents))), dtype=torch.int64, device=self.device)
         }
         
         if self.num_actions is not None:
