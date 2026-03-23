@@ -6,6 +6,7 @@ from agents.learner.losses.base import BaseLoss
 from agents.learner.losses.priorities import BasePriorityComputer, NullPriorityComputer
 from agents.learner.losses.shape_validator import ShapeValidator
 
+
 class LossPipeline:
     """
     Unified pipeline that handles both single-step (DQN) and sequence (MuZero) losses.
@@ -76,19 +77,23 @@ class LossPipeline:
         B = weights.shape[0]
         T = gradient_scales.shape[1]
 
+        # --- ADD THESE 3 LINES FOR TELEMETRY ---
+        loss_dict = {
+            "mean_is_weight": weights.mean().item(),
+            "max_is_weight": weights.max().item(),
+            "min_is_weight": weights.min().item(),
+        }
+
         total_loss_dict = {
             m.optimizer_name: torch.tensor(0.0, device=device) for m in self.modules
         }
-        loss_dict = {}
         all_elementwise_losses = {}
 
         # 4. Single-Pass Vectorized Execution
         for module in self.modules:
             # Blindly compute: decision logic now lives in the Factory/Registry
             # Compute ([B, T] elementwise loss, metrics_dict)
-            elementwise_loss, module_metrics = module.compute_loss(
-                predictions, targets
-            )
+            elementwise_loss, module_metrics = module.compute_loss(predictions, targets)
             all_elementwise_losses[module.name] = elementwise_loss
             mask = module.get_mask(targets)
 
@@ -103,6 +108,11 @@ class LossPipeline:
             # Mask and Reduce (Sum-over-Mask)
             masked_weighted_loss = (weighted_loss * mask.float()).sum()
             valid_transition_count = mask.float().sum().clamp(min=1.0)
+
+            # Calculate raw, unweighted loss for the dashboard
+            masked_unweighted_loss = (elementwise_loss * mask.float()).sum()
+            unweighted_scalar_loss = masked_unweighted_loss / valid_transition_count
+            loss_dict[f"{module.name}_unweighted"] = unweighted_scalar_loss.item()
 
             # Final Transition-Averaged Loss [Scalar]
             total_scalar_loss = masked_weighted_loss / valid_transition_count

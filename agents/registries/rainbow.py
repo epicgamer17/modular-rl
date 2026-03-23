@@ -1,5 +1,5 @@
 import torch
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional, Callable
 from agents.registries.base import register_agent
 from agents.learner.losses import LossPipeline, QBootstrappingLoss
 from agents.learner.losses.priorities import MaxLossPriorityComputer
@@ -12,6 +12,7 @@ from agents.learner.target_builders import (
 )
 from agents.action_selectors.selectors import ArgmaxSelector
 
+
 def build_rainbow_loss_pipeline(config, agent_network, device):
     representation = None
     if (
@@ -20,7 +21,9 @@ def build_rainbow_loss_pipeline(config, agent_network, device):
         and "behavior_heads" in agent_network.components
         and "q_logits" in agent_network.components["behavior_heads"]
     ):
-        representation = agent_network.components["behavior_heads"]["q_logits"].representation
+        representation = agent_network.components["behavior_heads"][
+            "q_logits"
+        ].representation
 
     is_distributional = getattr(config, "atom_size", 1) > 1
 
@@ -30,6 +33,17 @@ def build_rainbow_loss_pipeline(config, agent_network, device):
         is_categorical=is_distributional,
         loss_fn=getattr(config, "loss_function", None),
     )
+
+    # --- FIXED PRIORITY COMPUTER LOGIC ---
+    # if is_distributional:
+    #     from agents.learner.losses.priorities import ExpectedValueErrorPriorityComputer
+
+    #     priority_computer = ExpectedValueErrorPriorityComputer(
+    #         value_representation=representation,
+    #         target_key="q_logits",  # Ensure this matches your DistributionalTargetBuilder output key
+    #         pred_key="q_logits",
+    #     )
+    # else:
     priority_computer = MaxLossPriorityComputer(loss_key="QBootstrappingLoss")
 
     return LossPipeline(config, [td_loss_module], priority_computer=priority_computer)
@@ -41,6 +55,8 @@ def build_rainbow(
     agent_network: Any,
     device: torch.device,
     target_agent_network: Optional[torch.nn.Module] = None,
+    priority_update_fn: Optional[Callable] = None,
+    set_beta_fn: Optional[Callable] = None,
 ) -> Dict[str, Any]:
     # 1. Losses
     loss_pipeline = build_rainbow_loss_pipeline(config, agent_network, device)
@@ -76,7 +92,12 @@ def build_rainbow(
     lr_schedulers["default"] = get_lr_scheduler(opt, config)
 
     # 3. Callbacks
-    from agents.learner.callbacks import TargetNetworkSyncCallback, ResetNoiseCallback
+    from agents.learner.callbacks import (
+        TargetNetworkSyncCallback,
+        ResetNoiseCallback,
+        PriorityUpdaterCallback,
+    )
+    from utils.schedule import create_schedule
 
     callbacks = []
     if getattr(config, "use_noisy_net", False):
@@ -97,23 +118,37 @@ def build_rainbow(
             )
         )
 
-    # 4. Target Builder
+    # 4. Priority Update Callback (PER)
+    if getattr(config, "use_per", True) and priority_update_fn is not None:
+        callbacks.append(
+            PriorityUpdaterCallback(
+                priority_update_fn=priority_update_fn,
+                set_beta_fn=set_beta_fn,
+                per_beta_schedule=create_schedule(config.per_beta_schedule),
+            )
+        )
+
+    # 5. Target Builder
     assert (
         target_agent_network is not None
     ), "Rainbow requires a target_agent_network for TD target building."
-    
+
     is_distributional = getattr(config, "atom_size", 1) > 1
-    builder_cls = DistributionalTargetBuilder if is_distributional else TemporalDifferenceBuilder
-    
-    target_builder = TargetBuilderPipeline([
-        builder_cls(
-            target_network=target_agent_network,
-            gamma=config.discount_factor,
-            n_step=config.n_step,
-            bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
-        ),
-        SingleStepFormatter()
-    ])
+    builder_cls = (
+        DistributionalTargetBuilder if is_distributional else TemporalDifferenceBuilder
+    )
+
+    target_builder = TargetBuilderPipeline(
+        [
+            builder_cls(
+                target_network=target_agent_network,
+                gamma=config.discount_factor,
+                n_step=config.n_step,
+                bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
+            ),
+            SingleStepFormatter(),
+        ]
+    )
 
     return {
         "loss_pipeline": loss_pipeline,

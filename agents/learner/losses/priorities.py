@@ -2,12 +2,13 @@ import torch
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 
+
 class BasePriorityComputer(ABC):
     """
     Contract for extracting training priorities from loss results.
     Prevents loss modules from knowing about k=0 root priorities or TD-error specifics.
     """
-    
+
     @abstractmethod
     def compute(
         self,
@@ -21,8 +22,10 @@ class BasePriorityComputer(ABC):
         """
         pass
 
+
 class NullPriorityComputer(BasePriorityComputer):
     """Returns 1.0 for all batch elements, effectively disabling priority updates."""
+
     def compute(
         self,
         elementwise_losses: Dict[str, torch.Tensor],
@@ -34,11 +37,13 @@ class NullPriorityComputer(BasePriorityComputer):
         B = next(iter(elementwise_losses.values())).shape[0]
         return torch.ones(B, device=next(iter(elementwise_losses.values())).device)
 
+
 class RootLossPriorityComputer(BasePriorityComputer):
     """
     MuZero Standard: Priority is determined by the loss at the root step (t=0).
     Usually uses 'ValueLoss' as the source.
     """
+
     def __init__(self, loss_key: str = "ValueLoss"):
         self.loss_key = loss_key
 
@@ -51,9 +56,10 @@ class RootLossPriorityComputer(BasePriorityComputer):
         if self.loss_key not in elementwise_losses:
             B = next(iter(elementwise_losses.values())).shape[0]
             return torch.zeros(B, device=next(iter(elementwise_losses.values())).device)
-        
+
         # elementwise_losses is [B, T]. We want root [B]
         return elementwise_losses[self.loss_key][:, 0].detach()
+
 
 class MaxLossPriorityComputer(BasePriorityComputer):
     """
@@ -79,7 +85,7 @@ class MaxLossPriorityComputer(BasePriorityComputer):
 
 class ExpectedValueErrorPriorityComputer(BasePriorityComputer):
     """
-    MuZero Standard for Distributional RL: Priority is based on the MSE 
+    MuZero Standard for Distributional RL: Priority is based on the MSE
     of the expected value error at the root (t=0) - NOT the cross-entropy loss.
     This prevents priorities from being skewed by different math scales.
     [B, T, bins] -> [B, T] -> [B]
@@ -102,6 +108,7 @@ class ExpectedValueErrorPriorityComputer(BasePriorityComputer):
         targets: Dict[str, torch.Tensor],
     ) -> torch.Tensor:
         # 1. Predictions: Distribution -> Expected Scalar Value [B, T]
+        # TODO: make this work with distributional AND scalar (ie C51 and standard DQN, or distributional and standard MuZero)
         pred_logits = predictions[self.pred_key]
         pred_scalars = self.value_representation.to_expected_value(pred_logits)
 

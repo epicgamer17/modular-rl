@@ -94,23 +94,20 @@ class TargetBuilderPipeline(BaseTargetBuilder):
         network: nn.Module,
         current_targets: Dict[str, torch.Tensor],
     ) -> None:
+        all_generated_keys = set()
         for builder in self.builders:
-            # Capture keys before mutation to check for illegal collisions
             pre_keys = set(current_targets.keys())
-
             builder.build_targets(batch, predictions, network, current_targets)
 
-            # The Fail-Fast Collision Check
             new_keys = set(current_targets.keys()) - pre_keys
-            collisions = pre_keys.intersection(new_keys)
+            collisions = all_generated_keys.intersection(new_keys)
 
             # Anchors are allowed to be updated by subsequent builders
             collisions -= {"weights", "gradient_scales"}
             if collisions:
-                raise RuntimeError(
-                    f"TargetBuilder collision! Builder {builder.__class__.__name__} tried to overwrite keys: {collisions}. "
-                    "Ensure builders have disjoint responsibilities."
-                )
+                raise RuntimeError(...)
+
+            all_generated_keys.update(new_keys)
 
 
 class TemporalDifferenceBuilder(BaseTargetBuilder):

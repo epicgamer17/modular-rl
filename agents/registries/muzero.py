@@ -1,5 +1,5 @@
 import torch
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional, Callable
 from agents.registries.base import register_agent
 from agents.learner.losses import (
     LossPipeline,
@@ -116,7 +116,11 @@ def build_muzero_loss_pipeline(config, agent_network, device):
 
 @register_agent("muzero")
 def build_muzero(
-    config: Any, agent_network: Any, device: torch.device
+    config: Any,
+    agent_network: Any,
+    device: torch.device,
+    priority_update_fn: Optional[Callable] = None,
+    set_beta_fn: Optional[Callable] = None,
 ) -> Dict[str, Any]:
     # 1. Losses
     loss_pipeline = build_muzero_loss_pipeline(config, agent_network, device)
@@ -152,11 +156,30 @@ def build_muzero(
     lr_schedulers["default"] = get_lr_scheduler(opt, config)
 
     # 3. Callbacks
+    from agents.learner.callbacks import (
+        ResetNoiseCallback,
+        MetricEarlyStopCallback,
+        PriorityUpdaterCallback,
+    )
+    from utils.schedule import create_schedule
+
     callbacks = []
     if getattr(config, "use_noisy_net", False):
         callbacks.append(ResetNoiseCallback())
     if getattr(config, "use_early_stopping", False):
         callbacks.append(MetricEarlyStopCallback(threshold=config.early_stopping_kl))
+
+    # Priority Updates (PER)
+    if priority_update_fn is not None:
+        per_beta_schedule_config = getattr(config, "per_beta_schedule", None)
+        per_beta_schedule = create_schedule(per_beta_schedule_config)
+        callbacks.append(
+            PriorityUpdaterCallback(
+                priority_update_fn=priority_update_fn,
+                set_beta_fn=set_beta_fn,
+                per_beta_schedule=per_beta_schedule,
+            )
+        )
 
     # 4. Target Builder
     builders = [

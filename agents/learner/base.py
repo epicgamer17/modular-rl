@@ -148,13 +148,13 @@ class UniversalLearner:
 
                 # 2. Backward Pass (Routed to specific optimizers)
                 # We iterate over unique optimizers to avoid redundant backward passes on aggregated losses
-                for opt_key, total_loss in result.loss.items():
-                    # CRITICAL: Scale the loss so the accumulated gradients are averaged!
+                losses = list(result.loss.items())
+                for i, (opt_key, total_loss) in enumerate(losses):
                     loss_tensor = total_loss / accum_steps
 
-                    # Backward with retain_graph as multiple optimizers might share parameters
-                    loss_tensor.backward(retain_graph=len(result.loss) > 1)
-
+                    # Only retain the graph if this is NOT the last loss
+                    retain = len(losses) > 1 and i < (len(losses) - 1)
+                    loss_tensor.backward(retain_graph=retain)
                 # 3. Accumulation Boundary
                 if (step_idx + 1) % accum_steps == 0:
 
@@ -179,19 +179,6 @@ class UniversalLearner:
                     # Fire on_optimizer_step_end (e.g. noisy net reset)
                     self.callbacks.on_optimizer_step_end(learner=self)
 
-                # 4. Fire on_step_end
-                self.callbacks.on_step_end(
-                    learner=self,
-                    predictions=result.predictions,
-                    targets=result.targets,
-                    loss_dict=result.loss_dict,
-                    priorities=result.priorities,
-                    batch=batch,
-                    meta=result.meta,
-                )
-
-                yielded_current_result = True
-
                 # 5. Throughput Metrics
                 t_now = time.perf_counter()
                 dt = t_now - t_last
@@ -204,6 +191,19 @@ class UniversalLearner:
                 B, T = any_pred.shape[:2]
 
                 result.loss_dict["learner_throughput"] = (B * T) / dt if dt > 0 else 0
+
+                # 4. Fire on_step_end
+                self.callbacks.on_step_end(
+                    learner=self,
+                    predictions=result.predictions,
+                    targets=result.targets,
+                    loss_dict=result.loss_dict,
+                    priorities=result.priorities,
+                    batch=batch,
+                    meta=result.meta,
+                )
+
+                yielded_current_result = True
                 yield self._build_step_metrics(result)
 
         except EarlyStopIteration:
@@ -311,7 +311,9 @@ class UniversalLearner:
         for k, v in step_result.loss_dict.items():
             metrics[k] = v.detach().cpu().item() if torch.is_tensor(v) else v
 
-        metrics["loss"] = sum(loss.detach().cpu().item() for loss in step_result.loss.values())
+        metrics["loss"] = sum(
+            loss.detach().cpu().item() for loss in step_result.loss.values()
+        )
 
         finalized_metrics = finalize_metrics(step_result.meta.setdefault("metrics", {}))
         for k, v in finalized_metrics.items():

@@ -106,31 +106,20 @@ def build_universal_learner(
     lr_schedulers = {}
     observation_dtype = torch.float32
 
-    if priority_update_fn:
-        # We assume if a priority_update_fn is provided, it's a method of a buffer that also has set_beta
-        # This is a bit of a leap, but in this framework buffers that support PER follow this pattern.
-        # If not, it will fail-fast as requested.
-        set_beta_fn = getattr(priority_update_fn.__self__, "set_beta", None)
-        from utils.schedule import create_schedule
-
-        per_beta_schedule_config = getattr(config, "per_beta_schedule", None)
-        per_beta_schedule = create_schedule(per_beta_schedule_config)
-
-        callbacks.append(
-            PriorityUpdaterCallback(
-                priority_update_fn=priority_update_fn,
-                set_beta_fn=set_beta_fn,
-                per_beta_schedule=per_beta_schedule,
-            )
-        )
-
-    if weight_broadcast_fn:
-        callbacks.append(WeightBroadcastCallback(weight_broadcast_fn))
-
     # Ensure agent type is explicitly defined
     agent_type = getattr(config, "agent_type", None)
     if agent_type is None:
         raise ValueError("config.agent_type must be explicitly defined.")
+
+    if priority_update_fn and set_beta_fn is None:
+        # We assume if a priority_update_fn is provided, it's a method of a buffer that also has set_beta
+        # This is a bit of a leap, but in this framework buffers that support PER follow this pattern.
+        # If not, it will fail-fast as requested.
+        set_beta_fn = getattr(priority_update_fn.__self__, "set_beta", None)
+
+    if weight_broadcast_fn:
+        callbacks.append(WeightBroadcastCallback(weight_broadcast_fn))
+
     target_builder = None
     observation_dtype = torch.float32
 
@@ -138,7 +127,13 @@ def build_universal_learner(
     if agent_type == "muzero":
         from agents.registries.muzero import build_muzero
 
-        muzero_components = build_muzero(config, agent_network, device)
+        muzero_components = build_muzero(
+            config,
+            agent_network,
+            device,
+            priority_update_fn=priority_update_fn,
+            set_beta_fn=set_beta_fn,
+        )
         optimizers = muzero_components["optimizers"]
         lr_schedulers = muzero_components["lr_schedulers"]
         callbacks.extend(muzero_components["callbacks"])
@@ -156,7 +151,12 @@ def build_universal_learner(
         from agents.registries.rainbow import build_rainbow
 
         rainbow_components = build_rainbow(
-            config, agent_network, device, target_agent_network=target_agent_network
+            config,
+            agent_network,
+            device,
+            target_agent_network=target_agent_network,
+            priority_update_fn=priority_update_fn,
+            set_beta_fn=set_beta_fn,
         )
         optimizers = rainbow_components["optimizers"]
         lr_schedulers = rainbow_components["lr_schedulers"]
