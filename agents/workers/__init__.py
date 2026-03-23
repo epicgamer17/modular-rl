@@ -1,1 +1,1 @@
-from .actors import BaseActor, GymActor, PettingZooActor, get_actor_class
+from .actors import BaseActor, RolloutActor, EvaluatorActor
