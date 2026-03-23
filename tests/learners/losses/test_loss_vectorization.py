@@ -199,7 +199,7 @@ def test_clipped_surrogate_loss():
     predictions = {"policies": torch.randn(B, T, num_actions)}
     targets = {
         "actions": torch.randint(0, num_actions, (B, T)),
-        "log_probs": torch.randn(B, T),
+        "log_prob": torch.randn(B, T),
         "advantages": torch.randn(B, T),
         "policy_mask": torch.ones(B, T, dtype=torch.bool),
     }

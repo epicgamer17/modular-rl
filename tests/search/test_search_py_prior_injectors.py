@@ -6,16 +6,16 @@ from search.search_py.prior_injectors import (
     DirichletInjector,
     ActionTargetInjector,
     GumbelInjector,
-    _safe_log_probs,
+    _safe_log_prob,
 )
 
 pytestmark = pytest.mark.unit
 
 
-def test_safe_log_probs():
+def test_safe_log_prob():
     """Verifies zeros map to exactly -inf without NaN issues."""
     probs = torch.tensor([0.5, 0.0, 1.0])
-    logits = _safe_log_probs(probs)
+    logits = _safe_log_prob(probs)
     assert logits[1].item() == -float("inf")
     assert torch.isclose(logits[2], torch.tensor(0.0))
 

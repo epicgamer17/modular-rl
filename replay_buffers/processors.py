@@ -889,16 +889,19 @@ class GAEProcessor(InputProcessor):
             [t.get("values", 0.0) for t in transitions], dtype=np.float32
         )
 
-        # PPO usually expects a last value for the next state of the final transition.
-        # Check if sequence has value_history that is n+1 long
+        # GAE requires a bootstrap value for the final next state.
+        # 1. Use external bootstrap from kwargs (RolloutActor force-flush)
+        # 2. Fallback to sequence history (if it's n+1 long - i.e. finished trajectory)
+        last_value = kwargs.get("last_value", 0.0)
+
         if (
             sequence is not None
             and hasattr(sequence, "value_history")
             and len(sequence.value_history) > len(transitions)
         ):
+            # If the sequence has its own final value (e.g. from end of trajectory), use it.
+            # (In PPO we usually don't rely on history for chunk bootstrap, but it's safe)
             last_value = sequence.value_history[-1]
-        else:
-            last_value = 0.0
 
         dones_np = np.array([t.get("dones", False) for t in transitions], dtype=bool)
 
@@ -1408,6 +1411,6 @@ class AdvantageNormalizer(OutputProcessor):
             actions=buffers["actions"][sl],
             advantages=normalized_advantages,
             returns=buffers["returns"][sl],
-            log_probs=buffers["log_probs"][sl],
+            log_prob=buffers["log_prob"][sl],
             legal_moves_masks=buffers["legal_moves_masks"][sl],
         )

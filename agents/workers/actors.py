@@ -297,6 +297,53 @@ class RolloutActor(BaseActor):
             steps_this_call += batch_steps
             self.total_steps += batch_steps
 
+        # 6. Force-Flush at Chunk Boundary (PPO Bootstrap)
+        # Calculate bootstrap values for all active trajectories
+        with torch.inference_mode():
+            final_result = self.policy_source.get_inference(
+                self.obs,
+                self.info,
+                agent_network=self.agent_network,
+                exploration=False,
+            )
+            final_values = final_result.value
+
+        for i in range(self.num_envs):
+            seq = self.seq_manager.flush(i)
+            if seq and len(seq.observation_history) > 1:
+                # Use scalar value extraction (handles search or direct V)
+                v = (
+                    final_values[i].item()
+                    if final_values.dim() > 0
+                    else final_values.item()
+                )
+                self.buffer.store_aggregate(seq, last_value=v)
+
+            # 7. Seed the NEXT chunk starting with this observation
+            # (Ensures the first transition of the next collect() has s_0)
+            p_id = 0
+            if "player_id" in self.info:
+                p_id_batch = self.info["player_id"]
+                p_id = (
+                    p_id_batch[i].item()
+                    if torch.is_tensor(p_id_batch)
+                    else (
+                        p_id_batch[i]
+                        if isinstance(p_id_batch, (list, np.ndarray))
+                        else p_id_batch
+                    )
+                )
+
+            self.seq_manager.append(
+                i,
+                {
+                    "observation": self.obs[i].cpu().numpy(),
+                    "terminated": False,
+                    "truncated": False,
+                    "player_id": p_id,
+                },
+            )
+
         return {
             **self.get_state(),
             "steps_this_call": steps_this_call,

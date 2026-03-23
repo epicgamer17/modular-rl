@@ -37,7 +37,7 @@ class SingleStepFormatter(BaseTargetBuilder):
             "q_values",
             "returns",
             "advantages",
-            "log_probs",
+            "log_prob",
         ]
 
     def build_targets(

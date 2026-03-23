@@ -3,6 +3,7 @@ import torch.nn.functional as F
 from typing import Any, Dict, Optional, Tuple
 from agents.learner.losses.base import BaseLoss, LossRepresentation
 
+
 class QBootstrappingLoss(BaseLoss):
     """
     Standard TD target loss for Q-learning.
@@ -22,7 +23,7 @@ class QBootstrappingLoss(BaseLoss):
         # 1. Determine Pred/Target keys and default Loss function based on atom_size
         pred_key = "q_logits"
         target_key = "q_logits" if is_categorical else "values"
-        
+
         if loss_fn is None:
             loss_fn = F.cross_entropy if is_categorical else F.mse_loss
 
@@ -72,8 +73,8 @@ class QBootstrappingLoss(BaseLoss):
         # 5. Apply Loss Function
         if selected_preds.shape[-1] > 1:
             # Multi-atom categorical cross-entropy
-            log_probs = F.log_softmax(selected_preds, dim=-1)
-            raw_loss = -(flat_targets * log_probs).sum(dim=-1)
+            log_prob = F.log_softmax(selected_preds, dim=-1)
+            raw_loss = -(flat_targets * log_prob).sum(dim=-1)
         else:
             # Standard scalar regression (MSE)
             selected_preds = selected_preds.squeeze(-1)
@@ -81,6 +82,7 @@ class QBootstrappingLoss(BaseLoss):
             raw_loss = self.loss_fn(selected_preds, flat_targets, reduction="none")
 
         return raw_loss.reshape(B, T), {}
+
 
 class ChanceQLoss(BaseLoss):
     """Loss for stochastic muzero chance Q heads."""

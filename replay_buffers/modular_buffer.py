@@ -263,24 +263,6 @@ class ModularReplayBuffer:
                     # print(f"Storing non terminal with priority {p}")
                     self.sampler.on_store(idx, priority=p)
 
-    def finish_trajectory(self, last_value=0):
-        """
-        Calculates advantages and returns for the most recently stored trajectory.
-        Delegates to the input processor's finish_trajectory hook.
-        """
-        # We assume the most recent trajectory ends at the current pointer
-        # This is primarily for PPO-style sequential buffers
-        from replay_buffers.writers import PPOWriter
-
-        trajectory_slice = slice(0, self.size)
-        results = self.input_processor.finish_trajectory(
-            self.buffers, trajectory_slice, last_value=last_value
-        )
-        if results:
-            for key, val in results.items():
-                if key in self.buffers:
-                    self.buffers[key][trajectory_slice] = val
-
     def _write_to_buffer(self, name, idx, val):
         if isinstance(val, np.ndarray):
             val = torch.from_numpy(val)

@@ -40,7 +40,7 @@ from search.scoring_methods import (
     DeterministicChanceScoring,
 )
 from modules.models.agent_network import AgentNetwork
-from .utils import _safe_log_probs
+from .utils import _safe_log_prob
 
 
 class ModularSearch:
@@ -201,7 +201,7 @@ class ModularSearch:
                 raise ValueError(
                     "Search requires a policy distribution with logits/probs."
                 )
-            policy_logits = self._safe_log_probs(policy_probs)
+            policy_logits = self._safe_log_prob(policy_probs)
         if policy_logits.dim() == 1:
             policy_logits = policy_logits.unsqueeze(0)
         network_state = outputs.recurrent_state
@@ -424,7 +424,7 @@ class ModularSearch:
                 raise ValueError(
                     "Search requires a policy distribution with logits/probs."
                 )
-            policy_logits = self._safe_log_probs(policy_probs)
+            policy_logits = self._safe_log_prob(policy_probs)
 
         if trajectory_actions is None:
             trajectory_actions = [None] * B

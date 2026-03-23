@@ -2,7 +2,7 @@
 import torch
 
 
-def _safe_log_probs(probs: torch.Tensor) -> torch.Tensor:
+def _safe_log_prob(probs: torch.Tensor) -> torch.Tensor:
     """Converts probabilities to logits while keeping exact zeros as -inf."""
     return torch.where(probs > 0, probs.log(), torch.full_like(probs, -float("inf")))
 

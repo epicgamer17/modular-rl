@@ -45,7 +45,7 @@ def test_ppo_kl_propagation_to_callback(
     target_builder = TargetBuilderPipeline(
         [
             PassThroughTargetBuilder(
-                keys_to_keep=["actions", "log_probs", "advantages"]
+                keys_to_keep=["actions", "log_prob", "advantages"]
             ),
             SingleStepFormatter(),
         ]
@@ -81,13 +81,13 @@ def test_ppo_kl_propagation_to_callback(
     )
 
     # 7. Create a batch that will generate some KL
-    # approx_kl = (log_probs - log_probs).mean()
+    # approx_kl = (log_prob - log_prob).mean()
     # PPO typically operates with [B, T] where T=1 for standard rollout collection.
     # SingleStepFormatter will handle the unsqueezing if we give it [B].
     batch = {
         "observations": torch.randn(8, 4),
         "actions": torch.zeros(8, dtype=torch.long),
-        "log_probs": torch.ones(8) * 0.5,  # High old log probs
+        "log_prob": torch.ones(8) * 0.5,  # High old log probs
         "advantages": torch.ones(8),
         "weights": torch.ones(8),
     }
@@ -113,7 +113,7 @@ def test_ppo_kl_propagation_to_callback(
 
     # 7. Verify Callback handles it
     # If KL > 1.5 * target_kl, it should raise EarlyStopIteration
-    # Our dummy setup: log_probs = 0.5, log_probs = log(0.5) = -0.693
+    # Our dummy setup: log_prob = 0.5, log_prob = log(0.5) = -0.693
     # approx_kl = 0.5 - (-0.693) = 1.193 (approx)
     # 1.193 > 1.5 * 0.01 (0.015) -> Should raise
 

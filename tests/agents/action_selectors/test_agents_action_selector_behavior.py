@@ -161,7 +161,7 @@ def test_categorical_selector_masking():
 
 
 def test_categorical_selector_unmasked_log_prob():
-    """Test that PPODecorator uses the masked distribution for log_probs."""
+    """Test that PPODecorator uses the masked distribution for log_prob."""
     agent_network, obs, _, _, _ = _setup_action_selector_state()
     from agents.action_selectors.decorators import PPODecorator
     from torch.distributions import Categorical

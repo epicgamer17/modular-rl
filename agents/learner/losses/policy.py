@@ -75,25 +75,25 @@ class ClippedSurrogateLoss(BaseLoss):
         """PPO Policy Loss: returns [B, T]"""
         policy_logits = predictions[self.pred_key]
         actions = targets["actions"]
-        target_log_probs = targets["log_prob"]
+        target_log_prob = targets["log_prob"]
         advantages = targets["advantages"]
 
         # 1. Capture and Validate
         assert (
             policy_logits.ndim == 3
         ), f"ClippedSurrogateLoss requires [B, T, A], got {policy_logits.shape}"
-        B, T = target_log_probs.shape[:2]
+        B, T = target_log_prob.shape[:2]
 
         # 2. Vectorized Distribution math
         dist = self.representation.to_inference(policy_logits)
 
         # [B, T]
-        log_probs = dist.log_prob(actions)
+        log_prob = dist.log_prob(actions)
         assert (
-            log_probs.shape == target_log_probs.shape
-        ), f"ClippedSurrogateLoss: shape mismatch between log_probs {log_probs.shape} and log_prob target {target_log_probs.shape}"
-        
-        ratio = torch.exp(log_probs - target_log_probs)
+            log_prob.shape == target_log_prob.shape
+        ), f"ClippedSurrogateLoss: shape mismatch between log_prob {log_prob.shape} and log_prob target {target_log_prob.shape}"
+
+        ratio = torch.exp(log_prob - target_log_prob)
 
         assert (
             ratio.shape == advantages.shape
@@ -110,7 +110,7 @@ class ClippedSurrogateLoss(BaseLoss):
 
         # 3. Stats for full sequence
         with torch.no_grad():
-            approx_kl = (target_log_probs - log_probs).mean()
+            approx_kl = (target_log_prob - log_prob).mean()
 
         return loss, {"approx_kl": approx_kl.item()}
 
