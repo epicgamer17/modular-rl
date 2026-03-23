@@ -128,7 +128,7 @@ def test_batched_mcts_puffer():
     search = MockModularSearch(config)
     inner_sel = ArgmaxSelector()
     sel = TemperatureSelector(inner_sel, config)
-    policy_src = SearchPolicySource(search, net, config)
+    policy_src = SearchPolicySource(search_engine=search, agent_network=net, config=config)
     buf = MockBuffer()
 
     actor = GymPufferActor(

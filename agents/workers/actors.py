@@ -169,6 +169,8 @@ class RolloutActor(BaseActor):
         Returns metrics for the collection call.
         """
         steps_this_call = 0
+        batch_scores = []
+        batch_lengths = []
         start_time = time.time()
 
         while steps_this_call < num_steps:
@@ -260,8 +262,14 @@ class RolloutActor(BaseActor):
                     self.buffer.store_aggregate(completed_seq)
 
                     self.episodes_completed += 1
-                    self.completed_scores.append(self.current_scores[i])
-                    self.completed_lengths.append(self.current_lengths[i])
+                    ep_score = float(self.current_scores[i])
+                    ep_len = int(self.current_lengths[i])
+
+                    self.completed_scores.append(ep_score)
+                    self.completed_lengths.append(ep_len)
+                    batch_scores.append(ep_score)
+                    batch_lengths.append(ep_len)
+
                     self.current_scores[i] = 0.0
                     self.current_lengths[i] = 0
 
@@ -347,6 +355,8 @@ class RolloutActor(BaseActor):
         return {
             **self.get_state(),
             "steps_this_call": steps_this_call,
+            "batch_scores": batch_scores,
+            "batch_lengths": batch_lengths,
             "duration": time.time() - start_time,
             "steps_per_second": steps_this_call / (time.time() - (start_time + 1e-6)),
         }

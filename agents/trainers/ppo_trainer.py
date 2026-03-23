@@ -107,14 +107,14 @@ class PPOTrainer(BaseTrainer):
 
         # 6. Initialize Workers
         from agents.workers.actors import RolloutActor
-        from agents.environments.adapters import GymAdapter
 
         # Prepare worker args
         # For PPO, we use the GymAdapter for the environment
+        adapter_cls = self._get_adapter_class()
         env_factory = config.game.env_factory
-        
+
         worker_args = (
-            GymAdapter,
+            adapter_cls,
             (env_factory,),
             self.agent_network,
             self.policy_source,
@@ -201,11 +201,10 @@ class PPOTrainer(BaseTrainer):
 
         # 3. Log collection stats
         for res in results:
-            if res.get("episodes_completed", 0) > 0:
-                # We can't perfectly recover individual scores here if we aggregate in actor,
-                # but we can log the averages.
-                self.stats.append("score", float(res["avg_score"]))
-                self.stats.append("episode_length", float(res["avg_length"]))
+            for score in res.get("batch_scores", []):
+                self.stats.append("score", float(score))
+            for length in res.get("batch_lengths", []):
+                self.stats.append("episode_length", float(length))
 
 
         # 3. Learning step

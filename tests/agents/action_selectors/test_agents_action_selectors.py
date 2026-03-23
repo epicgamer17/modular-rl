@@ -233,7 +233,7 @@ def test_search_policy_source():
         temperature_schedule=ScheduleConfig(type="constant", initial=1.0),
     )
     search = MockSearch(config)
-    source = SearchPolicySource(search, network, config)
+    source = SearchPolicySource(search_engine=search, agent_network=network, config=config)
 
     obs = torch.randn(1, 4)
     result = source.get_inference(obs, {}, to_play=0)
@@ -254,7 +254,7 @@ def test_search_policy_source_agent_network_kwarg():
     )
     search = MockSearch(config)
     # Initialize with None; expect kwarg to be used instead
-    source = SearchPolicySource(search, None, config)
+    source = SearchPolicySource(search_engine=search, agent_network=None, config=config)
 
     obs = torch.randn(1, 4)
     result = source.get_inference(obs, {}, agent_network=network, to_play=0)

@@ -91,7 +91,7 @@ def test_sps_metrics_propagation():
     agent_net.obs_inference = lambda x: None
 
     # 1. Test SearchPolicySource directly returns search_metadata
-    policy_source = SearchPolicySource(search, agent_net, config)
+    policy_source = SearchPolicySource(search_engine=search, agent_network=agent_net, config=config)
     obs = torch.zeros(1, 3, 3, 3)
     result = policy_source.get_inference(obs, {}, to_play=0)
     assert "search_metadata" in result.extra_metadata

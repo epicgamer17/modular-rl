@@ -74,10 +74,10 @@ class BaseTrainer:
             self.executor = create_executor(self.config)
 
         # 2. Prepare worker args
-        # EvaluatorActor takes: adapter_cls, adapter_args, network, policy_source, buffer, config
+        adapter_cls = self._get_adapter_class()
         env_factory = self.config.game.env_factory
         worker_args = (
-            GymAdapter,
+            adapter_cls,
             (env_factory,),
             self.agent_network,
             self.policy_source,
@@ -141,6 +141,27 @@ class BaseTrainer:
         if "score" in res:
             self.stats.append("test_score", res["score"], subkey="avg")
             print(f"[test] score: {res['score']:.3f} (step {step})")
+
+    def _get_adapter_class(self):
+        """Dynamically selects the correct environment adapter."""
+        from agents.environments.adapters import (
+            GymAdapter,
+            PettingZooAdapter,
+            VectorAdapter,
+        )
+
+        # If the config specifies vectorized (e.g., PufferLib or Gym.vector)
+        if hasattr(self.config, "game") and getattr(
+            self.config.game, "vectorized", False
+        ):
+            return VectorAdapter
+
+        # If there are multiple players, it's PettingZoo (AEC or Parallel)
+        if self.num_players > 1:
+            return PettingZooAdapter
+
+        # Fallback to standard Gym
+        return GymAdapter
 
     def _detect_player_id(self, env) -> str:
         if self.config.game.num_players > 1:

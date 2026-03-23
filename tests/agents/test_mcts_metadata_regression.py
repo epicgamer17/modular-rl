@@ -45,7 +45,7 @@ def test_mcts_metadata_merging_regression():
     
     net = MockNetwork()
     search = MockSearch()
-    policy_source = SearchPolicySource(search, net, config)
+    policy_source = SearchPolicySource(search_engine=search, agent_network=net, config=config)
     selector = ArgmaxSelector()
     buffer = MockBuffer()
     

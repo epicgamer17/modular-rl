@@ -121,11 +121,16 @@ class MuZeroTrainer(BaseTrainer):
         # Policy sources
         self.policy_source = NetworkPolicySource(self.agent_network)
         # MuZero uses MCTS for rollout
-        self.search_policy_source = SearchPolicySource(self.agent_network, config)
-        
+        from search.factory import SearchBackendFactory
+        search_engine = SearchBackendFactory.create(config, device=self.device, num_actions=self.num_actions)
+        self.search_policy_source = SearchPolicySource(
+            search_engine=search_engine,
+            agent_network=self.agent_network,
+            config=config,
+        )
+
         # Decide between single and vector adapter
-        num_envs = getattr(config, "num_envs", 1)
-        adapter_cls = VectorAdapter if num_envs > 1 else GymAdapter
+        adapter_cls = self._get_adapter_class()
         env_factory = config.game.env_factory
         adapter_args = (env_factory,)
 
@@ -212,9 +217,10 @@ class MuZeroTrainer(BaseTrainer):
 
         # 3. Log collection stats
         for res in results:
-            if res.get("episodes_completed", 0) > 0:
-                self.stats.append("score", float(res["avg_score"]))
-                self.stats.append("episode_length", float(res["avg_length"]))
+            for score in res.get("batch_scores", []):
+                self.stats.append("score", float(score))
+            for length in res.get("batch_lengths", []):
+                self.stats.append("episode_length", float(length))
 
         # 3. Learning step
         if self.buffer.size >= self.config.min_replay_buffer_size:

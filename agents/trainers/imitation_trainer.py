@@ -126,8 +126,7 @@ class ImitationTrainer(BaseTrainer):
         self.policy_source = NetworkPolicySource(self.agent_network)
 
         # Decide between single and vector adapter
-        num_envs = getattr(config, "num_envs", 1)
-        adapter_cls = VectorAdapter if num_envs > 1 else GymAdapter
+        adapter_cls = self._get_adapter_class()
         env_factory = config.game.env_factory
         adapter_args = (env_factory,)
 

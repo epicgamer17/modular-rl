@@ -19,6 +19,7 @@ from agents.learner.losses import QBootstrappingLoss
 from replay_buffers.buffer_factories import create_dqn_buffer
 from agents.learner.batch_iterators import RepeatSampleIterator
 from agents.learner.factory import build_universal_learner
+from agents.action_selectors.policy_sources import NetworkPolicySource
 
 
 class RainbowTrainer(BaseTrainer):
@@ -150,14 +151,11 @@ class RainbowTrainer(BaseTrainer):
 
         # 6. Initialize Workers
         from agents.workers.actors import RolloutActor
-        from agents.environments.adapters import GymAdapter, VectorAdapter
-        from agents.action_selectors.policy_sources import NetworkPolicySource
 
         self.policy_source = NetworkPolicySource(self.agent_network)
-        
+
         # Decisions between single and vector adapter
-        num_envs = getattr(config, "num_envs", 1)
-        adapter_cls = VectorAdapter if num_envs > 1 else GymAdapter
+        adapter_cls = self._get_adapter_class()
         env_factory = config.game.env_factory
         adapter_args = (env_factory,)
         worker_args = (
@@ -169,7 +167,7 @@ class RainbowTrainer(BaseTrainer):
             config,
             self.action_selector,
         )
-        
+
         num_workers = config.num_workers if hasattr(config, "num_workers") else 1
         self.executor.launch_workers(RolloutActor, worker_args, num_workers=num_workers)
 
@@ -233,19 +231,20 @@ class RainbowTrainer(BaseTrainer):
 
         # 2. Collect data via actor
         from agents.workers.actors import RolloutActor
-        
+
         # We collected 'replay_interval' steps per training iteration
         # If asynchronous, we might want to collect as much as possible
         results, collection_stats = self.executor.collect_data(
             num_steps=getattr(self.config, "replay_interval", 4),
-            worker_type=RolloutActor
+            worker_type=RolloutActor,
         )
 
         # 3. Log collection stats
         for res in results:
-            if res.get("episodes_completed", 0) > 0:
-                self.stats.append("score", float(res["avg_score"]))
-                self.stats.append("episode_length", float(res["avg_length"]))
+            for score in res.get("batch_scores", []):
+                self.stats.append("score", float(score))
+            for length in res.get("batch_lengths", []):
+                self.stats.append("episode_length", float(length))
 
         # 5. Learning step
         if self.buffer.size >= self.config.min_replay_buffer_size:
