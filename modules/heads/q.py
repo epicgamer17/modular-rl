@@ -81,13 +81,30 @@ class QHead(BaseHead):
         new_state = state if state is not None else {}
         inference = None
         if is_inference:
-            inference = self.representation.to_inference(logits)
+            inference = self.representation.to_expected_value(logits)
 
         return HeadOutput(
             training_tensor=logits,
             inference_tensor=inference,
             state=new_state,
+            metrics=self.compute_metrics(logits, inference),
         )
+
+    def compute_metrics(
+        self,
+        training_tensor: torch.Tensor,
+        inference_tensor: Optional[Any] = None,
+    ) -> Dict[str, float]:
+        """Calculates Q-specific diagnostics (e.g., mean predicted Q-value)."""
+        metrics = {}
+        with torch.inference_mode():
+            val = (
+                inference_tensor
+                if inference_tensor is not None
+                else self.representation.to_expected_value(training_tensor)
+            )
+            metrics["mean"] = val.mean().item()
+        return metrics
 
 
 class DuelingQHead(BaseHead):
@@ -182,10 +199,27 @@ class DuelingQHead(BaseHead):
         new_state = state if state is not None else {}
         inference = None
         if is_inference:
-            inference = self.representation.to_inference(q)
+            inference = self.representation.to_expected_value(q)
 
         return HeadOutput(
             training_tensor=q,
             inference_tensor=inference,
             state=new_state,
+            metrics=self.compute_metrics(q, inference),
         )
+
+    def compute_metrics(
+        self,
+        training_tensor: torch.Tensor,
+        inference_tensor: Optional[Any] = None,
+    ) -> Dict[str, float]:
+        """Calculates Q-specific diagnostics (e.g., mean predicted Q-value)."""
+        metrics = {}
+        with torch.inference_mode():
+            val = (
+                inference_tensor
+                if inference_tensor is not None
+                else self.representation.to_expected_value(training_tensor)
+            )
+            metrics["mean"] = val.mean().item()
+        return metrics

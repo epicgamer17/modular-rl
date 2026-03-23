@@ -218,6 +218,11 @@ class AgentNetwork(nn.Module):
             network_state.update(next_h)
 
         q_vals = outputs.get("q_logits")
+        # Ensure q_vals is a Tensor if it exists; if it's a Distribution (likely a config typo),
+        # it shouldn't be treated as Q-Values for state-value calculation.
+        if q_vals is not None and not torch.is_tensor(q_vals):
+            q_vals = None
+
         state_value = (
             q_vals.max(dim=-1)[0] if q_vals is not None else outputs.get("state_value")
         )
