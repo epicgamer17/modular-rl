@@ -103,7 +103,11 @@ class MuZeroTrainer(BaseTrainer):
                 "minibatch_size": config.minibatch_size,
                 "unroll_steps": config.unroll_steps,
                 "num_actions": self.num_actions,
-                "atom_size": (config.support_range * 2) + 1 if hasattr(config, "support_range") and config.support_range else 1,
+                "atom_size": (
+                    (config.support_range * 2) + 1
+                    if hasattr(config, "support_range") and config.support_range
+                    else 1
+                ),
             },
         )
 
@@ -113,7 +117,7 @@ class MuZeroTrainer(BaseTrainer):
         # Launch workers
         num_workers = config.num_workers
         worker_args = (
-            config.game.make_env,
+            config.game.env_factory,
             self.agent_network,
             self.action_selector,
             self.buffer,

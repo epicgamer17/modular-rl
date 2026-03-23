@@ -1,6 +1,7 @@
 from typing import Tuple, Optional, Dict, Any
 import torch
 from torch import Tensor
+import torch.nn as nn
 from .base import BaseHead, HeadOutput
 from agents.learner.losses.representations import BaseRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
@@ -24,7 +25,14 @@ class ValueHead(BaseHead):
         name: Optional[str] = None,
         input_source: str = "default",
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config, name=name, input_source=input_source)
+        super().__init__(
+            arch_config,
+            input_shape,
+            representation,
+            neck_config,
+            name=name,
+            input_source=input_source,
+        )
 
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -84,7 +92,11 @@ class ValueHead(BaseHead):
         """Calculates value-specific diagnostics (e.g., mean predicted value)."""
         metrics = {}
         with torch.inference_mode():
-            val = inference_tensor if inference_tensor is not None else self.representation.to_expected_value(training_tensor)
+            val = (
+                inference_tensor
+                if inference_tensor is not None
+                else self.representation.to_expected_value(training_tensor)
+            )
             metrics["mean"] = val.mean().item()
         return metrics
 

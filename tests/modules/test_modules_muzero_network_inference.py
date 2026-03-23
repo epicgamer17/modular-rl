@@ -34,7 +34,7 @@ def _build_muzero_test_config(
         multi_agent=False,
         num_players=1,
         num_actions=5,
-        make_env=MockEnv,
+        env_factory=MockEnv,
     )
 
     config_dict = copy.deepcopy(rainbow_cartpole_replay_config.config_dict)
@@ -57,7 +57,9 @@ def _build_muzero_test_config(
     return MuZeroConfig(config_dict, game)
 
 
-def test_muzero_network_structure(rainbow_cartpole_replay_config, make_cartpole_config, net_factory):
+def test_muzero_network_structure(
+    rainbow_cartpole_replay_config, make_cartpole_config, net_factory
+):
     config = _build_muzero_test_config(
         rainbow_cartpole_replay_config, make_cartpole_config
     )
@@ -114,7 +116,9 @@ def test_muzero_network_structure(rainbow_cartpole_replay_config, make_cartpole_
     print("Success!")
 
 
-def test_learner_inference(rainbow_cartpole_replay_config, make_cartpole_config, net_factory):
+def test_learner_inference(
+    rainbow_cartpole_replay_config, make_cartpole_config, net_factory
+):
     print("\n--- Testing Learner Inference ---")
     config = _build_muzero_test_config(
         rainbow_cartpole_replay_config, make_cartpole_config

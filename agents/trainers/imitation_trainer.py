@@ -123,7 +123,7 @@ class ImitationTrainer(BaseTrainer):
         self.executor = create_executor(config)
         self.actor_cls = get_actor_class(env, config)
         worker_args = (
-            config.game.make_env,
+            config.game.env_factory,
             self.agent_network,
             self.action_selector,
             self.buffer,

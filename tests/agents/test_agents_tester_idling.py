@@ -1,4 +1,5 @@
 import pytest
+
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 import copy
@@ -14,9 +15,7 @@ def make_mock_env():
     return MockGymEnv()
 
 
-def _setup_tester_idling_context(
-    rainbow_cartpole_replay_config, make_cartpole_config
-):
+def _setup_tester_idling_context(rainbow_cartpole_replay_config, make_cartpole_config):
     device = torch.device("cpu")
     network = MockNetwork(num_actions=2).to(device)
     import torch.multiprocessing as mp
@@ -38,7 +37,7 @@ def _setup_tester_idling_context(
         multi_agent=False,
         num_players=1,
         num_actions=2,
-        make_env=make_mock_env,
+        env_factory=make_mock_env,
     )
     config = copy.deepcopy(rainbow_cartpole_replay_config)
     config.game = game_config
@@ -76,7 +75,9 @@ def test_tester_execution_throttling(
             executor.launch(Tester, launch_args, num_workers=1)
         except RuntimeError as err:
             if "Operation not permitted" in str(err) or "torch_shm_manager" in str(err):
-                pytest.skip("Shared-memory multiprocessing is unavailable in this test environment")
+                pytest.skip(
+                    "Shared-memory multiprocessing is unavailable in this test environment"
+                )
             raise
 
         # Wait briefly to ensure it doesn't immediately dump results
@@ -97,13 +98,17 @@ def test_tester_execution_throttling(
             results.extend(new_results)
             time.sleep(0.1)
 
-        assert len(results) == 1, "Tester should return exactly 1 result after being triggered."
+        assert (
+            len(results) == 1
+        ), "Tester should return exactly 1 result after being triggered."
         assert "std" in results[0]
 
         # 5. Check result queue again - should be empty until another trigger
         time.sleep(0.5)
         no_results, _ = executor.collect_data(min_samples=None, worker_type=Tester)
-        assert len(no_results) == 0, "Tester should not run continuously without triggers."
+        assert (
+            len(no_results) == 0
+        ), "Tester should not run continuously without triggers."
 
         # 6. Request work again to ensure repeatability
         executor.request_work(Tester)
@@ -114,7 +119,9 @@ def test_tester_execution_throttling(
             results_2.extend(new_results)
             time.sleep(0.1)
 
-        assert len(results_2) == 1, "Tester should return another result after a second trigger."
+        assert (
+            len(results_2) == 1
+        ), "Tester should return another result after a second trigger."
 
     finally:
         executor.stop()

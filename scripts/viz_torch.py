@@ -71,7 +71,7 @@ try:
                 multi_agent=False,
                 num_players=1,
                 num_actions=2,
-                make_env=None,
+                env_factory=None,
             )
         orig_agent_config_init(self, config_dict, game_config)
 
@@ -213,12 +213,12 @@ def main():
             env = None
             if (
                 hasattr(config, "game")
-                and hasattr(config.game, "make_env")
-                and config.game.make_env
+                and hasattr(config.game, "env_factory")
+                and config.game.env_factory
             ):
                 try:
-                    if "UnknownObject" not in str(config.game.make_env):
-                        env = config.game.make_env()
+                    if "UnknownObject" not in str(config.game.env_factory):
+                        env = config.game.env_factory()
                 except Exception as e:
                     print(f"Note: Could not create environment to infer shapes: {e}")
             inference_shape = (

@@ -21,7 +21,7 @@ def test_muzero_trainer_checkpointing(
     config = MuZeroConfig(config_dict, cartpole_game_config)
 
     # Initialize a lightweight dummy environment
-    env = cartpole_game_config.make_env()
+    env = cartpole_game_config.env_factory()
 
     # Initialize the trainer (this hits dozens of lines in both trainer files)
     trainer = MuZeroTrainer(config=config, env=env, device=torch.device("cpu"))

@@ -70,7 +70,7 @@ def test_memory_growth(net_factory, num_calls=100, num_simulations=10):
     config = MuZeroConfig(params, game_config)
     device = torch.device("cpu")
 
-    env = game_config.make_env()
+    env = game_config.env_factory()
     env.reset()
     obs = env.observe(env.agent_selection)
     info = env.infos[env.agent_selection]

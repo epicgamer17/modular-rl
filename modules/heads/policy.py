@@ -1,6 +1,7 @@
 from typing import Tuple, Optional, Dict, Any
 import torch
 from torch import Tensor
+import torch.nn as nn
 from .base import BaseHead, HeadOutput
 from agents.learner.losses.representations import BaseRepresentation
 from configs.modules.architecture_config import ArchitectureConfig
@@ -25,7 +26,14 @@ class PolicyHead(BaseHead):
         name: Optional[str] = None,
         input_source: str = "default",
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config, name=name, input_source=input_source)
+        super().__init__(
+            arch_config,
+            input_shape,
+            representation,
+            neck_config,
+            name=name,
+            input_source=input_source,
+        )
 
         # 1. Heads now take ownership of their own architectural blocks
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -94,7 +102,11 @@ class PolicyHead(BaseHead):
         metrics = {}
         with torch.inference_mode():
             # If inference_tensor isn't provided (e.g., during training), instantiate a temporary distribution
-            dist = inference_tensor if inference_tensor is not None else self.representation.to_inference(training_tensor)
+            dist = (
+                inference_tensor
+                if inference_tensor is not None
+                else self.representation.to_inference(training_tensor)
+            )
             if hasattr(dist, "entropy") and callable(dist.entropy):
                 metrics["entropy"] = dist.entropy().mean().item()
         return metrics
@@ -106,9 +118,15 @@ class PolicyHead(BaseHead):
         """
         # Standard init for layers (neck/hidden)
         super().init_weights()
-        
+
         # Strict gain=0.01 for final action projection (standard RL practice)
-        if hasattr(self.output_layer, "weight") and self.output_layer.weight is not None:
-             nn.init.orthogonal_(self.output_layer.weight, gain=0.01)
-             if hasattr(self.output_layer, "bias") and self.output_layer.bias is not None:
-                 nn.init.constant_(self.output_layer.bias, 0.0)
+        if (
+            hasattr(self.output_layer, "weight")
+            and self.output_layer.weight is not None
+        ):
+            nn.init.orthogonal_(self.output_layer.weight, gain=0.01)
+            if (
+                hasattr(self.output_layer, "bias")
+                and self.output_layer.bias is not None
+            ):
+                nn.init.constant_(self.output_layer.bias, 0.0)

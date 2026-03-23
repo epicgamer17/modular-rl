@@ -248,13 +248,17 @@ class NFSPTrainer(BaseTrainer):
             "input_shape": self.obs_dim,
             "num_actions": self.num_actions,
             "arch_config": rl_config.arch,
-            "representation_config": getattr(rl_config, "representation_backbone", None),
+            "representation_config": getattr(
+                rl_config, "representation_backbone", None
+            ),
             "heads_config": rl_config.heads,
             "num_players": self.num_players,
             "validator_params": {
                 "minibatch_size": rl_config.minibatch_size,
                 "num_actions": self.num_actions,
-                "atom_size": rl_config.atom_size if hasattr(rl_config, "atom_size") else 1,
+                "atom_size": (
+                    rl_config.atom_size if hasattr(rl_config, "atom_size") else 1
+                ),
             },
         }
         self.br_agent_network = AgentNetwork(**network_kwargs).to(device)
@@ -427,7 +431,7 @@ class NFSPTrainer(BaseTrainer):
         )
         self.actor_cls = _pick_nfsp_actor(env)
         worker_args = (
-            self.config.game.make_env,
+            self.config.game.env_factory,
             self.br_agent_network,
             self.avg_agent_network,
             None,  # replay buffer (trainer stores transitions)

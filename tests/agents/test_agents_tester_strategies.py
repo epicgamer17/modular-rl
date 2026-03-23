@@ -1,4 +1,5 @@
 import pytest
+
 pytestmark = pytest.mark.integration
 
 import copy
@@ -36,7 +37,7 @@ def _setup_tester_context(rainbow_cartpole_replay_config, make_cartpole_config):
         multi_agent=False,
         num_players=1,
         num_actions=2,
-        make_env=lambda: MockEnv(False),
+        env_factory=lambda: MockEnv(False),
     )
     config = copy.deepcopy(rainbow_cartpole_replay_config)
     config.game = game_config

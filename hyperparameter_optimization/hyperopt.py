@@ -50,10 +50,7 @@ except ImportError:
         def bayes_elo(self, return_params=False):
             # Return a dummy DF structure expected by the code
             data = {"Elo": [1400] * len(self.players)}
-            idx = [
-                p.name if hasattr(p, "name") else str(p)
-                for p in self.players
-            ]
+            idx = [p.name if hasattr(p, "name") else str(p) for p in self.players]
             return {"Elo table": pd.DataFrame(data, index=idx)}
 
     StandingsTable = MockStandingsTable
@@ -67,7 +64,7 @@ class MarlHyperoptConfig:
     file_name: str
     eval_method: str  # "elo", "best_agent_elo", "test_agents_elo"
     best_agent: Any
-    make_env: Callable
+    env_factory: Callable
     prep_params: Callable
     agent_class: Any
     agent_config: Callable
@@ -90,7 +87,7 @@ class SarlHyperoptConfig:
     eval_method: Literal[
         "final_score", "rolling_average", "final_score_rolling_average"
     ]
-    make_env: Callable
+    env_factory: Callable
     prep_params: Callable
     agent_class: Any
     agent_config: Callable
@@ -172,7 +169,7 @@ def _determine_trial_name(
 
     current_agent_config = config.agent_config(
         config.prep_params(params.copy()),
-        config.game_config(make_env=config.make_env),
+        config.game_config(env_factory=config.env_factory),
     )
 
     for i, best_config_raw in enumerate(initial_best_configs, 1):
@@ -181,7 +178,7 @@ def _determine_trial_name(
 
         target_agent_config = config.agent_config(
             config.prep_params(best_config_resolved),
-            config.game_config(make_env=config.make_env),
+            config.game_config(env_factory=config.env_factory),
         )
 
         if current_agent_config == target_agent_config:
@@ -205,12 +202,12 @@ def _check_params_validity(params: Dict) -> None:
         ), "Replay buffer size must be > min replay buffer size"
 
 
-def _make_env_safe(make_env_fn):
+def _env_factory_safe(env_factory_fn):
     """Attempts to create env with rgb_array, falls back to default."""
     try:
-        return make_env_fn(render_mode="rgb_array")
+        return env_factory_fn(render_mode="rgb_array")
     except TypeError:
-        return make_env_fn()
+        return env_factory_fn()
 
 
 # --- Evaluation Logic ---
@@ -358,12 +355,13 @@ def marl_run_training(params, agent_name):
     config = _MARL_CONFIG
 
     params = config.prep_params(params)
-    env = _make_env_safe(config.make_env)
+    env = _env_factory_safe(config.env_factory)
 
     agent = config.agent_class(
         env=env,
         config=config.agent_config(
-            config_dict=params, game_config=config.game_config(make_env=config.make_env)
+            config_dict=params,
+            game_config=config.game_config(env_factory=config.env_factory),
         ),
         name=agent_name,
         device=config.device,
@@ -391,12 +389,13 @@ def sarl_run_training(params, agent_name):
     config = _SARL_CONFIG
 
     params = config.prep_params(params)
-    env = _make_env_safe(config.make_env)
+    env = _env_factory_safe(config.env_factory)
 
     agent = config.agent_class(
         env=env,
         config=config.agent_config(
-            config_dict=params, game_config=config.game_config(make_env=config.make_env)
+            config_dict=params,
+            game_config=config.game_config(env_factory=config.env_factory),
         ),
         name=agent_name,
         device=config.device,

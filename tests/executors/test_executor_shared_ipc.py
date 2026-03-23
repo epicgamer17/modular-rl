@@ -1,4 +1,5 @@
 import pytest
+
 pytestmark = pytest.mark.integration
 
 import torch
@@ -23,7 +24,7 @@ class MockGame:
         self.num_actions = 2
         self.num_players = 1
 
-    def make_env(self):
+    def env_factory(self):
         return None
 
 

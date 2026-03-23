@@ -71,7 +71,7 @@ def test_gym_actor_rollout(make_cartpole_config, make_rainbow_config_dict, net_f
     # 5. Instantiate Actor
     device = torch.device("cpu")
     actor = GymActor(
-        env_factory=config.make_env,
+        env_factory=config.env_factory,
         agent_network=network,
         action_selector=selector,
         replay_buffer=buffer,
@@ -99,7 +99,9 @@ def test_gym_actor_rollout(make_cartpole_config, make_rainbow_config_dict, net_f
         assert isinstance(transition["done"], bool)
 
 
-def test_tester_worker_rollout(make_cartpole_config, make_rainbow_config_dict, net_factory):
+def test_tester_worker_rollout(
+    make_cartpole_config, make_rainbow_config_dict, net_factory
+):
     """
     Test real Tester worker with StandardGymTest.
     """
@@ -139,7 +141,7 @@ def test_tester_worker_rollout(make_cartpole_config, make_rainbow_config_dict, n
     test_types = [StandardGymTest("standard_test", num_trials=2)]
 
     tester = TesterWorker(
-        env_factory=config.make_env,
+        env_factory=config.env_factory,
         agent_network=network,
         action_selector=selector,
         replay_buffer=None,

@@ -75,7 +75,7 @@ class RainbowTrainer(BaseTrainer):
 
         # Initialize target network
         from modules.utils import update_target_network
-        
+
         update_target_network(self.agent_network, self.target_agent_network)
         self.agent_network.train()
         self.target_agent_network.eval()
@@ -151,7 +151,7 @@ class RainbowTrainer(BaseTrainer):
 
         num_workers = config.num_workers
         worker_args = (
-            config.game.make_env,
+            config.game.env_factory,
             self.agent_network,
             self.action_selector,
             self.buffer,

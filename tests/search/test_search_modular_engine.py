@@ -139,7 +139,7 @@ def search_setup(net_factory):
         search_engine._set_node_configs()
 
         # Use real lightweight network for compliance
-        env = game_config.make_env()
+        env = game_config.env_factory()
         input_shape = env.observation_space(env.possible_agents[0]).shape
         network = net_factory(config, input_shape, num_actions)
 

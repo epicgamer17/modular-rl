@@ -27,22 +27,23 @@ class AgentConfig(
     Inherits from various mixins to provide standard capabilities.
     Also manages the 'arch' attribute for modular network components.
     """
+
     # --- STRICT COMPONENT CONTRACT ---
     # These must be initialized (defaulting to None if unused) to avoid hasattr/getattr
     world_model: Optional[Any] = None
     feature_extractor: Optional[Any] = None
     memory_core: Optional[Any] = None
-    prediction_backbone: Optional[Any] = None # Legacy/Bridge name
-    
+    prediction_backbone: Optional[Any] = None  # Legacy/Bridge name
+
     heads: Dict[str, Any] = {}
-    
+
     # Behavioral Heads (Deprecated: Move to 'heads' dict)
     policy_head: Optional[Any] = None
     value_head: Optional[Any] = None
     afterstate_value_head: Optional[Any] = None
-    head: Optional[Any] = None # Rainbow style
+    head: Optional[Any] = None  # Rainbow style
     projector: Optional[Any] = None
-    
+
     # Internal World Model Components
     representation_backbone: Optional[Any] = None
     dynamics_backbone: Optional[Any] = None
@@ -116,5 +117,5 @@ class AgentConfig(
             self.game is not None
         ), "Config requires a game config to be provided in 'game' field"
         assert (
-            self.game.make_env is not None
-        ), "Game config must provide a valid environment factory (make_env)"
+            self.game.env_factory is not None
+        ), "Game config must provide a valid environment factory (env_factory)"

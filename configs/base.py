@@ -11,6 +11,21 @@ from utils.schedule import ScheduleConfig
 
 
 class ConfigBase:
+    def parse_dict_field(self, field_name, default=None, required=True):
+        value = self.parse_field(field_name, default=default, required=required)
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise TypeError(
+                f"Expected dict for field {field_name!r}, got {type(value).__name__}"
+            )
+
+        merged = {}
+        if isinstance(default, dict):
+            merged.update(default)
+        merged.update(value)
+        return merged
+
     def parse_field(
         self, field_name, default=None, wrapper=None, required=True, dtype=None
     ):
@@ -65,7 +80,6 @@ class ConfigBase:
                 for k, v in self.config_dict[block].items():
                     if k not in self.config_dict:
                         self.config_dict[k] = v
-
 
     @classmethod
     def load(cls, filepath: str):
@@ -367,8 +381,8 @@ class Config(
             self.game is not None
         ), "Config requires a game config to be provided in 'game' field"
         assert (
-            self.game.make_env is not None
-        ), "Game config must provide a valid environment factory (make_env)"
+            self.game.env_factory is not None
+        ), "Game config must provide a valid environment factory (env_factory)"
 
     @classmethod
     def load(cls, filepath: str):

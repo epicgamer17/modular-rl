@@ -45,5 +45,5 @@ class NFSPDQNConfig(ConfigBase):
     def _verify_game(self):
         assert self.game.is_discrete, "NFSP only supports discrete action spaces"
         assert (
-            self.game.make_env is not None
-        ), "NFSP requires a valid environment factory (make_env) in the game config"
+            self.game.env_factory is not None
+        ), "NFSP requires a valid environment factory (env_factory) in the game config"

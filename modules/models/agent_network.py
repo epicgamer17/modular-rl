@@ -102,7 +102,9 @@ class AgentNetwork(nn.Module):
 
         self.register_buffer("_device_indicator", torch.empty(0))
 
-    def initialize(self) -> None:
+    def initialize(
+        self, kernel_initializer: Optional[Union[str, Callable[..., Any]]] = None
+    ) -> None:
         """Unified initialization via component-owned strategies."""
         # 1. Custom Initializers (Hone-in on components that own their math)
         for m in self.modules():
@@ -113,12 +115,36 @@ class AgentNetwork(nn.Module):
                     for sub in m.modules():
                         sub._is_initialized = True
 
-        # 2. Global Fallback (Standard RL Orthogonal init for generic layers)
-        # TODO: not sure if i love having fallbacks.
+        initializer = kernel_initializer or "orthogonal"
+
+        def apply_initializer(m: nn.Module) -> None:
+            if callable(initializer):
+                initializer(m.weight)
+                return
+
+            name = str(initializer).lower()
+            if name == "orthogonal":
+                nn.init.orthogonal_(m.weight, gain=1.0)
+            elif name == "xavier_uniform":
+                nn.init.xavier_uniform_(m.weight)
+            elif name == "xavier_normal":
+                nn.init.xavier_normal_(m.weight)
+            elif name == "kaiming_uniform":
+                nn.init.kaiming_uniform_(m.weight, nonlinearity="relu")
+            elif name == "kaiming_normal":
+                nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
+            elif name == "normal":
+                nn.init.normal_(m.weight, mean=0.0, std=0.02)
+            elif name == "uniform":
+                nn.init.uniform_(m.weight, a=-0.1, b=0.1)
+            else:
+                raise ValueError(f"Unsupported kernel initializer: {initializer}")
+
+        # 2. Global Fallback for generic layers not initialized by components.
         def fallback_init(m):
             if isinstance(m, (nn.Conv2d, nn.Linear, nn.ConvTranspose2d)):
                 if not getattr(m, "_is_initialized", False):
-                    nn.init.orthogonal_(m.weight, gain=1.0)
+                    apply_initializer(m)
                     if m.bias is not None:
                         nn.init.constant_(m.bias, 0.0)
                     m._is_initialized = True

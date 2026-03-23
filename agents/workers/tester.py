@@ -66,7 +66,10 @@ class NetworkAgent:
 
             # Perform inference via PolicySource
             result = self.policy_source.get_inference(
-                obs=obs_tensor, info=info, agent_network=self.agent_network, exploration=False
+                obs=obs_tensor,
+                info=info,
+                agent_network=self.agent_network,
+                exploration=False,
             )
 
             # Standardize masking
@@ -74,7 +77,9 @@ class NetworkAgent:
                 info = {}
             if "legal_moves" in info and "legal_moves_mask" not in info:
                 action_tensor = result.action_dim
-                assert action_tensor is not None, "InferenceResult has no action tensor for mask shape"
+                assert (
+                    action_tensor is not None
+                ), "InferenceResult has no action tensor for mask shape"
                 mask = torch.zeros(
                     action_tensor.shape, dtype=torch.bool, device=self.device
                 )
@@ -360,7 +365,10 @@ class Tester:
             ).unsqueeze(0)
             # Perform inference via PolicySource
             result = self.policy_source.get_inference(
-                obs=obs_tensor, info=info, agent_network=self.agent_network, exploration=False
+                obs=obs_tensor,
+                info=info,
+                agent_network=self.agent_network,
+                exploration=False,
             )
 
             # Standardize masking
@@ -368,7 +376,9 @@ class Tester:
                 info = {}
             if "legal_moves" in info and "legal_moves_mask" not in info:
                 action_tensor = result.action_dim
-                assert action_tensor is not None, "InferenceResult has no action tensor for mask shape"
+                assert (
+                    action_tensor is not None
+                ), "InferenceResult has no action tensor for mask shape"
                 mask = torch.zeros(
                     action_tensor.shape, dtype=torch.bool, device=self.device
                 )
@@ -449,7 +459,7 @@ class TestFactory:
     ) -> Tuple:
         """Returns the positional arguments expected by Tester.__init__."""
         return (
-            config.game.make_env,
+            config.game.env_factory,
             agent_network,
             action_selector,
             None,  # replay_buffer (Tester doesn't use it)
