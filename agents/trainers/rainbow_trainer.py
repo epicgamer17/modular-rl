@@ -227,9 +227,9 @@ class RainbowTrainer(BaseTrainer):
     def train_step(self) -> None:
         """Single training step for Rainbow: update epsilon, collect, and optimize."""
         # 1. Update weights and epsilon before collection
-        self.executor.update_weights(
-            self.agent_network.state_dict(),
-            params={"epsilon": self.current_epsilon},
+        self.executor.update_parameters(
+            weights=self.agent_network.state_dict(),
+            hyperparams={"epsilon": self.current_epsilon},
         )
 
         # 2. Collect data via actor

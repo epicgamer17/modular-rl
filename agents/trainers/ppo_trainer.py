@@ -98,7 +98,7 @@ class PPOTrainer(BaseTrainer):
             config=config,
             agent_network=self.agent_network,
             device=device,
-            weight_broadcast_fn=self.executor.update_weights,
+            weight_broadcast_fn=self.executor.update_parameters,
             validator_params={
                 "minibatch_size": config.minibatch_size,
                 "num_actions": self.num_actions,
@@ -187,7 +187,7 @@ class PPOTrainer(BaseTrainer):
         Single training step for PPO: collects a full epoch of data and optimizes.
         """
         # 1. Update weights before collection
-        self.executor.update_weights(self.agent_network.state_dict())
+        self.executor.update_parameters(weights=self.agent_network.state_dict())
 
         # 2. Collect trajectory data via actor
         from agents.workers.actors import RolloutActor

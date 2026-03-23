@@ -48,21 +48,22 @@ class _NFSPActorMixin:
 
     average_agent_network: AgentNetwork
 
-    def update_parameters(self, params_dict: Dict[str, Any]) -> None:
-        if not params_dict:
-            return
+    def update_parameters(
+        self,
+        weights: Optional[Dict[str, torch.Tensor]] = None,
+        hyperparams: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if hyperparams:
+            avg_state = hyperparams.get("avg_state_dict")
+            if avg_state is not None:
+                from modules.utils import update_target_network
+                update_target_network(avg_state, self.average_agent_network)
 
-        avg_state = params_dict.get("avg_state_dict")
-        if avg_state is not None:
-            from modules.utils import update_target_network
+            if hyperparams.get("reset_noise"):
+                if hasattr(self.average_agent_network, "reset_noise"):
+                    self.average_agent_network.reset_noise()
 
-            update_target_network(avg_state, self.average_agent_network)
-
-        if params_dict.get("reset_noise"):
-            if hasattr(self.average_agent_network, "reset_noise"):
-                self.average_agent_network.reset_noise()
-
-        super().update_parameters(params_dict)
+        super().update_parameters(weights=weights, hyperparams=hyperparams)
 
     def _map_all_player_rewards(
         self, rewards: Optional[Dict[Any, float]]
@@ -506,7 +507,10 @@ class NFSPTrainer(BaseTrainer):
         if not self.config.multi_process:
             params["avg_state_dict"] = self.avg_agent_network.state_dict()
 
-        self.executor.update_weights(self.br_agent_network.state_dict(), params=params)
+        self.executor.update_parameters(
+            weights=self.br_agent_network.state_dict(), 
+            hyperparams=params
+        )
 
     def _store_sequence_transitions(self, sequence: Sequence):
         if not sequence.action_history:

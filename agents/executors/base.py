@@ -26,10 +26,12 @@ class BaseExecutor(ABC):
         pass  # pragma: no cover
 
     @abstractmethod
-    def update_weights(
-        self, state_dict: Dict[str, Any], params: Optional[Dict[str, Any]] = None
+    def update_parameters(
+        self,
+        weights: Optional[Dict[str, torch.Tensor]] = None,
+        hyperparams: Optional[Dict[str, Any]] = None,
     ):
-        """Updates the weights of the workers."""
+        """Updates the weights and/or hyperparameters of the workers."""
         pass  # pragma: no cover
 
     @abstractmethod

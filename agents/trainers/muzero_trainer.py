@@ -96,7 +96,7 @@ class MuZeroTrainer(BaseTrainer):
             agent_network=self.agent_network,
             device=device,
             priority_update_fn=self.buffer.update_priorities,
-            weight_broadcast_fn=self.executor.update_weights,
+            weight_broadcast_fn=self.executor.update_parameters,
             validator_params={
                 "minibatch_size": config.minibatch_size,
                 "unroll_steps": config.unroll_steps,
@@ -193,7 +193,7 @@ class MuZeroTrainer(BaseTrainer):
     def train_step(self) -> Dict[str, Any]:
         """Perform one training step (batch of gradients)."""
         # 1. Update weights and trigger work
-        self.executor.update_weights(self.agent_network.state_dict())
+        self.executor.update_parameters(weights=self.agent_network.state_dict())
         
         # 2. Collect data via actor
         from agents.workers.actors import RolloutActor

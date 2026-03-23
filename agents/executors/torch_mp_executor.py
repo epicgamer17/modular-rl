@@ -102,13 +102,12 @@ class TorchMPExecutor(BaseExecutor):
                 # 1. Parameter Updates
                 while not param_queue.empty():
                     try:
-                        params = param_queue.get_nowait()
-                        if params:
-                            worker.update_parameters(params)
-                            if params.get("reset_noise") and hasattr(worker.agent_network, "reset_noise"):
-                                worker.agent_network.reset_noise()
-                            if hasattr(worker, "action_selector"):
-                                worker.action_selector.update_parameters(params)
+                        update_dict = param_queue.get_nowait()
+                        if update_dict:
+                            worker.update_parameters(
+                                weights=update_dict.get("weights"),
+                                hyperparams=update_dict.get("hyperparams")
+                            )
                     except queue.Empty:
                         break
 
@@ -224,23 +223,27 @@ class TorchMPExecutor(BaseExecutor):
                         f"Worker process {i} died unexpectedly with exit code {w.exitcode}"
                     )
 
-    def update_weights(
-        self, state_dict: Dict[str, Any], params: Optional[Dict[str, Any]] = None
+    def update_parameters(
+        self,
+        weights: Optional[Dict[str, torch.Tensor]] = None,
+        hyperparams: Optional[Dict[str, Any]] = None,
     ):
-        # In TorchMP with shared memory, weights are updated in-place on the shared model.
-        # But wait, we must update the uncompiled underlying model if it's compiled, relying on Pytorch references.
-        # Actually, if they share memory, we don't need to load_state_dict here!
-        # The main thread does step() on its model, which IS the shared model, since both are uncompiled originally.
-        # However, to be safe, we just signal parameter updates.
-        if params is None:
-            params = {}
+        # In TorchMP with shared memory, weights ARE the actor model weights (on CPU).
+        # But we still send the hyperparams to trigger refreshes.
+        if hyperparams is None:
+            hyperparams = {}
 
         # Signal noise reset if this is a learning update
-        params["reset_noise"] = True
+        # hyperparams["reset_noise"] = True # No longer needed here, handled in Actor
+
+        update_dict = {
+            "weights": weights,
+            "hyperparams": hyperparams
+        }
 
         # Send to all workers via the queue
         for _ in range(len(self.workers)):
-            self.param_queue.put(params)
+            self.param_queue.put(update_dict)
 
     def request_work(self, worker_type: Type, **kwargs):
         """Signals the trigger event and sends arguments for the specified worker type."""

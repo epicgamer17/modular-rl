@@ -41,16 +41,13 @@ class LocalExecutor(BaseExecutor):
 
         return results
 
-    def update_weights(
-        self, state_dict: Dict[str, Any], params: Optional[Dict[str, Any]] = None
+    def update_parameters(
+        self,
+        weights: Optional[Dict[str, torch.Tensor]] = None,
+        hyperparams: Optional[Dict[str, Any]] = None,
     ):
         for _, w in self.workers:
-            w.agent_network.load_state_dict(state_dict)
-            if hasattr(w.agent_network, "reset_noise"):
-                w.agent_network.reset_noise()
-            if params is not None and hasattr(w, "action_selector"):
-                w.action_selector.update_parameters(params)
-            w.update_parameters(params)
+            w.update_parameters(weights=weights, hyperparams=hyperparams)
 
     def request_work(self, worker_type: Type, **kwargs):
         """Signals the trigger event and stores arguments for the specified worker type."""

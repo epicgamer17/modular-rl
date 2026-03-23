@@ -145,7 +145,7 @@ class ImitationTrainer(BaseTrainer):
 
     def train_step(self) -> None:
         # 1) Broadcast weights
-        self.executor.update_weights(self.agent_network.state_dict())
+        self.executor.update_parameters(weights=self.agent_network.state_dict())
 
         # 2) Collect data via actor
         from agents.workers.actors import RolloutActor

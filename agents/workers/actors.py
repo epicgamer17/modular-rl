@@ -24,8 +24,12 @@ class BaseActor(ABC):
         pass
 
     @abstractmethod
-    def update_parameters(self, state_dict: Dict[str, Any]) -> None:
-        """Updates model weights or hyperparameters."""
+    def update_parameters(
+        self,
+        weights: Optional[Dict[str, torch.Tensor]] = None,
+        hyperparams: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Updates model weights and/or hyperparameters."""
         pass
 
     @abstractmethod
@@ -121,22 +125,29 @@ class RolloutActor(BaseActor):
         """Prepares the network for rollout (eval mode)."""
         self.agent_network.eval()
 
-    def update_parameters(self, state_dict: Dict[str, Any]) -> None:
-        """Updates network weights (from state_dict) and/or selector hyperparameters."""
-        if state_dict is None or not state_dict:
-            return
-
-        if any(isinstance(v, (torch.Tensor, dict)) for v in state_dict.values()):
+    def update_parameters(
+        self,
+        weights: Optional[Dict[str, torch.Tensor]] = None,
+        hyperparams: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Updates network weights (from weights) and/or selector hyperparameters."""
+        if weights:
             # Handle potentially compiled model state dicts
             clean_params = {
-                k.replace("_orig_mod.", ""): v for k, v in state_dict.items()
+                k.replace("_orig_mod.", ""): v for k, v in weights.items()
             }
             self.agent_network.load_state_dict(clean_params, strict=False)
-        else:
-            # hyperparameters update (e.g. epsilon, temperature)
-            # This relies on policy_source or search engines having an update_parameters method if needed.
+            
+            # Reset noise if present on the network
+            if hasattr(self.agent_network, "reset_noise"):
+                self.agent_network.reset_noise()
+
+        if hyperparams:
+            if self.action_selector and hasattr(self.action_selector, "update_parameters"):
+                self.action_selector.update_parameters(hyperparams)
+            
             if hasattr(self.policy_source, "update_parameters"):
-                self.policy_source.update_parameters(state_dict)
+                self.policy_source.update_parameters(hyperparams)
 
     def get_state(self) -> Dict[str, Any]:
         """Returns rolling statistics for logging."""
@@ -340,13 +351,14 @@ class EvaluatorActor(BaseActor):
     def setup(self) -> None:
         self.agent_network.eval()
 
-    def update_parameters(self, state_dict: Dict[str, Any]) -> None:
-        if state_dict is None or not state_dict:
-            return
-
-        if any(isinstance(v, (torch.Tensor, dict)) for v in state_dict.values()):
+    def update_parameters(
+        self,
+        weights: Optional[Dict[str, torch.Tensor]] = None,
+        hyperparams: Optional[Dict[str, Any]] = None
+    ) -> None:
+        if weights:
             clean_params = {
-                k.replace("_orig_mod.", ""): v for k, v in state_dict.items()
+                k.replace("_orig_mod.", ""): v for k, v in weights.items()
             }
             self.agent_network.load_state_dict(clean_params, strict=False)
 
