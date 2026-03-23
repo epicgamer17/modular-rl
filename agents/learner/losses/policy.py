@@ -3,6 +3,7 @@ import torch.nn.functional as F
 from typing import Any, Dict, Optional, Tuple
 from agents.learner.losses.base import BaseLoss, LossRepresentation
 
+
 class PolicyLoss(BaseLoss):
     """Policy prediction loss module."""
 
@@ -45,6 +46,7 @@ class PolicyLoss(BaseLoss):
 
         return loss, metrics
 
+
 class ClippedSurrogateLoss(BaseLoss):
     def __init__(
         self,
@@ -73,14 +75,14 @@ class ClippedSurrogateLoss(BaseLoss):
         """PPO Policy Loss: returns [B, T]"""
         policy_logits = predictions[self.pred_key]
         actions = targets["actions"]
-        old_log_probs = targets["log_prob"]
+        target_log_probs = targets["log_prob"]
         advantages = targets["advantages"]
 
         # 1. Capture and Validate
         assert (
             policy_logits.ndim == 3
         ), f"ClippedSurrogateLoss requires [B, T, A], got {policy_logits.shape}"
-        B, T = old_log_probs.shape[:2]
+        B, T = target_log_probs.shape[:2]
 
         # 2. Vectorized Distribution math
         dist = self.representation.to_inference(policy_logits)
@@ -88,9 +90,10 @@ class ClippedSurrogateLoss(BaseLoss):
         # [B, T]
         log_probs = dist.log_prob(actions)
         assert (
-            log_probs.shape == old_log_probs.shape
-        ), f"ClippedSurrogateLoss: shape mismatch between log_probs {log_probs.shape} and log_prob target {old_log_probs.shape}"
-        ratio = torch.exp(log_probs - old_log_probs)
+            log_probs.shape == target_log_probs.shape
+        ), f"ClippedSurrogateLoss: shape mismatch between log_probs {log_probs.shape} and log_prob target {target_log_probs.shape}"
+        
+        ratio = torch.exp(log_probs - target_log_probs)
 
         assert (
             ratio.shape == advantages.shape
@@ -107,9 +110,10 @@ class ClippedSurrogateLoss(BaseLoss):
 
         # 3. Stats for full sequence
         with torch.no_grad():
-            approx_kl = (old_log_probs - log_probs).mean()
+            approx_kl = (target_log_probs - log_probs).mean()
 
         return loss, {"approx_kl": approx_kl.item()}
+
 
 class ImitationLoss(BaseLoss):
     def __init__(

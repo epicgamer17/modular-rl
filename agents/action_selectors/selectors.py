@@ -23,69 +23,6 @@ class BaseActionSelector(ABC):
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
         raise NotImplementedError  # pragma: no cover
 
-    def mask_actions(
-        self,
-        values: torch.Tensor,
-        legal_moves: Any,
-        mask_value: Optional[float] = None,
-        device: Optional[torch.device] = None,
-    ) -> torch.Tensor:
-        """
-        Masks illegal actions in the given values (logits, probs, or Q-values).
-
-        Args:
-            values: The tensor to mask [B, A] or [A].
-            legal_moves: List of legal move indices or list of lists for batched input.
-            mask_value: The value to use for masking (defaults to self.config.default_mask_value).
-            device: Optional device.
-
-        Returns:
-            The masked tensor.
-        """
-        if mask_value is None:
-            mask_value = (
-                getattr(self.config, "default_mask_value", -float("inf"))
-                if self.config is not None
-                else -float("inf")
-            )
-
-        if device is None:
-            device = values.device
-
-        # Core masking logic (adapted from utils.action_mask)
-        mask = torch.zeros_like(values, dtype=torch.bool).to(device)
-
-        if values.dim() == 1:
-            if isinstance(legal_moves, (list, np.ndarray, torch.Tensor)):
-                mask[legal_moves] = True
-            else:
-                raise ValueError(
-                    f"For 1D actions, legal_moves must be an iterable of indices, got {type(legal_moves)}"
-                )
-        elif values.dim() == 2:
-            # Batch of legal moves: [[...], [...]]
-            # Special case: if batch size is 1 and legal_moves is a single list of moves OR a 1D tensor mask
-            if values.shape[0] == 1 and len(legal_moves) > 0:
-                # If it's a list, check if the first element is a list to determine nesting
-                is_nested = isinstance(legal_moves[0], (list, np.ndarray)) or (
-                    torch.is_tensor(legal_moves) and legal_moves.dim() > 1
-                )
-
-                if not is_nested:
-                    mask[0, legal_moves] = True
-                else:
-                    mask[0, legal_moves[0]] = True
-            else:
-                for i, legal in enumerate(legal_moves):
-                    if legal is not None:
-                        mask[i, legal] = True
-        else:
-            raise ValueError(
-                f"mask_actions expects 1D or 2D tensor, got {values.dim()}D"
-            )
-
-        return torch.where(mask, values, torch.tensor(mask_value, device=device))
-
     def update_parameters(self, params_dict: Dict[str, Any]) -> None:
         """
         Updates the internal parameters of the selector.
@@ -117,15 +54,17 @@ class CategoricalSelector(BaseActionSelector):
 
         metadata = {}
 
-        mask = info.get("legal_moves_mask", info.get("legal_moves"))
+        mask = info.get("legal_moves_mask")
 
         from torch.distributions import Categorical
 
         if result.logits is not None:
             logits = result.logits
             if mask is not None:
-                logits = self.mask_actions(
-                    logits, mask, mask_value=-float("inf"), device=logits.device
+                logits = torch.where(
+                    mask, 
+                    logits, 
+                    torch.tensor(-float("inf"), device=logits.device, dtype=logits.dtype)
                 )
             policy = Categorical(logits=logits)
         else:
@@ -171,10 +110,12 @@ class EpsilonGreedySelector(BaseActionSelector):
         batch_size = q_values.shape[0] if q_values.dim() == 2 else 1
 
         # Check if legal moves are provided
-        mask = info.get("legal_moves_mask", info.get("legal_moves"))
+        mask = info.get("legal_moves_mask")
         if mask is not None:
-            q_values = self.mask_actions(
-                q_values, mask, mask_value=-float("inf"), device=q_values.device
+            q_values = torch.where(
+                mask, 
+                q_values, 
+                torch.tensor(-float("inf"), device=q_values.device, dtype=q_values.dtype)
             )
 
         # Exploration/Exploitation logic
@@ -234,7 +175,7 @@ class ArgmaxSelector(BaseActionSelector):
         **kwargs,
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
 
-        mask = info.get("legal_moves_mask", info.get("legal_moves"))
+        mask = info.get("legal_moves_mask")
 
         # Prefer q_values, fall back to logits or probs
         values = result.q_values
@@ -245,7 +186,11 @@ class ArgmaxSelector(BaseActionSelector):
         ), "ArgmaxSelector requires result.q_values, result.logits, or result.probs"
 
         if mask is not None:
-            values = self.mask_actions(values, mask)
+            values = torch.where(
+                mask, 
+                values, 
+                torch.tensor(-float("inf"), device=values.device, dtype=values.dtype)
+            )
 
         action = torch.argmax(values, dim=-1)
         return action, {}

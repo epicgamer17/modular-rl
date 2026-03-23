@@ -1408,6 +1408,6 @@ class AdvantageNormalizer(OutputProcessor):
             actions=buffers["actions"][sl],
             advantages=normalized_advantages,
             returns=buffers["returns"][sl],
-            old_log_probs=buffers["old_log_probs"][sl],
+            log_probs=buffers["log_probs"][sl],
             legal_moves_masks=buffers["legal_moves_masks"][sl],
         )
