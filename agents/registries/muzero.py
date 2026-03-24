@@ -18,13 +18,10 @@ from agents.learner.callbacks import (
 )
 from modules.utils import get_lr_scheduler
 from agents.learner.target_builders import (
-    TargetBuilderPipeline,
-    LatentConsistencyBuilder,
     PassThroughTargetBuilder,
-    SequencePadder,
-    SequenceMaskBuilder,
-    SequenceInfrastructureBuilder,
     ChanceTargetBuilder,
+    SequenceTargetPipeline,
+    LatentConsistencyBuilder,
 )
 
 
@@ -182,19 +179,20 @@ def build_muzero(
         )
 
     # 4. Target Builder
-    builders = [
-        PassThroughTargetBuilder(["values", "rewards", "policies", "actions", "to_plays"]),
-        SequencePadder(unroll_steps=config.unroll_steps),
-        SequenceMaskBuilder(),
-        SequenceInfrastructureBuilder(unroll_steps=config.unroll_steps),
+    algorithmic_builders = [
+        PassThroughTargetBuilder(
+            ["values", "rewards", "policies", "actions", "to_plays"]
+        ),
     ]
     if getattr(config, "consistency_loss_factor", 0) > 0:
-        builders.append(LatentConsistencyBuilder())
+        algorithmic_builders.append(LatentConsistencyBuilder())
 
     if config.stochastic:
-        builders.append(ChanceTargetBuilder())
+        algorithmic_builders.append(ChanceTargetBuilder())
 
-    target_builder = TargetBuilderPipeline(builders)
+    target_builder = SequenceTargetPipeline(
+        algorithmic_builders=algorithmic_builders, unroll_steps=config.unroll_steps
+    )
 
     return {
         "loss_pipeline": loss_pipeline,

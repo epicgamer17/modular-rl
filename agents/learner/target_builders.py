@@ -446,3 +446,38 @@ class LatentConsistencyBuilder(BaseTargetBuilder):
             batch_size, unroll_len, -1
         ).detach()
         current_targets["consistency_targets"] = consistency_targets
+
+
+class SequenceTargetPipeline(TargetBuilderPipeline):
+    """
+    Standardizes the target pipeline for unrolled sequence algorithms (MuZero, PPO).
+    Takes the pure algorithmic builders and automatically seals them with the
+    required padding, masking, and infrastructure.
+    """
+
+    def __init__(self, algorithmic_builders: List[BaseTargetBuilder], unroll_steps: int):
+        # 1. The pure math (e.g., ChanceTargetBuilder, DistributionalTargetBuilder)
+        builders = list(algorithmic_builders)
+
+        # 2. The non-negotiable infrastructure
+        builders.extend(
+            [
+                SequencePadder(unroll_steps),
+                SequenceMaskBuilder(),
+                SequenceInfrastructureBuilder(unroll_steps),
+            ]
+        )
+
+        super().__init__(builders)
+
+
+class SingleStepTargetPipeline(TargetBuilderPipeline):
+    """
+    Standardizes the target pipeline for single-step algorithms (DQN, Rainbow, SAC).
+    """
+
+    def __init__(self, algorithmic_builders: List[BaseTargetBuilder]):
+        builders = list(algorithmic_builders)
+        builders.append(SingleStepFormatter())
+
+        super().__init__(builders)

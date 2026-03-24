@@ -83,13 +83,15 @@ def build_ppo(config: Any, agent_network: Any, device: torch.device) -> Dict[str
         callbacks.append(MetricEarlyStopCallback(threshold=config.early_stopping_kl))
 
     # 4. Target Builder
-    from agents.learner.target_builders import PassThroughTargetBuilder, TargetBuilderPipeline, SingleStepFormatter
-    target_builder = TargetBuilderPipeline([
-        PassThroughTargetBuilder(
-            ["values", "returns", "actions", "log_prob", "advantages"]
-        ),
-        SingleStepFormatter()
-    ])
+    from agents.learner.target_builders import (
+        PassThroughTargetBuilder,
+        SingleStepTargetPipeline,
+    )
+
+    math_builder = PassThroughTargetBuilder(
+        ["values", "returns", "actions", "log_prob", "advantages"]
+    )
+    target_builder = SingleStepTargetPipeline([math_builder])
 
     return {
         "loss_pipeline": loss_pipeline,
