@@ -3,6 +3,7 @@
 import sys
 import os
 from typing import Optional, List, Tuple
+from collections import Counter
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "custom_gym_envs_pkg"))
 sys.path.insert(
@@ -26,7 +27,6 @@ _RESOURCE_MAP: dict[int, str] = {
     5: "ORE",
 }
 
-# FIXED: 12 is Victory Point, 13 is Monopoly
 _DEVCARD_MAP: dict[int, str] = {
     11: "KNIGHT",
     12: "VICTORY_POINT",
@@ -36,7 +36,7 @@ _DEVCARD_MAP: dict[int, str] = {
 }
 
 # ---------------------------------------------------------------------------
-# State Tracking (Prevents grabbing old settlements from bloated JSON deltas)
+# State Tracking
 # ---------------------------------------------------------------------------
 _known_roads = set()
 _known_settlements = set()
@@ -71,51 +71,44 @@ def _texts_sorted(gls: dict) -> list[tuple[Optional[int], dict]]:
 def _split_maritime_trades(
     given_enums: list[int], received_enums: list[int], trade_ratios: dict
 ) -> list[tuple]:
-    from collections import Counter
-
+    """
+    Greedily splits combined Colonist trades into atomic Catanatron trades
+    using the player's current actual trade ratios.
+    """
     given_counts = Counter(given_enums)
     trades = []
 
-    # We must satisfy every card the player received
+    # For each card received, find the corresponding 'given' resources that satisfy a ratio
     for recv_enum in received_enums:
         recv_res = _RESOURCE_MAP[recv_enum]
         matched = False
 
-        # Check all resources we gave to see which one satisfies a ratio
-        for res_enum in [1, 2, 3, 4, 5]:  # Wood, Brick, Sheep, Wheat, Ore
+        # Check Wood, Brick, Sheep, Wheat, Ore in order
+        for res_enum in [1, 2, 3, 4, 5]:
             if given_counts[res_enum] == 0:
                 continue
 
             ratio = trade_ratios.get(res_enum, 4)
             if given_counts[res_enum] >= ratio:
-                # Valid trade found: consume resources and build tuple
+                # Consume resources from the virtual pool
                 given_counts[res_enum] -= ratio
                 res_name = _RESOURCE_MAP[res_enum]
 
-                # Catanatron format: (Given, Given, Given, Given, Received)
-                # Pad with None if the ratio is less than 4
+                # Catanatron expects (Res, Res, Res, Res, Target)
+                # Pad with None for 2:1 or 3:1 trades
                 trade_list = [res_name] * ratio + [None] * (4 - ratio) + [recv_res]
                 trades.append(tuple(trade_list))
                 matched = True
                 break
 
         if not matched:
-            raise ValueError(
-                f"Could not satisfy trade for {recv_res} with given resources {given_counts}"
+            # If this happens, it usually means the port mapping is wrong
+            # and Catanatron thinks the ratio is 4:1 while Colonist used 2:1.
+            print(
+                f"[WARN] Could not satisfy trade for {recv_res}. Ratios used: {trade_ratios}"
             )
 
     return trades
-
-
-def _build_trade_tuples(res: str, n: int, recv: str) -> list[tuple]:
-    result: list[tuple] = []
-    remaining = n
-    for size in (4, 3, 2):
-        while remaining >= size:
-            pad = [None] * (4 - size)
-            result.append(tuple([res] * size + pad + [recv]))
-            remaining -= size
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +117,7 @@ def _build_trade_tuples(res: str, n: int, recv: str) -> list[tuple]:
 
 
 def parse_step(
-    json_event: dict, current_player_color: int
+    json_event: dict, current_player_color: int, player_ratios: dict = None
 ) -> Optional[List[ActionTuple]]:
     global _game_over_seen
 
@@ -137,6 +130,8 @@ def parse_step(
         if text.get("type") == 45:
             _game_over_seen = True
 
+    parsed_actions = []
+
     for _from_color, text in texts:
         ttype = text.get("type")
         pcolor = text.get("playerColor")
@@ -144,20 +139,20 @@ def parse_step(
         if ttype == 10 and pcolor == current_player_color:
             forced_roll = text.get("firstDice", 0) + text.get("secondDice", 0)
             idx = ACTIONS_ARRAY.index((AT.ROLL, None))
-            return [(idx, forced_roll, None)]
+            parsed_actions.append((idx, forced_roll, None))
 
-        if ttype == 11 and pcolor == current_player_color:
+        elif ttype == 11 and pcolor == current_player_color:
             location = sc.get("mechanicRobberState", {}).get("locationTileIndex")
-            catan_coord = WEB_TILE_TO_CATAN_COORD[location]
-            idx = ACTIONS_ARRAY.index((AT.MOVE_ROBBER, catan_coord))
-            return [(idx, None, None)]
+            if location is not None:
+                catan_coord = WEB_TILE_TO_CATAN_COORD[location]
+                idx = ACTIONS_ARRAY.index((AT.MOVE_ROBBER, catan_coord))
+                parsed_actions.append((idx, None, None))
 
-        if ttype == 55 and pcolor == current_player_color:
+        elif ttype == 55 and pcolor == current_player_color:
             idx = ACTIONS_ARRAY.index((AT.DISCARD, None))
-            return [(idx, None, None)]
+            parsed_actions.append((idx, None, None))
 
-        # ------------------------------------------------- BUILD (initial or paid)
-        if ttype in (4, 5) and pcolor == current_player_color:
+        elif ttype in (4, 5) and pcolor == current_player_color:
             piece_enum = text.get("pieceEnum")
             ms = sc.get("mapState", {})
 
@@ -169,7 +164,7 @@ def parse_step(
                             _known_roads.add(eid)
                             catan_edge = WEB_EDGE_TO_CATAN_EDGE[eid]
                             idx = ACTIONS_ARRAY.index((AT.BUILD_ROAD, catan_edge))
-                            return [(idx, None, None)]
+                            parsed_actions.append((idx, None, None))
 
             elif piece_enum == 2:  # Settlement
                 for cid_str, cdata in ms.get("tileCornerStates", {}).items():
@@ -179,7 +174,7 @@ def parse_step(
                             _known_settlements.add(cid)
                             catan_node = WEB_CORNER_TO_CATAN_NODE[cid]
                             idx = ACTIONS_ARRAY.index((AT.BUILD_SETTLEMENT, catan_node))
-                            return [(idx, None, None)]
+                            parsed_actions.append((idx, None, None))
 
             elif piece_enum in (1, 3):  # City
                 for cid_str, cdata in ms.get("tileCornerStates", {}).items():
@@ -189,26 +184,25 @@ def parse_step(
                             _known_cities.add(cid)
                             catan_node = WEB_CORNER_TO_CATAN_NODE[cid]
                             idx = ACTIONS_ARRAY.index((AT.BUILD_CITY, catan_node))
-                            return [(idx, None, None)]
+                            parsed_actions.append((idx, None, None))
 
-        if ttype == 1 and pcolor == current_player_color:
+        elif ttype == 1 and pcolor == current_player_color:
             mdc = sc.get("mechanicDevelopmentCardsState", {})
             pdata = mdc.get("players", {}).get(str(current_player_color), {})
             bought = pdata.get("developmentCardsBoughtThisTurn", [])
             dev_card = _DEVCARD_MAP.get(bought[-1]) if bought else None
             idx = ACTIONS_ARRAY.index((AT.BUY_DEVELOPMENT_CARD, None))
-            return [(idx, None, dev_card)]
+            parsed_actions.append((idx, None, dev_card))
 
-        if ttype == 20 and pcolor == current_player_color:
+        elif ttype == 20 and pcolor == current_player_color:
             card_enum = text.get("cardEnum")
-
             if card_enum == 11:
                 idx = ACTIONS_ARRAY.index((AT.PLAY_KNIGHT_CARD, None))
-                return [(idx, None, None)]
-            if card_enum == 14:
+                parsed_actions.append((idx, None, None))
+            elif card_enum == 14:
                 idx = ACTIONS_ARRAY.index((AT.PLAY_ROAD_BUILDING, None))
-                return [(idx, None, None)]
-            if card_enum == 15:
+                parsed_actions.append((idx, None, None))
+            elif card_enum == 15:
                 yop_enums: list[int] = []
                 for _, t2 in texts:
                     if (
@@ -225,29 +219,20 @@ def parse_step(
                     )
                 )
                 idx = ACTIONS_ARRAY.index((AT.PLAY_YEAR_OF_PLENTY, resources))
-                return [(idx, None, None)]
-            if card_enum == 12:
-                return None
-            return None
+                parsed_actions.append((idx, None, None))
 
-        if ttype == 116 and pcolor == current_player_color:
+        elif ttype == 116 and pcolor == current_player_color:
             given = text.get("givenCardEnums", [])
             received = text.get("receivedCardEnums", [])
-
-            # Fallback to 4:1 if ratios aren't provided (though they should be for accuracy)
             ratios = player_ratios or {1: 4, 2: 4, 3: 4, 4: 4, 5: 4}
-
             trade_tuples = _split_maritime_trades(given, received, ratios)
-            result: List[ActionTuple] = []
             for tt in trade_tuples:
                 idx = ACTIONS_ARRAY.index((AT.MARITIME_TRADE, tt))
-                result.append((idx, None, None))
-            return result if result else None
+                parsed_actions.append((idx, None, None))
 
-        if ttype == 44:
-            if _game_over_seen:
-                continue  # Skip END_TURN if the game is already over
-            idx = ACTIONS_ARRAY.index((AT.END_TURN, None))
-            return [(idx, None, None)]
+        elif ttype == 44:
+            if not _game_over_seen:
+                idx = ACTIONS_ARRAY.index((AT.END_TURN, None))
+                parsed_actions.append((idx, None, None))
 
-    return None
+    return parsed_actions if len(parsed_actions) > 0 else None

@@ -340,14 +340,17 @@ def _process_single_replay(raw: dict, filename: str = "Unknown") -> Optional[dic
     data = raw.get("data", raw)
     events = data["eventHistory"]["events"]
     play_order = data["playOrder"]
-    initial_state = data["eventHistory"].get("initialState", {})
 
-    # 1. EXTRACT PLAYER COUNT
-    game_settings = data.get("gameSettings", initial_state.get("gameSettings", {}))
-    n_players = game_settings.get("maxPlayers", len(play_order))
+    # FIX 1: Use the robust initial_state extraction from visualize_trajectory.py
+    initial_state = data.get(
+        "initialState", data.get("eventHistory").get("initialState")
+    )
+
+    # FIX 2: Strictly use the length of play_order to determine the player count
+    game_settings = data.get("gameSettings")
+    n_players = len(play_order)
 
     # 2. INITIALIZE STEPPER
-    # Ensure your env supports 'num_players' argument
     stepper = GodModeStepper(num_players=n_players, representation="image")
     stepper.current_filename = filename
     winner = _find_winner(events)
@@ -410,21 +413,30 @@ def _process_single_replay(raw: dict, filename: str = "Unknown") -> Optional[dic
             else:
                 break
 
-        # --- NEW: EXTRACT TRADE RATIOS FOR THE PARSER ---
-        # We get the acting player's specific ratios from the current Catanatron state
+        # --- EXTRACT EXACT TRADE RATIOS USING CATANATRON'S BUILT-IN METHOD ---
         c_idx = _colonist_to_color_idx[acting_player]
-        game_state = stepper.env.unwrapped.game.state
+        game = stepper.env.unwrapped.game
+        catanatron_color = game.state.colors[c_idx]
 
-        # Mapping Catanatron's internal string-based ratios back to Colonist's 1-5 enums
-        current_ratios = {
-            1: game_state.player_state[f"P{c_idx}_WOOD_TRADE_RATIO"],
-            2: game_state.player_state[f"P{c_idx}_BRICK_TRADE_RATIO"],
-            3: game_state.player_state[f"P{c_idx}_SHEEP_TRADE_RATIO"],
-            4: game_state.player_state[f"P{c_idx}_WHEAT_TRADE_RATIO"],
-            5: game_state.player_state[f"P{c_idx}_ORE_TRADE_RATIO"],
-        }
+        # Returns a set like {"WOOD", None} where None is a 3:1 port
+        player_ports = game.state.board.get_player_port_resources(catanatron_color)
 
-        # Pass ratios to the parser to handle combined/multiple trades correctly
+        # Start with default 4:1 bank ratios
+        current_ratios = {1: 4, 2: 4, 3: 4, 4: 4, 5: 4}
+        _STR_TO_ENUM = {"WOOD": 1, "BRICK": 2, "SHEEP": 3, "WHEAT": 4, "ORE": 5}
+
+        # Apply 3:1 generic port to all resources if the player owns one
+        if None in player_ports:
+            for i in range(1, 6):
+                current_ratios[i] = 3
+
+        # Override specific resources with 2:1 port ratios
+        for port_res in player_ports:
+            if port_res in _STR_TO_ENUM:
+                res_enum = _STR_TO_ENUM[port_res]
+                current_ratios[res_enum] = 2
+
+        # Pass accurate ratios to the parser to handle combined/multiple trades correctly
         result = parse_step(event, acting_player, player_ratios=current_ratios)
 
         cs = sc.get("currentState", {})
@@ -443,6 +455,11 @@ def _process_single_replay(raw: dict, filename: str = "Unknown") -> Optional[dic
                 stepper._update_true_bank()
                 stepper._recount_vps()
                 game.playable_actions = generate_playable_actions(game.state)
+
+                valid_actions = stepper.env.unwrapped._get_valid_action_indices()
+                action_type, _ = ACTIONS_ARRAY[action_idx]
+                if action_type.name == "END_TURN" and action_idx not in valid_actions:
+                    continue
 
                 c_idx = _colonist_to_color_idx[acting_player]
                 catanatron_color = game.state.colors[c_idx]

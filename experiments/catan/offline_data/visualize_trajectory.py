@@ -20,6 +20,12 @@ import imageio.v2 as imageio
 from json_parser import _texts_sorted, parse_step, reset_parser_state
 from path_a_simulator import GodModeStepper
 
+from custom_gym_envs.envs.catan import ACTIONS_ARRAY
+from catanatron.models.enums import ActionType as AT
+from catanatron.models.actions import generate_playable_actions
+
+DISCARD_IDX = ACTIONS_ARRAY.index((AT.DISCARD, None))
+
 
 def _ensure_hwc(frame: np.ndarray) -> np.ndarray:
     if frame.ndim == 3 and frame.shape[0] > frame.shape[1]:
@@ -44,7 +50,8 @@ def generate_video(
     events = d["eventHistory"]["events"]
     play_order: list[int] = d["playOrder"]
 
-    stepper = GodModeStepper(render_mode="rgb_array")
+    n_players = len(play_order)  # Fix dynamic player count
+    stepper = GodModeStepper(num_players=n_players, render_mode="rgb_array")
     current_turn_color: int = play_order[0]
 
     writer = imageio.get_writer(output_mp4, fps=fps, macro_block_size=None)
@@ -97,8 +104,22 @@ def generate_video(
         if "playerStates" in sc:
             stepper.sync_resources(sc["playerStates"], play_order)
 
-        result = parse_step(event, acting_player)
+        # ADD THE DISCARD DRAIN FIX HERE BEFORE parse_step
+        while True:
+            env = stepper.env.unwrapped
+            stepper._update_true_bank()
+            stepper._recount_vps()
+            env.game.playable_actions = generate_playable_actions(env.game.state)
+            valid_actions = env._get_valid_action_indices()
 
+            if len(valid_actions) == 1 and DISCARD_IDX in valid_actions:
+                if stepper.env.unwrapped.game.winning_color() is not None:
+                    break
+                stepper.step_and_override(DISCARD_IDX, None, None)
+            else:
+                break
+
+        result = parse_step(event, acting_player)
         if result is not None:
             for i, (action_idx, forced_roll, forced_dev_card) in enumerate(result):
                 if max_steps is not None and step_count >= max_steps:

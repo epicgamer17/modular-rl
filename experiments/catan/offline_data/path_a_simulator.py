@@ -122,7 +122,7 @@ class GodModeStepper:
             tile.resource = res
 
         board.map.port_nodes = init_port_nodes_cache(board.map.tiles)
-        board.player_port_resources_cache = {}
+        board.player_port_resources_cache = {}  # Force re-calculation on next trade
 
     def sync_resources(self, player_states_diff: dict, play_order: list):
         for p_key, state in player_states_diff.items():
