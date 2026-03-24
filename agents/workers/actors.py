@@ -9,7 +9,10 @@ from agents.action_selectors.policy_sources import BasePolicySource
 from agents.environments.adapters import BaseAdapter
 from agents.workers.state_management import SequenceManager
 from replay_buffers.modular_buffer import ModularReplayBuffer
-from agents.action_selectors.selectors import BaseActionSelector
+from agents.action_selectors.selectors import (
+    BaseActionSelector,
+    ArgmaxSelector,
+)
 from agents.workers.payloads import TaskRequest, TaskType, WorkerPayload
 
 
@@ -88,6 +91,9 @@ class RolloutActor(BaseActor):
         )
         self.agent_network = network
         self.policy_source = policy_source
+        assert (
+            action_selector is not None
+        ), "ActionSelector is mandatory for RolloutActor (Null Object Pattern). Provide a valid selector (e.g., CategoricalSelector, ArgmaxSelector)."
         self.action_selector = action_selector
         self.buffer = buffer
 
@@ -196,26 +202,11 @@ class RolloutActor(BaseActor):
                 self.obs, self.info, agent_network=self.agent_network
             )
 
-            # 2. Resilient Action Extraction
-            if self.action_selector is not None:
-                # Use standard action selector (handles masking, temperature, etc)
-                actions, metadata = self.action_selector.select_action(
-                    result, self.info, exploration=True
-                )
-            elif result.action is not None:
-                actions = result.action
-                metadata = result.extras
-            elif result.probs is not None:
-                # Sample from policy if specific action not provided
-                actions = torch.multinomial(result.probs, num_samples=1).squeeze(-1)
-                metadata = result.extras
-            elif "best_actions" in result.extras:
-                actions = result.extras["best_actions"]
-                metadata = result.extras
-            else:
-                # Greedy fallback
-                actions = result.probs.argmax(dim=-1)
-                metadata = result.extras
+            # 2. Resilient Action Extraction (Null Object Pattern)
+            # NO BRANCHING. Responsibility live strictly in the selector.
+            actions, metadata = self.action_selector.select_action(
+                result, self.info, exploration=True
+            )
 
             # 3. Step the Adapter (Hides messy environment library logic)
             next_obs, rewards, terminals, truncations, infos = self.adapter.step(
@@ -420,6 +411,9 @@ class EvaluatorActor(BaseActor):
 
         self.agent_network = network
         self.policy_source = policy_source
+        assert (
+            action_selector is not None
+        ), "ActionSelector is mandatory for EvaluatorActor (Null Object Pattern). Provide a valid selector (e.g., ArgmaxSelector)."
         self.action_selector = action_selector
         self.test_agents = test_agents
         self.num_envs = self.adapter.num_envs
@@ -493,32 +487,17 @@ class EvaluatorActor(BaseActor):
                 # Test agent contract: act(obs, info)
                 if hasattr(agent, "act"):
                     actions = agent.act(obs, info)
-                elif hasattr(agent, "select_action"):
-                    # Handle if it was another action selector passed as an agent
-                    actions, _ = agent.select_action(result, info, exploration=False)
                 else:
                     # Fallback to Student if agent is None or invalid
                     actions, _ = self.action_selector.select_action(
                         result, info, exploration=False
                     )
-            elif self.action_selector is not None:
-                # 2. Standard Student Inference
+            else:
+                # 2. Standard Student Inference (Null Object Pattern)
+                # NO BRANCHING. Responsibility lives strictly in the selector.
                 actions, _ = self.action_selector.select_action(
                     result, info, exploration=False
                 )
-            else:
-                # Fallback to result check (deprecated but safe for simple cases)
-                if result.action is not None:
-                    actions = result.action
-                elif result.probs is not None:
-                    actions = result.probs.argmax(dim=-1)
-                elif result.logits is not None:
-                    actions = result.logits.argmax(dim=-1)
-                else:
-                    raise AttributeError(
-                        "EvaluatorActor failed to determine action: "
-                        "no action_selector provided and results lack actions/probs/logits."
-                    )
 
             next_obs, rewards, terminals, truncations, infos = self.adapter.step(
                 actions
