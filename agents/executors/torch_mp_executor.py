@@ -24,28 +24,26 @@ class TorchMPExecutor(BaseExecutor):
         self.stop_flag = mp.Value("i", 0)
         self.result_queue = mp.Queue()
         self.error_queue = mp.Queue()
-        self.param_queue = mp.Queue()
-        self.command_queue = mp.Queue()
-        self.worker_events = {}  # {worker_type_name: mp.Event}
-        self.shared_networks = set()  # To avoid redundant updates to shared RAM
+        # self.param_queue = mp.Queue() # BROKEN SHARED CONDUIT
+        # self.command_queue = mp.Queue() # BROKEN SHARED CONDUIT
+        # self.worker_events = {}  # BROKEN SHARED CONDUIT
+        self.workers = []  # List of WorkerHandle (dict or dataclass)
+        self.shared_networks = set()
 
     def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int):
         self.stop_flag.value = 0
-        if not hasattr(self, "workers"):
-            self.workers = []
-
-        # Create a trigger event for this worker type if it doesn't exist
-        type_name = worker_cls.__name__
-        if type_name not in self.worker_events:
-            self.worker_events[type_name] = mp.Event()
-
-        trigger_event = self.worker_events[type_name]
 
         # Track network if it is likely shared (index 2 of standard worker args)
         if len(args) > 2 and isinstance(args[2], torch.nn.Module):
             self.shared_networks.add(args[2])
 
         for i in range(num_workers):
+            # Create DEDICATED conduits for this specific worker instance
+            # to avoid race conditions and ghost events
+            local_param_queue = mp.Queue()
+            local_command_queue = mp.Queue()
+            local_trigger_event = mp.Event()
+
             p = mp.Process(
                 target=self._worker_loop,
                 args=(
@@ -55,13 +53,19 @@ class TorchMPExecutor(BaseExecutor):
                     self.stop_flag,
                     self.result_queue,
                     self.error_queue,
-                    self.param_queue,
-                    self.command_queue,
-                    trigger_event,
+                    local_param_queue,
+                    local_command_queue,
+                    local_trigger_event,
                 ),
             )
             p.start()
-            self.workers.append((worker_cls, p))
+            self.workers.append({
+                "worker_cls": worker_cls,
+                "process": p,
+                "param_queue": local_param_queue,
+                "command_queue": local_command_queue,
+                "trigger_event": local_trigger_event,
+            })
 
     @staticmethod
     def _worker_loop(
@@ -124,18 +128,6 @@ class TorchMPExecutor(BaseExecutor):
                 if use_signaling and trigger_event is not None:
                     while not stop_flag.value:
                         if trigger_event.wait(timeout=0.1):
-                            # Check if if there is a specific command for us in the queue
-                            # (We use a simple name matching since all workers of this type share the event)
-                            # However, in multi-process, only one worker might grab the command from the queue.
-                            # So we peek or handle it carefully.
-                            # Simplest: Each worker just tries to get its own command.
-                            try:
-                                # This is a bit tricky with multiple workers.
-                                # For now, assume the orchestrator sends one command per worker or we broadcast.
-                                # Given the project structure, we usually have one command per collection step.
-                                pass
-                            except:
-                                pass
                             trigger_event.clear()
                             break
 
@@ -232,7 +224,8 @@ class TorchMPExecutor(BaseExecutor):
             raise err
 
         # 2. Check if all workers are still alive
-        for i, (_, w) in enumerate(self.workers):
+        for i, handle in enumerate(self.workers):
+            w = handle["process"]
             if not w.is_alive():
                 # Check if it exited with code 0 (clean stop) or not
                 if (
@@ -258,29 +251,23 @@ class TorchMPExecutor(BaseExecutor):
                 # This update is global; all workers automatically see it via shared RAM
                 net.load_state_dict(clean_params, strict=False)
 
-        # 2. Only send hyperparams to the workers to trigger local resets (e.g. noisy net)
-        # We set weights=None for the IPC queue to avoid massive serialization overhead
-        # (The Death Trap)
+        # 2. Broadcast hyperparams to dedicated worker queues
         update_dict = {"weights": None, "hyperparams": hyperparams or {}}
 
-        # Send to all workers via the queue
-        for _ in range(len(self.workers)):
-            self.param_queue.put(update_dict)
+        # Broadcast to all workers via their LOCAL conduits to avoid theft
+        for handle in self.workers:
+            handle["param_queue"].put(update_dict)
 
     def request_work(self, worker_type: Type, **kwargs):
-        """Signals the trigger event and sends arguments for the specified worker type."""
+        """Signals the trigger events and sends arguments to specific workers."""
         type_name = worker_type.__name__
+        
         # Broadcast command to all workers of this type
-        # (Assuming all workers are idle and waiting for their own command)
-        num_target_workers = len(
-            [w for w_cls, w in self.workers if w_cls == worker_type]
-        )
-        # Just put one command per worker in the queue
-        for _ in range(num_target_workers):
-            self.command_queue.put((type_name, kwargs))
-
-        if type_name in self.worker_events:
-            self.worker_events[type_name].set()
+        # via their LOCAL conduits to avoid ghost events
+        for handle in self.workers:
+            if handle["worker_cls"] == worker_type:
+                handle["command_queue"].put((type_name, kwargs))
+                handle["trigger_event"].set()
 
     def stop(self):
         self.stop_flag.value = 1
@@ -288,7 +275,8 @@ class TorchMPExecutor(BaseExecutor):
         # Give workers a moment to see the stop flag
         time.sleep(0.1)
 
-        for _, w in self.workers:
+        for handle in self.workers:
+            w = handle["process"]
             if w.is_alive():
                 # For some environments, join() might hang if the queue is full
                 # terminate() is safer but join() is still needed to clean up
@@ -303,10 +291,13 @@ class TorchMPExecutor(BaseExecutor):
                         os.kill(w.pid, signal.SIGKILL)
                     except:
                         pass
-        self.workers = []
-
         # Close and clear queues to release file descriptors/threads
-        for q in [self.result_queue, self.error_queue]:
+        all_queues = [self.result_queue, self.error_queue]
+        for handle in self.workers:
+            all_queues.append(handle["param_queue"])
+            all_queues.append(handle["command_queue"])
+
+        for q in all_queues:
             while not q.empty():
                 try:
                     q.get_nowait()
@@ -314,3 +305,5 @@ class TorchMPExecutor(BaseExecutor):
                     break
             q.close()
             q.join_thread()
+            
+        self.workers = []
