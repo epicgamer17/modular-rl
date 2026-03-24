@@ -59,19 +59,18 @@ class NoisyLinear(nn.Module):
         if self.use_factorized:
             eps_i = torch.randn(1, self.in_features, device=device)
             eps_j = torch.randn(self.out_features, 1, device=device)
-            self.eps_w = self.f(eps_j) @ self.f(eps_i)
-            self.eps_b = (
-                self.f(eps_j).reshape(self.out_features) if self.use_bias else None
-            )
-        else:
-            self.eps_w = self.f(torch.randn(self.mu_w.shape, device=device))
+            self.eps_w.copy_(self.f(eps_j) @ self.f(eps_i))
             if self.use_bias:
-                self.eps_b = self.f(torch.randn(size=self.mu_b.shape, device=device))
+                self.eps_b.copy_(self.f(eps_j).reshape(self.out_features))
+        else:
+            self.eps_w.copy_(self.f(torch.randn(self.mu_w.shape, device=device)))
+            if self.use_bias:
+                self.eps_b.copy_(self.f(torch.randn(size=self.mu_b.shape, device=device)))
 
     def remove_noise(self) -> None:
-        self.eps_w = torch.zeros_like(self.mu_w)
+        self.eps_w.zero_()
         if self.use_bias:
-            self.eps_b = torch.zeros_like(self.mu_b)
+            self.eps_b.zero_()
 
     def reset_parameters(self) -> None:
         p = self.in_features

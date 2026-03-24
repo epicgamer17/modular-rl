@@ -4,6 +4,7 @@ import numpy as np
 import dataclasses
 from modules.models.inference_output import InferenceOutput
 from agents.action_selectors.types import InferenceResult
+from abc import ABC, abstractmethod
 
 # Constant for default epsilon
 DEFAULT_EPSILON = 0.05
@@ -50,19 +51,27 @@ class LegalMovesMaskDecorator(BaseActionSelector):
         if mask is not None:
             # Masking value for log-space (-inf)
             MASK_VALUE = -1e9
-            
+
             updates = {}
             if result.logits is not None:
                 updates["logits"] = torch.where(
-                    mask, 
-                    result.logits, 
-                    torch.tensor(MASK_VALUE, device=result.logits.device, dtype=result.logits.dtype)
+                    mask,
+                    result.logits,
+                    torch.tensor(
+                        MASK_VALUE,
+                        device=result.logits.device,
+                        dtype=result.logits.dtype,
+                    ),
                 )
             if result.q_values is not None:
                 updates["q_values"] = torch.where(
-                    mask, 
-                    result.q_values, 
-                    torch.tensor(MASK_VALUE, device=result.q_values.device, dtype=result.q_values.dtype)
+                    mask,
+                    result.q_values,
+                    torch.tensor(
+                        MASK_VALUE,
+                        device=result.q_values.device,
+                        dtype=result.q_values.dtype,
+                    ),
                 )
             if result.probs is not None:
                 # Mask and re-normalize probabilities

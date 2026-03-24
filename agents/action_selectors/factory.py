@@ -5,6 +5,7 @@ from agents.action_selectors.selectors import (
     LegalMovesMaskDecorator,
 )
 from agents.action_selectors.decorators import PPODecorator, TemperatureSelector
+from agents.action_selectors.selectors import CategoricalSelector, EpsilonGreedySelector
 
 
 class SelectorFactory:
@@ -56,7 +57,7 @@ class SelectorFactory:
 
         # 1.5 Automatically wrap with LegalMovesMaskDecorator (MANDATORY)
         # Since base selectors (Argmax, Categorical, EpsilonGreedy) no longer handle masks,
-        # we must ensure the decorator is present by default. We only skip if explicitly 
+        # we must ensure the decorator is present by default. We only skip if explicitly
         # listed in the decorators list to avoid double-masking.
         if hasattr(config, "decorators"):
             decorators_cfg = config.decorators

@@ -43,7 +43,6 @@ class ShapeValidator:
             if torch.is_tensor(tensor):
                 self._check_shape_strict(key, tensor, is_prediction=True)
 
-
     def _check_shape_strict(
         self, key: str, tensor: torch.Tensor, is_prediction: bool
     ) -> None:
@@ -69,7 +68,7 @@ class ShapeValidator:
         ), f"{prefix} sequence length mismatch: expected {self.T}, got {shape[1]} | full shape: {shape}"
 
         # 3. Content specific checks
-        if key in ["policy_logits", "q_logits", "policies"]:
+        if key in ["policy_logits", "policies"]:
             # Action/Categorical distributions: [B, T, num_actions]
             assert (
                 len(shape) == 3
@@ -100,6 +99,27 @@ class ShapeValidator:
                 assert (
                     len(shape) == 2
                 ), f"{prefix} scalar target mismatch: expected 2D [B, T], got {shape} | full shape: {shape}"
+        elif key == "q_logits":
+            if is_prediction:
+                # Prediction: Distributions for all actions [B, T, num_actions, atoms]
+                assert (
+                    len(shape) == 4
+                ), f"{prefix} predicted Q-values must be 4D [B, T, num_actions, atoms], got {shape}"
+                assert (
+                    shape[2] == self.num_actions
+                ), f"{prefix} action dimension mismatch: expected {self.num_actions}, got {shape[2]} | full shape: {shape}"
+                assert (
+                    shape[3] == self.atom_size
+                ), f"{prefix} distributional atoms mismatch: expected {self.atom_size}, got {shape[3]} | full shape: {shape}"
+            else:
+                # Target: Projected distribution for the *taken* action [B, T, atoms]
+                assert (
+                    len(shape) == 3
+                ), f"{prefix} Q-target distribution must be 3D [B, T, atoms], got {shape}"
+                assert (
+                    shape[2] == self.atom_size
+                ), f"{prefix} distributional target mismatch: expected {self.atom_size} atoms, got {shape[2]} | full shape: {shape}"
+
         elif key.endswith("_mask") or key == "masks":
             # Semantic masks (value_mask, reward_mask, policy_mask, q_mask) must be exactly [B, T]
             assert (

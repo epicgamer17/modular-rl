@@ -150,6 +150,10 @@ class BaseTrainer:
             self.stats.append("test_score", res["score"], subkey="avg")
             print(f"[test] score: {res['score']:.3f} (step {step})")
 
+        if "avg_length" in res:
+            self.stats.append("episode_length", res["avg_length"], subkey="test")
+            print(f"[test] avg_length: {res['avg_length']:.1f}")
+
     def _get_adapter_class(self):
         """Dynamically selects the correct environment adapter."""
         from agents.environments.adapters import (

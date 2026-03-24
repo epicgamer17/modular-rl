@@ -292,8 +292,8 @@ class FilterKeysInputProcessor(InputProcessor):
 
 class TerminationFlagsInputProcessor(InputProcessor):
     """
-    Ensures 'terminated'/'truncated' flags are present for transition pipelines.
-    Defaults are conservative and backward-compatible with older call sites.
+    Ensures 'terminated'/'truncated' and 'dones' flags are present for transition pipelines.
+    Computes an authoritative 'done' if missing.
     """
 
     def __init__(
@@ -307,9 +307,22 @@ class TerminationFlagsInputProcessor(InputProcessor):
         self.truncated_key = truncated_key
 
     def process_single(self, **kwargs):
-        done = bool(kwargs.get(self.done_key, False))
-        kwargs[self.terminated_key] = bool(kwargs.get(self.terminated_key, done))
-        kwargs[self.truncated_key] = bool(kwargs.get(self.truncated_key, False))
+        # 1. Read explicitly provided flags
+        terminated = bool(kwargs.get(self.terminated_key))
+        truncated = bool(kwargs.get(self.truncated_key))
+
+        assert (
+            terminated is not None and truncated is not None
+        ), "terminated and truncated flags must be present"
+
+        # 2. Compute authoritative done
+        is_done = terminated or truncated
+
+        # 3. Explicitly inject ALL keys back into kwargs
+        kwargs[self.terminated_key] = terminated
+        kwargs[self.truncated_key] = truncated
+        kwargs[self.done_key] = is_done
+
         return kwargs
 
 
@@ -375,22 +388,23 @@ class NStepInputProcessor(InputProcessor):
         final_terminated = buffer[-1].get(self.terminated_key, final_done)
         final_truncated = buffer[-1].get(self.truncated_key, False)
 
-        # Iterate reversed from newest to oldest
-        for transition in reversed(list(buffer)):
+        # Corrected N-Step Summation (Forward)
+        for i, transition in enumerate(list(buffer)):
             r = transition.get(self.reward_key, 0.0)
             d = transition.get(self.done_key, False)
 
+            # Apply discount based on step index (gamma^i * r_i)
+            final_reward += (self.gamma**i) * r
+
             # If a step was terminal, it cuts the n-step chain
             if d:
-                final_reward = r
                 final_next_obs = transition.get("next_observations")
                 final_next_info = transition.get("next_infos")
                 final_next_legal_moves = transition.get("next_legal_moves")
                 final_done = True
                 final_terminated = transition.get(self.terminated_key, True)
                 final_truncated = transition.get(self.truncated_key, False)
-            else:
-                final_reward = r + self.gamma * final_reward
+                break
 
         # 2. Prepare the output
         # The output is the oldest transition, but with updated reward/next_obs/done

@@ -72,9 +72,25 @@ class QBootstrappingLoss(BaseLoss):
 
         # 5. Apply Loss Function
         if selected_preds.shape[-1] > 1:
-            # Multi-atom categorical cross-entropy
+            # Multi-atom categorical loss
+            # Performance optimization: ensure targets are probability distributions before computing loss
+            assert torch.allclose(
+                flat_targets.sum(dim=-1), torch.ones_like(flat_targets.sum(dim=-1))
+            ), f"Categorical targets must sum to 1.0, got {flat_targets.sum(dim=-1).mean().item()}"
+            
             log_prob = F.log_softmax(selected_preds, dim=-1)
-            raw_loss = -(flat_targets * log_prob).sum(dim=-1)
+            
+            # If the user passed KLDivLoss (like Rainbow), use it!
+            if isinstance(self.loss_fn, torch.nn.KLDivLoss):
+                # KLDivLoss expects input as Log-Probabilities, and Target as Probabilities.
+                # It requires batch reduction="none", so we temporarily wrap it
+                raw_loss = F.kl_div(
+                    log_prob, flat_targets, reduction="none"
+                ).sum(dim=-1)
+            else:
+                # Fallback to manual cross-entropy if not KL
+                # (Assuming flat_targets are pure probabilities)
+                raw_loss = -(flat_targets * log_prob).sum(dim=-1)
         else:
             # Standard scalar regression (MSE)
             selected_preds = selected_preds.squeeze(-1)
@@ -131,6 +147,12 @@ class ChanceQLoss(BaseLoss):
 
         flat_pred = pred.reshape(B * T, -1)
         flat_target = formatted_target.reshape(B * T, -1)
+
+        # Performance optimization: ensure targets are probability distributions before computing loss
+        if flat_target.shape[-1] > 1:
+            assert torch.allclose(
+                flat_target.sum(dim=-1), torch.ones_like(flat_target.sum(dim=-1))
+            ), f"Categorical targets must sum to 1.0, got {flat_target.sum(dim=-1).mean().item()}"
 
         raw_loss = self.loss_fn(flat_pred, flat_target, reduction="none")
         if raw_loss.ndim > 1:

@@ -53,7 +53,7 @@ def build_rainbow(
     config: Any,
     agent_network: Any,
     device: torch.device,
-    target_agent_network: Optional[torch.nn.Module] = None,
+    target_agent_network: torch.nn.Module,
     priority_update_fn: Optional[Callable] = None,
     set_beta_fn: Optional[Callable] = None,
 ) -> Dict[str, Any]:
@@ -100,7 +100,7 @@ def build_rainbow(
 
     callbacks = []
     if getattr(config, "use_noisy_net", False):
-        callbacks.append(ResetNoiseCallback())
+        callbacks.append(ResetNoiseCallback(target_agent_network))
 
     if target_agent_network is not None:
         sync_interval = getattr(
@@ -153,5 +153,5 @@ def build_rainbow(
         "lr_schedulers": lr_schedulers,
         "target_builder": target_builder,
         "callbacks": callbacks,
-        "observation_dtype": torch.uint8,
+        "observation_dtype": torch.float32,
     }

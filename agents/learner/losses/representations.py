@@ -171,6 +171,7 @@ class C51Representation(DiscreteSupportRepresentation):
 
         Returns:
             projected_distribution: [..., Atoms] Distribution aligned with the fixed support grid.
+                Returns pure probabilities in [0, 1] that sum to 1, not logits or log-probs.
         """
         # 1. Capture original shape and flatten to [N, Atoms]
         orig_shape = shifted_support.shape

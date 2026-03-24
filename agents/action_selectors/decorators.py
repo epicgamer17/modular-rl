@@ -4,6 +4,7 @@ from agents.action_selectors.selectors import BaseActionSelector
 from agents.action_selectors.types import InferenceResult
 from torch.distributions import Categorical
 from utils.schedule import create_schedule, Schedule, ScheduleConfig
+from typing import Any, Dict, Optional, Tuple
 
 
 class PPODecorator(BaseActionSelector):

@@ -152,7 +152,7 @@ class TargetNetworkSyncCallback(Callback):
             return
 
         from modules.utils import update_target_network
-        
+
         tau = (1.0 - self.ema_beta) if self.soft_update else 1.0
         update_target_network(learner.agent_network, self.target_network, tau=tau)
 
@@ -160,11 +160,15 @@ class TargetNetworkSyncCallback(Callback):
 class ResetNoiseCallback(Callback):
     """Resets noisy network parameters after every optimizer step."""
 
+    def __init__(self, target_network: Optional[Any] = None):
+        self.target_network = target_network
+
     def on_optimizer_step_end(
         self,
         learner,
     ) -> None:
         learner.agent_network.reset_noise()
+        self.target_network.reset_noise()
 
 
 class MetricEarlyStopCallback(Callback):

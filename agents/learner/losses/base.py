@@ -100,6 +100,14 @@ class BaseLoss(ABC):
         flat_pred = pred.reshape(B * T, *orig_shape[2:])
         flat_target = formatted_target.reshape(B * T, *orig_shape[2:])
 
+        # Performance optimization: ensure targets are probability distributions before computing loss
+        # Only applicable if we have multiple features (e.g. atoms/bins) and not just a single scalar
+        if flat_target.shape[-1] > 1:
+            # We use a broad check to catch mass loss in Bellman projections
+            t_sum = flat_target.sum(dim=-1)
+            assert torch.allclose(t_sum, torch.ones_like(t_sum), atol=1e-3), \
+                f"{self.__class__.__name__}: Categorical targets must sum to 1.0, got {t_sum.mean().item()}"
+
         raw_loss = self.loss_fn(flat_pred, flat_target, reduction="none")
 
         # 4. Collapse and Reshape to [B, T] result

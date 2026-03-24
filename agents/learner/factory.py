@@ -162,7 +162,7 @@ def build_universal_learner(
         lr_schedulers = rainbow_components["lr_schedulers"]
         callbacks.extend(rainbow_components.get("callbacks", []))
         target_builder = rainbow_components["target_builder"]
-        observation_dtype = rainbow_components.get("observation_dtype", torch.uint8)
+        observation_dtype = rainbow_components.get("observation_dtype", torch.float32)
     elif agent_type == "supervised":
         from agents.registries.supervised import build_supervised
 

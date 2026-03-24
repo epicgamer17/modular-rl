@@ -10,7 +10,7 @@ from agents.environments.adapters import BaseAdapter
 from agents.workers.state_management import SequenceManager
 from replay_buffers.modular_buffer import ModularReplayBuffer
 from agents.workers.payloads import TaskRequest, TaskType, WorkerPayload
-from agents.workers.trajectory_buffer import TrajectoryBuffer
+from agents.action_selectors.selectors import BaseActionSelector
 
 
 class BaseActor(ABC):
@@ -28,7 +28,7 @@ class BaseActor(ABC):
     def update_parameters(
         self,
         weights: Optional[Dict[str, torch.Tensor]] = None,
-        hyperparams: Optional[Dict[str, Any]] = None
+        hyperparams: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Updates model weights and/or hyperparameters."""
         pass
@@ -57,9 +57,9 @@ class RolloutActor(BaseActor):
         adapter_args: Tuple[Any, ...],
         network: AgentNetwork,
         policy_source: BasePolicySource,
-        buffer: ModularReplayBuffer,        # Index 4
+        buffer: ModularReplayBuffer,  # Index 4
         config: Any,
-        action_selector: Optional[BaseActionSelector] = None, # Index 6
+        action_selector: Optional[BaseActionSelector] = None,  # Index 6
         test_agents: Optional[List[Any]] = None,
         worker_id: int = 0,
     ):
@@ -130,47 +130,33 @@ class RolloutActor(BaseActor):
 
         # Track current episode progress across envs
         self.current_lengths = np.zeros(self.num_envs)
-
-        # 2. Pre-allocate the Trajectory Buffer for this actor's device
-        # We size it for a reasonable chunk (at least num_steps)
-        # For simplicity, we can resize it if needed, or use a large default.
-        # Most collectors use a fixed size like 128 or 2048.
-        # If config doesn't specify, we'll use a safe default and resize if collect is called with more.
-        self.chunk_size = getattr(config, "steps_per_collect", 2048)
-        self.traj_buffer = TrajectoryBuffer(
-            num_envs=self.num_envs,
-            chunk_size=self.chunk_size,
-            obs_shape=self.adapter.env.observation_space.shape if hasattr(self.adapter.env, "observation_space") else self.obs.shape[1:],
-            num_actions=num_actions,
-            device=device
-        )
+        self.current_scores = np.zeros(self.num_envs)
 
     def setup(self) -> None:
         """Prepares the network for rollout (eval mode)."""
         self.agent_network.eval()
-        self.traj_buffer.clear()
 
     def update_parameters(
         self,
         weights: Optional[Dict[str, torch.Tensor]] = None,
-        hyperparams: Optional[Dict[str, Any]] = None
+        hyperparams: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Updates network weights (from weights) and/or selector hyperparameters."""
         if weights:
             # Handle potentially compiled model state dicts
-            clean_params = {
-                k.replace("_orig_mod.", ""): v for k, v in weights.items()
-            }
+            clean_params = {k.replace("_orig_mod.", ""): v for k, v in weights.items()}
             self.agent_network.load_state_dict(clean_params, strict=False)
-            
+
             # Reset noise if present on the network
             if hasattr(self.agent_network, "reset_noise"):
                 self.agent_network.reset_noise()
 
         if hyperparams:
-            if self.action_selector and hasattr(self.action_selector, "update_parameters"):
+            if self.action_selector and hasattr(
+                self.action_selector, "update_parameters"
+            ):
                 self.action_selector.update_parameters(hyperparams)
-            
+
             if hasattr(self.policy_source, "update_parameters"):
                 self.policy_source.update_parameters(hyperparams)
 
@@ -202,16 +188,7 @@ class RolloutActor(BaseActor):
         Main execution loop. Performs num_steps environment steps across managed environments.
         Returns metrics for the collection call.
         """
-        # Ensure Trajectory Buffer is large enough for this call
-        if num_steps > self.traj_buffer.chunk_size:
-            self.traj_buffer = TrajectoryBuffer(
-                num_envs=self.num_envs,
-                chunk_size=num_steps,
-                obs_shape=self.traj_buffer.obs.shape[2:],
-                num_actions=self.traj_buffer.probs.shape[2] if self.traj_buffer.probs is not None else None,
-                device=self.traj_buffer.device
-            )
-        self.traj_buffer.clear()
+        steps_this_call = 0
 
         steps_this_call = 0
         batch_scores = []
@@ -235,30 +212,44 @@ class RolloutActor(BaseActor):
                 actions
             )
 
-            # 4. FAST VECTORIZED INSERTION (Pre-allocated tensors)
-            # Eliminate per-step dict loop.
-            self.traj_buffer.insert(
-                obs=next_obs,
-                actions=actions,
-                rewards=rewards,
-                terminals=terminals,
-                truncations=truncations,
-                values=result.value,
-                probs=result.probs,
-                log_probs=metadata.get("log_prob"),
-                player_ids=self.info.get("player_id"),
-                legal_moves_masks=self.info.get("legal_moves_mask"),
-            )
-
-            self.current_scores += rewards.cpu().numpy()
-            self.current_lengths += 1
-
-            # 5. Boundary Logic & Episode Stats (Still needs per-env check for terminals)
-            # But we only create dicts if the environment actually finished.
+            # 4. Process Transitions and Boundary Logic
             for i in range(self.num_envs):
-                # We always append to SequenceManager, but now we get the step from TrajectoryBuffer
-                # which uses efficient pre-extracted tensors.
-                step_dict = self.traj_buffer.get_step_dict(self.traj_buffer.step_idx - 1, i)
+                # Update rolling accumulators
+                self.current_scores[i] += rewards[i].item()
+                self.current_lengths[i] += 1
+
+                # Build the step dictionary manually for each environment
+                p_id = 0
+                if "player_id" in self.info:
+                    p_ids = self.info["player_id"]
+                    p_id = p_ids[i].item() if torch.is_tensor(p_ids) else p_ids[i]
+
+                step_dict = {
+                    "observation": next_obs[i].cpu().numpy(),
+                    "action": actions[i].item(),
+                    "reward": rewards[i].item(),
+                    "terminated": terminals[i].item(),
+                    "truncated": truncations[i].item(),
+                    "player_id": p_id,
+                }
+
+                # Optional metadata
+                if result.value is not None:
+                    step_dict["value"] = result.value[i].item()
+                if result.probs is not None:
+                    step_dict["policy"] = result.probs[i].cpu().numpy()
+
+                lp = metadata.get("log_prob")
+                if lp is not None:
+                    step_dict["log_prob"] = lp[i].item()
+
+                mask = self.info.get("legal_moves_mask")
+                if mask is not None:
+                    step_dict["legal_moves"] = (
+                        torch.where(mask[i])[0].cpu().numpy().tolist()
+                    )
+
+                # Store in SequenceManager
                 self.seq_manager.append(i, step_dict)
 
                 if terminals[i].item() or truncations[i].item():
@@ -325,7 +316,7 @@ class RolloutActor(BaseActor):
             # Only force-flush the chunk if we actually took steps in it (len > 1)
             if len(active_seq.observation_history) > 1:
                 seq = self.seq_manager.flush(i)
-                
+
                 # Use scalar value extraction (handles search or direct V)
                 v = (
                     final_values[i].item()
@@ -423,12 +414,10 @@ class EvaluatorActor(BaseActor):
     def update_parameters(
         self,
         weights: Optional[Dict[str, torch.Tensor]] = None,
-        hyperparams: Optional[Dict[str, Any]] = None
+        hyperparams: Optional[Dict[str, Any]] = None,
     ) -> None:
         if weights:
-            clean_params = {
-                k.replace("_orig_mod.", ""): v for k, v in weights.items()
-            }
+            clean_params = {k.replace("_orig_mod.", ""): v for k, v in weights.items()}
             self.agent_network.load_state_dict(clean_params, strict=False)
 
     def get_state(self) -> Dict[str, Any]:
@@ -455,7 +444,9 @@ class EvaluatorActor(BaseActor):
         """
         obs, info = self.adapter.reset()
         current_rewards = torch.zeros(self.num_envs)
+        current_lengths = torch.zeros(self.num_envs, dtype=torch.int)
         finished_rewards = []
+        finished_lengths = []
 
         while len(finished_rewards) < num_episodes:
             # Force greedy behavior via exploration=False
@@ -465,18 +456,20 @@ class EvaluatorActor(BaseActor):
 
             # 1. Routing Trick: Check for hardcoded test agents (Guaranteed Tensor[B] from Adapter)
             player_ids = info.get("player_id", None)
-            
+
             # For simplicity in evaluation, assume a single player per environment at each step
             # or use the first if batched (Evaluator usually uses B=1)
             current_player = player_ids[0] if player_ids is not None else None
-            
+
             # Resolve agent if available
             agent = None
             if self.test_agents and current_player is not None:
                 if isinstance(self.test_agents, dict):
                     # Handle dict-based routing
                     agent = self.test_agents.get(current_player.item())
-                elif isinstance(self.test_agents, list) and current_player.item() < len(self.test_agents):
+                elif isinstance(self.test_agents, list) and current_player.item() < len(
+                    self.test_agents
+                ):
                     # Handle list-based routing
                     agent = self.test_agents[current_player.item()]
 
@@ -500,22 +493,30 @@ class EvaluatorActor(BaseActor):
                 actions
             )
             current_rewards += rewards
+            current_lengths += 1
 
             for i in range(self.num_envs):
                 if terminals[i] or truncations[i]:
                     reward_val = current_rewards[i].item()
+                    length_val = current_lengths[i].item()
                     finished_rewards.append(reward_val)
+                    finished_lengths.append(length_val)
                     self.total_reward += reward_val
                     self.episodes_completed += 1
                     current_rewards[i] = 0.0
+                    current_lengths[i] = 0
 
             obs, info = next_obs, infos
 
         avg_score = (
             sum(finished_rewards) / len(finished_rewards) if finished_rewards else 0.0
         )
+        avg_length = (
+            sum(finished_lengths) / len(finished_lengths) if finished_lengths else 0.0
+        )
         return {
             "score": avg_score,
+            "avg_length": avg_length,
             "num_episodes": len(finished_rewards),
             "total_reward_accumulated": self.total_reward,
         }
