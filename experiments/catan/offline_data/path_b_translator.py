@@ -139,9 +139,11 @@ class JsonStateTracker:
         self,
         play_order: list[int],
         board_config: Optional[dict[int, tuple[int, int]]] = None,
+        discard_limit: int = 7,
     ) -> None:
         self.play_order = play_order
         self.n = len(play_order)
+        self.discard_limit = discard_limit
 
         # ----- Static board from board_config --------------------------------
         # tile_data[catan_coord] = (resource_str_or_None, dice_number_or_None)
@@ -176,6 +178,13 @@ class JsonStateTracker:
         self.player_res: dict[int, dict[int, int]] = {
             c: {r: 0 for r in range(1, 6)} for c in play_order
         }
+
+        # --- ADD THIS: Track absolute card counts to handle hidden opponents ---
+        self.player_card_counts: dict[int, int] = {c: 0 for c in play_order}
+
+        # --- NEW FIX: Explicitly track who still needs to discard ---
+        self.players_needing_discard: set[int] = set()
+        # ---------------------------------------------------------------------
 
         # Road lengths (from mechanicLongestRoadState).
         # Zeroed during initial placement to match catanatron's behaviour
@@ -218,8 +227,16 @@ class JsonStateTracker:
             if web_corner not in WEB_CORNER_TO_CATAN_NODE:
                 continue
             catan_node = WEB_CORNER_TO_CATAN_NODE[web_corner]
-            owner = cdata.get("owner")
-            btype = cdata.get("buildingType", 1)  # 1=settlement, 2=city
+            # FIX: Retrieve existing state so partial diffs don't erase it
+            existing_owner, existing_btype = self.node_buildings.get(
+                catan_node, (None, 1)
+            )
+
+            owner = cdata.get("owner", existing_owner)
+            btype = cdata.get(
+                "buildingType", existing_btype
+            )  # 1=settlement, 2=city
+
             if owner is not None:
                 self.node_buildings[catan_node] = (owner, btype)
 
@@ -241,7 +258,8 @@ class JsonStateTracker:
             if web_edge not in WEB_EDGE_TO_CATAN_EDGE:
                 continue
             catan_edge = WEB_EDGE_TO_CATAN_EDGE[web_edge]
-            owner = edata.get("owner")
+            # FIX: Fallback to existing owner for edge updates
+            owner = edata.get("owner", self.edge_buildings.get(catan_edge))
             if owner is not None:
                 self.edge_buildings[catan_edge] = owner
 
@@ -263,13 +281,32 @@ class JsonStateTracker:
             pcolor = int(pcolor_str)
             if pcolor not in self.player_res:
                 continue
-            cards = pdata.get("resourceCards", {}).get("cards")
+
+            rc = pdata.get("resourceCards", {})
+
+            # 1. Update absolute count (crucial for hidden opponents)
+            if "count" in rc:
+                self.player_card_counts[pcolor] = rc["count"]
+            elif "length" in rc:
+                self.player_card_counts[pcolor] = rc["length"]
+            elif "total" in rc:
+                self.player_card_counts[pcolor] = rc["total"]
+
+            # 2. Update specific cards if they are public
+            cards = rc.get("cards")
             if cards is not None:
                 new_res = {r: 0 for r in range(1, 6)}
                 for res_enum in cards:
                     if 1 <= res_enum <= 5:
                         new_res[res_enum] += 1
                 self.player_res[pcolor] = new_res
+                # Fallback just in case count wasn't provided
+                if (
+                    "count" not in rc
+                    and "length" not in rc
+                    and "total" not in rc
+                ):
+                    self.player_card_counts[pcolor] = sum(new_res.values())
 
         # ---- Road lengths ---------------------------------------------------
         # Mirror catanatron: road lengths stay at 0 during initial build phase.
@@ -278,7 +315,9 @@ class JsonStateTracker:
             for pcolor_str, ldata in mlrs.items():
                 pcolor = int(pcolor_str)
                 if pcolor in self.road_lengths:
-                    self.road_lengths[pcolor] = ldata.get("longestRoad", 0)
+                    # FIX: Only update if explicitly in the diff to avoid zeroing it out
+                    if "longestRoad" in ldata:
+                        self.road_lengths[pcolor] = ldata["longestRoad"]
 
         # ---- Tile info (learn board layout from robber visits) --------------
         gls = sc.get("gameLogState", {})
@@ -312,12 +351,29 @@ class JsonStateTracker:
             if roll is not None:
                 self.last_roll = roll
 
+                # FIX: Record exactly who needs to discard right when the 7 is rolled
+                if roll == 7:
+                    self.players_needing_discard = {
+                        c
+                        for c in self.play_order
+                        if self.player_card_counts.get(c, 0) > self.discard_limit
+                    }
+                    if self.players_needing_discard:
+                        self.is_discarding = True
+                    else:
+                        self.is_moving_robber = True
+
         for _, v in gls.items():
             t = v.get("text", {})
             if not isinstance(t, dict):
                 continue
             ttype = t.get("type")
             pcolor = t.get("playerColor")
+
+            # FIX: Playing a Knight instantly triggers the Robber phase
+            if ttype == 20 and t.get("cardEnum") in (10, 11):
+                self.is_moving_robber = True
+
             if ttype == 10 and pcolor in self.has_rolled:
                 self.has_rolled[pcolor] = True
             elif ttype == 44:
@@ -326,14 +382,16 @@ class JsonStateTracker:
                     self.has_rolled[c] = False
                 self.is_discarding = False
                 self.is_moving_robber = False
+                self.players_needing_discard.clear()  # Ensure list clears on turn end
             elif ttype == 60:
                 self.is_discarding = True
             elif ttype == 55:
-                # DISCARD completed; check if more players need to discard
-                still_discarding = any(
-                    sum(self.player_res[c].values()) > 7 for c in self.play_order
-                )
-                if not still_discarding:
+                # DISCARD completed; check if more players need to discard using reliable counts
+                # FIX: Simply remove the player from the queue when they emit a discard event
+                if pcolor in self.players_needing_discard:
+                    self.players_needing_discard.remove(pcolor)
+
+                if not self.players_needing_discard:
                     self.is_discarding = False
                     self.is_moving_robber = True
             elif ttype == 11:
