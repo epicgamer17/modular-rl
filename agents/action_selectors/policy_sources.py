@@ -176,7 +176,7 @@ class SearchPolicySource(BasePolicySource):
                 best_actions_out = torch.tensor(best_action, device=obs.device)
 
             return InferenceResult(
-                policy=Categorical(probs=probs),
+                probs=probs,
                 value=value,
                 action=best_actions_out,
                 extras={
@@ -220,14 +220,6 @@ class NFSPNetworkPolicySource(BasePolicySource):
             q_values=br_result.q_values,
             logits=avg_result.logits,
             probs=avg_result.probs,
-            reward=(
-                br_result.reward if br_result.reward is not None else avg_result.reward
-            ),
-            to_play=(
-                br_result.to_play
-                if br_result.to_play is not None
-                else avg_result.to_play
-            ),
             extras={
                 **(br_result.extras or {}),
                 **(avg_result.extras or {}),

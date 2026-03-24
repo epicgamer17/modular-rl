@@ -239,14 +239,21 @@ class RolloutActor(BaseActor):
                     # [num_actions]
                     transition["policy"] = result.probs[i].cpu().numpy()
 
-                # 4.5 Capture Log Probs (Essential for PPO)
-                # Check metadata from ActionSelector first
+                # 4.5 Capture Log Probs (Essential for PPO/Policy Gradients)
                 if "log_prob" in metadata:
                     lp = metadata["log_prob"]
                     transition["log_prob"] = lp[i].item() if torch.is_tensor(lp) else lp
-                elif result.policy is not None and hasattr(result.policy, "log_prob"):
-                    # Compute manually from distribution if selector didn't provide it
-                    lp = result.policy.log_prob(actions).cpu().numpy()
+                elif "policy_dist" in metadata:
+                    # Best case: selector already made a distribution
+                    dist = metadata["policy_dist"]
+                    lp = dist.log_prob(actions).cpu().numpy()
+                    transition["log_prob"] = lp[i]
+                elif result.probs is not None:
+                    # Fallback: create distribution once per step if missing
+                    # Note: Distributions are created once per env for simplicity if missing.
+                    from torch.distributions import Categorical
+                    dist = Categorical(probs=result.probs)
+                    lp = dist.log_prob(actions).cpu().numpy()
                     transition["log_prob"] = lp[i]
 
                 # Enrich with environment metadata
