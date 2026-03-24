@@ -4,6 +4,7 @@ import traceback
 import time
 from typing import Any, Dict, List, Optional, Tuple, Type
 from .base import BaseExecutor
+from agents.workers.payloads import WorkerPayload
 import torch
 
 
@@ -165,7 +166,21 @@ class TorchMPExecutor(BaseExecutor):
                 else:
                     data = {}
 
-                result_queue.put((worker_cls.__name__, data))
+                # Package result into standardized payload
+                if isinstance(data, WorkerPayload):
+                    payload = data
+                elif isinstance(data, dict):
+                    # Separate metrics (for logging) from data (for training) if necessary.
+                    # For now, we assume dicts from standard actors are metrics.
+                    payload = WorkerPayload(
+                        worker_type=worker_cls.__name__, metrics=data
+                    )
+                else:
+                    payload = WorkerPayload(
+                        worker_type=worker_cls.__name__, metrics={}, data=data
+                    )
+
+                result_queue.put(payload)
         except Exception as e:
             # We stringify the exception to prevent obscure pickling errors (like 'cell' objects)
             # from masking the real underlying crash when this goes through the mp.Queue.

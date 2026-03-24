@@ -1,6 +1,7 @@
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple, Type
+from agents.workers.payloads import WorkerPayload
 import torch
 
 
@@ -79,7 +80,25 @@ class BaseExecutor(ABC):
         def fetch_and_route():
             new_batch = self._fetch_available_results()
             for obj in new_batch:
-                if isinstance(obj, tuple) and len(obj) == 2 and isinstance(obj[0], str):
+                if isinstance(obj, WorkerPayload):
+                    t_name = obj.worker_type
+                    # Standard interface: we primarily return metrics to the trainer
+                    # but ensure trajectory data is included if it exists in the payload.
+                    data = obj.metrics
+                    if obj.data is not None:
+                        if not data:
+                            data = obj.data
+                        elif isinstance(obj.data, dict):
+                            data = {**data, **obj.data}
+
+                    if type_name and t_name == type_name:
+                        results.append(data)
+                    else:
+                        if t_name not in self.result_buffer:
+                            self.result_buffer[t_name] = []
+                        self.result_buffer[t_name].append(data)
+                elif isinstance(obj, tuple) and len(obj) == 2 and isinstance(obj[0], str):
+                    # Legacy support for raw tuples
                     t_name, data = obj
                     if type_name and t_name == type_name:
                         results.append(data)
