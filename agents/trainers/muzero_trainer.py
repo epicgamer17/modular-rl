@@ -56,7 +56,10 @@ class MuZeroTrainer(BaseTrainer):
             self.agent_network.share_memory()
 
         # 2. Initialize Action Selector (MCTS)
-        inner_selector = CategoricalSelector()
+        from agents.action_selectors.selectors import LegalMovesMaskDecorator
+        
+        # We wrap with LegalMovesMaskDecorator first, then Temperature
+        inner_selector = LegalMovesMaskDecorator(CategoricalSelector())
         self.action_selector = TemperatureSelector(
             inner_selector=inner_selector,
             config=config,

@@ -1,5 +1,5 @@
-from typing import Any, Dict, Optional, Tuple
 import torch
+import dataclasses
 from agents.action_selectors.selectors import BaseActionSelector
 from agents.action_selectors.types import InferenceResult
 from torch.distributions import Categorical
@@ -39,15 +39,6 @@ class PPODecorator(BaseActionSelector):
         metadata["value"] = result.value.cpu()
 
         return action, metadata
-
-    def mask_actions(
-        self,
-        values: torch.Tensor,
-        legal_moves: Any,
-        mask_value: float = -float("inf"),
-        device: Optional[torch.device] = None,
-    ) -> torch.Tensor:
-        return self.inner_selector.mask_actions(values, legal_moves, mask_value, device)
 
     def update_parameters(self, params_dict: Dict[str, Any]) -> None:
         """
@@ -124,31 +115,19 @@ class TemperatureSelector(BaseActionSelector):
 
         # Apply temperature
         if temp == 0.0:
-            mask = info.get("legal_moves_mask", info.get("legal_moves")) if info else None
-            if mask is not None:
-                logits = self.mask_actions(logits, mask)
+            # Greedy selection on current logits (already masked by LegalMovesMaskDecorator)
             best_actions = logits.argmax(dim=-1)
             logits = torch.full_like(logits, -float("inf"))
             logits.scatter_(1, best_actions.unsqueeze(1), 0.0)
         elif temp != 1.0:
             logits = logits / temp
 
-        # Write heated logits back; clear probs so downstream selector uses the new values
-        result.logits = logits
-        result.probs = None
+        # Return a new frozen result with the heated logits
+        result = dataclasses.replace(result, logits=logits, probs=None)
 
         return self.inner_selector.select_action(
             result, info, exploration=exploration, **kwargs
         )
-
-    def mask_actions(
-        self,
-        values: torch.Tensor,
-        legal_moves: Any,
-        mask_value: float = -float("inf"),
-        device: Optional[torch.device] = None,
-    ) -> torch.Tensor:
-        return self.inner_selector.mask_actions(values, legal_moves, mask_value, device)
 
     def update_parameters(self, params_dict: Dict[str, Any]) -> None:
         """

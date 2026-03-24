@@ -71,7 +71,7 @@ class BaseTrainer:
         """Initializes the EvaluatorActor via an Executor."""
         from agents.workers.actors import EvaluatorActor
         from agents.environments.adapters import GymAdapter
-        from agents.action_selectors.selectors import ArgmaxSelector
+        from agents.action_selectors.selectors import ArgmaxSelector, LegalMovesMaskDecorator
 
         # 1. Initialize Executor if not already done
         if self.executor is None:
@@ -81,6 +81,8 @@ class BaseTrainer:
         # 2. Prepare worker args
         adapter_cls = self._get_adapter_class()
         env_factory = self.config.game.env_factory
+        # Ensure evaluator respects legal moves!
+        selector = LegalMovesMaskDecorator(ArgmaxSelector())
         worker_args = (
             adapter_cls,
             (env_factory,),
@@ -88,7 +90,7 @@ class BaseTrainer:
             self.policy_source,
             None,  # Index 4 (buffer placeholder)
             self.config,  # Index 5
-            ArgmaxSelector(),  # Index 6 (action_selector)
+            selector,  # Index 6 (action_selector)
             self.test_agents,  # Index 7 (test_agents)
         )
 

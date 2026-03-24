@@ -1,9 +1,8 @@
 from typing import Dict, Any
 from agents.action_selectors.selectors import (
-    CategoricalSelector,
-    EpsilonGreedySelector,
     ArgmaxSelector,
     BaseActionSelector,
+    LegalMovesMaskDecorator,
 )
 from agents.action_selectors.decorators import PPODecorator, TemperatureSelector
 
@@ -19,6 +18,7 @@ class SelectorFactory:
         # Decorators
         "ppo_injector": PPODecorator,
         "temperature": TemperatureSelector,
+        "legal_moves_mask": LegalMovesMaskDecorator,
     }
 
     @classmethod
@@ -52,14 +52,25 @@ class SelectorFactory:
             raise ValueError(f"Unknown selector type: {base_type}")
 
         # Create the inner-most selector
-        # Pass the config object (base_cfg) to the constructor
         selector = cls.REGISTRY[base_type](config=base_cfg, **base_kwargs)
 
-        # 2. Recursively wrap it with Decorators (Inside-Out)
+        # 1.5 Automatically wrap with LegalMovesMaskDecorator (MANDATORY)
+        # Since base selectors (Argmax, Categorical, EpsilonGreedy) no longer handle masks,
+        # we must ensure the decorator is present by default. We only skip if explicitly 
+        # listed in the decorators list to avoid double-masking.
         if hasattr(config, "decorators"):
             decorators_cfg = config.decorators
         else:
             decorators_cfg = config.get("decorators", [])
+
+        has_mask_dec = any(
+            (getattr(d, "type", d.get("type")) == "legal_moves_mask")
+            for d in decorators_cfg
+        )
+        if not has_mask_dec:
+            selector = LegalMovesMaskDecorator(inner_selector=selector)
+
+        # 2. Recursively wrap it with Decorators (Inside-Out)
         for dec_cfg in decorators_cfg:
             # Handle if dec_cfg is a Config object or dict
             if hasattr(dec_cfg, "type"):
