@@ -225,7 +225,7 @@ class UniversalLearner:
         1. Forward Pass (Predictions)
         2. Build Targets (via TargetBuilder or passthrough)
         3. Run Loss Pipeline
-        4. Priories
+        4. Priorities
         """
         # 1. Predictions
         predictions = self.agent_network.learner_inference(batch)

@@ -27,6 +27,7 @@ class TorchMPExecutor(BaseExecutor):
         self.param_queue = mp.Queue()
         self.command_queue = mp.Queue()
         self.worker_events = {}  # {worker_type_name: mp.Event}
+        self.shared_networks = set()  # To avoid redundant updates to shared RAM
 
     def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int):
         self.stop_flag.value = 0
@@ -39,6 +40,10 @@ class TorchMPExecutor(BaseExecutor):
             self.worker_events[type_name] = mp.Event()
 
         trigger_event = self.worker_events[type_name]
+
+        # Track network if it is likely shared (index 2 of standard worker args)
+        if len(args) > 2 and isinstance(args[2], torch.nn.Module):
+            self.shared_networks.add(args[2])
 
         for i in range(num_workers):
             p = mp.Process(
@@ -245,15 +250,18 @@ class TorchMPExecutor(BaseExecutor):
         weights: Optional[Dict[str, torch.Tensor]] = None,
         hyperparams: Optional[Dict[str, Any]] = None,
     ):
-        # In TorchMP with shared memory, weights ARE the actor model weights (on CPU).
-        # But we still send the hyperparams to trigger refreshes.
-        if hyperparams is None:
-            hyperparams = {}
+        # 1. Update shared memory once in main process
+        if weights and self.shared_networks:
+            # Handle potentially compiled model state dicts
+            clean_params = {k.replace("_orig_mod.", ""): v for k, v in weights.items()}
+            for net in self.shared_networks:
+                # This update is global; all workers automatically see it via shared RAM
+                net.load_state_dict(clean_params, strict=False)
 
-        # Signal noise reset if this is a learning update
-        # hyperparams["reset_noise"] = True # No longer needed here, handled in Actor
-
-        update_dict = {"weights": weights, "hyperparams": hyperparams}
+        # 2. Only send hyperparams to the workers to trigger local resets (e.g. noisy net)
+        # We set weights=None for the IPC queue to avoid massive serialization overhead
+        # (The Death Trap)
+        update_dict = {"weights": None, "hyperparams": hyperparams or {}}
 
         # Send to all workers via the queue
         for _ in range(len(self.workers)):
