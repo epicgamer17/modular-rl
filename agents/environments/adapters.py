@@ -142,7 +142,11 @@ class VectorAdapter(BaseAdapter):
             obs = result
             info = {}
             
-        return torch.as_tensor(obs, dtype=torch.float32, device=self.device), self._process_info(info)
+        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+        if obs_tensor.dim() == len(self.vec_env.observation_space.shape):
+            obs_tensor = obs_tensor.unsqueeze(0)
+            
+        return obs_tensor, self._process_info(info)
 
     def step(self, actions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
         # Map actions back to NumPy for the vectorized environment
@@ -152,11 +156,23 @@ class VectorAdapter(BaseAdapter):
         # Unpack, being robust to different return lengths (e.g. PufferLib)
         obs, rewards, terminals, truncs, infos = ans[:5]
         
+        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+        rewards_tensor = torch.as_tensor(rewards, dtype=torch.float32, device=self.device)
+        terminals_tensor = torch.as_tensor(terminals, dtype=torch.bool, device=self.device)
+        truncs_tensor = torch.as_tensor(truncs, dtype=torch.bool, device=self.device)
+
+        # Force batch dimension if squeezed by the environment
+        if obs_tensor.dim() == len(self.vec_env.observation_space.shape):
+            obs_tensor = obs_tensor.unsqueeze(0)
+            rewards_tensor = rewards_tensor.unsqueeze(0)
+            terminals_tensor = terminals_tensor.unsqueeze(0)
+            truncs_tensor = truncs_tensor.unsqueeze(0)
+
         return (
-            torch.as_tensor(obs, dtype=torch.float32, device=self.device),
-            torch.as_tensor(rewards, dtype=torch.float32, device=self.device),
-            torch.as_tensor(terminals, dtype=torch.bool, device=self.device),
-            torch.as_tensor(truncs, dtype=torch.bool, device=self.device),
+            obs_tensor,
+            rewards_tensor,
+            terminals_tensor,
+            truncs_tensor,
             self._process_info(infos)
         )
 

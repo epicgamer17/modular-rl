@@ -107,7 +107,7 @@ class EpsilonGreedySelector(BaseActionSelector):
             result.q_values is not None
         ), "EpsilonGreedySelector requires result.q_values"
         q_values = result.q_values
-        batch_size = q_values.shape[0] if q_values.dim() == 2 else 1
+        batch_size = q_values.shape[0]
 
         # Check if legal moves are provided
         mask = info.get("legal_moves_mask")

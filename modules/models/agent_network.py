@@ -189,9 +189,7 @@ class AgentNetwork(nn.Module):
         ), f"[Fail-Fast] Expected float32 obs, got {obs.dtype}. Cast in Adapter!"
         assert (
             obs.dim() >= 2
-        ), f"[Fail-Fast] Expected batched obs [B, ...], got shape {obs.shape}."
-        if obs.dim() == len(self.input_shape):
-            obs = obs.unsqueeze(0)
+        ), f"[Fail-Fast] Expected batched obs [B, ...], got shape {obs.shape} (Adapter failed its contract)."
 
         latent = self.components["representation"](obs)
 

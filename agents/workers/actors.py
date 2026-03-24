@@ -228,12 +228,8 @@ class RolloutActor(BaseActor):
 
                 # Enrich with inference math (targets for learner)
                 if result.value is not None:
-                    # Search value is usually (B,)
-                    val = (
-                        result.value[i].item()
-                        if result.value.dim() > 0
-                        else result.value.item()
-                    )
+                    # Guaranteed to be Tensor[B] or Tensor[B, 1]
+                    val = result.value[i].item()
                     transition["value"] = val
                 if result.probs is not None:
                     # [num_actions]

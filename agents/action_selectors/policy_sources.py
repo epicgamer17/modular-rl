@@ -84,110 +84,60 @@ class SearchPolicySource(BasePolicySource):
             "player" in info
         ), "info must contain 'player', or pass to_play as a kwarg"
 
-        # MCTSDecorator logic uses run_vectorized if B > 1
-        is_batched = obs.dim() > len(agent_network.input_shape) and obs.shape[0] > 1
-
         start_time = time.time()
+        res = self.search.run_vectorized(obs, info, agent_network)
+        (
+            root_values,
+            exploratory_policies,
+            target_policies,
+            best_actions,
+            sm_list,
+        ) = res
 
-        if is_batched:
-            res = self.search.run_vectorized(obs, info, agent_network)
-            (
-                root_values,
-                exploratory_policies,
-                target_policies,
-                best_actions,
-                sm_list,
-            ) = res
+        search_duration = time.time() - start_time
 
-            search_duration = time.time() - start_time
-
-            probs = torch.stack(
-                [
-                    torch.as_tensor(
-                        p, device=obs.device, dtype=torch.float32
-                    ).contiguous()
-                    for p in exploratory_policies
-                ]
-            )
-            values = torch.as_tensor(
-                root_values, device=obs.device, dtype=torch.float32
-            )
-
-            # Ensure values is [B, 1] if input was batched
-            if not isinstance(values, torch.Tensor):
-                values = torch.tensor(values, device=obs.device, dtype=torch.float32)
-            if values.dim() == 1:
-                values = values.unsqueeze(-1)
-
-            # Standardize search results to tensors for BaseActor squeezing and PufferActor indexing
-            target_policies_tensor = torch.stack(
-                [
-                    torch.as_tensor(
-                        p, device=obs.device, dtype=torch.float32
-                    ).contiguous()
-                    for p in target_policies
-                ]
-            )
-            best_actions_tensor = torch.as_tensor(
-                best_actions, device=obs.device, dtype=torch.long
-            )
-
-            return InferenceResult(
-                probs=probs,
-                value=values,
-                action=best_actions_tensor,
-                extras={
-                    "target_policies": target_policies_tensor,
-                    "search_duration": search_duration,
-                    "search_metadata": sm_list,
-                    "best_actions": best_actions_tensor,
-                    "value": values.squeeze(-1),
-                    "root_value": values.squeeze(-1),
-                },
-            )
-        else:
-            res = self.search.run(obs, info, agent_network, exploration=exploration)
-            (
-                root_value,
-                exploratory_policy,
-                target_policy,
-                best_action,
-                search_metadata,
-            ) = res
-
-            search_duration = time.time() - start_time
-            probs = exploratory_policy.to(obs.device, non_blocking=True).contiguous()
-            value = torch.tensor([root_value], device=obs.device, dtype=torch.float32)
-
-            # If the input was unsqueezed [1, ...], the output should be [1, A]
-            if obs.dim() > len(agent_network.input_shape):
-                probs = probs.unsqueeze(0)
-                # value is already [1] which matches [B]
-                target_policies_out = (
-                    target_policy.unsqueeze(0)
-                    .to(obs.device, non_blocking=True)
-                    .contiguous()
-                )
-                best_actions_out = torch.tensor([best_action], device=obs.device)
-            else:
-                target_policies_out = target_policy.to(
-                    obs.device, non_blocking=True
+        probs = torch.stack(
+            [
+                torch.as_tensor(
+                    p, device=obs.device, dtype=torch.float32
                 ).contiguous()
-                best_actions_out = torch.tensor(best_action, device=obs.device)
+                for p in exploratory_policies
+            ]
+        )
+        values = torch.as_tensor(
+            root_values, device=obs.device, dtype=torch.float32
+        )
 
-            return InferenceResult(
-                probs=probs,
-                value=value,
-                action=best_actions_out,
-                extras={
-                    "target_policies": target_policies_out,
-                    "search_duration": search_duration,
-                    "search_metadata": search_metadata,
-                    "best_actions": best_actions_out,
-                    "value": value.squeeze(0),
-                    "root_value": value.squeeze(0),
-                },
-            )
+        # Standardize values to [B, 1] for potential Multi-Player Reward mapping
+        if values.dim() == 1:
+            values = values.unsqueeze(-1)
+
+        # Standardize search results to tensors for BaseActor squeezing and PufferActor indexing
+        target_policies_tensor = torch.stack(
+            [
+                torch.as_tensor(
+                    p, device=obs.device, dtype=torch.float32
+                ).contiguous()
+                for p in target_policies
+            ]
+        )
+        best_actions_tensor = torch.as_tensor(
+            best_actions, device=obs.device, dtype=torch.long
+        )
+
+        return InferenceResult(
+            probs=probs,
+            value=values,
+            action=best_actions_tensor,
+            extras={
+                "target_policies": target_policies_tensor,
+                "search_duration": search_duration,
+                "search_metadata": sm_list,
+                "best_actions": best_actions_tensor,
+                "value": values.squeeze(-1),
+                "root_value": values.squeeze(-1),
+            },
+        )
 
 
 class NFSPNetworkPolicySource(BasePolicySource):
