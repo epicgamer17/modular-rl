@@ -9,11 +9,8 @@ from agents.action_selectors.policy_sources import BasePolicySource
 from agents.environments.adapters import BaseAdapter
 from agents.workers.state_management import SequenceManager
 from replay_buffers.modular_buffer import ModularReplayBuffer
-from agents.action_selectors.selectors import (
-    BaseActionSelector,
-    ArgmaxSelector,
-)
 from agents.workers.payloads import TaskRequest, TaskType, WorkerPayload
+from agents.workers.trajectory_buffer import TrajectoryBuffer
 
 
 class BaseActor(ABC):
@@ -132,12 +129,26 @@ class RolloutActor(BaseActor):
         self.completed_lengths = []
 
         # Track current episode progress across envs
-        self.current_scores = np.zeros(self.num_envs)
         self.current_lengths = np.zeros(self.num_envs)
+
+        # 2. Pre-allocate the Trajectory Buffer for this actor's device
+        # We size it for a reasonable chunk (at least num_steps)
+        # For simplicity, we can resize it if needed, or use a large default.
+        # Most collectors use a fixed size like 128 or 2048.
+        # If config doesn't specify, we'll use a safe default and resize if collect is called with more.
+        self.chunk_size = getattr(config, "steps_per_collect", 2048)
+        self.traj_buffer = TrajectoryBuffer(
+            num_envs=self.num_envs,
+            chunk_size=self.chunk_size,
+            obs_shape=self.adapter.env.observation_space.shape if hasattr(self.adapter.env, "observation_space") else self.obs.shape[1:],
+            num_actions=num_actions,
+            device=device
+        )
 
     def setup(self) -> None:
         """Prepares the network for rollout (eval mode)."""
         self.agent_network.eval()
+        self.traj_buffer.clear()
 
     def update_parameters(
         self,
@@ -191,6 +202,17 @@ class RolloutActor(BaseActor):
         Main execution loop. Performs num_steps environment steps across managed environments.
         Returns metrics for the collection call.
         """
+        # Ensure Trajectory Buffer is large enough for this call
+        if num_steps > self.traj_buffer.chunk_size:
+            self.traj_buffer = TrajectoryBuffer(
+                num_envs=self.num_envs,
+                chunk_size=num_steps,
+                obs_shape=self.traj_buffer.obs.shape[2:],
+                num_actions=self.traj_buffer.probs.shape[2] if self.traj_buffer.probs is not None else None,
+                device=self.traj_buffer.device
+            )
+        self.traj_buffer.clear()
+
         steps_this_call = 0
         batch_scores = []
         batch_lengths = []
@@ -213,59 +235,33 @@ class RolloutActor(BaseActor):
                 actions
             )
 
-            # 4. Route Transitions to SequenceManager
+            # 4. FAST VECTORIZED INSERTION (Pre-allocated tensors)
+            # Eliminate per-step dict loop.
+            self.traj_buffer.insert(
+                obs=next_obs,
+                actions=actions,
+                rewards=rewards,
+                terminals=terminals,
+                truncations=truncations,
+                values=result.value,
+                probs=result.probs,
+                log_probs=metadata.get("log_prob"),
+                player_ids=self.info.get("player_id"),
+                legal_moves_masks=self.info.get("legal_moves_mask"),
+            )
+
             self.current_scores += rewards.cpu().numpy()
             self.current_lengths += 1
 
+            # 5. Boundary Logic & Episode Stats (Still needs per-env check for terminals)
+            # But we only create dicts if the environment actually finished.
             for i in range(self.num_envs):
-                transition = {
-                    "observation": next_obs[i].cpu().numpy(),
-                    "action": actions[i].item(),
-                    "reward": rewards[i].item(),
-                    "terminated": terminals[i].item(),
-                    "truncated": truncations[i].item(),
-                }
+                # We always append to SequenceManager, but now we get the step from TrajectoryBuffer
+                # which uses efficient pre-extracted tensors.
+                step_dict = self.traj_buffer.get_step_dict(self.traj_buffer.step_idx - 1, i)
+                self.seq_manager.append(i, step_dict)
 
-                # Enrich with inference math (targets for learner)
-                if result.value is not None:
-                    # Guaranteed to be Tensor[B] or Tensor[B, 1]
-                    val = result.value[i].item()
-                    transition["value"] = val
-                if result.probs is not None:
-                    # [num_actions]
-                    transition["policy"] = result.probs[i].cpu().numpy()
-
-                # 4.5 Capture Log Probs (Essential for PPO/Policy Gradients)
-                if "log_prob" in metadata:
-                    lp = metadata["log_prob"]
-                    transition["log_prob"] = lp[i].item() if torch.is_tensor(lp) else lp
-                elif "policy_dist" in metadata:
-                    # Best case: selector already made a distribution
-                    dist = metadata["policy_dist"]
-                    lp = dist.log_prob(actions).cpu().numpy()
-                    transition["log_prob"] = lp[i]
-                elif result.probs is not None:
-                    # Fallback: create distribution once per step if missing
-                    # Note: Distributions are created once per env for simplicity if missing.
-                    from torch.distributions import Categorical
-                    dist = Categorical(probs=result.probs)
-                    lp = dist.log_prob(actions).cpu().numpy()
-                    transition["log_prob"] = lp[i]
-
-                # Enrich with environment metadata (Guaranteed Tensor[B] from Adapter)
-                if "player_id" in self.info:
-                    transition["player_id"] = self.info["player_id"][i].item()
-
-                if "legal_moves_mask" in self.info:
-                    mask = self.info["legal_moves_mask"][i]
-                    transition["legal_moves"] = (
-                        torch.where(mask)[0].cpu().numpy().tolist()
-                    )
-
-                self.seq_manager.append(i, transition)
-
-                # 5. Boundary Logic: Flush and Reseed
-                if terminals[i] or truncations[i]:
+                if terminals[i].item() or truncations[i].item():
                     completed_seq = self.seq_manager.flush(i)
                     self.buffer.store_aggregate(completed_seq)
 
