@@ -264,8 +264,14 @@ class ModularReplayBuffer:
                     self.sampler.on_store(idx, priority=p)
 
     def _write_to_buffer(self, name, idx, val):
-        if isinstance(val, np.ndarray):
-            val = torch.from_numpy(val)
+        # Safely convert NumPy arrays and NumPy scalars (np.float32, np.int64) into PyTorch tensors
+        if isinstance(val, (np.ndarray, np.generic)):
+            val = torch.as_tensor(val)
+
+        # If it's a PyTorch tensor on a different device (like GPU), move it to CPU for the buffer
+        if torch.is_tensor(val) and val.device.type != "cpu":
+            val = val.cpu()
+
         self.buffers[name][idx] = val
 
     def sample(self):

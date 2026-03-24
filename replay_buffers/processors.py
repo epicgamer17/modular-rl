@@ -110,15 +110,6 @@ class InputProcessor(ABC):
             transitions.append(t)
         return transitions
 
-    def finish_trajectory(self, buffers, trajectory_slice, **kwargs):
-        """
-        Optional hook called when a trajectory ends.
-        Override to compute trajectory-level computations (e.g., GAE).
-        Returns:
-            Optional dict of computed values to store in buffer.
-        """
-        return None
-
     def clear(self):
         pass
 
@@ -181,17 +172,6 @@ class StackedInputProcessor(InputProcessor):
                 return None
             data.update(result)
         return data
-
-    def finish_trajectory(self, buffers, trajectory_slice, **kwargs):
-        """
-        Calls finish_trajectory on all processors, aggregating results.
-        """
-        result = {}
-        for p in self.processors:
-            traj_result = p.finish_trajectory(buffers, trajectory_slice, **kwargs)
-            if traj_result:
-                result.update(traj_result)
-        return result
 
     def get_processor(self, processor_type):
         """
@@ -873,127 +853,63 @@ class ObservationDecompressionProcessor(OutputProcessor):
 
 
 class GAEProcessor(InputProcessor):
-    """
-    Computes Generalized Advantage Estimation (GAE) at trajectory end.
-    Passes through single steps unchanged, then finalizes with GAE calculation.
-    """
-
     def __init__(self, gamma, gae_lambda):
         self.gamma = gamma
         self.gae_lambda = gae_lambda
 
     def process_single(self, *args, **kwargs):
+        # We only compute GAE on full sequences/chunks
         return kwargs
 
     def process_sequence(self, sequence, **kwargs):
-        """
-        Computes GAE over a full sequence of transitions.
-        """
-        transitions = kwargs.get("transitions")
-        if transitions is None:
-            transitions = self._sequence_to_transitions(sequence)
-
-        if transitions is None or len(transitions) == 0:
-            return {"transitions": []}
-
-        # Extract rewards and values
-        rewards_np = np.array(
-            [t.get("rewards", 0.0) for t in transitions], dtype=np.float32
-        )
-        values_np = np.array(
-            [t.get("values", 0.0) for t in transitions], dtype=np.float32
+        # 1. Fail-Fast Boundary Check
+        # If the episode hasn't ended, the actor MUST provide the bootstrap value.
+        is_terminal = bool(sequence.terminated_history[-1]) or bool(
+            sequence.done_history[-1]
         )
 
-        # GAE requires a bootstrap value for the final next state.
-        # 1. Use external bootstrap from kwargs (RolloutActor force-flush)
-        # 2. Fallback to sequence history (if it's n+1 long - i.e. finished trajectory)
-        last_value = kwargs.get("bootstrap_value", kwargs.get("last_value", 0.0))
+        if not is_terminal:
+            assert (
+                "bootstrap_value" in kwargs
+            ), "[Fail-Fast] Unfinished PPO chunk requires a bootstrap_value in kwargs!"
+            last_val = kwargs["bootstrap_value"]
+        else:
+            last_val = 0.0
 
-        if (
-            sequence is not None
-            and hasattr(sequence, "value_history")
-            and len(sequence.value_history) > len(transitions)
-        ):
-            # If the sequence has its own final value (e.g. from end of trajectory), use it.
-            # (In PPO we usually don't rely on history for chunk bootstrap, but it's safe)
-            last_value = sequence.value_history[-1]
+        # 2. Extract arrays from the sequence object
+        rewards = np.array(sequence.rewards, dtype=np.float32)
+        values = np.array(sequence.value_history, dtype=np.float32)
 
-        dones_np = np.array([t.get("dones", False) for t in transitions], dtype=bool)
+        # 3. Append the bootstrap value to the value array
+        values_appended = np.append(values, last_val)
 
-        rewards_pad = np.append(rewards_np, last_value)
-        values_pad = np.append(values_np, last_value)
+        # 4. Calculate TD Residuals (Deltas)
+        # delta_t = r_t + gamma * V(s_{t+1}) - V(s_t)
+        deltas = rewards + self.gamma * values_appended[1:] - values_appended[:-1]
 
-        # Vectorized GAE
-        deltas = (
-            rewards_pad[:-1]
-            + self.gamma * values_pad[1:] * (~dones_np)
-            - values_pad[:-1]
-        )
+        # 5. Compute GAE (Advantages) using your fast utils function
+        from replay_buffers.utils import discounted_cumulative_sums
 
-        advantages = discounted_cumulative_sums(
-            deltas, self.gamma * self.gae_lambda
-        ).copy()
-        returns = discounted_cumulative_sums(rewards_pad, self.gamma).copy()[:-1]
+        advantages = discounted_cumulative_sums(deltas, self.gamma * self.gae_lambda)
 
-        adv_list = advantages.tolist()
-        ret_list = returns.tolist()
+        # 6. Compute Returns (Targets for Value Loss)
+        returns = advantages + values
 
-        for t, adv, ret in zip(transitions, adv_list, ret_list):
-            t["advantages"] = adv
-            t["returns"] = ret
-
-            # Extract scalar log_prob for PPO
-            if t.get("policy") is not None:
-                pol = t["policy"]
-                if np.isscalar(pol) or (hasattr(pol, "ndim") and pol.ndim == 0):
-                    t["log_prob"] = float(pol)
-                elif isinstance(pol, (np.ndarray, torch.Tensor)) and pol.ndim == 1:
-                    # Fallback: if it's a distribution and we have the action, compute log_prob
-                    # Assuming policy is probs
-                    action = t.get("actions")
-                    if action is not None:
-                        idx = int(action)
-                        # Avoid log(0)
-                        prob = float(pol[idx])
-                        t["log_prob"] = float(np.log(max(prob, 1e-10)))
-            elif t.get("policies") is not None:
-                # Handle plural naming consistency
-                pol = t["policies"]
-                if np.isscalar(pol) or (hasattr(pol, "ndim") and pol.ndim == 0):
-                    t["log_prob"] = float(pol)
-
-        return {"transitions": transitions}
-
-    def finish_trajectory(self, buffers, trajectory_slice, bootstrap_value=0):
-        """
-        Compute GAE advantages and returns for a trajectory segment in old single-step mode.
-        """
-        rewards = torch.cat(
-            (
-                buffers["rewards"][trajectory_slice],
-                torch.tensor([bootstrap_value], dtype=torch.float32),
+        # 7. Package the flattened transitions for the Replay Buffer
+        processed_transitions = []
+        for i in range(len(rewards)):
+            processed_transitions.append(
+                {
+                    "observations": sequence.observation_history[i],
+                    "actions": sequence.action_history[i],
+                    "log_prob": sequence.log_prob_history[i],  # Unified singular key
+                    "values": values[i],  # Old values needed for Value Clipping
+                    "advantages": advantages[i],
+                    "returns": returns[i],  # Target for Value Loss
+                }
             )
-        )
-        values = torch.cat(
-            (
-                buffers["values"][trajectory_slice],
-                torch.tensor([bootstrap_value], dtype=torch.float32),
-            )
-        )
 
-        deltas = rewards[:-1] + self.gamma * values[1:] - values[:-1]
-
-        deltas_np = deltas.detach().cpu().numpy()
-        rewards_np = rewards.detach().cpu().numpy()
-
-        advantages = torch.from_numpy(
-            discounted_cumulative_sums(deltas_np, self.gamma * self.gae_lambda).copy()
-        ).to(torch.float32)
-        returns = torch.from_numpy(
-            discounted_cumulative_sums(rewards_np, self.gamma).copy()
-        ).to(torch.float32)[:-1]
-
-        return {"advantages": advantages, "returns": returns}
+        return {"transitions": processed_transitions}
 
 
 # ==========================================
