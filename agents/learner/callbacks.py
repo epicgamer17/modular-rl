@@ -251,7 +251,7 @@ class WeightBroadcastCallback(Callback):
 
 
 class EpsilonGreedySchedulerCallback(Callback):
-    """Syncs target network weights at the end of each training step."""
+    """Steps the epsilon-greedy exploration schedule at the end of each training step."""
 
     # TODO: should we have the init like this or should the learner store the target_agent_network too?
     def __init__(self, epsilon_schedule):

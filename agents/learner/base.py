@@ -179,7 +179,7 @@ class UniversalLearner:
                     # Fire on_optimizer_step_end (e.g. noisy net reset)
                     self.callbacks.on_optimizer_step_end(learner=self)
 
-                # 5. Throughput Metrics
+                # 4. Throughput Metrics
                 t_now = time.perf_counter()
                 dt = t_now - t_last
                 t_last = t_now
@@ -192,7 +192,7 @@ class UniversalLearner:
 
                 result.loss_dict["learner_throughput"] = (B * T) / dt if dt > 0 else 0
 
-                # 4. Fire on_step_end
+                # 5. Fire on_step_end
                 self.callbacks.on_step_end(
                     learner=self,
                     predictions=result.predictions,
@@ -288,22 +288,14 @@ class UniversalLearner:
         self.training_step = state.get("training_step", 0)
 
         if "optimizers" in state:
-            for k, v in self.optimizers.items():
+            for k, opt in self.optimizers.items():
                 if k in state["optimizers"]:
-                    v.load_state_dict(state["optimizers"][k])
-        # Backward compatibility for old checkpoints
-        elif "optimizer" in state:
-            if "default" in self.optimizers:
-                self.optimizers["default"].load_state_dict(state["optimizer"])
+                    opt.load_state_dict(state["optimizers"][k])
 
         if "lr_schedulers" in state:
-            for k, v in self.lr_schedulers.items():
+            for k, sched in self.lr_schedulers.items():
                 if k in state["lr_schedulers"]:
-                    v.load_state_dict(state["lr_schedulers"][k])
-        # Backward compatibility for old checkpoints
-        elif "lr_scheduler" in state:
-            if "default" in self.lr_schedulers:
-                self.lr_schedulers["default"].load_state_dict(state["lr_scheduler"])
+                    sched.load_state_dict(state["lr_schedulers"][k])
 
     def _build_step_metrics(self, step_result: StepResult) -> Dict[str, Any]:
         """Final cleanup of metrics to ensure no tensors leak to the logger."""
