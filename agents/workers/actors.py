@@ -256,12 +256,9 @@ class RolloutActor(BaseActor):
                     lp = dist.log_prob(actions).cpu().numpy()
                     transition["log_prob"] = lp[i]
 
-                # Enrich with environment metadata
+                # Enrich with environment metadata (Guaranteed Tensor[B] from Adapter)
                 if "player_id" in self.info:
-                    p_id = self.info["player_id"]
-                    transition["player_id"] = (
-                        p_id[i].item() if torch.is_tensor(p_id) else p_id[i]
-                    )
+                    transition["player_id"] = self.info["player_id"][i].item()
 
                 if "legal_moves_mask" in self.info:
                     mask = self.info["legal_moves_mask"][i]
@@ -474,21 +471,22 @@ class EvaluatorActor(BaseActor):
                 obs, info, agent_network=self.agent_network, exploration=False
             )
 
-            # 1. Routing Trick: Check for hardcoded test agents
-            player_ids = info.get("player_id", [])
+            # 1. Routing Trick: Check for hardcoded test agents (Guaranteed Tensor[B] from Adapter)
+            player_ids = info.get("player_id", None)
+            
             # For simplicity in evaluation, assume a single player per environment at each step
             # or use the first if batched (Evaluator usually uses B=1)
-            current_player = player_ids[0] if (player_ids and len(player_ids) > 0) else None
+            current_player = player_ids[0] if player_ids is not None else None
             
             # Resolve agent if available
             agent = None
             if self.test_agents and current_player is not None:
                 if isinstance(self.test_agents, dict):
                     # Handle dict-based routing
-                    agent = self.test_agents.get(current_player.item() if hasattr(current_player, "item") else current_player)
-                elif isinstance(self.test_agents, list) and current_player < len(self.test_agents):
+                    agent = self.test_agents.get(current_player.item())
+                elif isinstance(self.test_agents, list) and current_player.item() < len(self.test_agents):
                     # Handle list-based routing
-                    agent = self.test_agents[current_player]
+                    agent = self.test_agents[current_player.item()]
 
             if agent is not None:
                 # Test agent contract: act(obs, info)

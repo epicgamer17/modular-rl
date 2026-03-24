@@ -101,6 +101,7 @@ class GymAdapter(BaseAdapter):
     def _process_info(self, info: Dict[str, Any]) -> Dict[str, Any]:
         processed = info.copy()
         # Standardize player_id for Actor/Search consumption
+        # Guaranteed to be Tensor[B] where B=1 for single-player Gym
         processed["player_id"] = torch.tensor([0], dtype=torch.int64, device=self.device)
         
         # Expand legal_moves into a boolean mask [1, num_actions]
@@ -191,9 +192,13 @@ class VectorAdapter(BaseAdapter):
             mask = torch.ones((self.num_envs, self.num_actions), dtype=torch.bool, device=self.device)
             processed["legal_moves_mask"] = mask
             
-        # Standardize player indexing
+        # 3. Standardize player indexing: Guaranteed to be Tensor[B]
         if "player" in processed:
-            processed["player_id"] = torch.as_tensor(processed["player"], dtype=torch.int64, device=self.device)
+            p_id = torch.as_tensor(processed["player"], dtype=torch.int64, device=self.device)
+            # Ensure it is at least 1D (B,)
+            if p_id.dim() == 0:
+                p_id = p_id.unsqueeze(0)
+            processed["player_id"] = p_id
         else:
             processed["player_id"] = torch.zeros(self.num_envs, dtype=torch.int64, device=self.device)
             
