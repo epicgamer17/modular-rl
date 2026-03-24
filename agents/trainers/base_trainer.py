@@ -29,7 +29,12 @@ class BaseTrainer:
         self.device = device
         self.name = name
         self.stats = stats if stats is not None else StatTracker(name=name)
-        self.test_agents = test_agents if test_agents is not None else []
+        
+        # Priority: 1. test_agents args, 2. config.game.test_agents, 3. empty list
+        self.test_agents = test_agents
+        if self.test_agents is None:
+            self.test_agents = getattr(config.game, "test_agents", [])
+        
         self._env = env
 
         # Detect player_id for PettingZoo environments
@@ -84,6 +89,7 @@ class BaseTrainer:
             None,  # Index 4 (buffer placeholder)
             self.config,  # Index 5
             ArgmaxSelector(),  # Index 6 (action_selector)
+            self.test_agents,  # Index 7 (test_agents)
         )
 
         # 3. Launch EvaluatorActor

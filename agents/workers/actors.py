@@ -52,8 +52,9 @@ class RolloutActor(BaseActor):
         network: AgentNetwork,
         policy_source: BasePolicySource,
         buffer: ModularReplayBuffer,        # Index 4
-        config: Any,                         # Index 5
+        config: Any,
         action_selector: Optional[BaseActionSelector] = None, # Index 6
+        test_agents: Optional[List[Any]] = None,
         worker_id: int = 0,
     ):
         """
@@ -378,7 +379,8 @@ class EvaluatorActor(BaseActor):
         buffer: Optional[ModularReplayBuffer],  # Index 4 (ignored by EvaluatorActor)
         config: Any,  # Index 5
         action_selector: Optional[BaseActionSelector] = None,  # Index 6
-        worker_id: int = 0,  # Index 7
+        test_agents: Optional[List[Any]] = None,  # Index 7
+        worker_id: int = 0,  # Index 8
     ):
         """
         Initializes the EvaluatorActor.
@@ -403,6 +405,7 @@ class EvaluatorActor(BaseActor):
         self.agent_network = network
         self.policy_source = policy_source
         self.action_selector = action_selector
+        self.test_agents = test_agents
         self.num_envs = self.adapter.num_envs
 
         self.total_reward = 0.0
@@ -445,8 +448,36 @@ class EvaluatorActor(BaseActor):
                 obs, info, agent_network=self.agent_network, exploration=False
             )
 
-            # Determine greedy action
-            if self.action_selector is not None:
+            # 1. Routing Trick: Check for hardcoded test agents
+            player_ids = info.get("player_id", [])
+            # For simplicity in evaluation, assume a single player per environment at each step
+            # or use the first if batched (Evaluator usually uses B=1)
+            current_player = player_ids[0] if (player_ids and len(player_ids) > 0) else None
+            
+            # Resolve agent if available
+            agent = None
+            if self.test_agents and current_player is not None:
+                if isinstance(self.test_agents, dict):
+                    # Handle dict-based routing
+                    agent = self.test_agents.get(current_player.item() if hasattr(current_player, "item") else current_player)
+                elif isinstance(self.test_agents, list) and current_player < len(self.test_agents):
+                    # Handle list-based routing
+                    agent = self.test_agents[current_player]
+
+            if agent is not None:
+                # Test agent contract: act(obs, info)
+                if hasattr(agent, "act"):
+                    actions = agent.act(obs, info)
+                elif hasattr(agent, "select_action"):
+                    # Handle if it was another action selector passed as an agent
+                    actions, _ = agent.select_action(result, info, exploration=False)
+                else:
+                    # Fallback to Student if agent is None or invalid
+                    actions, _ = self.action_selector.select_action(
+                        result, info, exploration=False
+                    )
+            elif self.action_selector is not None:
+                # 2. Standard Student Inference
                 actions, _ = self.action_selector.select_action(
                     result, info, exploration=False
                 )
