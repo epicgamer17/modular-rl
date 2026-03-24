@@ -26,6 +26,7 @@ class LossPipeline:
             minibatch_size=config.minibatch_size,
             unroll_steps=getattr(config, "unroll_steps", 0),
             num_actions=config.game.num_actions,
+            num_players=getattr(config.game, "num_players", 1),
             atom_size=getattr(config, "atom_size", 1),
         )
 

@@ -13,12 +13,14 @@ class ShapeValidator:
         minibatch_size: int = 0,
         unroll_steps: int = 0,
         num_actions: int = 0,
+        num_players: int = 1,
         atom_size: int = 1,
     ):
         self.B = minibatch_size
         self.K = unroll_steps
         self.T = self.K + 1
         self.num_actions = num_actions
+        self.num_players = num_players
         self.atom_size = atom_size
 
     def validate(
@@ -67,10 +69,27 @@ class ShapeValidator:
         ), f"{prefix} sequence length mismatch: expected {self.T}, got {shape[1]} | full shape: {shape}"
 
         # 3. Content specific checks
-        if key in ["policy_logits", "q_logits", "to_play_logits", "continuation_logits"]:
-            # Action/Categorical distributions: [B, T, D]
-            # (Note: to_play and continuation also follow this but D is num_players or 2)
-            pass 
+        if key in ["policy_logits", "q_logits", "policies"]:
+            # Action/Categorical distributions: [B, T, num_actions]
+            assert (
+                len(shape) == 3
+            ), f"{prefix} categorical distribution must be 3D [B, T, D], got {shape}"
+            assert (
+                shape[2] == self.num_actions
+            ), f"{prefix} action dimension mismatch: expected {self.num_actions}, got {shape[2]} | full shape: {shape}"
+        elif key in ["to_play_logits"]:
+            # To-play distributions: [B, T, num_players]
+            assert (
+                len(shape) == 3
+            ), f"{prefix} to-play distribution must be 3D [B, T, D], got {shape}"
+            assert (
+                shape[2] == self.num_players
+            ), f"{prefix} player dimension mismatch: expected {self.num_players}, got {shape[2]} | full shape: {shape}"
+        elif key in ["continuation_logits"]:
+            # Continuation is often a single scalar probability per step
+            assert (
+                len(shape) == 3
+            ), f"{prefix} continuation must be 3D [B, T, D], got {shape}"
         elif key in ["state_value", "returns", "afterstate_value", "reward_logits"]:
             # Could be scalar [B, T] or distributional [B, T, atoms]
             if len(shape) == 3:

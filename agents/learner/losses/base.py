@@ -81,15 +81,10 @@ class BaseLoss(ABC):
         pred = predictions[self.pred_key]
 
         # 2. Format targets through the Representation bridge
-        if hasattr(self.representation, "format_target") and callable(
-            self.representation.format_target
-        ):
-            # Target ingredients are pulled directly from the targets dict!
-            formatted_target = self.representation.format_target(
-                targets, target_key=self.target_key
-            )
-        else:
-            formatted_target = targets[self.target_key]
+        # Target ingredients are pulled directly from the targets dict!
+        formatted_target = self.representation.format_target(
+            targets, target_key=self.target_key
+        )
 
         # 3. Apply raw PyTorch loss function
         assert pred.shape == formatted_target.shape, (
