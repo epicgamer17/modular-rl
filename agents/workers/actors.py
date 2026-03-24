@@ -73,7 +73,8 @@ class RolloutActor(BaseActor):
         self.worker_id = worker_id
         # 1. Build the adapter for this worker
         # Most adapters take (env_factory, device, num_actions)
-        device = torch.device("cpu")  # Rollout always on CPU
+        device_name = getattr(config, "actor_device", "cpu")
+        device = torch.device(device_name)
         num_actions = getattr(config.game, "num_actions", None)
 
         self.adapter = adapter_cls(
@@ -318,8 +319,11 @@ class RolloutActor(BaseActor):
             final_values = final_result.value
 
         for i in range(self.num_envs):
-            seq = self.seq_manager.flush(i)
-            if seq and len(seq.observation_history) > 1:
+            active_seq = self.seq_manager.get_sequence(i)
+            # Only force-flush the chunk if we actually took steps in it (len > 1)
+            if len(active_seq.observation_history) > 1:
+                seq = self.seq_manager.flush(i)
+                
                 # Use scalar value extraction (handles search or direct V)
                 v = (
                     final_values[i].item()
@@ -328,30 +332,26 @@ class RolloutActor(BaseActor):
                 )
                 self.buffer.store_aggregate(seq, bootstrap_value=v)
 
-            # 7. Seed the NEXT chunk starting with this observation
-            # (Ensures the first transition of the next collect() has s_0)
-            p_id = 0
-            if "player_id" in self.info:
-                p_id_batch = self.info["player_id"]
-                p_id = (
-                    p_id_batch[i].item()
-                    if torch.is_tensor(p_id_batch)
-                    else (
-                        p_id_batch[i]
-                        if isinstance(p_id_batch, (list, np.ndarray))
-                        else p_id_batch
+                # 7. Seed the NEXT chunk starting with this observation
+                # (Ensures the first transition of the next collect() has s_0)
+                p_id = 0
+                if "player_id" in self.info:
+                    p_id_batch = self.info["player_id"]
+                    p_id = (
+                        p_id_batch[i].item()
+                        if torch.is_tensor(p_id_batch)
+                        else p_id_batch[i]
                     )
-                )
 
-            self.seq_manager.append(
-                i,
-                {
-                    "observation": self.obs[i].cpu().numpy(),
-                    "terminated": False,
-                    "truncated": False,
-                    "player_id": p_id,
-                },
-            )
+                self.seq_manager.append(
+                    i,
+                    {
+                        "observation": self.obs[i].cpu().numpy(),
+                        "terminated": False,
+                        "truncated": False,
+                        "player_id": p_id,
+                    },
+                )
 
         return {
             **self.get_state(),
@@ -396,7 +396,8 @@ class EvaluatorActor(BaseActor):
             action_selector: Optional action selection provider for evaluation.
         """
         self.worker_id = worker_id
-        device = torch.device("cpu")
+        device_name = getattr(config, "actor_device", "cpu")
+        device = torch.device(device_name)
         num_actions = getattr(config.game, "num_actions", None)
         self.adapter = adapter_cls(
             *adapter_args, device=device, num_actions=num_actions
