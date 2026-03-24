@@ -321,14 +321,6 @@ class PassThroughTargetBuilder(BaseTargetBuilder):
                 current_targets[key] = batch[key]
 
 
-class MCTSExtractor(BaseTargetBuilder):
-    """Generates targets by extracting MCTS search statistics from the batch."""
-
-    def build_targets(self, batch, predictions, network, current_targets) -> None:
-        target_keys = ["values", "rewards", "policies", "actions", "to_plays"]
-        for key in target_keys:
-            if key in batch and key not in current_targets:
-                current_targets[key] = batch[key]
 
 
 class SequencePadder(BaseTargetBuilder):

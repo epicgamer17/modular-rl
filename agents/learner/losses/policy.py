@@ -14,13 +14,14 @@ class PolicyLoss(BaseLoss):
         loss_fn: Any,
         loss_factor: float,
         optimizer_name: str = "default",
+        target_key: str = "policies",
         mask_key: str = "policy_mask",
         name: Optional[str] = None,
     ):
         super().__init__(
             device=device,
             pred_key="policy_logits",
-            target_key="policies",
+            target_key=target_key,
             mask_key=mask_key,
             representation=representation,
             loss_fn=loss_fn,
@@ -37,12 +38,13 @@ class PolicyLoss(BaseLoss):
 
         with torch.no_grad():
             pred_logits = predictions[self.pred_key]
-            target_probs = targets[self.target_key]
+            target_probs = targets.get(self.target_key)
 
-            log_q = F.log_softmax(pred_logits, dim=-1)
-            log_p = torch.log(target_probs + 1e-10)
-            kl = (target_probs * (log_p - log_q)).sum(dim=-1).mean()
-            metrics["approx_kl"] = kl.item()
+            if target_probs is not None:
+                log_q = F.log_softmax(pred_logits, dim=-1)
+                log_p = torch.log(target_probs + 1e-10)
+                kl = (target_probs * (log_p - log_q)).sum(dim=-1).mean()
+                metrics["approx_kl"] = kl.item()
 
         return loss, metrics
 
@@ -113,27 +115,3 @@ class ClippedSurrogateLoss(BaseLoss):
             approx_kl = (target_log_prob - log_prob).mean()
 
         return loss, {"approx_kl": approx_kl.item()}
-
-
-class ImitationLoss(BaseLoss):
-    def __init__(
-        self,
-        device: torch.device,
-        representation: LossRepresentation,
-        loss_fn: Any,
-        loss_factor: float = 1.0,
-        optimizer_name: str = "default",
-        mask_key: str = "policy_mask",
-        name: Optional[str] = None,
-    ):
-        super().__init__(
-            device=device,
-            pred_key="policy_logits",
-            target_key="policies",
-            mask_key=mask_key,
-            representation=representation,
-            loss_fn=loss_fn,
-            optimizer_name=optimizer_name,
-            loss_factor=loss_factor,
-            name=name,
-        )

@@ -4,13 +4,13 @@ import time
 from typing import List, Optional
 
 import torch
-
+import torch.nn.functional as F
 from agents.action_selectors.factory import SelectorFactory
 from agents.learner.base import UniversalLearner
 from agents.learner.batch_iterators import RepeatSampleIterator
 from agents.learner.callbacks import ResetNoiseCallback
 from agents.trainers.base_trainer import BaseTrainer
-from agents.learner.losses import ImitationLoss, LossPipeline
+from agents.learner.losses import PolicyLoss, LossPipeline
 from modules.models.agent_network import AgentNetwork
 from modules.utils import get_lr_scheduler
 from replay_buffers.buffer_factories import create_nfsp_buffer
@@ -90,9 +90,18 @@ class ImitationTrainer(BaseTrainer):
         lr_scheduler = get_lr_scheduler(optimizer, config)
 
         # Loss
-        loss_pipeline = LossPipeline([ImitationLoss(config, device, self.num_actions)])
+        sl_rep = self.agent_network.components["behavior_heads"]["policy_logits"].representation
+        loss_pipeline = LossPipeline([
+            PolicyLoss(
+                device=device,
+                representation=sl_rep,
+                loss_fn=F.cross_entropy,
+                loss_factor=getattr(config, "policy_loss_factor", 1.0),
+                target_key="target_policies",
+            )
+        ])
         loss_pipeline.validate_dependencies(
-            network_output_keys={"policies"},
+            network_output_keys={"policy_logits"},
             target_keys={"target_policies"},
         )
 

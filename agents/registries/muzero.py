@@ -20,7 +20,7 @@ from modules.utils import get_lr_scheduler
 from agents.learner.target_builders import (
     TargetBuilderPipeline,
     LatentConsistencyBuilder,
-    MCTSExtractor,
+    PassThroughTargetBuilder,
     SequencePadder,
     SequenceMaskBuilder,
     SequenceInfrastructureBuilder,
@@ -183,7 +183,7 @@ def build_muzero(
 
     # 4. Target Builder
     builders = [
-        MCTSExtractor(),
+        PassThroughTargetBuilder(["values", "rewards", "policies", "actions", "to_plays"]),
         SequencePadder(unroll_steps=config.unroll_steps),
         SequenceMaskBuilder(),
         SequenceInfrastructureBuilder(unroll_steps=config.unroll_steps),

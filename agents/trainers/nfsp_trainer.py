@@ -16,7 +16,7 @@ from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
     PassThroughTargetBuilder,
 )
-from agents.learner.losses import ImitationLoss, LossPipeline, QBootstrappingLoss
+from agents.learner.losses import PolicyLoss, LossPipeline, QBootstrappingLoss
 from replay_buffers.buffer_factories import create_dqn_buffer, create_nfsp_buffer
 from agents.action_selectors.policy_sources import NFSPNetworkPolicySource
 from agents.action_selectors.selectors import (
@@ -391,11 +391,12 @@ class NFSPTrainer(BaseTrainer):
         sl_loss_pipeline = LossPipeline(
             sl_config,
             [
-                ImitationLoss(
+                PolicyLoss(
                     device=device,
                     representation=sl_rep,
                     loss_fn=sl_config.policy_loss_function,
                     loss_factor=getattr(sl_config, "policy_loss_factor", 1.0),
+                    target_key="target_policies",
                 )
             ],
         )
