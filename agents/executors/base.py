@@ -97,15 +97,6 @@ class BaseExecutor(ABC):
                         if t_name not in self.result_buffer:
                             self.result_buffer[t_name] = []
                         self.result_buffer[t_name].append(data)
-                elif isinstance(obj, tuple) and len(obj) == 2 and isinstance(obj[0], str):
-                    # Legacy support for raw tuples
-                    t_name, data = obj
-                    if type_name and t_name == type_name:
-                        results.append(data)
-                    else:
-                        if t_name not in self.result_buffer:
-                            self.result_buffer[t_name] = []
-                        self.result_buffer[t_name].append(data)
                 else:
                     results.append(obj)
 

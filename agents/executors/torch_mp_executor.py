@@ -4,7 +4,7 @@ import traceback
 import time
 from typing import Any, Dict, List, Optional, Tuple, Type
 from .base import BaseExecutor
-from agents.workers.payloads import WorkerPayload
+from agents.workers.payloads import WorkerPayload, TaskRequest, TaskType
 import torch
 
 
@@ -134,50 +134,21 @@ class TorchMPExecutor(BaseExecutor):
                     if stop_flag.value:
                         break
 
-                # 3. Fetch task arguments if any
+                # 3. Fetch task request if any
+                task_request = None
                 while not command_queue.empty():
                     try:
-                        name, args = command_queue.get_nowait()
-                        if name == worker_cls.__name__:
-                            cmd_args = args
+                        req = command_queue.get_nowait()
+                        if isinstance(req, TaskRequest):
+                            task_request = req
                             break
-                        else:
-                            # Not for us, put it back (clunky but works for small num worker types)
-                            command_queue.put((name, args))
-                            time.sleep(0.01)
                     except queue.Empty:
                         break
 
-                # 4. Dispatch Task
-                if hasattr(worker, "collect"):
-                    n = cmd_args.get("num_steps", 1000)
-                    data = worker.collect(n)
-                elif hasattr(worker, "evaluate"):
-                    n = cmd_args.get("num_episodes", 1)
-                    data = worker.evaluate(n)
-                elif hasattr(worker, "reanalyze"):
-                    n = cmd_args.get("batch_size", 32)
-                    data = worker.reanalyze(n)
-                elif hasattr(worker, "play_sequence"):
-                    data = worker.play_sequence()
-                else:
-                    data = {}
-
-                # Package result into standardized payload
-                if isinstance(data, WorkerPayload):
-                    payload = data
-                elif isinstance(data, dict):
-                    # Separate metrics (for logging) from data (for training) if necessary.
-                    # For now, we assume dicts from standard actors are metrics.
-                    payload = WorkerPayload(
-                        worker_type=worker_cls.__name__, metrics=data
-                    )
-                else:
-                    payload = WorkerPayload(
-                        worker_type=worker_cls.__name__, metrics={}, data=data
-                    )
-
-                result_queue.put(payload)
+                # 4. Dispatch Task via Command Pattern
+                if task_request:
+                    payload = worker.execute(task_request)
+                    result_queue.put(payload)
         except Exception as e:
             # We stringify the exception to prevent obscure pickling errors (like 'cell' objects)
             # from masking the real underlying crash when this goes through the mp.Queue.
@@ -259,14 +230,32 @@ class TorchMPExecutor(BaseExecutor):
             handle["param_queue"].put(update_dict)
 
     def request_work(self, worker_type: Type, **kwargs):
-        """Signals the trigger events and sends arguments to specific workers."""
-        type_name = worker_type.__name__
+        """Signals the trigger events and sends TaskRequests to specific workers."""
+        # Map legacy kwargs to TaskType
+        # This allows trainers to call collect_data(num_steps=...) as before
+        task_type = None
+        batch_size = 0
         
+        if "num_steps" in kwargs:
+            task_type = TaskType.COLLECT
+            batch_size = kwargs.pop("num_steps")
+        elif "num_episodes" in kwargs:
+            task_type = TaskType.EVALUATE
+            batch_size = kwargs.pop("num_episodes")
+        elif "batch_size" in kwargs:
+            task_type = TaskType.REANALYZE
+            batch_size = kwargs.pop("batch_size")
+        else:
+            # Default to collect if nothing specified
+            task_type = TaskType.COLLECT
+            batch_size = 1000
+            
+        request = TaskRequest(task_type=task_type, batch_size=batch_size, kwargs=kwargs)
+
         # Broadcast command to all workers of this type
-        # via their LOCAL conduits to avoid ghost events
         for handle in self.workers:
             if handle["worker_cls"] == worker_type:
-                handle["command_queue"].put((type_name, kwargs))
+                handle["command_queue"].put(request)
                 handle["trigger_event"].set()
 
     def stop(self):

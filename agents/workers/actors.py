@@ -10,6 +10,7 @@ from agents.environments.adapters import BaseAdapter
 from agents.workers.state_management import SequenceManager
 from replay_buffers.modular_buffer import ModularReplayBuffer
 from agents.action_selectors.selectors import BaseActionSelector
+from agents.workers.payloads import TaskRequest, TaskType, WorkerPayload
 
 
 class BaseActor(ABC):
@@ -30,6 +31,11 @@ class BaseActor(ABC):
         hyperparams: Optional[Dict[str, Any]] = None
     ) -> None:
         """Updates model weights and/or hyperparameters."""
+        pass
+
+    @abstractmethod
+    def execute(self, request: TaskRequest) -> WorkerPayload:
+        """Single entry point for all worker tasks."""
         pass
 
     @abstractmethod
@@ -163,6 +169,15 @@ class RolloutActor(BaseActor):
                 np.mean(self.completed_lengths) if self.completed_lengths else 0.0
             ),
         }
+
+    def execute(self, request: TaskRequest) -> WorkerPayload:
+        if request.task_type != TaskType.COLLECT:
+            raise ValueError(
+                f"RolloutActor only supports {TaskType.COLLECT}, got {request.task_type}"
+            )
+
+        metrics = self.collect(request.batch_size)
+        return WorkerPayload(worker_type=self.__class__.__name__, metrics=metrics)
 
     @torch.inference_mode()
     def collect(self, num_steps: int) -> Dict[str, Any]:
@@ -432,6 +447,15 @@ class EvaluatorActor(BaseActor):
             "total_reward": self.total_reward,
             "average_reward": self.total_reward / max(1, self.episodes_completed),
         }
+
+    def execute(self, request: TaskRequest) -> WorkerPayload:
+        if request.task_type != TaskType.EVALUATE:
+            raise ValueError(
+                f"EvaluatorActor only supports {TaskType.EVALUATE}, got {request.task_type}"
+            )
+
+        metrics = self.evaluate(request.batch_size)
+        return WorkerPayload(worker_type=self.__class__.__name__, metrics=metrics)
 
     @torch.inference_mode()
     def evaluate(self, num_episodes: int) -> Dict[str, Any]:

@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple, Type
 from .base import BaseExecutor
-from agents.workers.payloads import WorkerPayload
+from agents.workers.payloads import WorkerPayload, TaskRequest, TaskType
 import torch
 
 
@@ -20,33 +20,18 @@ class LocalExecutor(BaseExecutor):
         for _, worker in new_workers:
             worker.setup()
         self.workers.extend(new_workers)
+        # Type-name to task mapping
+        self.pending_tasks = {}
 
     def _fetch_available_results(self) -> List[Any]:
         results = []
         for worker_cls, worker in self.workers:
             type_name = worker_cls.__name__
 
-            if self.worker_signals.get(type_name, False):
-                if hasattr(worker, "collect"):
-                    num_steps = self.worker_signals.pop(f"{type_name}_num_steps", 1000)
-                    data = worker.collect(num_steps)
-                elif hasattr(worker, "evaluate"):
-                    num_episodes = self.worker_signals.pop(
-                        f"{type_name}_num_episodes", 1
-                    )
-                    data = worker.evaluate(num_episodes)
-                elif hasattr(worker, "reanalyze"):
-                    batch_size = self.worker_signals.pop(f"{type_name}_batch_size", 32)
-                    data = worker.reanalyze(batch_size)
-                elif hasattr(worker, "play_sequence"):
-                    data = worker.play_sequence()
-                else:
-                    data = {}
-
-                # Package synchronous result into payload for BaseExecutor
-                results.append(WorkerPayload(worker_type=type_name, metrics=data))
-
-                self.worker_signals[type_name] = False
+            task = self.pending_tasks.pop(type_name, None)
+            if task:
+                payload = worker.execute(task)
+                results.append(payload)
 
         return results
 
@@ -59,11 +44,29 @@ class LocalExecutor(BaseExecutor):
             w.update_parameters(weights=weights, hyperparams=hyperparams)
 
     def request_work(self, worker_type: Type, **kwargs):
-        """Signals the trigger event and stores arguments for the specified worker type."""
+        """Signals that work is pending and stores the TaskRequest for the specified worker type."""
         type_name = worker_type.__name__
-        self.worker_signals[type_name] = True
-        for k, v in kwargs.items():
-            self.worker_signals[f"{type_name}_{k}"] = v
+        
+        # Map legacy kwargs to TaskType
+        task_type = None
+        batch_size = 0
+        
+        if "num_steps" in kwargs:
+            task_type = TaskType.COLLECT
+            batch_size = kwargs.pop("num_steps")
+        elif "num_episodes" in kwargs:
+            task_type = TaskType.EVALUATE
+            batch_size = kwargs.pop("num_episodes")
+        elif "batch_size" in kwargs:
+            task_type = TaskType.REANALYZE
+            batch_size = kwargs.pop("batch_size")
+        else:
+            # Default to collect if nothing specified
+            task_type = TaskType.COLLECT
+            batch_size = 1000
+            
+        request = TaskRequest(task_type=task_type, batch_size=batch_size, kwargs=kwargs)
+        self.pending_tasks[type_name] = request
 
     def stop(self):
         self.workers = []
