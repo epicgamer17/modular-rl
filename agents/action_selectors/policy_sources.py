@@ -135,12 +135,13 @@ class SearchPolicySource(BasePolicySource):
             return InferenceResult(
                 probs=probs,
                 value=values,
-                extra_metadata={
+                action=best_actions_tensor,
+                extras={
                     "target_policies": target_policies_tensor,
                     "search_duration": search_duration,
                     "search_metadata": sm_list,
                     "best_actions": best_actions_tensor,
-                    "value": values.squeeze(-1),  # Tensor for consistency
+                    "value": values.squeeze(-1),
                     "root_value": values.squeeze(-1),
                 },
             )
@@ -177,6 +178,7 @@ class SearchPolicySource(BasePolicySource):
             return InferenceResult(
                 policy=Categorical(probs=probs),
                 value=value,
+                action=best_actions_out,
                 extras={
                     "target_policies": target_policies_out,
                     "search_duration": search_duration,
