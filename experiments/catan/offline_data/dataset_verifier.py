@@ -18,6 +18,7 @@ from path_b_translator import JsonStateTracker
 import path_b_translator
 
 DISCARD_IDX = ACTIONS_ARRAY.index((AT.DISCARD, None))
+NUM_ACTIONS = len(ACTIONS_ARRAY)
 
 # Human-readable names for the 57 channels
 CHANNEL_NAMES = [
@@ -79,6 +80,44 @@ CHANNEL_NAMES = [
     "P0_RoadDist",
     "P1_RoadDist",
 ]
+
+
+def _collect_all_obs(env_unwrapped, agent_id: str) -> Dict[str, np.ndarray]:
+    """Collects axial, spatial, and vector observations for an agent."""
+    env_unwrapped.representation = "image"
+    env_unwrapped.spatial_encoding = "axial"
+    obs_axial = env_unwrapped.observe(agent_id)["observation"].copy()
+
+    env_unwrapped.spatial_encoding = "spatial"
+    obs_spatial = env_unwrapped.observe(agent_id)["observation"].copy()
+
+    env_unwrapped.representation = "vector"
+    obs_vec = env_unwrapped.observe(agent_id)["observation"].copy()
+
+    # Restore defaults
+    env_unwrapped.representation = "image"
+    env_unwrapped.spatial_encoding = "axial"
+
+    return {"obs_axial": obs_axial, "obs_spatial": obs_spatial, "obs_vec": obs_vec}
+
+
+def _get_action_mask(env_unwrapped) -> np.ndarray:
+    """Returns a boolean action mask from the current valid action indices."""
+    valid_indices = env_unwrapped._get_valid_action_indices()
+    mask = np.zeros(NUM_ACTIONS, dtype=bool)
+    mask[list(valid_indices)] = True
+    return mask
+
+
+def _has_domestic_trades(events: list) -> bool:
+    """Returns True if any event contains an inter-player domestic trade (type 118)."""
+    for event in events:
+        sc = event.get("stateChange", {})
+        gls = sc.get("gameLogState", {})
+        for _, text in _texts_sorted(gls):
+            if text.get("type") == 118:
+                return True
+    return False
 
 
 def _board_config_from_initial_state(initial_state: dict) -> dict:
@@ -184,7 +223,20 @@ def _print_rich_desync_report(
     print(f"{'='*85}\n")
 
 
-def process_and_verify_single(json_path: str) -> Optional[Dict[str, np.ndarray]]:
+def process_and_verify_single(
+    json_path: str, mode: str = "bc"
+) -> Optional[Dict[str, np.ndarray]]:
+    """Process a single replay file and return a dataset dict.
+
+    Args:
+        json_path: Path to the colonist replay JSON file.
+        mode: "bc" for behaviour cloning (T-aligned obs/actions/masks) or
+              "rl" for MuZero-compatible format with T+1 state-aligned fields
+              and T transition-aligned fields, plus terminal state.
+
+    Returns:
+        Dict of numpy arrays, or None if the replay failed verification.
+    """
     reset_parser_state()
     with open(json_path, "r") as f:
         data = json.load(f).get("data", {})
@@ -193,6 +245,12 @@ def process_and_verify_single(json_path: str) -> Optional[Dict[str, np.ndarray]]
     play_order = data.get("playOrder", [])
     initial_state = data.get("eventHistory", {}).get("initialState", {})
     game_settings = data.get("gameSettings", initial_state.get("gameSettings", {}))
+
+    # Skip games with inter-player trades (type 118): resource state cannot be
+    # corrected for these trades since they have no playerStates snapshot.
+    if _has_domestic_trades(events):
+        print(f"[SKIP] {Path(json_path).name}: contains domestic trades (type 118)")
+        return None
 
     n_players = len(play_order)
     stepper = GodModeStepper(num_players=n_players, representation="image")
@@ -227,8 +285,23 @@ def process_and_verify_single(json_path: str) -> Optional[Dict[str, np.ndarray]]
     current_turn_color = play_order[0]
     _colonist_to_color_idx = {c: i for i, c in enumerate(play_order)}
 
-    obs_list, act_list = [], []
+    # --- Data collection lists ---
+    # BC mode:  all lists are T-aligned (one entry per transition).
+    # RL mode:  obs/mask/to_play/terminated/done are state-aligned (T+1),
+    #           actions/rewards are transition-aligned (T).
+    #           The terminal state entry is appended after the loop.
+    axial_list: list = []
+    spatial_list: list = []
+    vec_list: list = []
+    act_list: list = []
+    mask_list: list = []
+    # RL-only transition-aligned
+    reward_list: list = []
+    # RL-only state-aligned (pre-action states only; terminal appended post-loop)
+    to_play_list: list = []
+
     done_parsing = False
+    game_ended = False
 
     for ev_idx, event in enumerate(events):
         if done_parsing:
@@ -266,16 +339,32 @@ def process_and_verify_single(json_path: str) -> Optional[Dict[str, np.ndarray]]
                 # Force Path B Phase to Discard
                 tracker.is_discarding = True
                 tracker.is_moving_robber = False
-                obs_b_discard = tracker.to_tensor(acting_player)
 
-                obs_list.append(obs_b_discard.copy())
+                c_idx_discard = _colonist_to_color_idx[acting_player]
+                catanatron_color_discard = stepper.env.unwrapped.game.state.colors[c_idx_discard]
+                agent_id_discard = stepper.env.unwrapped.agent_map[catanatron_color_discard]
+                all_obs_discard = _collect_all_obs(stepper.env.unwrapped, agent_id_discard)
+
+                axial_list.append(all_obs_discard["obs_axial"])
+                spatial_list.append(all_obs_discard["obs_spatial"])
+                vec_list.append(all_obs_discard["obs_vec"])
                 act_list.append(DISCARD_IDX)
+                mask_list.append(_get_action_mask(stepper.env.unwrapped))
+
+                if mode == "rl":
+                    to_play_list.append(c_idx_discard)
+                    reward_list.append(0.0)
 
                 stepper.step_and_override(DISCARD_IDX, None, None)
                 if stepper.env.unwrapped.game.winning_color() is not None:
+                    game_ended = True
                     break
             else:
                 break
+
+        if game_ended:
+            done_parsing = True
+            break
 
         # Sync Path B Phase to Catanatron's current True Phase
         stepper._update_true_bank()
@@ -359,10 +448,22 @@ def process_and_verify_single(json_path: str) -> Optional[Dict[str, np.ndarray]]
                         )
                         return None
 
-                    obs_list.append(obs_b.copy())
+                    all_obs = _collect_all_obs(stepper.env.unwrapped, agent_id)
+                    axial_list.append(all_obs["obs_axial"])
+                    spatial_list.append(all_obs["obs_spatial"])
+                    vec_list.append(all_obs["obs_vec"])
                     act_list.append(action_idx)
+                    mask_list.append(_get_action_mask(stepper.env.unwrapped))
+
+                    if mode == "rl":
+                        to_play_list.append(c_idx)
+                        reward_list.append(0.0)  # overwritten below if this is the winning action
 
                     if stepper.env.unwrapped.game.winning_color() is not None:
+                        if mode == "rl":
+                            # The acting player always wins on their own action.
+                            reward_list[-1] = 1.0
+                        game_ended = True
                         done_parsing = True
                         break
 
@@ -374,25 +475,77 @@ def process_and_verify_single(json_path: str) -> Optional[Dict[str, np.ndarray]]
             # resource gains from other players rolling), flush the pending resources!
             stepper.flush_corrections()
 
-    if not obs_list:
+    # RL mode: append the terminal state entry (state T, the state AFTER the last action).
+    # This makes obs/masks/to_plays/terminated/dones T+1-aligned while actions/rewards
+    # remain T-aligned, matching the MuZero rollout actor's sequence format.
+    if mode == "rl" and game_ended and act_list:
+        # Use the last pre-action obs as a placeholder for the true terminal obs
+        # (we do not step on the winning action, so the exact post-action obs is unavailable).
+        # terminated=True is sufficient for MuZero to zero-bootstrap at this position.
+        axial_list.append(axial_list[-1].copy())
+        spatial_list.append(spatial_list[-1].copy())
+        vec_list.append(vec_list[-1].copy())
+        mask_list.append(np.zeros(NUM_ACTIONS, dtype=bool))
+        to_play_list.append(to_play_list[-1])
+
+    if not act_list:
         return None
-    return {"observations": np.stack(obs_list), "actions": np.array(act_list)}
+
+    if mode == "bc":
+        return {
+            # T-aligned: one entry per transition
+            "obs_axial": np.stack(axial_list),
+            "obs_spatial": np.stack(spatial_list),
+            "obs_vec": np.stack(vec_list),
+            "actions": np.array(act_list, dtype=np.int32),
+            "action_masks": np.stack(mask_list),
+        }
+    else:
+        # State-aligned arrays have T+1 entries (indices 0..T).
+        # Transition-aligned arrays have T entries (indices 0..T-1).
+        terminated = np.zeros(len(axial_list), dtype=bool)
+        dones = np.zeros(len(axial_list), dtype=bool)
+        if game_ended:
+            terminated[-1] = True
+            dones[-1] = True
+        return {
+            # State-aligned (T+1)
+            "obs_axial": np.stack(axial_list),
+            "obs_spatial": np.stack(spatial_list),
+            "obs_vec": np.stack(vec_list),
+            "action_masks": np.stack(mask_list),
+            "to_plays": np.array(to_play_list, dtype=np.int16),
+            "terminated": terminated,
+            "dones": dones,
+            # Transition-aligned (T)
+            "actions": np.array(act_list, dtype=np.int32),
+            "rewards": np.array(reward_list, dtype=np.float32),
+        }
 
 
-def generate_verified_dataset(replays_dir: str, output_path: str):
-    """Processes an entire directory of replays and saves the verified dataset."""
+def generate_verified_dataset(
+    replays_dir: str, output_path: str, mode: str = "bc"
+) -> None:
+    """Processes an entire directory of replays and saves the verified dataset.
+
+    Args:
+        replays_dir: Directory containing colonist replay JSON files.
+        output_path: Path for the output gzipped pickle file.
+        mode: "bc" or "rl" — passed through to process_and_verify_single.
+              In "rl" mode, a "game_lengths" array is also saved, recording the
+              number of transitions T per game for episode-boundary tracking.
+    """
     json_files = list(Path(replays_dir).glob("*.json"))
     print(f"Found {len(json_files)} replays. Starting generation & verification...")
 
-    verified_obs, verified_acts = [], []
+    per_game: list = []
     failed = 0
 
     for idx, fpath in enumerate(json_files, 1):
         try:
-            dataset = process_and_verify_single(str(fpath))
+            dataset = process_and_verify_single(str(fpath), mode=mode)
             if dataset is not None:
-                verified_obs.append(dataset["observations"])
-                verified_acts.append(dataset["actions"])
+                per_game.append(dataset)
                 print(
                     f"[{idx}/{len(json_files)}] ✅ Verified & Processed: {fpath.name}"
                 )
@@ -402,19 +555,33 @@ def generate_verified_dataset(replays_dir: str, output_path: str):
             print(f"[{idx}/{len(json_files)}] ⚠️ Error on {fpath.name}: {str(e)}")
             failed += 1
 
-    if verified_obs:
-        final_dataset = {
-            "observations": np.concatenate(verified_obs, axis=0),
-            "actions": np.concatenate(verified_acts, axis=0),
-        }
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        with gzip.open(output_path, "wb") as f:
-            pickle.dump(final_dataset, f, protocol=pickle.HIGHEST_PROTOCOL)
-        print(
-            f"\n🎉 Success! Saved {len(final_dataset['actions'])} verified steps to {output_path}"
-        )
-    else:
+    if not per_game:
         print("\n⚠️ No replays were successfully verified.")
+        return
+
+    # Concatenate all games along axis 0.
+    keys = list(per_game[0].keys())
+    final_dataset: Dict[str, np.ndarray] = {
+        k: np.concatenate([g[k] for g in per_game], axis=0) for k in keys
+    }
+
+    # In RL mode, record per-game transition counts for n-step boundary tracking.
+    # game_lengths[i] = T for game i (number of transitions, i.e. length of actions array).
+    if mode == "rl":
+        final_dataset["game_lengths"] = np.array(
+            [g["actions"].shape[0] for g in per_game], dtype=np.int32
+        )
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with gzip.open(output_path, "wb") as f:
+        pickle.dump(final_dataset, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    total_steps = len(final_dataset["actions"])
+    total_games = len(per_game)
+    print(
+        f"\n🎉 Success! Saved {total_steps} verified steps from {total_games} games "
+        f"({failed} failed) to {output_path}"
+    )
 
 
 if __name__ == "__main__":

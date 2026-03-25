@@ -134,6 +134,11 @@ class GodModeStepper:
             if "resourceCards" in state and "cards" in state["resourceCards"]:
                 cards = state["resourceCards"]["cards"]
                 if cards is not None:
+                    # Colonist encodes hidden (opponent) cards as 0. Skip the
+                    # correction entirely — Catanatron's simulation is accurate
+                    # for that player and overwriting with zeros destroys it.
+                    if any(c == 0 for c in cards):
+                        continue
                     counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
                     for res_enum in cards:
                         if 1 <= res_enum <= 5:
