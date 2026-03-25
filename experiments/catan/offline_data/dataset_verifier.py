@@ -19,6 +19,7 @@ os.environ["GYM_CONFIG_QUIET"] = "1"
 os.environ["GYM_IGNORE_WARNINGS"] = "1"
 import warnings
 import logging
+
 warnings.filterwarnings("ignore")
 logging.getLogger("gym").setLevel(logging.ERROR)
 logging.getLogger("gymnasium").setLevel(logging.ERROR)
@@ -242,7 +243,10 @@ def _print_rich_desync_report(
 
 
 def process_and_verify_single(
-    json_path: str, mode: str = "bc", players: Optional[int] = None
+    json_path: str,
+    mode: str = "bc",
+    players: Optional[int] = None,
+    victory_points: Optional[int] = None,
 ) -> Optional[Dict[str, np.ndarray]]:
     """Process a single replay file and return a dataset dict.
 
@@ -251,6 +255,8 @@ def process_and_verify_single(
         mode: "bc" for behaviour cloning (T-aligned obs/actions/masks) or
               "rl" for MuZero-compatible format with T+1 state-aligned fields
               and T transition-aligned fields, plus terminal state.
+        players: Optional filter for number of players.
+        victory_points: Optional filter for game target victory points.
 
     Returns:
         Dict of numpy arrays, or None if the replay failed verification.
@@ -275,13 +281,21 @@ def process_and_verify_single(
         gc.collect()
         return None
 
-    n_players = len(play_order)
-
     # Player filtering
     n_players = len(play_order)
     if players is not None:
         if n_players != players:
-            # print(f"[SKIP] {Path(json_path).name}: expected {players} players, got {n_players}")
+            del events
+            del initial_state
+            del game_settings
+            del data
+            gc.collect()
+            return None
+
+    # VP filtering
+    if victory_points is not None:
+        game_vps = int(game_settings.get("victoryPoints", 10))  # Colonist default is 10
+        if game_vps != victory_points:
             del events
             del initial_state
             del game_settings
@@ -591,7 +605,11 @@ def process_and_verify_single(
 
 
 def process_chunk_and_save(
-    json_paths: list[str], output_path: str, mode: str, players: Optional[int] = None
+    json_paths: list[str],
+    output_path: str,
+    mode: str,
+    players: Optional[int] = None,
+    victory_points: Optional[int] = None,
 ) -> int:
     """Worker function: Processes a batch of games and writes directly to disk."""
     per_game = []
@@ -599,7 +617,8 @@ def process_chunk_and_save(
 
     for path in json_paths:
         try:
-            dataset = process_and_verify_single(path, mode, players)
+            # Added victory_points passthrough here
+            dataset = process_and_verify_single(path, mode, players, victory_points)
             if dataset is not None:
                 per_game.append(dataset)
                 success_count += 1
@@ -638,6 +657,7 @@ def generate_verified_dataset(
     chunk_size: int = 50,
     max_workers: int = 4,
     players: Optional[int] = None,
+    victory_points: Optional[int] = None,  # Added VP Argument here
 ) -> None:
     """Processes directory in parallel and saves data in memory-safe chunks."""
     json_files = [str(p) for p in Path(replays_dir).glob("*.json")]
@@ -661,7 +681,9 @@ def generate_verified_dataset(
         for chunk_idx, chunk_paths in enumerate(chunks):
             out_path = os.path.join(output_dir, f"catan_chunk_{chunk_idx:04d}.pkl.gz")
             res = pool.apply_async(
-                process_chunk_and_save, (chunk_paths, out_path, mode, players)
+                # Pass victory_points down to the worker
+                process_chunk_and_save,
+                (chunk_paths, out_path, mode, players, victory_points),
             )
             async_tasks.append(res)
 

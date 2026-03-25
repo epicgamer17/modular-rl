@@ -36,7 +36,7 @@ class MuZeroConfig(
         if "agent_type" not in config_dict:
             config_dict["agent_type"] = "muzero"
         super(MuZeroConfig, self).__init__(config_dict, game_config)
-        # The WorldModel component for MuZero consumes the root config directly 
+        # The WorldModel component for MuZero consumes the root config directly
         # to access dynamics backbones and head configurations.
         self.world_model = self
 
@@ -91,7 +91,13 @@ class MuZeroConfig(
                 rh_dict.setdefault("lstm_horizon_len", self.lstm_horizon_len)
             if self.atom_size > 1:
                 rew_strat = rh_dict.get("output_strategy", {})
-                rew_strat.update({"type": "muzero", "num_classes": self.atom_size, "support_range": self.support_range})
+                rew_strat.update(
+                    {
+                        "type": "muzero",
+                        "num_classes": self.atom_size,
+                        "support_range": self.support_range,
+                    }
+                )
                 rh_dict["output_strategy"] = rew_strat
             self.reward_head = reward_head_cls(rh_dict)
             self.env_heads["reward_logits"] = self.reward_head
@@ -103,11 +109,17 @@ class MuZeroConfig(
         if value_dict is not None:
             if self.atom_size > 1:
                 val_strat = value_dict.get("output_strategy", {})
-                val_strat.update({"type": "muzero", "num_classes": self.atom_size, "support_range": self.support_range})
+                val_strat.update(
+                    {
+                        "type": "muzero",
+                        "num_classes": self.atom_size,
+                        "support_range": self.support_range,
+                    }
+                )
                 value_dict["output_strategy"] = val_strat
             self.value_head = ValueHeadConfig(value_dict)
             self.heads["state_value"] = self.value_head
-            
+
             # Afterstate value head for stochastic MuZero
             if self.stochastic:
                 self.heads["afterstate_value"] = self.value_head
@@ -138,7 +150,9 @@ class MuZeroConfig(
             self.policy_head = None
 
         # Chance Probability Head Parsing (Environment Head)
-        chance_dict = self.parse_field("chance_probability_head", default=None, required=False)
+        chance_dict = self.parse_field(
+            "chance_probability_head", default=None, required=False
+        )
         if chance_dict is not None:
             chance_strat = chance_dict.get("output_strategy", {"type": "categorical"})
             chance_strat.setdefault("num_classes", self.num_chance)
@@ -174,7 +188,7 @@ class MuZeroConfig(
                 self.chance_encoder_backbone = default_bb_cfg
         else:
             # Final defaults if nothing provided
-            dense_default = {"type": "dense"}
+            dense_default = {"type": "mlp"}
             if self.representation_backbone is None:
                 self.representation_backbone = BackboneConfigFactory.create(
                     dense_default
