@@ -4,9 +4,27 @@ import os
 import json
 import gzip
 import pickle
+import gc
+import warnings
+import logging
 import numpy as np
+import concurrent.futures
+from multiprocessing import Pool
+from tqdm import tqdm
 from pathlib import Path
 from typing import Optional, Dict
+
+# Aggressively suppress gym/gymnasium/pufferlib migraton warnings
+os.environ["GYM_CONFIG_QUIET"] = "1"
+os.environ["GYM_IGNORE_WARNINGS"] = "1"
+import warnings
+import logging
+warnings.filterwarnings("ignore")
+logging.getLogger("gym").setLevel(logging.ERROR)
+logging.getLogger("gymnasium").setLevel(logging.ERROR)
+logging.getLogger("pufferlib").setLevel(logging.ERROR)
+logging.getLogger("catanatron").setLevel(logging.ERROR)
+np.seterr(all="ignore")
 
 # Ensure these imports point to your project modules
 from custom_gym_envs.envs.catan import ACTIONS_ARRAY
@@ -224,7 +242,7 @@ def _print_rich_desync_report(
 
 
 def process_and_verify_single(
-    json_path: str, mode: str = "bc"
+    json_path: str, mode: str = "bc", players: Optional[int] = None
 ) -> Optional[Dict[str, np.ndarray]]:
     """Process a single replay file and return a dataset dict.
 
@@ -249,339 +267,419 @@ def process_and_verify_single(
     # Skip games with inter-player trades (type 118): resource state cannot be
     # corrected for these trades since they have no playerStates snapshot.
     if _has_domestic_trades(events):
-        print(f"[SKIP] {Path(json_path).name}: contains domestic trades (type 118)")
+        # print(f"[SKIP] {Path(json_path).name}: contains domestic trades (type 118)")
+        # Explicitly destroy the heavy dictionaries
+        del events
+        del initial_state
+        del data
+        gc.collect()
         return None
 
     n_players = len(play_order)
+
+    # Player filtering
+    n_players = len(play_order)
+    if players is not None:
+        if n_players != players:
+            # print(f"[SKIP] {Path(json_path).name}: expected {players} players, got {n_players}")
+            del events
+            del initial_state
+            del game_settings
+            del data
+            gc.collect()
+            return None
+
     stepper = GodModeStepper(num_players=n_players, representation="image")
-    stepper.current_filename = Path(json_path).name
 
-    discard_limit = int(game_settings.get("cardDiscardLimit", 7))
-    tracker = JsonStateTracker(
-        play_order,
-        _board_config_from_initial_state(initial_state),
-        discard_limit=discard_limit,
-    )
-    tracker.update(initial_state)
+    try:
+        stepper.current_filename = Path(json_path).name
 
-    tile_hex_states = initial_state.get("mapState", {}).get("tileHexStates", {})
-    if game_settings:
-        stepper.sync_settings(game_settings)
-    if tile_hex_states:
-        stepper.set_board_layout(tile_hex_states, initial_state)
-    map_state = initial_state.get("mapState", {})
-    if map_state:
-        stepper.sync_ports(map_state)
+        discard_limit = int(game_settings.get("cardDiscardLimit", 7))
+        tracker = JsonStateTracker(
+            play_order,
+            _board_config_from_initial_state(initial_state),
+            discard_limit=discard_limit,
+        )
+        tracker.update(initial_state)
 
-    # --- PORT FIX: Synchronize Path B's ports to match Path A's parsed Colonist ports ---
-    tracker_port_nodes = {}
-    from path_b_translator import _NODE_MAP
+        tile_hex_states = initial_state.get("mapState", {}).get("tileHexStates", {})
+        if game_settings:
+            stepper.sync_settings(game_settings)
+        if tile_hex_states:
+            stepper.set_board_layout(tile_hex_states, initial_state)
+        map_state = initial_state.get("mapState", {})
+        if map_state:
+            stepper.sync_ports(map_state)
 
-    for res, nids in stepper.env.unwrapped.game.state.board.map.port_nodes.items():
-        tracker_port_nodes[res] = [_NODE_MAP[n] for n in nids if n in _NODE_MAP]
-    path_b_translator._PORT_NODES = tracker_port_nodes
-    # ------------------------------------------------------------------------------------
+        # --- PORT FIX: Synchronize Path B's ports to match Path A's parsed Colonist ports ---
+        tracker_port_nodes = {}
+        from path_b_translator import _NODE_MAP
 
-    current_turn_color = play_order[0]
-    _colonist_to_color_idx = {c: i for i, c in enumerate(play_order)}
+        for res, nids in stepper.env.unwrapped.game.state.board.map.port_nodes.items():
+            tracker_port_nodes[res] = [_NODE_MAP[n] for n in nids if n in _NODE_MAP]
+        path_b_translator._PORT_NODES = tracker_port_nodes
+        # ------------------------------------------------------------------------------------
 
-    # --- Data collection lists ---
-    # BC mode:  all lists are T-aligned (one entry per transition).
-    # RL mode:  obs/mask/to_play/terminated/done are state-aligned (T+1),
-    #           actions/rewards are transition-aligned (T).
-    #           The terminal state entry is appended after the loop.
-    axial_list: list = []
-    spatial_list: list = []
-    vec_list: list = []
-    act_list: list = []
-    mask_list: list = []
-    # RL-only transition-aligned
-    reward_list: list = []
-    # RL-only state-aligned (pre-action states only; terminal appended post-loop)
-    to_play_list: list = []
+        current_turn_color = play_order[0]
+        _colonist_to_color_idx = {c: i for i, c in enumerate(play_order)}
 
-    done_parsing = False
-    game_ended = False
+        # --- Data collection lists ---
+        # BC mode:  all lists are T-aligned (one entry per transition).
+        # RL mode:  obs/mask/to_play/terminated/done are state-aligned (T+1),
+        #           actions/rewards are transition-aligned (T).
+        #           The terminal state entry is appended after the loop.
+        axial_list: list = []
+        spatial_list: list = []
+        vec_list: list = []
+        act_list: list = []
+        mask_list: list = []
+        # RL-only transition-aligned
+        reward_list: list = []
+        # RL-only state-aligned (pre-action states only; terminal appended post-loop)
+        to_play_list: list = []
 
-    for ev_idx, event in enumerate(events):
-        if done_parsing:
-            break
+        done_parsing = False
+        game_ended = False
 
-        sc = event.get("stateChange", {})
-        texts = _texts_sorted(sc.get("gameLogState", {}))
-
-        acting_player = current_turn_color
-        for _, t in texts:
-            pc = t.get("playerColor")
-            if pc is not None and t.get("type") in (1, 4, 5, 10, 11, 20, 55, 116):
-                acting_player = pc
+        for ev_idx, event in enumerate(events):
+            if done_parsing:
                 break
 
-        if "playerStates" in sc:
-            stepper.sync_resources(sc["playerStates"], play_order)
+            sc = event.get("stateChange", {})
+            texts = _texts_sorted(sc.get("gameLogState", {}))
 
-        env = stepper.env.unwrapped
+            acting_player = current_turn_color
+            for _, t in texts:
+                pc = t.get("playerColor")
+                if pc is not None and t.get("type") in (1, 4, 5, 10, 11, 20, 55, 116):
+                    acting_player = pc
+                    break
 
-        # ======================================================================
-        # TODO: Update catanatron later to NOT have random discarding.
-        # Catanatron currently handles discards automatically and randomly.
-        # To align Colonist's asynchronous event order to Catanatron's strict
-        # sequential order, we force Path B's phases to match Path A, and
-        # execute discards here before evaluating the actual Colonist action.
-        # ======================================================================
-        while True:
+            if "playerStates" in sc:
+                stepper.sync_resources(sc["playerStates"], play_order)
+
+            env = stepper.env.unwrapped
+
+            # ======================================================================
+            # TODO: Update catanatron later to NOT have random discarding.
+            # Catanatron currently handles discards automatically and randomly.
+            # To align Colonist's asynchronous event order to Catanatron's strict
+            # sequential order, we force Path B's phases to match Path A, and
+            # execute discards here before evaluating the actual Colonist action.
+            # ======================================================================
+            while True:
+                stepper._update_true_bank()
+                stepper._recount_vps()
+                env.game.playable_actions = generate_playable_actions(env.game.state)
+                valid_actions = env._get_valid_action_indices()
+
+                if len(valid_actions) == 1 and DISCARD_IDX in valid_actions:
+                    # Force Path B Phase to Discard
+                    tracker.is_discarding = True
+                    tracker.is_moving_robber = False
+
+                    c_idx_discard = _colonist_to_color_idx[acting_player]
+                    catanatron_color_discard = stepper.env.unwrapped.game.state.colors[
+                        c_idx_discard
+                    ]
+                    agent_id_discard = stepper.env.unwrapped.agent_map[
+                        catanatron_color_discard
+                    ]
+                    all_obs_discard = _collect_all_obs(
+                        stepper.env.unwrapped, agent_id_discard
+                    )
+
+                    axial_list.append(all_obs_discard["obs_axial"])
+                    spatial_list.append(all_obs_discard["obs_spatial"])
+                    vec_list.append(all_obs_discard["obs_vec"])
+                    act_list.append(DISCARD_IDX)
+                    mask_list.append(_get_action_mask(stepper.env.unwrapped))
+
+                    if mode == "rl":
+                        to_play_list.append(c_idx_discard)
+                        reward_list.append(0.0)
+
+                    stepper.step_and_override(DISCARD_IDX, None, None)
+                    if stepper.env.unwrapped.game.winning_color() is not None:
+                        game_ended = True
+                        break
+                else:
+                    break
+
+            if game_ended:
+                done_parsing = True
+                break
+
+            # Sync Path B Phase to Catanatron's current True Phase
             stepper._update_true_bank()
             stepper._recount_vps()
             env.game.playable_actions = generate_playable_actions(env.game.state)
             valid_actions = env._get_valid_action_indices()
 
-            if len(valid_actions) == 1 and DISCARD_IDX in valid_actions:
-                # Force Path B Phase to Discard
-                tracker.is_discarding = True
-                tracker.is_moving_robber = False
+            tracker.is_discarding = DISCARD_IDX in valid_actions
+            tracker.is_moving_robber = any(
+                ACTIONS_ARRAY[va][0].name == "MOVE_ROBBER" for va in valid_actions
+            )
 
-                c_idx_discard = _colonist_to_color_idx[acting_player]
-                catanatron_color_discard = stepper.env.unwrapped.game.state.colors[c_idx_discard]
-                agent_id_discard = stepper.env.unwrapped.agent_map[catanatron_color_discard]
-                all_obs_discard = _collect_all_obs(stepper.env.unwrapped, agent_id_discard)
+            obs_b = tracker.to_tensor(acting_player)
+            # ======================================================================
 
-                axial_list.append(all_obs_discard["obs_axial"])
-                spatial_list.append(all_obs_discard["obs_spatial"])
-                vec_list.append(all_obs_discard["obs_vec"])
-                act_list.append(DISCARD_IDX)
-                mask_list.append(_get_action_mask(stepper.env.unwrapped))
+            c_idx = _colonist_to_color_idx[acting_player]
+            catanatron_color = stepper.env.unwrapped.game.state.colors[c_idx]
+            player_ports = (
+                stepper.env.unwrapped.game.state.board.get_player_port_resources(
+                    catanatron_color
+                )
+            )
+            current_ratios = {1: 4, 2: 4, 3: 4, 4: 4, 5: 4}
+            if None in player_ports:
+                current_ratios = {k: 3 for k in current_ratios}
+            _STR_TO_ENUM = {"WOOD": 1, "BRICK": 2, "SHEEP": 3, "WHEAT": 4, "ORE": 5}
+            for port_res in player_ports:
+                if port_res in _STR_TO_ENUM:
+                    current_ratios[_STR_TO_ENUM[port_res]] = 2
 
-                if mode == "rl":
-                    to_play_list.append(c_idx_discard)
-                    reward_list.append(0.0)
+            result = parse_step(event, acting_player, player_ratios=current_ratios)
+            tracker.update(sc)
 
-                stepper.step_and_override(DISCARD_IDX, None, None)
-                if stepper.env.unwrapped.game.winning_color() is not None:
-                    game_ended = True
-                    break
-            else:
-                break
+            if "currentTurnPlayerColor" in sc.get("currentState", {}):
+                current_turn_color = sc["currentState"]["currentTurnPlayerColor"]
 
-        if game_ended:
-            done_parsing = True
-            break
+            if result:
+                # We explicitly filter out DISCARD actions parsed from the JSON because
+                # we already forced them into the dataset via the Drain Loop above!
+                filtered_result = [
+                    (idx, fr, fdc) for (idx, fr, fdc) in result if idx != DISCARD_IDX
+                ]
 
-        # Sync Path B Phase to Catanatron's current True Phase
-        stepper._update_true_bank()
-        stepper._recount_vps()
-        env.game.playable_actions = generate_playable_actions(env.game.state)
-        valid_actions = env._get_valid_action_indices()
+                if not filtered_result:
+                    # If everything was filtered out, we still need to flush passive gains!
+                    stepper.flush_corrections()
+                else:
+                    for i, (action_idx, forced_roll, forced_dev_card) in enumerate(
+                        filtered_result
+                    ):
+                        game = stepper.env.unwrapped.game
+                        stepper._update_true_bank()
+                        stepper._recount_vps()
+                        game.playable_actions = generate_playable_actions(game.state)
 
-        tracker.is_discarding = DISCARD_IDX in valid_actions
-        tracker.is_moving_robber = any(
-            ACTIONS_ARRAY[va][0].name == "MOVE_ROBBER" for va in valid_actions
-        )
-
-        obs_b = tracker.to_tensor(acting_player)
-        # ======================================================================
-
-        c_idx = _colonist_to_color_idx[acting_player]
-        catanatron_color = stepper.env.unwrapped.game.state.colors[c_idx]
-        player_ports = stepper.env.unwrapped.game.state.board.get_player_port_resources(
-            catanatron_color
-        )
-        current_ratios = {1: 4, 2: 4, 3: 4, 4: 4, 5: 4}
-        if None in player_ports:
-            current_ratios = {k: 3 for k in current_ratios}
-        _STR_TO_ENUM = {"WOOD": 1, "BRICK": 2, "SHEEP": 3, "WHEAT": 4, "ORE": 5}
-        for port_res in player_ports:
-            if port_res in _STR_TO_ENUM:
-                current_ratios[_STR_TO_ENUM[port_res]] = 2
-
-        result = parse_step(event, acting_player, player_ratios=current_ratios)
-        tracker.update(sc)
-
-        if "currentTurnPlayerColor" in sc.get("currentState", {}):
-            current_turn_color = sc["currentState"]["currentTurnPlayerColor"]
-
-        if result:
-            # We explicitly filter out DISCARD actions parsed from the JSON because
-            # we already forced them into the dataset via the Drain Loop above!
-            filtered_result = [
-                (idx, fr, fdc) for (idx, fr, fdc) in result if idx != DISCARD_IDX
-            ]
-
-            if not filtered_result:
-                # If everything was filtered out, we still need to flush passive gains!
-                stepper.flush_corrections()
-            else:
-                for i, (action_idx, forced_roll, forced_dev_card) in enumerate(
-                    filtered_result
-                ):
-                    game = stepper.env.unwrapped.game
-                    stepper._update_true_bank()
-                    stepper._recount_vps()
-                    game.playable_actions = generate_playable_actions(game.state)
-
-                    valid_actions = stepper.env.unwrapped._get_valid_action_indices()
-                    action_type, _ = ACTIONS_ARRAY[action_idx]
-
-                    if action_type.name == "END_TURN" and action_idx not in valid_actions:
-                        continue
-
-                    if action_idx not in valid_actions:
-                        print(f"\n❌ ACTION DESYNC IN: {Path(json_path).name}")
-                        _print_rich_desync_report(
-                            ev_idx, event, action_idx, acting_player, stepper, None, None
+                        valid_actions = (
+                            stepper.env.unwrapped._get_valid_action_indices()
                         )
-                        return None
+                        action_type, _ = ACTIONS_ARRAY[action_idx]
 
-                    agent_id = stepper.env.unwrapped.agent_map[catanatron_color]
-                    obs_a = stepper.env.unwrapped.observe(agent_id)["observation"]
+                        if (
+                            action_type.name == "END_TURN"
+                            and action_idx not in valid_actions
+                        ):
+                            continue
 
-                    # Compare Channels 0-44 (Exclude bank and road lengths which are computed differently)
-                    if not np.allclose(obs_a[:45], obs_b[:45], atol=1e-5):
-                        print(f"\n❌ TENSOR MISMATCH IN: {Path(json_path).name}")
-                        _print_rich_desync_report(
-                            ev_idx,
-                            event,
-                            action_idx,
-                            acting_player,
-                            stepper,
-                            obs_a,
-                            obs_b,
-                        )
-                        return None
+                        if action_idx not in valid_actions:
+                            print(f"\n❌ ACTION DESYNC IN: {Path(json_path).name}")
+                            _print_rich_desync_report(
+                                ev_idx,
+                                event,
+                                action_idx,
+                                acting_player,
+                                stepper,
+                                None,
+                                None,
+                            )
+                            return None
 
-                    all_obs = _collect_all_obs(stepper.env.unwrapped, agent_id)
-                    axial_list.append(all_obs["obs_axial"])
-                    spatial_list.append(all_obs["obs_spatial"])
-                    vec_list.append(all_obs["obs_vec"])
-                    act_list.append(action_idx)
-                    mask_list.append(_get_action_mask(stepper.env.unwrapped))
+                        agent_id = stepper.env.unwrapped.agent_map[catanatron_color]
+                        obs_a = stepper.env.unwrapped.observe(agent_id)["observation"]
 
-                    if mode == "rl":
-                        to_play_list.append(c_idx)
-                        reward_list.append(0.0)  # overwritten below if this is the winning action
+                        # Compare Channels 0-44 (Exclude bank and road lengths which are computed differently)
+                        if not np.allclose(obs_a[:45], obs_b[:45], atol=1e-5):
+                            print(f"\n❌ TENSOR MISMATCH IN: {Path(json_path).name}")
+                            _print_rich_desync_report(
+                                ev_idx,
+                                event,
+                                action_idx,
+                                acting_player,
+                                stepper,
+                                obs_a,
+                                obs_b,
+                            )
+                            return None
 
-                    if stepper.env.unwrapped.game.winning_color() is not None:
+                        all_obs = _collect_all_obs(stepper.env.unwrapped, agent_id)
+                        axial_list.append(all_obs["obs_axial"])
+                        spatial_list.append(all_obs["obs_spatial"])
+                        vec_list.append(all_obs["obs_vec"])
+                        act_list.append(action_idx)
+                        mask_list.append(_get_action_mask(stepper.env.unwrapped))
+
                         if mode == "rl":
-                            # The acting player always wins on their own action.
-                            reward_list[-1] = 1.0
-                        game_ended = True
-                        done_parsing = True
-                        break
+                            to_play_list.append(c_idx)
+                            reward_list.append(
+                                0.0
+                            )  # overwritten below if this is the winning action
 
-                    stepper.step_and_override(action_idx, forced_roll, forced_dev_card)
-                    if i == len(filtered_result) - 1:
-                        stepper.flush_corrections()
+                        if stepper.env.unwrapped.game.winning_color() is not None:
+                            if mode == "rl":
+                                # The acting player always wins on their own action.
+                                reward_list[-1] = 1.0
+                            game_ended = True
+                            done_parsing = True
+                            break
+
+                        stepper.step_and_override(
+                            action_idx, forced_roll, forced_dev_card
+                        )
+                        if i == len(filtered_result) - 1:
+                            stepper.flush_corrections()
+            else:
+                # FIX: Even if there were no actions parsed (e.g. player trades, passive
+                # resource gains from other players rolling), flush the pending resources!
+                stepper.flush_corrections()
+
+        # RL mode: append the terminal state entry (state T, the state AFTER the last action).
+        # This makes obs/masks/to_plays/terminated/dones T+1-aligned while actions/rewards
+        # remain T-aligned, matching the MuZero rollout actor's sequence format.
+        if mode == "rl" and game_ended and act_list:
+            # Use the last pre-action obs as a placeholder for the true terminal obs
+            # (we do not step on the winning action, so the exact post-action obs is unavailable).
+            # terminated=True is sufficient for MuZero to zero-bootstrap at this position.
+            axial_list.append(axial_list[-1].copy())
+            spatial_list.append(spatial_list[-1].copy())
+            vec_list.append(vec_list[-1].copy())
+            mask_list.append(np.zeros(NUM_ACTIONS, dtype=bool))
+            to_play_list.append(to_play_list[-1])
+
+        if not act_list:
+            return None
+
+        if mode == "bc":
+            return {
+                # DOWNCAST TO FLOAT16 AND INT16 TO SAVE 50% RAM AND DISK
+                "obs_axial": np.stack(axial_list).astype(np.float16),
+                "obs_spatial": np.stack(spatial_list).astype(np.float16),
+                "obs_vec": np.stack(vec_list).astype(np.float16),
+                "actions": np.array(act_list, dtype=np.int16),
+                "action_masks": np.stack(mask_list).astype(bool),
+            }
         else:
-            # FIX: Even if there were no actions parsed (e.g. player trades, passive
-            # resource gains from other players rolling), flush the pending resources!
-            stepper.flush_corrections()
+            # State-aligned arrays have T+1 entries (indices 0..T).
+            # Transition-aligned arrays have T entries (indices 0..T-1).
+            terminated = np.zeros(len(axial_list), dtype=bool)
+            dones = np.zeros(len(axial_list), dtype=bool)
+            if game_ended:
+                terminated[-1] = True
+                dones[-1] = True
+            return {
+                # State-aligned (T+1)
+                "obs_axial": np.stack(axial_list).astype(np.float16),
+                "obs_spatial": np.stack(spatial_list).astype(np.float16),
+                "obs_vec": np.stack(vec_list).astype(np.float16),
+                "action_masks": np.stack(mask_list).astype(bool),
+                "to_plays": np.array(to_play_list, dtype=np.int16),
+                "terminated": terminated,
+                "dones": dones,
+                # Transition-aligned (T)
+                "actions": np.array(act_list, dtype=np.int16),
+                "rewards": np.array(reward_list, dtype=np.float16),
+            }
+    finally:
+        # THIS IS THE CRITICAL FIX: Destroy the environment and force GC
+        if stepper and hasattr(stepper, "env"):
+            stepper.env.close()
+        del stepper
+        gc.collect()
 
-    # RL mode: append the terminal state entry (state T, the state AFTER the last action).
-    # This makes obs/masks/to_plays/terminated/dones T+1-aligned while actions/rewards
-    # remain T-aligned, matching the MuZero rollout actor's sequence format.
-    if mode == "rl" and game_ended and act_list:
-        # Use the last pre-action obs as a placeholder for the true terminal obs
-        # (we do not step on the winning action, so the exact post-action obs is unavailable).
-        # terminated=True is sufficient for MuZero to zero-bootstrap at this position.
-        axial_list.append(axial_list[-1].copy())
-        spatial_list.append(spatial_list[-1].copy())
-        vec_list.append(vec_list[-1].copy())
-        mask_list.append(np.zeros(NUM_ACTIONS, dtype=bool))
-        to_play_list.append(to_play_list[-1])
 
-    if not act_list:
-        return None
+def process_chunk_and_save(
+    json_paths: list[str], output_path: str, mode: str, players: Optional[int] = None
+) -> int:
+    """Worker function: Processes a batch of games and writes directly to disk."""
+    per_game = []
+    success_count = 0
 
-    if mode == "bc":
-        return {
-            # T-aligned: one entry per transition
-            "obs_axial": np.stack(axial_list),
-            "obs_spatial": np.stack(spatial_list),
-            "obs_vec": np.stack(vec_list),
-            "actions": np.array(act_list, dtype=np.int32),
-            "action_masks": np.stack(mask_list),
+    for path in json_paths:
+        try:
+            dataset = process_and_verify_single(path, mode, players)
+            if dataset is not None:
+                per_game.append(dataset)
+                success_count += 1
+        except Exception:
+            # Silently catch so one bad game doesn't crash the chunk
+            pass
+
+    # If we got valid games, save them right here in the worker process
+    if per_game:
+        keys = list(per_game[0].keys())
+        final_dataset = {
+            k: np.concatenate([g[k] for g in per_game], axis=0) for k in keys
         }
-    else:
-        # State-aligned arrays have T+1 entries (indices 0..T).
-        # Transition-aligned arrays have T entries (indices 0..T-1).
-        terminated = np.zeros(len(axial_list), dtype=bool)
-        dones = np.zeros(len(axial_list), dtype=bool)
-        if game_ended:
-            terminated[-1] = True
-            dones[-1] = True
-        return {
-            # State-aligned (T+1)
-            "obs_axial": np.stack(axial_list),
-            "obs_spatial": np.stack(spatial_list),
-            "obs_vec": np.stack(vec_list),
-            "action_masks": np.stack(mask_list),
-            "to_plays": np.array(to_play_list, dtype=np.int16),
-            "terminated": terminated,
-            "dones": dones,
-            # Transition-aligned (T)
-            "actions": np.array(act_list, dtype=np.int32),
-            "rewards": np.array(reward_list, dtype=np.float32),
-        }
+
+        # RL specific additions
+        if mode == "rl":
+            final_dataset["game_lengths"] = np.array(
+                [g["actions"].shape[0] for g in per_game], dtype=np.int16
+            )
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with gzip.open(output_path, "wb") as f:
+            pickle.dump(final_dataset, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    # Nuke the arrays from the worker's RAM before picking up the next task
+    del per_game
+    gc.collect()
+
+    return success_count
 
 
 def generate_verified_dataset(
-    replays_dir: str, output_path: str, mode: str = "bc"
+    replays_dir: str,
+    output_dir: str,
+    mode: str = "bc",
+    chunk_size: int = 50,
+    max_workers: int = 4,
+    players: Optional[int] = None,
 ) -> None:
-    """Processes an entire directory of replays and saves the verified dataset.
+    """Processes directory in parallel and saves data in memory-safe chunks."""
+    json_files = [str(p) for p in Path(replays_dir).glob("*.json")]
+    print(f"Found {len(json_files)} replays. Starting distributed generation...")
 
-    Args:
-        replays_dir: Directory containing colonist replay JSON files.
-        output_path: Path for the output gzipped pickle file.
-        mode: "bc" or "rl" — passed through to process_and_verify_single.
-              In "rl" mode, a "game_lengths" array is also saved, recording the
-              number of transitions T per game for episode-boundary tracking.
-    """
-    json_files = list(Path(replays_dir).glob("*.json"))
-    print(f"Found {len(json_files)} replays. Starting generation & verification...")
+    os.makedirs(output_dir, exist_ok=True)
 
-    per_game: list = []
-    failed = 0
+    # Pre-chunk the file paths into lists
+    chunks = [
+        json_files[i : i + chunk_size] for i in range(0, len(json_files), chunk_size)
+    ]
 
-    for idx, fpath in enumerate(json_files, 1):
-        try:
-            dataset = process_and_verify_single(str(fpath), mode=mode)
-            if dataset is not None:
-                per_game.append(dataset)
-                print(
-                    f"[{idx}/{len(json_files)}] ✅ Verified & Processed: {fpath.name}"
-                )
-            else:
-                failed += 1
-        except Exception as e:
-            print(f"[{idx}/{len(json_files)}] ⚠️ Error on {fpath.name}: {str(e)}")
-            failed += 1
+    total_success = 0
 
-    if not per_game:
-        print("\n⚠️ No replays were successfully verified.")
-        return
+    # THE HEAVY HAND: OS-level memory wipes via maxtasksperchild=1
+    # This forces the worker process to exit and respawn after each chunk,
+    # guaranteeing that 100% of its memory is returned to the operating system.
+    with Pool(processes=max_workers, maxtasksperchild=1) as pool:
+        # Pre-generate tasks
+        async_tasks = []
+        for chunk_idx, chunk_paths in enumerate(chunks):
+            out_path = os.path.join(output_dir, f"catan_chunk_{chunk_idx:04d}.pkl.gz")
+            res = pool.apply_async(
+                process_chunk_and_save, (chunk_paths, out_path, mode, players)
+            )
+            async_tasks.append(res)
 
-    # Concatenate all games along axis 0.
-    keys = list(per_game[0].keys())
-    final_dataset: Dict[str, np.ndarray] = {
-        k: np.concatenate([g[k] for g in per_game], axis=0) for k in keys
-    }
-
-    # In RL mode, record per-game transition counts for n-step boundary tracking.
-    # game_lengths[i] = T for game i (number of transitions, i.e. length of actions array).
-    if mode == "rl":
-        final_dataset["game_lengths"] = np.array(
-            [g["actions"].shape[0] for g in per_game], dtype=np.int32
+        # Process as they finish
+        pbar = tqdm(
+            async_tasks,
+            total=len(chunks),
+            desc="Processing Chunks",
         )
+        for res in pbar:
+            try:
+                # This will wait for the task to complete
+                successes_in_chunk = res.get()
+                total_success += successes_in_chunk
+            except Exception as e:
+                print(f"\n⚠️ Unexpected Error during chunk processing: {str(e)}")
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    with gzip.open(output_path, "wb") as f:
-        pickle.dump(final_dataset, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-    total_steps = len(final_dataset["actions"])
-    total_games = len(per_game)
-    print(
-        f"\n🎉 Success! Saved {total_steps} verified steps from {total_games} games "
-        f"({failed} failed) to {output_path}"
-    )
+            pbar.set_postfix({"Total Valid Games": total_success})
 
 
 if __name__ == "__main__":

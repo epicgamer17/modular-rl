@@ -30,3 +30,4 @@ ffmpeg
 .hypothesis
 *.json
 experiments/catan/offline_data/games.tar.gz
+*.gz
