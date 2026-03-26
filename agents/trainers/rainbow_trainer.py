@@ -5,7 +5,7 @@ from typing import Optional, List, Dict, Any, Tuple
 from agents.trainers.base_trainer import BaseTrainer
 from agents.learner.base import UniversalLearner
 
-from agents.action_selectors.factory import SelectorFactory
+from agents.factories.action_selector import SelectorFactory
 from modules.models.agent_network import AgentNetwork
 from replay_buffers.transition import TransitionBatch, Transition
 from stats.stats import StatTracker, PlotType
@@ -16,9 +16,9 @@ from agents.learner.target_builders import (
 from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
 from agents.learner.losses import QBootstrappingLoss
-from replay_buffers.buffer_factories import create_dqn_buffer
+from agents.factories.replay_buffer import create_dqn_buffer
 from agents.learner.batch_iterators import RepeatSampleIterator
-from agents.learner.factory import build_universal_learner
+from agents.factories.learner import build_universal_learner
 from agents.action_selectors.policy_sources import NetworkPolicySource
 
 
@@ -145,7 +145,7 @@ class RainbowTrainer(BaseTrainer):
         )
 
         # 5. Initialize Executor
-        from agents.executors.factory import create_executor
+        from agents.factories.executor import create_executor
 
         self.executor = create_executor(config)
 

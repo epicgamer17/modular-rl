@@ -1,5 +1,5 @@
 import torch
-from search.aos_search.search_factories import build_search_pipeline
+from agents.factories.aos_search import build_search_pipeline
 
 
 class ModularSearch:

@@ -2,9 +2,9 @@ import torch
 import time
 from typing import Optional, List, Dict, Any
 from agents.trainers.base_trainer import BaseTrainer
-from agents.learner.factory import build_universal_learner
+from agents.factories.learner import build_universal_learner
 from agents.learner.batch_iterators import SingleBatchIterator
-from replay_buffers.buffer_factories import create_muzero_buffer
+from agents.factories.replay_buffer import create_muzero_buffer
 from agents.action_selectors.selectors import CategoricalSelector
 from agents.action_selectors.decorators import TemperatureSelector
 from modules.models.agent_network import AgentNetwork
@@ -90,7 +90,7 @@ class MuZeroTrainer(BaseTrainer):
             observation_compression=config.observation_compression,
         )
         # 5. Initialize Executor
-        from agents.executors.factory import create_executor
+        from agents.factories.executor import create_executor
         self.executor = create_executor(config)
 
         # 7. The Orchestrator (Universal Learner)
@@ -124,7 +124,7 @@ class MuZeroTrainer(BaseTrainer):
         # Policy sources
         self.policy_source = NetworkPolicySource(self.agent_network)
         # MuZero uses MCTS for rollout
-        from search.factory import SearchBackendFactory
+        from agents.factories.search import SearchBackendFactory
         search_engine = SearchBackendFactory.create(config, device=self.device, num_actions=self.num_actions)
         self.search_policy_source = SearchPolicySource(
             search_engine=search_engine,

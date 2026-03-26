@@ -23,6 +23,7 @@ from agents.learner.callbacks import (
     TargetNetworkSyncCallback,
     ResetNoiseCallback,
     EpsilonGreedySchedulerCallback,
+    Callback,
 )
 from agents.learner.losses import LossPipeline
 

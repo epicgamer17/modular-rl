@@ -1,15 +1,15 @@
 from typing import Tuple, Dict, Type, Any, Optional
 from torch import nn
-from .to_play import ToPlayHead
-from .base import BaseHead
-from .reward import RewardHead, ValuePrefixRewardHead
-from .value import ValueHead
-from .policy import PolicyHead
-from .chance_probability import ChanceProbabilityHead
-from .continuation import ContinuationHead
-from .observation import ObservationHead
-from .latent_consistency import SimSiamProjectorHead
-from .q import QHead, DuelingQHead
+from modules.heads.to_play import ToPlayHead
+from modules.heads.base import BaseHead
+from modules.heads.reward import RewardHead, ValuePrefixRewardHead
+from modules.heads.value import ValueHead
+from modules.heads.policy import PolicyHead
+from modules.heads.chance_probability import ChanceProbabilityHead
+from modules.heads.continuation import ContinuationHead
+from modules.heads.observation import ObservationHead
+from modules.heads.latent_consistency import SimSiamProjectorHead
+from modules.heads.q import QHead, DuelingQHead
 from configs.modules.heads.to_play import ToPlayHeadConfig
 from configs.modules.heads.value import ValueHeadConfig
 from configs.modules.heads.reward import RewardHeadConfig, ValuePrefixRewardHeadConfig

@@ -5,9 +5,9 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from configs.agents.muzero import MuZeroConfig
-from modules.backbones.factory import BackboneFactory
+from agents.factories.backbone import BackboneFactory
 from modules.embeddings.action_fusion import ActionFusion
-from modules.heads.factory import HeadFactory
+from agents.factories.head import HeadFactory
 from modules.utils import scale_gradient, _normalize_hidden_state
 from modules.models.inference_output import WorldModelOutput
 

@@ -4,7 +4,7 @@ from configs.base import (
     ReplayConfig,
 )
 from configs.modules.backbones.base import BackboneConfig
-from configs.modules.backbones.factory import BackboneConfigFactory
+from agents.factories.backbone_config import BackboneConfigFactory
 from configs.modules.architecture_config import ArchitectureConfig
 from modules.utils import (
     prepare_activations,

@@ -8,7 +8,7 @@ sys.path.append(os.getcwd())
 
 from modules.backbones.mlp import NoisyLinear
 from agents.registries.rainbow import build_rainbow
-from agents.learner.factory import build_universal_learner
+from agents.factories.learner import build_universal_learner
 
 def test_noisy_linear_inplace():
     print("Testing NoisyLinear in-place updates...")

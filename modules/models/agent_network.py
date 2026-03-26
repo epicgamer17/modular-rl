@@ -6,10 +6,10 @@ from modules.models.inference_output import (
     InferenceOutput,
 )
 from modules.models.world_model import WorldModel
-from modules.backbones.factory import BackboneFactory
+from agents.factories.backbone import BackboneFactory
 from modules.backbones.recurrent import RecurrentBackbone
 from modules.backbones.transformer import TransformerBackbone
-from modules.heads.factory import HeadFactory
+from agents.factories.head import HeadFactory
 
 
 from agents.learner.losses.representations import get_representation

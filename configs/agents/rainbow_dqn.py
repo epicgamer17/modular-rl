@@ -6,11 +6,11 @@ from configs.base import (
     EpsilonGreedyConfig,
 )
 from configs.modules.backbones.base import BackboneConfig
-from configs.modules.backbones.factory import BackboneConfigFactory
+from agents.factories.backbone_config import BackboneConfigFactory
 from configs.modules.heads.base import HeadConfig
 from configs.modules.heads.q import QHeadConfig, DuelingQHeadConfig
 from configs.modules.output_strategies import OutputStrategyConfigFactory
-from configs.modules.backbones.factory import BackboneConfigFactory
+from agents.factories.backbone_config import BackboneConfigFactory
 from configs.modules.architecture_config import ArchitectureConfig
 from utils.utils import tointlists
 

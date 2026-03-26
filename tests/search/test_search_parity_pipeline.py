@@ -3,8 +3,8 @@ import torch
 import numpy as np
 from types import SimpleNamespace
 
-from search.aos_search.search_factories import build_search_pipeline
-from search.search_py.search_factories import create_mcts
+from agents.factories.aos_search import build_search_pipeline
+from agents.factories.search_py import create_mcts
 from tests.search.conftest import MockSearchNetwork as MockNetwork
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]

@@ -1,7 +1,7 @@
 import pytest
 pytestmark = pytest.mark.integration
 
-from replay_buffers.buffer_factories import create_dqn_buffer
+from agents.factories.replay_buffer import create_dqn_buffer
 from replay_buffers.processors import NStepInputProcessor
 import torch
 

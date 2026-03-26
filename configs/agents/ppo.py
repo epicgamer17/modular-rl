@@ -5,7 +5,7 @@ from configs.modules.heads.policy import PolicyHeadConfig
 from configs.modules.heads.value import ValueHeadConfig
 from configs.modules.heads.base import HeadConfig
 from configs.modules.backbones.base import BackboneConfig
-from configs.modules.backbones.factory import BackboneConfigFactory
+from agents.factories.backbone_config import BackboneConfigFactory
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.base import ActorConfig
 from configs.base import CriticConfig

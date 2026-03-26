@@ -6,7 +6,7 @@ from pathlib import Path
 from agents.trainers.base_trainer import BaseTrainer
 from agents.executors.local_executor import LocalExecutor
 from agents.executors.torch_mp_executor import TorchMPExecutor
-from agents.action_selectors.factory import SelectorFactory
+from agents.factories.action_selector import SelectorFactory
 from agents.action_selectors.policy_sources import NetworkPolicySource
 
 
@@ -75,7 +75,7 @@ class PPOTrainer(BaseTrainer):
         self.policy_source = NetworkPolicySource(self.agent_network)
 
         # 3. Initialize Replay Buffer
-        from replay_buffers.buffer_factories import create_ppo_buffer
+        from agents.factories.replay_buffer import create_ppo_buffer
 
         self.replay_buffer = create_ppo_buffer(
             observation_dimensions=self.obs_dim,
@@ -87,12 +87,12 @@ class PPOTrainer(BaseTrainer):
         )
 
         # 4. Initialize Executor
-        from agents.executors.factory import create_executor
+        from agents.factories.executor import create_executor
 
         self.executor = create_executor(config)
 
         # 5. Initialize Learner via Factory
-        from agents.learner.factory import build_universal_learner
+        from agents.factories.learner import build_universal_learner
 
         self.learner = build_universal_learner(
             config=config,

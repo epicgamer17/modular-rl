@@ -131,7 +131,7 @@ def search_setup(net_factory):
         config = MuZeroConfig(config_dict, game_config)
         device = torch.device("cpu")
 
-        from search.search_py.search_factories import create_mcts
+        from agents.factories.search_py import create_mcts
 
         search_engine = create_mcts(config, device, num_actions)
 

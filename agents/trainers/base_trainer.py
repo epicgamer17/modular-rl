@@ -75,7 +75,7 @@ class BaseTrainer:
 
         # 1. Initialize Executor if not already done
         if self.executor is None:
-            from agents.executors.factory import create_executor
+            from agents.factories.executor import create_executor
             self.executor = create_executor(self.config)
 
         # 2. Prepare worker args

@@ -7,7 +7,7 @@ import torch
 from torch.distributions import Categorical
 
 from agents.action_selectors.decorators import PPODecorator
-from agents.action_selectors.factory import SelectorFactory
+from agents.factories.action_selector import SelectorFactory
 from agents.action_selectors.selectors import (
     ArgmaxSelector,
     CategoricalSelector,

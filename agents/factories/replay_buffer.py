@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
 from replay_buffers.concurrency import LocalBackend, TorchMPBackend, ConcurrencyBackend
@@ -30,23 +31,6 @@ from replay_buffers.samplers import (
     UniformSampler,
     WholeBufferSampler,
 )
-from utils.utils import legal_moves_mask
-
-
-# class RenameKeyInputProcessor(InputProcessor):
-#     """
-#     Helper processor to map input argument names to buffer names.
-#     e.g. 'action' -> 'actions', 'target_policy' -> 'target_policies'
-#     """
-
-#     def __init__(self, mapping: dict):
-#         self.mapping = mapping
-
-#     def process_single(self, **kwargs):
-#         for old_k, new_k in self.mapping.items():
-#             if old_k in kwargs and new_k not in kwargs:
-#                 kwargs[new_k] = kwargs[old_k]
-#         return kwargs
 
 
 class TargetPolicyInputProcessor(InputProcessor):
@@ -106,13 +90,6 @@ class TargetPolicyInputProcessor(InputProcessor):
         return kwargs
 
 
-#     def process_single(self, **kwargs):
-#         for old_k, new_k in self.mapping.items():
-#             if old_k in kwargs and new_k not in kwargs:
-#                 kwargs[new_k] = kwargs[old_k]
-#         return kwargs
-
-
 def create_dqn_buffer(
     observation_dimensions,
     max_size,
@@ -137,21 +114,11 @@ def create_dqn_buffer(
         BufferConfig("next_legal_moves_masks", shape=(num_actions,), dtype=torch.bool),
     ]
 
-    # Standard Pluralization Mapping
-    # key_mapping = {
-    #     "observation": "observations",
-    #     "action": "actions",
-    #     "reward": "rewards",
-    #     "next_observation": "next_observations",
-    #     "done": "dones",
-    # }
-
     if config is not None:
         # N-Step DQN Stack
         # 1. Rename Keys -> 2. Extract Legal Moves -> 3. N-Step Accumulation
         input_stack = StackedInputProcessor(
             [
-                # RenameKeyInputProcessor(key_mapping),
                 TerminationFlagsInputProcessor(
                     done_key="dones",
                     terminated_key="terminated",
@@ -285,19 +252,9 @@ def create_n_step_buffer(
         BufferConfig("dones", shape=(), dtype=torch.bool),
     ]
 
-    # key_mapping = {
-    #     "observation": "observations",
-    #     "action": "actions",
-    #     "reward": "rewards",
-    #     "next_observation": "next_observations",
-    #     "next_info": "next_infos",
-    #     "done": "dones",
-    # }
-
     # Stack: Rename -> NStep
     input_stack = StackedInputProcessor(
         [
-            # RenameKeyInputProcessor(key_mapping),
             NStepInputProcessor(
                 n_step,
                 gamma,
@@ -522,25 +479,10 @@ def create_rssm_buffer(
         BufferConfig("dones", shape=(), dtype=torch.float32),
     ]
 
-    # RSSM Stack: Simple renaming
-    # input_stack = StackedInputProcessor(
-    #     [
-    # RenameKeyInputProcessor(
-    #     {
-    #         "observation": "observations",
-    #         "action": "actions",
-    #         "reward": "rewards",
-    #         "done": "dones",
-    #     }
-    # )
-    #     ]
-    # )
-
     return ModularReplayBuffer(
         max_size=max_size,
         batch_size=batch_size,
         buffer_configs=configs,
-        # input_processor=input_stack,
         writer=CircularWriter(max_size),
         sampler=UniformSampler(),
         backend=backend if backend is not None else LocalBackend(),

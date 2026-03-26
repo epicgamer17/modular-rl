@@ -17,7 +17,7 @@ from agents.learner.target_builders import (
     PassThroughTargetBuilder,
 )
 from agents.learner.losses import PolicyLoss, LossPipeline, QBootstrappingLoss
-from replay_buffers.buffer_factories import create_dqn_buffer, create_nfsp_buffer
+from agents.factories.replay_buffer import create_dqn_buffer, create_nfsp_buffer
 from agents.action_selectors.policy_sources import NFSPNetworkPolicySource
 from agents.action_selectors.selectors import (
     CategoricalSelector,

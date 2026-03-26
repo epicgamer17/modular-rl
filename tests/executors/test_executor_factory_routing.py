@@ -4,7 +4,7 @@ pytestmark = pytest.mark.unit
 
 from types import SimpleNamespace
 
-from agents.executors.factory import create_executor
+from agents.factories.executor import create_executor
 from agents.executors.local_executor import LocalExecutor
 from agents.executors.torch_mp_executor import TorchMPExecutor
 

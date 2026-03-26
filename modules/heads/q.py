@@ -6,7 +6,7 @@ from .base import BaseHead, HeadOutput
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
 from agents.learner.losses.representations import BaseRepresentation
-from modules.backbones.factory import BackboneFactory
+from agents.factories.backbone import BackboneFactory
 from modules.backbones.mlp import build_dense, NoisyLinear
 
 

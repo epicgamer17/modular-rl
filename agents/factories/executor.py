@@ -9,11 +9,11 @@ def create_executor(config: Config) -> Any:
     executor_type = config.executor_type.lower()
 
     if executor_type == "local":
-        from .local_executor import LocalExecutor
+        from agents.executors.local_executor import LocalExecutor
 
         return LocalExecutor()
     elif executor_type == "torch_mp":
-        from .torch_mp_executor import TorchMPExecutor
+        from agents.executors.torch_mp_executor import TorchMPExecutor
 
         return TorchMPExecutor()
     else:

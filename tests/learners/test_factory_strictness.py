@@ -1,6 +1,6 @@
 import pytest
 import torch
-from agents.learner.factory import build_universal_learner, build_loss_pipeline
+from agents.factories.learner import build_universal_learner, build_loss_pipeline
 from modules.models.agent_network import AgentNetwork
 
 pytestmark = pytest.mark.unit

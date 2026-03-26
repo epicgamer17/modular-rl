@@ -89,6 +89,7 @@ def _build_valid_mask(
         elif legal_moves.dim() == 1:  # [num_actions] — broadcast across batch
             return legal_moves.unsqueeze(0).expand(B, -1).to(device=device)
 
+    import numpy as np
     # Fallback: list-of-ints or list-of-lists (e.g. from parity tests / Python backend).
     if isinstance(legal_moves[0], int):
         # Flat list — replicate across batch
@@ -177,8 +178,8 @@ class MCTSPipeline:
         Args:
             batched_obs: Batched observations fed to
                 ``agent_network.obs_inference``.
-            batched_info: Dict containing optional ``\"legal_moves\"`` for
-                action masking and strictly required ``\"player\"``.
+            batched_info: Dict containing optional ``"legal_moves"`` for
+                action masking and strictly required ``"player"``.
             agent_network: Network with ``obs_inference`` and
                 ``hidden_state_inference`` methods.
             trajectory_actions: Optional tensor of sequence actions (for reanalyze).
@@ -255,7 +256,7 @@ class MCTSPipeline:
         tree.node_values[:, 0] = root_v
         # Root raw network value — never overwritten by backprop
         tree.raw_network_values[:, 0] = root_v
-        tree.node_visits[:, 0] = 1  # count the initial \"visit\"
+        tree.node_visits[:, 0] = 1  # count the initial "visit"
 
         # children_prior_logits[:, 0, :num_actions] = pristine (noised) logits
         tree.children_prior_logits[:, 0, : self.num_actions] = root_logits.float()

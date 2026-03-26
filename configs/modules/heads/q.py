@@ -6,7 +6,7 @@ from configs.modules.output_strategies import (
     OutputStrategyConfigFactory,
 )
 from configs.modules.backbones.base import BackboneConfig
-from configs.modules.backbones.factory import BackboneConfigFactory
+from agents.factories.backbone_config import BackboneConfigFactory
 
 
 class QHeadConfig(HeadConfig):

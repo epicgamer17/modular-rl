@@ -1,7 +1,6 @@
 from typing import Optional
 from configs.base import ConfigBase
 from configs.modules.backbones.base import BackboneConfig
-from configs.modules.backbones.factory import BackboneConfigFactory
 
 
 class HeadConfig(ConfigBase):
@@ -10,6 +9,7 @@ class HeadConfig(ConfigBase):
     def __init__(self, config_dict: dict):
         super().__init__(config_dict)
         # Optional neck/backbone for the head
+        from agents.factories.backbone_config import BackboneConfigFactory
         self.neck: Optional[BackboneConfig] = self.parse_field(
             "neck", default=None, required=False, wrapper=BackboneConfigFactory.create
         )

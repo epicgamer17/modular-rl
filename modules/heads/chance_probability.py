@@ -7,7 +7,7 @@ from agents.learner.losses.representations import (
 )
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
-from modules.backbones.factory import BackboneFactory
+from agents.factories.backbone import BackboneFactory
 from modules.backbones.mlp import build_dense, NoisyLinear
 
 

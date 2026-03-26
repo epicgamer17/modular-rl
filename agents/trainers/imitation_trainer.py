@@ -5,7 +5,7 @@ from typing import List, Optional
 
 import torch
 import torch.nn.functional as F
-from agents.action_selectors.factory import SelectorFactory
+from agents.factories.action_selector import SelectorFactory
 from agents.learner.base import UniversalLearner
 from agents.learner.batch_iterators import RepeatSampleIterator
 from agents.learner.callbacks import ResetNoiseCallback
@@ -13,7 +13,7 @@ from agents.trainers.base_trainer import BaseTrainer
 from agents.learner.losses import PolicyLoss, LossPipeline
 from modules.models.agent_network import AgentNetwork
 from modules.utils import get_lr_scheduler
-from replay_buffers.buffer_factories import create_nfsp_buffer
+from agents.factories.replay_buffer import create_nfsp_buffer
 from stats.stats import PlotType, StatTracker
 
 
@@ -126,7 +126,7 @@ class ImitationTrainer(BaseTrainer):
         self.learner.replay_buffer = self.buffer
 
         # Executor + actors
-        from agents.executors.factory import create_executor
+        from agents.factories.executor import create_executor
         from agents.workers.actors import RolloutActor
         from agents.environments.adapters import GymAdapter, VectorAdapter
         from agents.action_selectors.policy_sources import NetworkPolicySource

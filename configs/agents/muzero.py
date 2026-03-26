@@ -9,7 +9,7 @@ from configs.base import (
     EarlyStoppingConfig,
 )
 from configs.modules.backbones.base import BackboneConfig
-from configs.modules.backbones.factory import BackboneConfigFactory
+from agents.factories.backbone_config import BackboneConfigFactory
 from configs.modules.heads.to_play import ToPlayHeadConfig
 from configs.modules.heads.policy import PolicyHeadConfig
 from configs.modules.heads.chance_probability import ChanceProbabilityHeadConfig

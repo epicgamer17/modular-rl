@@ -11,7 +11,7 @@ from agents.action_selectors.selectors import (
     EpsilonGreedySelector,
     ArgmaxSelector,
 )
-from agents.action_selectors.factory import SelectorFactory
+from agents.factories.action_selector import SelectorFactory
 from agents.action_selectors.types import InferenceResult
 from configs.selectors import SelectorConfig
 from modules.models.inference_output import InferenceOutput

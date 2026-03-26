@@ -1,5 +1,5 @@
 import pytest
-from agents.action_selectors.factory import SelectorFactory
+from agents.factories.action_selector import SelectorFactory
 from agents.action_selectors.selectors import CategoricalSelector
 from agents.action_selectors.decorators import PPODecorator
 
