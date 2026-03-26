@@ -100,15 +100,16 @@ class ClippedSurrogateLoss(BaseLoss):
         assert (
             ratio.shape == advantages.shape
         ), f"ClippedSurrogateLoss ratio vs advantages: {ratio.shape} vs {advantages.shape}"
-        surr1 = ratio * advantages
-        surr2 = (
-            torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param)
-            * advantages
+        from agents.learner.functional.losses import compute_clipped_surrogate_loss
+
+        loss = compute_clipped_surrogate_loss(
+            log_prob,
+            target_log_prob,
+            advantages,
+            self.clip_param,
+            dist.entropy(),
+            self.entropy_coefficient,
         )
-
-        entropy = dist.entropy()
-
-        loss = -torch.min(surr1, surr2) - self.entropy_coefficient * entropy
 
         # 3. Stats for full sequence
         with torch.no_grad():

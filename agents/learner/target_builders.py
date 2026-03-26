@@ -170,11 +170,16 @@ class TemporalDifferenceBuilder(BaseTargetBuilder):
             if target_q.dim() == 3 and target_q.shape[1] == 1:
                 target_q = target_q.squeeze(1)
 
+        from agents.learner.functional.targets import compute_td_target
+
         max_next_q = target_q[
             torch.arange(batch_size, device=rewards.device), next_actions
         ]
 
-        target_q_val = rewards + (1 - terminal_mask.float()) * discount * max_next_q
+        # Use pure math from functional/targets.py
+        target_q_val = compute_td_target(
+            rewards, terminal_mask, max_next_q, self.gamma, self.n_step
+        )
 
         # Whitelist the mathematical labels required for the loss pipeline
         if "q_values" in current_targets:
@@ -265,21 +270,16 @@ class DistributionalTargetBuilder(BaseTargetBuilder):
             # Compute probabilities for the projected atoms
             next_probs = torch.softmax(chosen_next_logits, dim=-1)
 
-        # 2. Get the base grid geometry from the network's representation
-        assert hasattr(
-            representation, "project_onto_grid"
-        ), "Distributional targets require a C51Representation."
-        base_support = representation.support.to(rewards.device)
+        from agents.learner.functional.targets import compute_c51_target
 
-        # 3. Do the MDP Math: Shift the support! (Tz = r + gamma * z)
-        # [B, 1] + [B, 1] * [1, Atoms] -> [B, Atoms]
-        shifted_support = rewards.unsqueeze(1) + discount * (
-            1.0 - terminal_mask.float()
-        ).unsqueeze(1) * base_support.unsqueeze(0)
-
-        # 4. Delegate the pure geometric projection back to the representation
-        target_distribution = representation.project_onto_grid(
-            shifted_support=shifted_support, probabilities=next_probs
+        # Use pure math from functional/targets.py
+        target_distribution = compute_c51_target(
+            rewards=rewards,
+            next_probs=next_probs,
+            support=representation.support.to(rewards.device),
+            dones=terminal_mask,
+            gamma=self.gamma,
+            n_step=self.n_step,
         )
 
         # 5. Whitelist the labels for the loss module

@@ -897,17 +897,16 @@ class GAEProcessor(InputProcessor):
         # 3. Append the bootstrap value to the value array
         values_appended = np.append(values, last_val)
 
-        # 4. Calculate TD Residuals (Deltas)
-        # delta_t = r_t + gamma * V(s_{t+1}) - V(s_t)
-        deltas = rewards + self.gamma * values_appended[1:] - values_appended[:-1]
+        # 4. Calculate GAE and Returns using pure math from functional/advantages.py
+        from agents.learner.functional.advantages import compute_gae
 
-        # 5. Compute GAE (Advantages) using your fast utils function
-        from replay_buffers.utils import discounted_cumulative_sums
-
-        advantages = discounted_cumulative_sums(deltas, self.gamma * self.gae_lambda)
-
-        # 6. Compute Returns (Targets for Value Loss)
-        returns = advantages + values
+        advantages, returns = compute_gae(
+            rewards=rewards,
+            values=values,
+            bootstrap_value=last_val,
+            gamma=self.gamma,
+            gae_lambda=self.gae_lambda,
+        )
 
         # 7. Package the flattened transitions for the Replay Buffer
         processed_transitions = []
@@ -1143,196 +1142,20 @@ class NStepUnrollProcessor(OutputProcessor):
         device,
     ):
         """
-        Vectorized N-step target calculation.
+        Delegates to pure math in functional/returns.py
         """
-        # 1. Setup Dimensions and Windows
-        num_windows = self.unroll_steps + 1
-        n_step = self.n_step
-        gamma = self.gamma
+        from agents.learner.functional.returns import compute_unrolled_n_step_targets
 
-        # Pre-compute gamma vector: [1, g, g^2, ..., g^(n-1)]
-        # Shape: [1, 1, n_step]
-        gammas = (
-            gamma ** torch.arange(n_step, dtype=torch.float32, device=device)
-        ).reshape(1, 1, n_step)
-
-        # 2. Slice/Pad inputs to ensure we don't go out of bounds for the unfold
-        # The 'raw' tensors typically have length >= num_windows + n_step
-        # We need to create 'num_windows' windows of size 'n_step'.
-        # The length required for this is: num_windows + n_step - 1.
-
-        required_len = num_windows + n_step - 1
-        raw_dones = raw_terminated | raw_truncated
-
-        # Helper to pad if needed
-        def safe_slice_unfold(tensor, length, size, step):
-            if tensor.shape[1] < length:
-                pad_len = length - tensor.shape[1]
-                # Pad last dim (time)
-                # pad format: (pad_left, pad_right, pad_top, pad_bottom...)
-                # we want to pad dim 1. 2D tensor (B, L) -> (0, pad_len)
-                # 3D tensor (B, L, C) -> (0, 0, 0, pad_len) ?? No, F.pad works on last dim first.
-                if tensor.dim() == 2:
-                    tensor = torch.nn.functional.pad(tensor, (0, pad_len))
-                elif tensor.dim() == 3:
-                    # (B, L, C) -> pad L means pad dim 1.
-                    # F.pad(dHW, dC, dL, dB) order?
-                    # "Padding size: The padding size by which to pad some dimensions of input are described starting from the last dimension and moving forward."
-                    # For (B, L, C): last is C (pad 0,0). Next is L (pad 0, pad_len).
-                    tensor = torch.nn.functional.pad(tensor, (0, 0, 0, pad_len))
-
-            return tensor[:, :length].unfold(1, size, step)
-
-        # [B, num_windows, n_step]
-        rewards_windows = safe_slice_unfold(raw_rewards, required_len, n_step, 1)
-        to_plays_windows = safe_slice_unfold(raw_to_plays, required_len, n_step, 1)
-        dones_windows = safe_slice_unfold(raw_dones, required_len, n_step, 1)
-        valid_windows = safe_slice_unfold(valid_mask, required_len, n_step, 1)
-
-        # Current ToPlay for each window start (u)
-        # We need raw_to_plays to be long enough for simple indexing too
-        if raw_to_plays.shape[1] < num_windows:
-            raw_to_plays = torch.nn.functional.pad(
-                raw_to_plays, (0, num_windows - raw_to_plays.shape[1])
-            )
-
-        # Shape: [B, num_windows, 1]
-        current_to_plays = raw_to_plays[:, :num_windows].unsqueeze(2)
-
-        # 3. Compute Value Masks
-        # Game Boundary Mask (from valid_mask) & Done Mask
-        # We need to compute a mask that handles the "break" when a done occurs.
-        # Original logic:
-        #   valid = valid_mask & (~has_ended)
-        #   has_ended |= done & valid
-
-        # This implies:
-        # - If done[k] is True, then mask[k] is VALID (we count the terminal reward).
-        # - But mask[k+1] and onwards are INVALID.
-
-        dones_float = dones_windows.float()
-        # cumsum gives [0, 0, 1, 1] for dones [0, 0, 1, 0]
-        # We want to forbid steps AFTER the first done.
-        # Shift cumsum right by 1 to get "was done before this step?"
-        was_done_before = torch.cat(
-            [
-                torch.zeros((batch_size, num_windows, 1), device=device),
-                torch.cumsum(dones_float, dim=2)[:, :, :-1],
-            ],
-            dim=2,
+        return compute_unrolled_n_step_targets(
+            raw_rewards=raw_rewards,
+            raw_values=raw_values,
+            raw_to_plays=raw_to_plays,
+            raw_terminated=raw_terminated | raw_truncated,
+            valid_mask=valid_mask,
+            gamma=self.gamma,
+            n_step=self.n_step,
+            unroll_steps=self.unroll_steps,
         )
-
-        # Check if "was done before" > 0 or if "was done before" depends on valid mask?
-        # Typically simple cumsum is enough if we assume raw_dones are correct.
-
-        # Valid Reward Steps:
-        # 1. Original valid_mask is True (same game)
-        # 2. No done happened BEFORE this step in the window
-        valid_steps_mask = valid_windows & (was_done_before == 0)
-
-        # 4. Compute Discounted Rewards
-        # Player Sign: compared to current_to_play
-        # [B, W, N]
-        signs = torch.where(current_to_plays == to_plays_windows, 1.0, -1.0)
-
-        # Weighted Rewards
-        # sum(gamma^k * R_k * sign_k * valid_k)
-
-        weighted_rewards = rewards_windows * gammas * signs * valid_steps_mask.float()
-
-        # [B, num_windows]
-        summed_rewards = weighted_rewards.sum(dim=2)
-
-        # 5. Compute Bootstrap Value
-        # Value at u + n_step (the boot_idx)
-        # Boot indices: u + n_step
-        boot_indices = torch.arange(n_step, n_step + num_windows, device=device)
-        # Clamp to safeguard against OOB (though logic should prevent using it)
-        safe_boot_indices = torch.clamp(boot_indices, max=raw_values.shape[1] - 1)
-
-        # [B, num_windows]
-        boot_values = raw_values[:, safe_boot_indices]
-        boot_to_plays = raw_to_plays[:, safe_boot_indices]
-
-        # Bootstrap Validity:
-        # 1. Boot index must be within valid range (num_windows + n_step < max_size ideally)
-        # 2. boot index valid_mask must be true
-        # 3. Game must NOT have ended inside the n_step window.
-
-        # Check if any done occurred in the valid part of the window
-        # If valid_steps_mask has valid done, it's fine for reward, but kills bootstrap.
-        # If any 'done' & 'valid' occurred in window -> no bootstrap.
-        # We can sum up (dones_windows & valid_steps_mask).
-        # If > 0, then we hit a done.
-        terminated_windows = safe_slice_unfold(raw_terminated, required_len, n_step, 1)
-        hit_terminated_in_window = (
-            terminated_windows.float() * valid_steps_mask.float()
-        ).sum(dim=2) > 0
-
-        boot_is_valid = (
-            valid_mask[:, safe_boot_indices]
-            & (~hit_terminated_in_window)
-            & (~raw_terminated[:, safe_boot_indices])
-        )
-
-        # Boot Sign
-        boot_signs = torch.where(
-            current_to_plays.squeeze(2) == boot_to_plays, 1.0, -1.0
-        )
-
-        boot_term = (gamma**n_step) * boot_values * boot_signs
-
-        # Final Target Values
-        target_values = summed_rewards + torch.where(
-            boot_is_valid, boot_term, torch.tensor(0.0, device=device)
-        )
-
-        # Grounding: Ensure that any targets for padded steps (past game end) are explicitly 0.0
-        # This is important for "safe absorbing states" logic where we want to learn V(s_absorbing) = 0
-        target_values = target_values * valid_mask[:, :num_windows].float()
-
-        # 6. Target Rewards (Value Prefix or Instant)
-        target_rewards = torch.zeros(
-            (batch_size, num_windows), dtype=torch.float32, device=device
-        )
-
-        if self.value_prefix and self.lstm_horizon_len > 0:
-            # Reimplement prefix accumulation loop (fast enough for small unroll_steps)
-            prefix_sum = torch.zeros(batch_size, device=device)
-            horizon_id = 0
-
-            for u in range(1, num_windows):
-                if horizon_id % self.lstm_horizon_len == 0:
-                    prefix_sum = torch.zeros(batch_size, device=device)
-                horizon_id += 1
-
-                # Reward at u-1
-                if (u - 1) < raw_rewards.shape[1]:
-                    # We assume raw_rewards are valid for the prefix calculation
-                    # (ignoring valid_mask logic here as per original implementation appearance
-                    # or assuming consistency)
-                    prefix_sum = prefix_sum + raw_rewards[:, u - 1]
-
-                # Check if the TRANSITION to this node is valid (state u-1 must be non-terminal)
-                is_valid = valid_mask[:, u - 1]
-                target_rewards[is_valid, u] = prefix_sum[is_valid]
-        else:
-            # Standard: target_rewards[u] = raw_rewards[u-1]
-            # The reward at step u is for the transition FROM state u-1,
-            # so validity is determined by dynamics_mask at position u-1.
-            t_rew = raw_rewards[:, : num_windows - 1]
-            mask_slice = valid_mask[:, : num_windows - 1]  # positions 0..K-1
-
-            # We assign to target_rewards[:, 1:]
-            # But we must respect the mask
-            # Safe way: fill zero, then assign masked
-
-            # Slice match: [B, num_windows-1]
-            target_slice = torch.zeros_like(target_rewards[:, 1:])
-            target_slice[mask_slice] = t_rew[mask_slice]
-            target_rewards[:, 1:] = target_slice
-
-        return target_values, target_rewards
 
 
 class AdvantageNormalizer(OutputProcessor):

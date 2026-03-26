@@ -78,19 +78,20 @@ class QBootstrappingLoss(BaseLoss):
                 flat_targets.sum(dim=-1), torch.ones_like(flat_targets.sum(dim=-1))
             ), f"Categorical targets must sum to 1.0, got {flat_targets.sum(dim=-1).mean().item()}"
             
-            log_prob = F.log_softmax(selected_preds, dim=-1)
-            
+            from agents.learner.functional.losses import compute_categorical_kl_div
+
             # If the user passed KLDivLoss (like Rainbow), use it!
             if isinstance(self.loss_fn, torch.nn.KLDivLoss):
                 # KLDivLoss expects input as Log-Probabilities, and Target as Probabilities.
                 # It requires batch reduction="none", so we temporarily wrap it
-                raw_loss = F.kl_div(
-                    log_prob, flat_targets, reduction="none"
-                ).sum(dim=-1)
+                raw_loss = compute_categorical_kl_div(
+                    selected_preds, flat_targets, reduction="none"
+                )
             else:
-                # Fallback to manual cross-entropy if not KL
-                # (Assuming flat_targets are pure probabilities)
-                raw_loss = -(flat_targets * log_prob).sum(dim=-1)
+                # Fallback to manual cross-entropy if not KL (categorical cross-entropy)
+                raw_loss = compute_categorical_kl_div(
+                    selected_preds, flat_targets, reduction="none"
+                )
         else:
             # Standard scalar regression (MSE)
             selected_preds = selected_preds.squeeze(-1)

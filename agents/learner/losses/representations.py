@@ -106,34 +106,13 @@ class DiscreteSupportRepresentation(BaseRepresentation):
 
     def to_representation(self, scalar_targets: Tensor) -> Tensor:
         """Project scalar targets onto discrete support: [B, T] -> [B, T, bins]"""
-        device = scalar_targets.device
-        dtype = scalar_targets.dtype
-        orig_shape = scalar_targets.shape
+        from agents.learner.functional.distributions import (
+            project_scalars_to_discrete_support,
+        )
 
-        # 1. Flatten into [N]
-        x = scalar_targets.reshape(-1).clamp(self.vmin, self.vmax)
-
-        # 2. Process
-        b = (x - self.vmin) / self.delta_z
-        l = b.floor().long()
-        u = b.ceil().long()
-
-        p_u = b - l.float()
-        p_l = 1.0 - p_u
-
-        flat_l = l.view(-1, 1).clamp(0, self.bins - 1)
-        flat_u = u.view(-1, 1).clamp(0, self.bins - 1)
-        flat_p_l = p_l.view(-1, 1)
-        flat_p_u = p_u.view(-1, 1)
-
-        num_elements = x.shape[0]
-        projected = torch.zeros((num_elements, self.bins), device=device, dtype=dtype)
-
-        projected.scatter_add_(1, flat_l, flat_p_l)
-        projected.scatter_add_(1, flat_u, flat_p_u)
-
-        # 3. Unflatten back to [B, T, bins]
-        return projected.view(*orig_shape, self.bins)
+        return project_scalars_to_discrete_support(
+            scalar_targets, self.vmin, self.vmax, self.bins
+        )
 
     def format_target(
         self, targets: Dict[str, Tensor], target_key: str = "values"
@@ -162,45 +141,17 @@ class C51Representation(DiscreteSupportRepresentation):
         self, shifted_support: torch.Tensor, probabilities: torch.Tensor
     ) -> torch.Tensor:
         """
-        Pure geometric projection.
-        Takes masses at arbitrary points and snaps them to the fixed grid.
-
-        Args:
-            shifted_support: [..., Atoms] The locations of the probability mass after Bellman shift.
-            probabilities: [..., Atoms] The probability mass at each point.
-
-        Returns:
-            projected_distribution: [..., Atoms] Distribution aligned with the fixed support grid.
-                Returns pure probabilities in [0, 1] that sum to 1, not logits or log-probs.
+        Delegates pure math to functional/targets.py
         """
-        # 1. Capture original shape and flatten to [N, Atoms]
-        orig_shape = shifted_support.shape
-        N = shifted_support.numel() // self.bins
-        z = shifted_support.reshape(N, self.bins).clamp(self.vmin, self.vmax)
-        p = probabilities.reshape(N, self.bins)
-        device = z.device
+        from agents.learner.functional.targets import project_onto_grid
 
-        # 2. Calculate offsets and bounds (l, u)
-        b = (z - self.vmin) / self.delta_z
-        l = b.floor().long()
-        u = b.ceil().long()
-
-        # 3. Calculate mass distribution
-        # (u - b) + (b - l) only equals 1 if u = l + 1.
-        # To avoid mass loss when b is an integer (l == u), we use:
-        p_u = p * (b - l.float())
-        p_l = p * (1.0 - (b - l.float()))
-
-        # 4. Safe indexing for scattering
-        l_idx = l.clamp(0, self.bins - 1)
-        u_idx = u.clamp(0, self.bins - 1)
-
-        projected = torch.zeros((N, self.bins), device=device, dtype=p.dtype)
-        projected.scatter_add_(1, l_idx, p_l)
-        projected.scatter_add_(1, u_idx, p_u)
-
-        # 5. Return unflattened
-        return projected.reshape(*orig_shape)
+        return project_onto_grid(
+            shifted_support, 
+            probabilities, 
+            self.vmin, 
+            self.vmax, 
+            self.bins
+        )
 
     def to_representation(self, scalar_targets: Tensor) -> Tensor:
         """Standard two-hot fallthrough for C51 if given a scalar."""

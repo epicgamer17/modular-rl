@@ -45,5 +45,8 @@ def sample_tree_proportional(
 
 
 def discounted_cumulative_sums(x, discount):
-    # Discounted cumulative sums of vectors for computing rewards-to-go and advantage estimates
-    return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
+    from agents.learner.functional.returns import (
+        discounted_cumulative_sums as _discounted_cumulative_sums,
+    )
+
+    return _discounted_cumulative_sums(x, discount)
