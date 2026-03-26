@@ -247,6 +247,7 @@ def process_and_verify_single(
     mode: str = "bc",
     players: Optional[int] = None,
     victory_points: Optional[int] = None,
+    winners_only: bool = False,
 ) -> Optional[Dict[str, np.ndarray]]:
     """Process a single replay file and return a dataset dict.
 
@@ -257,6 +258,7 @@ def process_and_verify_single(
               and T transition-aligned fields, plus terminal state.
         players: Optional filter for number of players.
         victory_points: Optional filter for game target victory points.
+        winners_only: If True and mode is 'bc', only save state-actions of the winning player.
 
     Returns:
         Dict of numpy arrays, or None if the replay failed verification.
@@ -270,14 +272,25 @@ def process_and_verify_single(
     initial_state = data.get("eventHistory", {}).get("initialState", {})
     game_settings = data.get("gameSettings", initial_state.get("gameSettings", {}))
 
+    # Identify the winning player
+    end_game = data.get("eventHistory", {}).get("endGameState", {})
+    winner_color = None
+    if end_game:
+        for color_str, pdata in end_game.get("players", {}).items():
+            if pdata.get("winningPlayer"):
+                winner_color = int(color_str)
+                break
+
+    # If we need winners only, but cannot determine who won, abort parsing this replay
+    if mode == "bc" and winners_only and winner_color is None:
+        del events, initial_state, game_settings, data
+        gc.collect()
+        return None
+
     # Skip games with inter-player trades (type 118): resource state cannot be
     # corrected for these trades since they have no playerStates snapshot.
     if _has_domestic_trades(events):
-        # print(f"[SKIP] {Path(json_path).name}: contains domestic trades (type 118)")
-        # Explicitly destroy the heavy dictionaries
-        del events
-        del initial_state
-        del data
+        del events, initial_state, data
         gc.collect()
         return None
 
@@ -285,10 +298,7 @@ def process_and_verify_single(
     n_players = len(play_order)
     if players is not None:
         if n_players != players:
-            del events
-            del initial_state
-            del game_settings
-            del data
+            del events, initial_state, game_settings, data
             gc.collect()
             return None
 
@@ -296,10 +306,7 @@ def process_and_verify_single(
     if victory_points is not None:
         game_vps = int(game_settings.get("victoryPoints", 10))  # Colonist default is 10
         if game_vps != victory_points:
-            del events
-            del initial_state
-            del game_settings
-            del data
+            del events, initial_state, game_settings, data
             gc.collect()
             return None
 
@@ -403,15 +410,21 @@ def process_and_verify_single(
                         stepper.env.unwrapped, agent_id_discard
                     )
 
-                    axial_list.append(all_obs_discard["obs_axial"])
-                    spatial_list.append(all_obs_discard["obs_spatial"])
-                    vec_list.append(all_obs_discard["obs_vec"])
-                    act_list.append(DISCARD_IDX)
-                    mask_list.append(_get_action_mask(stepper.env.unwrapped))
+                    # Determine if we should record this transition based on winners_only
+                    record_transition = not (
+                        mode == "bc" and winners_only and acting_player != winner_color
+                    )
 
-                    if mode == "rl":
-                        to_play_list.append(c_idx_discard)
-                        reward_list.append(0.0)
+                    if record_transition:
+                        axial_list.append(all_obs_discard["obs_axial"])
+                        spatial_list.append(all_obs_discard["obs_spatial"])
+                        vec_list.append(all_obs_discard["obs_vec"])
+                        act_list.append(DISCARD_IDX)
+                        mask_list.append(_get_action_mask(stepper.env.unwrapped))
+
+                        if mode == "rl":
+                            to_play_list.append(c_idx_discard)
+                            reward_list.append(0.0)
 
                     stepper.step_and_override(DISCARD_IDX, None, None)
                     if stepper.env.unwrapped.game.winning_color() is not None:
@@ -520,21 +533,27 @@ def process_and_verify_single(
                             return None
 
                         all_obs = _collect_all_obs(stepper.env.unwrapped, agent_id)
-                        axial_list.append(all_obs["obs_axial"])
-                        spatial_list.append(all_obs["obs_spatial"])
-                        vec_list.append(all_obs["obs_vec"])
-                        act_list.append(action_idx)
-                        mask_list.append(_get_action_mask(stepper.env.unwrapped))
 
-                        if mode == "rl":
-                            to_play_list.append(c_idx)
-                            reward_list.append(
-                                0.0
-                            )  # overwritten below if this is the winning action
+                        # Determine if we should record this transition based on winners_only
+                        record_transition = not (
+                            mode == "bc"
+                            and winners_only
+                            and acting_player != winner_color
+                        )
+
+                        if record_transition:
+                            axial_list.append(all_obs["obs_axial"])
+                            spatial_list.append(all_obs["obs_spatial"])
+                            vec_list.append(all_obs["obs_vec"])
+                            act_list.append(action_idx)
+                            mask_list.append(_get_action_mask(stepper.env.unwrapped))
+
+                            if mode == "rl":
+                                to_play_list.append(c_idx)
+                                reward_list.append(0.0)
 
                         if stepper.env.unwrapped.game.winning_color() is not None:
-                            if mode == "rl":
-                                # The acting player always wins on their own action.
+                            if mode == "rl" and record_transition:
                                 reward_list[-1] = 1.0
                             game_ended = True
                             done_parsing = True
@@ -610,6 +629,7 @@ def process_chunk_and_save(
     mode: str,
     players: Optional[int] = None,
     victory_points: Optional[int] = None,
+    winners_only: bool = False,
 ) -> int:
     """Worker function: Processes a batch of games and writes directly to disk."""
     per_game = []
@@ -617,8 +637,9 @@ def process_chunk_and_save(
 
     for path in json_paths:
         try:
-            # Added victory_points passthrough here
-            dataset = process_and_verify_single(path, mode, players, victory_points)
+            dataset = process_and_verify_single(
+                path, mode, players, victory_points, winners_only
+            )
             if dataset is not None:
                 per_game.append(dataset)
                 success_count += 1
@@ -657,9 +678,19 @@ def generate_verified_dataset(
     chunk_size: int = 50,
     max_workers: int = 4,
     players: Optional[int] = None,
-    victory_points: Optional[int] = None,  # Added VP Argument here
+    victory_points: Optional[int] = None,
+    winners_only: bool = False,
 ) -> None:
     """Processes directory in parallel and saves data in memory-safe chunks."""
+
+    # Catch RL / winners_only conflict
+    if mode == "rl" and winners_only:
+        warnings.warn(
+            "⚠️ 'winners_only' is set to True but mode is 'rl'. "
+            "Ignoring 'winners_only' as RL requires all transitions for value estimation."
+        )
+        winners_only = False
+
     json_files = [str(p) for p in Path(replays_dir).glob("*.json")]
     print(f"Found {len(json_files)} replays. Starting distributed generation...")
 
@@ -683,7 +714,7 @@ def generate_verified_dataset(
             res = pool.apply_async(
                 # Pass victory_points down to the worker
                 process_chunk_and_save,
-                (chunk_paths, out_path, mode, players, victory_points),
+                (chunk_paths, out_path, mode, players, victory_points, winners_only),
             )
             async_tasks.append(res)
 
