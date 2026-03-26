@@ -19,18 +19,18 @@ class RewardHead(BaseHead):
 
     def __init__(
         self,
-        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
         neck_config: Optional[BackboneConfig] = None,
+        noisy_sigma: float = 0.0,
         name: Optional[str] = None,
         input_source: str = "default",
     ):
         super().__init__(
-            arch_config,
             input_shape,
             representation,
             neck_config,
+            noisy_sigma=noisy_sigma,
             name=name,
             input_source=input_source,
         )
@@ -44,7 +44,7 @@ class RewardHead(BaseHead):
         self.output_layer = build_dense(
             in_features=self.flat_dim,
             out_features=self.representation.num_features,
-            sigma=self.arch_config.noisy_sigma,
+            sigma=self.noisy_sigma,
         )
 
     def reset_noise(self) -> None:
@@ -112,21 +112,22 @@ class ValuePrefixRewardHead(RewardHead):
 
     def __init__(
         self,
-        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
-        config: ValuePrefixRewardHeadConfig,
+        lstm_hidden_size: int = 64,
+        lstm_horizon_len: int = 5,
         neck_config: Optional[BackboneConfig] = None,
+        noisy_sigma: float = 0.0,
         name: Optional[str] = None,
         input_source: str = "default",
     ):
         # We call BaseHead init to avoid RewardHead's default output_layer logic
         BaseHead.__init__(
             self,
-            arch_config,
             input_shape,
             representation,
             neck_config,
+            noisy_sigma=noisy_sigma,
             name=name,
             input_source=input_source,
         )
@@ -135,8 +136,8 @@ class ValuePrefixRewardHead(RewardHead):
         self.output_shape = self.neck.output_shape
         self.flat_dim = self._get_flat_dim(self.neck, input_shape)
 
-        self.lstm_hidden_size = config.lstm_hidden_size
-        self.lstm_horizon_len = config.lstm_horizon_len
+        self.lstm_hidden_size = lstm_hidden_size
+        self.lstm_horizon_len = lstm_horizon_len
 
         # LSTM input size is the output of the neck (flat_dim)
         self.lstm = nn.LSTM(
@@ -149,7 +150,7 @@ class ValuePrefixRewardHead(RewardHead):
         self.output_layer = build_dense(
             in_features=self.lstm_hidden_size,
             out_features=self.representation.num_features,
-            sigma=self.arch_config.noisy_sigma,
+            sigma=self.noisy_sigma,
         )
 
     def reset_noise(self) -> None:

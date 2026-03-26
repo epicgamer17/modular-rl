@@ -39,11 +39,16 @@ class BackboneFactory:
         cls, config: Optional[BackboneConfig], input_shape: Tuple[int, ...]
     ) -> nn.Module:
         if config is None:
-            return IdentityBackbone(None, input_shape)
+            return IdentityBackbone(input_shape)
         config_type = type(config)
         if config_type not in cls._backbones:
             raise ValueError(
                 f"No backbone module registered for config type: {config_type}"
             )
 
-        return cls._backbones[config_type](config, input_shape)
+        # Unpack the config object into keyword arguments for the constructor
+        # We exclude metadata and non-config fields from ConfigBase
+        exclude = {"config_dict", "game", "_parsed_fields", "agent_type"}
+        kwargs = {k: v for k, v in vars(config).items() if k not in exclude}
+
+        return cls._backbones[config_type](input_shape=input_shape, **kwargs)

@@ -72,6 +72,8 @@ class HeadFactory:
             representation = get_representation(config.output_strategy)
 
         # 2. ToPlayHead Specialization
+        noisy_sigma = arch_config.noisy_sigma
+
         if isinstance(config, ToPlayHeadConfig):
             num_players = kwargs.get("num_players", getattr(config, "num_players", None))
             if num_players is None:
@@ -79,11 +81,11 @@ class HeadFactory:
                     "ToPlayHead requires num_players (either in config or passed to factory)"
                 )
             return ToPlayHead(
-                arch_config=arch_config,
                 input_shape=input_shape,
                 num_players=num_players,
                 neck_config=config.neck,
                 representation=representation,
+                noisy_sigma=noisy_sigma,
                 name=name,
                 input_source=config.input_source,
             )
@@ -91,10 +93,10 @@ class HeadFactory:
         # PolicyHead
         if isinstance(config, PolicyHeadConfig):
             return PolicyHead(
-                arch_config=arch_config,
                 input_shape=input_shape,
                 neck_config=config.neck,
                 representation=representation,
+                noisy_sigma=noisy_sigma,
                 name=name,
                 input_source=config.input_source,
             )
@@ -107,10 +109,10 @@ class HeadFactory:
                     "ChanceProbabilityHead requires num_chance_codes to be passed."
                 )
             return ChanceProbabilityHead(
-                arch_config=arch_config,
                 input_shape=input_shape,
                 num_chance_codes=num_chance_codes,
                 neck_config=config.neck,
+                noisy_sigma=noisy_sigma,
                 name=name,
                 input_source=config.input_source,
             )
@@ -118,24 +120,27 @@ class HeadFactory:
         # ValuePrefixRewardHead takes specific config
         if isinstance(config, ValuePrefixRewardHeadConfig):
             return ValuePrefixRewardHead(
-                arch_config=arch_config,
                 input_shape=input_shape,
                 representation=representation,  # Representation is resolved by factory
-                config=config,
+                lstm_hidden_size=config.lstm_hidden_size,
+                lstm_horizon_len=config.lstm_horizon_len,
                 neck_config=config.neck,
+                noisy_sigma=noisy_sigma,
                 name=name,
                 input_source=config.input_source,
             )
 
-
         # SimSiamProjectorHead takes specific config
         if isinstance(config, SimSiamProjectorConfig):
             return SimSiamProjectorHead(
-                arch_config=arch_config,
                 input_shape=input_shape,
-                config=config,
+                proj_hidden_dim=config.proj_hidden_dim,
+                proj_output_dim=config.proj_output_dim,
+                pred_hidden_dim=config.pred_hidden_dim,
+                pred_output_dim=config.pred_output_dim,
                 representation=representation,
                 neck_config=config.neck,
+                noisy_sigma=noisy_sigma,
                 name=name,
                 input_source=config.input_source,
             )
@@ -146,12 +151,12 @@ class HeadFactory:
             if num_actions is None:
                 raise ValueError("QHead requires num_actions to be passed.")
             return QHead(
-                arch_config=arch_config,
                 input_shape=input_shape,
                 representation=representation,
                 hidden_backbone_config=config.hidden_backbone,
                 num_actions=num_actions,
                 neck_config=config.neck,
+                noisy_sigma=noisy_sigma,
                 name=name,
                 input_source=config.input_source,
             )
@@ -162,22 +167,22 @@ class HeadFactory:
             if num_actions is None:
                 raise ValueError("DuelingQHead requires num_actions to be passed.")
             return DuelingQHead(
-                arch_config=arch_config,
                 input_shape=input_shape,
                 representation=representation,
                 value_hidden_backbone_config=config.value_hidden_backbone,
                 advantage_hidden_backbone_config=config.advantage_hidden_backbone,
                 num_actions=num_actions,
                 neck_config=config.neck,
+                noisy_sigma=noisy_sigma,
                 name=name,
                 input_source=config.input_source,
             )
 
         return head_cls(
-            arch_config=arch_config,
             input_shape=input_shape,
             representation=representation,
             neck_config=config.neck,
+            noisy_sigma=noisy_sigma,
             name=name,
             input_source=config.input_source,
         )

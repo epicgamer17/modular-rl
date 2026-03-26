@@ -57,11 +57,9 @@ class SearchPolicySource(BasePolicySource):
         self,
         search_engine: Any,
         agent_network: Optional[AgentNetwork],
-        config: Any = None,
     ):
         self.search = search_engine
         self.agent_network = agent_network
-        self.config = config
 
     def get_inference(
         self, obs: torch.Tensor, info: Dict[str, Any], **kwargs

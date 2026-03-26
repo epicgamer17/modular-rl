@@ -119,8 +119,10 @@ class PPOTrainer(BaseTrainer):
             self.agent_network,
             self.policy_source,
             self.replay_buffer,
-            config,
             self.action_selector,
+            getattr(config, "actor_device", "cpu"),
+            getattr(config.game, "num_actions", None),
+            getattr(config.game, "num_players", 1),
         )
         
         # Launch rollout workers

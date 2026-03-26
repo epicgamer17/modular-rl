@@ -30,7 +30,7 @@ from torch.optim.sgd import SGD
 from agents.executors.local_executor import LocalExecutor
 from agents.executors.torch_mp_executor import TorchMPExecutor
 from agents.trainers.base_trainer import BaseTrainer
-from agents.workers.actors import GymActor, PettingZooActor
+from agents.workers.actors import RolloutActor
 from modules.models.agent_network import AgentNetwork
 from modules.utils import get_clean_state_dict
 from replay_buffers.sequence import Sequence
@@ -133,20 +133,21 @@ class _NFSPActorMixin:
         return sequence
 
 
-class NFSPGymActor(_NFSPActorMixin, GymActor):
+class NFSPGymActor(_NFSPActorMixin, RolloutActor):
     def __init__(
         self,
-        env_factory,
+        adapter_cls,
+        adapter_args,
         best_response_agent_network: AgentNetwork,
         average_agent_network: AgentNetwork,
-        replay_buffer,
-        num_players: Optional[int] = None,
-        config: Optional[Any] = None,
-        device: Optional[torch.device] = None,
-        name: str = "agent",
-        eta: float = 0.1,
-        *,
+        buffer,
+        action_selector=None,
+        actor_device: str = "cpu",
+        num_actions: Optional[int] = None,
+        num_players: int = 1,
         worker_id: int = 0,
+        eta: float = 0.1,
+        **kwargs,
     ):
         self.average_agent_network = average_agent_network
 
@@ -160,33 +161,35 @@ class NFSPGymActor(_NFSPActorMixin, GymActor):
             average_network=average_agent_network,
         )
         super().__init__(
-            env_factory=env_factory,
-            agent_network=best_response_agent_network,
-            action_selector=selector,
-            replay_buffer=replay_buffer,
-            num_players=num_players,
-            config=config,
-            device=device,
-            name=name,
-            worker_id=worker_id,
+            adapter_cls=adapter_cls,
+            adapter_args=adapter_args,
+            network=best_response_agent_network,
             policy_source=policy_source,
+            buffer=buffer,
+            action_selector=selector,
+            actor_device=actor_device,
+            num_actions=num_actions,
+            num_players=num_players,
+            worker_id=worker_id,
+            **kwargs,
         )
 
 
-class NFSPPettingZooActor(_NFSPActorMixin, PettingZooActor):
+class NFSPPettingZooActor(_NFSPActorMixin, RolloutActor):
     def __init__(
         self,
-        env_factory,
+        adapter_cls,
+        adapter_args,
         best_response_agent_network: AgentNetwork,
         average_agent_network: AgentNetwork,
-        replay_buffer,
-        num_players: Optional[int] = None,
-        config: Optional[Any] = None,
-        device: Optional[torch.device] = None,
-        name: str = "agent",
-        eta: float = 0.1,
-        *,
+        buffer,
+        action_selector=None,
+        actor_device: str = "cpu",
+        num_actions: Optional[int] = None,
+        num_players: int = 1,
         worker_id: int = 0,
+        eta: float = 0.1,
+        **kwargs,
     ):
         self.average_agent_network = average_agent_network
 
@@ -200,20 +203,21 @@ class NFSPPettingZooActor(_NFSPActorMixin, PettingZooActor):
             average_network=average_agent_network,
         )
         super().__init__(
-            env_factory=env_factory,
-            agent_network=best_response_agent_network,
-            action_selector=selector,
-            replay_buffer=replay_buffer,
-            num_players=num_players,
-            config=config,
-            device=device,
-            name=name,
-            worker_id=worker_id,
+            adapter_cls=adapter_cls,
+            adapter_args=adapter_args,
+            network=best_response_agent_network,
             policy_source=policy_source,
+            buffer=buffer,
+            action_selector=selector,
+            actor_device=actor_device,
+            num_actions=num_actions,
+            num_players=num_players,
+            worker_id=worker_id,
+            **kwargs,
         )
 
 
-def _pick_nfsp_actor(env: Any) -> type[GymActor] | type[PettingZooActor]:
+def _pick_nfsp_actor(env: Any) -> type[RolloutActor]:
     is_pz = hasattr(env, "possible_agents")
     if not is_pz and hasattr(env, "unwrapped"):
         is_pz = hasattr(env.unwrapped, "possible_agents")
@@ -432,18 +436,21 @@ class NFSPTrainer(BaseTrainer):
             TorchMPExecutor() if self.config.multi_process else LocalExecutor()
         )
         self.actor_cls = _pick_nfsp_actor(env)
+        adapter_cls = self._get_adapter_class()
         worker_args = (
-            self.config.game.env_factory,
+            adapter_cls,
+            (self.config.game.env_factory,),
             self.br_agent_network,
             self.avg_agent_network,
-            None,  # replay buffer (trainer stores transitions)
+            None,  # replay buffer
+            None,  # action_selector (will be built in worker)
+            getattr(self.config, "actor_device", "cpu"),
+            getattr(self.config.game, "num_actions", None),
             self.num_players,
-            rl_config,  # TorchMPExecutor assumes args[5] has compilation config
-            device,
-            self.name,
+            0,  # worker_id placeholder
             getattr(self.config, "anticipatory_param", 0.1),
         )
-        self.executor.launch(self.actor_cls, worker_args, self.config.num_workers)
+        self.executor.launch_workers(self.actor_cls, worker_args, self.config.num_workers)
 
         # BaseTrainer expects a single agent_network/action_selector for tester wiring.
         self.agent_network = self.br_agent_network

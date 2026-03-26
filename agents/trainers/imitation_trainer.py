@@ -144,8 +144,11 @@ class ImitationTrainer(BaseTrainer):
             adapter_args,
             self.agent_network,
             self.policy_source,
-            config,
             self.buffer,
+            self.action_selector,
+            getattr(config, "actor_device", "cpu"),
+            getattr(config.game, "num_actions", None),
+            getattr(config.game, "num_players", 1),
         )
         
         num_workers = config.num_workers if hasattr(config, "num_workers") else 1

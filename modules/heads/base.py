@@ -27,15 +27,15 @@ class BaseHead(nn.Module, ABC):
 
     def __init__(
         self,
-        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
         neck_config: Optional[BackboneConfig] = None,
+        noisy_sigma: float = 0.0,
         name: Optional[str] = None,
         input_source: str = "default",
     ):
         super().__init__()
-        self.arch_config = arch_config
+        self.noisy_sigma = noisy_sigma
         self.input_shape = input_shape
         self.representation = representation
         self.name = name or self.__class__.__name__

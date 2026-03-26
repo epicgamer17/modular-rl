@@ -8,7 +8,7 @@ class IdentityBackbone(nn.Module):
     A pass-through backbone that returns the input as is.
     """
 
-    def __init__(self, config, input_shape: Tuple[int]):
+    def __init__(self, input_shape: Tuple[int]):
         super().__init__()
         self.input_shape = input_shape
         self.output_shape = input_shape  # Output shape is same as input

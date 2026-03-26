@@ -89,9 +89,10 @@ class BaseTrainer:
             self.agent_network,
             self.policy_source,
             None,  # Index 4 (buffer placeholder)
-            self.config,  # Index 5
-            selector,  # Index 6 (action_selector)
-            self.test_agents,  # Index 7 (test_agents)
+            selector,  # action_selector
+            getattr(self.config, "actor_device", "cpu"),
+            getattr(self.config.game, "num_actions", None),
+            self.test_agents,
         )
 
         # 3. Launch EvaluatorActor

@@ -19,15 +19,22 @@ class ObservationHead(BaseHead):
 
     def __init__(
         self,
-        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: Optional[BaseRepresentation] = None,
         neck_config: Optional[BackboneConfig] = None,
         use_output_layer: bool = True,
+        noisy_sigma: float = 0.0,
         name: Optional[str] = None,
         input_source: str = "default",
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config, name=name, input_source=input_source)
+        super().__init__(
+            input_shape,
+            representation,
+            neck_config,
+            noisy_sigma=noisy_sigma,
+            name=name,
+            input_source=input_source,
+        )
 
         # 1. Image or Vector neck (e.g. Deconv or MLP)
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -46,7 +53,7 @@ class ObservationHead(BaseHead):
             self.output_layer = build_dense(
                 in_features=self.flat_dim,
                 out_features=self.representation.num_features,
-                sigma=self.arch_config.noisy_sigma,
+                sigma=self.noisy_sigma,
             )
 
     def reset_noise(self) -> None:

@@ -145,10 +145,13 @@ class DAggerActor(RolloutActor):
         adapter_args: Tuple[Any, ...],
         student_network: AgentNetwork,
         expert_network: AgentNetwork,
-        policy_source: BasePolicySource,  # Reference to student policy
-        config: Any,
+        policy_source: BasePolicySource,
         buffer: ModularReplayBuffer,
+        actor_device: str = "cpu",
+        num_actions: Optional[int] = None,
+        num_players: int = 1,
         worker_id: int = 0,
+        **kwargs,
     ):
         """
         Initializes the DAggerActor.
@@ -159,18 +162,23 @@ class DAggerActor(RolloutActor):
             student_network: The network being trained.
             expert_network: The fixed network providing labels.
             policy_source: Strategy for retrieving Student inferences.
-            config: Algorithm configuration.
             buffer: Replay Buffer for storing labeled transitions.
+            actor_device: Device to use for the environment and network.
+            num_actions: Number of actions in the environment.
+            num_players: Number of players in the game.
             worker_id: Unique worker ID.
         """
         super().__init__(
-            adapter_cls,
-            adapter_args,
-            student_network,
-            policy_source,
-            config,
-            buffer,
-            worker_id,
+            adapter_cls=adapter_cls,
+            adapter_args=adapter_args,
+            network=student_network,
+            policy_source=policy_source,
+            buffer=buffer,
+            actor_device=actor_device,
+            num_actions=num_actions,
+            num_players=num_players,
+            worker_id=worker_id,
+            **kwargs,
         )
         self.expert_network = expert_network
 
@@ -256,10 +264,13 @@ class NFSPActor(RolloutActor):
         adapter_args: Tuple[Any, ...],
         rl_network: AgentNetwork,
         avg_network: AgentNetwork,
-        policy_source: BasePolicySource,  # This should handle anticipatory (eta) sampling
-        config: Any,
+        policy_source: BasePolicySource,
         buffer: ModularReplayBuffer,
+        actor_device: str = "cpu",
+        num_actions: Optional[int] = None,
+        num_players: int = 1,
         worker_id: int = 0,
+        **kwargs,
     ):
         """
         Initializes the NFSPActor.
@@ -270,18 +281,23 @@ class NFSPActor(RolloutActor):
             rl_network: Network used for Best Response (RL).
             avg_network: Network used for Average Strategy (SL).
             policy_source: PolicySource wrapping NFSP logic (η-sampling).
-            config: Algorithm configuration.
             buffer: Replay Buffer handling tagged storage.
+            actor_device: Device to use for the environment and network.
+            num_actions: Number of actions in the environment.
+            num_players: Number of players in the game.
             worker_id: Unique worker ID.
         """
         super().__init__(
-            adapter_cls,
-            adapter_args,
-            rl_network,
-            policy_source,
-            config,
-            buffer,
-            worker_id,
+            adapter_cls=adapter_cls,
+            adapter_args=adapter_args,
+            network=rl_network,
+            policy_source=policy_source,
+            buffer=buffer,
+            actor_device=actor_device,
+            num_actions=num_actions,
+            num_players=num_players,
+            worker_id=worker_id,
+            **kwargs,
         )
         self.avg_network = avg_network
         self.expert_network = avg_network  # For generic evaluation if needed

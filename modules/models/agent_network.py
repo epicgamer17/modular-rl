@@ -62,10 +62,20 @@ class AgentNetwork(nn.Module):
         # 2. Environment Phase (The Physics Engine)
         if world_model_config is not None:
             self.components["world_model"] = WorldModel(
-                config=world_model_config,
                 latent_dimensions=self.latent_dim,
                 num_actions=num_actions,
-                env_heads=world_model_config.env_heads,
+                arch_config=arch_config,
+                stochastic=getattr(world_model_config, "stochastic", False),
+                num_chance=getattr(world_model_config, "num_chance", 0),
+                observation_shape=getattr(world_model_config.game, "observation_shape", None),
+                use_true_chance_codes=getattr(world_model_config, "use_true_chance_codes", False),
+                num_players=num_players,
+                env_heads_config=world_model_config.env_heads,
+                dynamics_backbone_config=world_model_config.dynamics_backbone,
+                afterstate_dynamics_backbone_config=getattr(world_model_config, "afterstate_dynamics_backbone", None),
+                chance_probability_head_config=getattr(world_model_config, "chance_probability_head", None),
+                chance_encoder_backbone_config=getattr(world_model_config, "chance_encoder_backbone", None),
+                action_embedding_dim=getattr(world_model_config, "action_embedding_dim", 16),
             )
 
         # 3. Behavior Phase: Temporal Memory (Backbones)

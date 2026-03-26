@@ -144,8 +144,10 @@ class MuZeroTrainer(BaseTrainer):
             self.agent_network,
             self.search_policy_source,
             self.buffer,
-            config,
             self.action_selector,
+            getattr(config, "actor_device", "cpu"),
+            getattr(config.game, "num_actions", None),
+            getattr(config.game, "num_players", 1),
         )
         
         num_rollout_workers = config.num_workers if hasattr(config, "num_workers") else 1

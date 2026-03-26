@@ -93,28 +93,37 @@ class ResidualBlock(nn.Module):
 class ResNetBackbone(nn.Module):
     """ResNet backbone implementation."""
 
-    def __init__(self, config: ResNetConfig, input_shape: Tuple[int, ...]):
+    def __init__(
+        self,
+        input_shape: Tuple[int, ...],
+        filters: List[int],
+        kernel_sizes: List[int],
+        strides: List[int],
+        norm_type: str = "batch",
+        activation: nn.Module = nn.ReLU(),
+        noisy_sigma: float = 0.0,
+        **kwargs,
+    ):
         super().__init__()
-        self.config = config
         self.input_shape = input_shape
-        self.noisy = config.noisy_sigma != 0
+        self.noisy = noisy_sigma != 0
 
         layers = []
         current_input_channels = input_shape[0]
         curr_h, curr_w = input_shape[1], input_shape[2]
 
-        for i in range(len(config.filters)):
-            out_channels = config.filters[i]
-            k_size = config.kernel_sizes[i]
-            stride = unpack(config.strides[i])[0]
+        for i in range(len(filters)):
+            out_channels = filters[i]
+            k_size = kernel_sizes[i]
+            stride = unpack(strides[i])[0]
 
             layer = ResidualBlock(
                 in_channels=current_input_channels,
                 out_channels=out_channels,
                 kernel_size=k_size,
                 stride=stride,
-                norm_type=config.norm_type,
-                activation=config.activation,
+                norm_type=norm_type,
+                activation=activation,
                 input_size=(curr_h, curr_w),
             )
             layers.append(layer)

@@ -19,15 +19,22 @@ class ChanceProbabilityHead(BaseHead):
 
     def __init__(
         self,
-        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         num_chance_codes: int,
         neck_config: Optional[BackboneConfig] = None,
+        noisy_sigma: float = 0.0,
         name: Optional[str] = None,
         input_source: str = "default",
     ):
         representation = ClassificationRepresentation(num_classes=num_chance_codes)
-        super().__init__(arch_config, input_shape, representation, neck_config, name=name, input_source=input_source)
+        super().__init__(
+            input_shape,
+            representation,
+            neck_config,
+            noisy_sigma=noisy_sigma,
+            name=name,
+            input_source=input_source,
+        )
 
         # 1. Heads now build their own feature architecture (neck)
         self.neck = BackboneFactory.create(neck_config, input_shape)
@@ -39,7 +46,7 @@ class ChanceProbabilityHead(BaseHead):
         self.output_layer = build_dense(
             in_features=self.flat_dim,
             out_features=self.representation.num_features,
-            sigma=self.arch_config.noisy_sigma,
+            sigma=self.noisy_sigma,
         )
 
     def reset_noise(self) -> None:

@@ -23,22 +23,25 @@ class SimSiamProjectorHead(BaseHead):
 
     def __init__(
         self,
-        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
-        config: SimSiamProjectorConfig,
+        proj_hidden_dim: int,
+        proj_output_dim: int,
+        pred_hidden_dim: int,
+        pred_output_dim: int,
         representation: Optional[BaseRepresentation] = None,
         neck_config: Optional[BackboneConfig] = None,
+        noisy_sigma: float = 0.0,
         name: Optional[str] = None,
         input_source: str = "default",
     ):
         if representation is None:
-            representation = IdentityRepresentation(num_features=config.pred_output_dim)
+            representation = IdentityRepresentation(num_features=pred_output_dim)
 
         super().__init__(
-            arch_config,
             input_shape,
             representation,
             neck_config,
+            noisy_sigma=noisy_sigma,
             name=name,
             input_source=input_source,
         )
@@ -50,22 +53,22 @@ class SimSiamProjectorHead(BaseHead):
 
         # 2. Projection layers (SimSiam/EfficientZero style)
         self.projection = nn.Sequential(
-            nn.Linear(self.flat_dim, config.proj_hidden_dim),
-            nn.BatchNorm1d(config.proj_hidden_dim),
+            nn.Linear(self.flat_dim, proj_hidden_dim),
+            nn.BatchNorm1d(proj_hidden_dim),
             nn.ReLU(),
-            nn.Linear(config.proj_hidden_dim, config.proj_hidden_dim),
-            nn.BatchNorm1d(config.proj_hidden_dim),
+            nn.Linear(proj_hidden_dim, proj_hidden_dim),
+            nn.BatchNorm1d(proj_hidden_dim),
             nn.ReLU(),
-            nn.Linear(config.proj_hidden_dim, config.proj_output_dim),
-            nn.BatchNorm1d(config.proj_output_dim),
+            nn.Linear(proj_hidden_dim, proj_output_dim),
+            nn.BatchNorm1d(proj_output_dim),
         )
 
         # 3. Predictor layers (The 'projection_head' in original code)
         self.predictor = nn.Sequential(
-            nn.Linear(config.proj_output_dim, config.pred_hidden_dim),
-            nn.BatchNorm1d(config.pred_hidden_dim),
+            nn.Linear(proj_output_dim, pred_hidden_dim),
+            nn.BatchNorm1d(pred_hidden_dim),
             nn.ReLU(),
-            nn.Linear(config.pred_hidden_dim, config.pred_output_dim),
+            nn.Linear(pred_hidden_dim, pred_output_dim),
         )
 
     def forward(

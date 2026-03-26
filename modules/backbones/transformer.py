@@ -7,9 +7,17 @@ from configs.modules.backbones.transformer import TransformerConfig
 class TransformerBackbone(nn.Module):
     """Transformer backbone implementation."""
 
-    def __init__(self, config: TransformerConfig, input_shape: Tuple[int, ...]):
+    def __init__(
+        self,
+        input_shape: Tuple[int, ...],
+        d_model: int = 128,
+        num_heads: int = 4,
+        d_ff: int = 256,
+        num_layers: int = 2,
+        dropout: float = 0.1,
+        **kwargs,
+    ):
         super().__init__()
-        self.config = config
         self.input_shape = input_shape
 
         # input_shape: (Seq, Features) or (Features)
@@ -19,24 +27,24 @@ class TransformerBackbone(nn.Module):
             input_dim = input_shape[-1]
 
         self.embedding = (
-            nn.Linear(input_dim, config.d_model)
-            if input_dim != config.d_model
+            nn.Linear(input_dim, d_model)
+            if input_dim != d_model
             else nn.Identity()
         )
 
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=config.d_model,
-            nhead=config.num_heads,
-            dim_feedforward=config.d_ff,
-            dropout=config.dropout,
+            d_model=d_model,
+            nhead=num_heads,
+            dim_feedforward=d_ff,
+            dropout=dropout,
             activation="relu",  # Standard for Transformer
             batch_first=True,
         )
         self.transformer_encoder = nn.TransformerEncoder(
-            encoder_layer, num_layers=config.num_layers
+            encoder_layer, num_layers=num_layers
         )
 
-        self.output_shape = (config.d_model,)
+        self.output_shape = (d_model,)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, L, D) or (B, D) or (B, L, C, H, W)

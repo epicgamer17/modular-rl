@@ -104,32 +104,37 @@ class NoisyLinear(nn.Module):
 class MLPBackbone(nn.Module):
     """Dense (MLP) backbone implementation."""
 
-    def __init__(self, config: MLPConfig, input_shape: Tuple[int, ...]):
+    def __init__(
+        self,
+        input_shape: Tuple[int, ...],
+        widths: List[int],
+        norm_type: str = "none",
+        activation: nn.Module = nn.ReLU(),
+        noisy_sigma: float = 0.0,
+        **kwargs,
+    ):
         super().__init__()
-        self.config = config
         self.input_shape = input_shape
-        self.noisy = config.noisy_sigma != 0
+        self.noisy = noisy_sigma != 0
 
         # Calculate dimensions sequence
         input_dim = torch.Size(input_shape).numel()
-        all_dims = [input_dim] + list(config.widths)
+        all_dims = [input_dim] + list(widths)
 
         layers = []
         for in_f, out_f in zip(all_dims[:-1], all_dims[1:]):
             # Use bias only if not using normalization
-            use_bias = config.norm_type == "none"
+            use_bias = norm_type == "none"
 
             # Build layer (standard or noisy)
-            layers.append(
-                build_dense(in_f, out_f, sigma=config.noisy_sigma, bias=use_bias)
-            )
+            layers.append(build_dense(in_f, out_f, sigma=noisy_sigma, bias=use_bias))
 
             # Optional normalization
-            if config.norm_type != "none":
-                layers.append(build_normalization_layer(config.norm_type, out_f, dim=1))
+            if norm_type != "none":
+                layers.append(build_normalization_layer(norm_type, out_f, dim=1))
 
             # Activation
-            layers.append(config.activation)
+            layers.append(activation)
 
         self.model = nn.Sequential(*layers)
         self.output_shape = (all_dims[-1],)

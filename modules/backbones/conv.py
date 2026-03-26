@@ -9,54 +9,63 @@ from configs.modules.backbones.deconv import DeconvConfig
 class ConvBackbone(nn.Module):
     """Standard Convolutional backbone implementation."""
 
-    def __init__(self, config: ConvConfig, input_shape: Tuple[int, ...]):
+    def __init__(
+        self,
+        input_shape: Tuple[int, ...],
+        filters: List[int],
+        kernel_sizes: List[int],
+        strides: List[int],
+        norm_type: str = "batch",
+        activation: nn.Module = nn.ReLU(),
+        noisy_sigma: float = 0.0,
+        **kwargs,
+    ):
         super().__init__()
-        self.config = config
         self.input_shape = input_shape
-        self.noisy = config.noisy_sigma != 0
+        self.noisy = noisy_sigma != 0
 
         layers = []
         current_input_channels = input_shape[0]
         h, w = input_shape[1], input_shape[2]
         
-        for i in range(len(config.filters)):
+        for i in range(len(filters)):
             # Padding calculation
             manual_padding, torch_padding = calculate_same_padding(
-                (h, w), config.kernel_sizes[i], config.strides[i]
+                (h, w), kernel_sizes[i], strides[i]
             )
 
             # Bias rule: bias=False if followed by normalization
-            use_bias = config.norm_type == "none"
-            
+            use_bias = norm_type == "none"
+
             # Convolutional layer
             conv = nn.Conv2d(
                 in_channels=current_input_channels,
-                out_channels=config.filters[i],
-                kernel_size=config.kernel_sizes[i],
-                stride=config.strides[i],
+                out_channels=filters[i],
+                kernel_size=kernel_sizes[i],
+                stride=strides[i],
                 padding=torch_padding if torch_padding is not None else 0,
                 bias=use_bias,
             )
 
             # Normalization layer
-            norm_layer = build_normalization_layer(config.norm_type, config.filters[i], dim=2)
+            norm_layer = build_normalization_layer(norm_type, filters[i], dim=2)
 
             # Construct sequential block for this stage
             if manual_padding is None:
-                stage = nn.Sequential(conv, norm_layer, config.activation)
+                stage = nn.Sequential(conv, norm_layer, activation)
             else:
                 stage = nn.Sequential(
                     nn.ZeroPad2d(manual_padding),
                     conv,
                     norm_layer,
-                    config.activation,
+                    activation,
                 )
-            
+
             layers.append(stage)
-            current_input_channels = config.filters[i]
+            current_input_channels = filters[i]
 
             # Update spatial dimensions for next iteration
-            stride_h, stride_w = unpack(config.strides[i])
+            stride_h, stride_w = unpack(strides[i])
             h = (h + stride_h - 1) // stride_h
             w = (w + stride_w - 1) // stride_w
 
@@ -79,24 +88,33 @@ class ConvBackbone(nn.Module):
 class DeconvBackbone(nn.Module):
     """Backbone for upscaling/decoding tasks."""
 
-    def __init__(self, config: DeconvConfig, input_shape: Tuple[int, ...]):
+    def __init__(
+        self,
+        input_shape: Tuple[int, ...],
+        filters: List[int],
+        kernel_sizes: List[int],
+        strides: List[int],
+        output_padding: Optional[List[int]] = None,
+        norm_type: str = "batch",
+        activation: nn.Module = nn.ReLU(),
+        **kwargs,
+    ):
         super().__init__()
-        self.config = config
         self.input_shape = input_shape
 
         layers = []
         current_input_channels = input_shape[0]
-        output_padding = config.output_padding if config.output_padding is not None else [0] * len(config.filters)
+        op_list = output_padding if output_padding is not None else [0] * len(filters)
 
-        for i in range(len(config.filters)):
-            k = unpack(config.kernel_sizes[i])
-            s = unpack(config.strides[i])
-            op = unpack(output_padding[i])
+        for i in range(len(filters)):
+            k = unpack(kernel_sizes[i])
+            s = unpack(strides[i])
+            op = unpack(op_list[i])
 
-            use_bias = config.norm_type == "none"
+            use_bias = norm_type == "none"
             conv = nn.ConvTranspose2d(
                 in_channels=current_input_channels,
-                out_channels=config.filters[i],
+                out_channels=filters[i],
                 kernel_size=k,
                 stride=s,
                 padding=0,
@@ -104,9 +122,9 @@ class DeconvBackbone(nn.Module):
                 bias=use_bias,
             )
 
-            norm_layer = build_normalization_layer(config.norm_type, config.filters[i], dim=2)
-            layers.append(nn.Sequential(conv, norm_layer, config.activation))
-            current_input_channels = config.filters[i]
+            norm_layer = build_normalization_layer(norm_type, filters[i], dim=2)
+            layers.append(nn.Sequential(conv, norm_layer, activation))
+            current_input_channels = filters[i]
 
         self.model = nn.Sequential(*layers)
         self.output_shape = self._get_output_shape()

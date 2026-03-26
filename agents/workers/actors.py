@@ -57,11 +57,14 @@ class RolloutActor(BaseActor):
         adapter_args: Tuple[Any, ...],
         network: AgentNetwork,
         policy_source: BasePolicySource,
-        buffer: ModularReplayBuffer,  # Index 4
-        config: Any,
-        action_selector: Optional[BaseActionSelector] = None,  # Index 6
+        buffer: ModularReplayBuffer,
+        action_selector: Optional[BaseActionSelector] = None,
+        actor_device: str = "cpu",
+        num_actions: Optional[int] = None,
+        num_players: int = 1,
         test_agents: Optional[List[Any]] = None,
         worker_id: int = 0,
+        **kwargs,
     ):
         """
         Initializes the RolloutActor.
@@ -72,16 +75,17 @@ class RolloutActor(BaseActor):
             network: Neural network for value/policy estimation.
             policy_source: Strategy for retrieving InferenceResults.
             buffer: Replay Buffer reference for storing completed sequences.
-            config: Algorithm configuration.
             action_selector: Optional action selector.
+            actor_device: Device to use for the environment and network.
+            num_actions: Number of actions in the environment.
+            num_players: Number of players in the game.
+            test_agents: Optional list of agents for evaluation.
             worker_id: Unique ID for this worker.
         """
         self.worker_id = worker_id
         # 1. Build the adapter for this worker
         # Most adapters take (env_factory, device, num_actions)
-        device_name = getattr(config, "actor_device", "cpu")
-        device = torch.device(device_name)
-        num_actions = getattr(config.game, "num_actions", None)
+        device = torch.device(actor_device)
 
         self.adapter = adapter_cls(
             *adapter_args, device=device, num_actions=num_actions
@@ -94,7 +98,6 @@ class RolloutActor(BaseActor):
         self.action_selector = action_selector
         self.buffer = buffer
 
-        num_players = getattr(config.game, "num_players", 1)
         self.num_envs = self.adapter.num_envs
         self.seq_manager = SequenceManager(num_players, self.num_envs)
 
@@ -369,11 +372,13 @@ class EvaluatorActor(BaseActor):
         adapter_args: Tuple[Any, ...],
         network: AgentNetwork,
         policy_source: BasePolicySource,
-        buffer: Optional[ModularReplayBuffer],  # Index 4 (ignored by EvaluatorActor)
-        config: Any,  # Index 5
-        action_selector: Optional[BaseActionSelector] = None,  # Index 6
-        test_agents: Optional[List[Any]] = None,  # Index 7
-        worker_id: int = 0,  # Index 8
+        buffer: Optional[ModularReplayBuffer],
+        action_selector: Optional[BaseActionSelector] = None,
+        actor_device: str = "cpu",
+        num_actions: Optional[int] = None,
+        test_agents: Optional[List[Any]] = None,
+        worker_id: int = 0,
+        **kwargs,
     ):
         """
         Initializes the EvaluatorActor.
@@ -384,14 +389,14 @@ class EvaluatorActor(BaseActor):
             network: Greedy network for performance evaluation.
             policy_source: Inference provider.
             buffer: Placeholder for argument consistency (not used).
-            config: Algorithm configuration.
-            worker_id: Worker identifier.
             action_selector: Optional action selection provider for evaluation.
+            actor_device: Device to use for the environment and network.
+            num_actions: Number of actions in the environment.
+            test_agents: Optional list of agents for evaluation.
+            worker_id: Worker identifier.
         """
         self.worker_id = worker_id
-        device_name = getattr(config, "actor_device", "cpu")
-        device = torch.device(device_name)
-        num_actions = getattr(config.game, "num_actions", None)
+        device = torch.device(actor_device)
         self.adapter = adapter_cls(
             *adapter_args, device=device, num_actions=num_actions
         )
