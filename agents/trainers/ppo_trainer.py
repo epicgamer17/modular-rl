@@ -46,15 +46,26 @@ class PPOTrainer(BaseTrainer):
         super().__init__(config, env, device, name, stats, test_agents)
 
         # 1. Initialize Network
+        from agents.factories.builders import make_backbone_fn, make_head_fn
+
         # New standard: input_shape excludes batch dimension
         input_shape = self.obs_dim
+
+        # Build functional components
+        representation_fn = make_backbone_fn(getattr(config, "representation_backbone", None))
+        memory_core_fn = make_backbone_fn(getattr(config, "prediction_backbone", None))
+
+        head_fns = {}
+        if hasattr(config, "heads") and config.heads:
+            for name, head_cfg in config.heads.items():
+                head_fns[name] = make_head_fn(head_cfg)
+
         self.agent_network = AgentNetwork(
             input_shape=input_shape,
             num_actions=self.num_actions,
-            arch_config=config.arch,
-            representation_config=getattr(config, "representation_backbone", None),
-            prediction_backbone_config=getattr(config, "prediction_backbone", None),
-            heads_config=config.heads,
+            representation_fn=representation_fn,
+            memory_core_fn=memory_core_fn,
+            head_fns=head_fns,
             num_players=getattr(config.game, "num_players", 1),
         )
         self.agent_network.to(device)

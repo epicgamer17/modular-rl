@@ -39,12 +39,19 @@ class RainbowTrainer(BaseTrainer):
         super().__init__(config, env, device, name, stats, test_agents)
 
         # 1. Initialize Networks
+        from agents.factories.builders import make_backbone_fn, make_head_fn
+
+        representation_fn = make_backbone_fn(getattr(config, "representation_backbone", None))
+        head_fns = {
+            name: make_head_fn(h_cfg)
+            for name, h_cfg in config.heads.items()
+        }
+
         network_kwargs = {
             "input_shape": self.obs_dim,
             "num_actions": self.num_actions,
-            "arch_config": config.arch,
-            "representation_config": getattr(config, "representation_backbone", None),
-            "heads_config": config.heads,
+            "representation_fn": representation_fn,
+            "head_fns": head_fns,
             "num_players": getattr(config.game, "num_players", 1),
         }
         self.agent_network = AgentNetwork(**network_kwargs)

@@ -10,9 +10,7 @@ from agents.factories.replay_buffer import (
     create_rssm_buffer,
     create_ppo_buffer,
 )
-from agents.factories.backbone import BackboneFactory
 from agents.factories.backbone_config import BackboneConfigFactory
-from agents.factories.head import HeadFactory
 from agents.factories.search import SearchBackendFactory
 
 __all__ = [
@@ -27,8 +25,6 @@ __all__ = [
     "create_nfsp_buffer",
     "create_rssm_buffer",
     "create_ppo_buffer",
-    "BackboneFactory",
     "BackboneConfigFactory",
-    "HeadFactory",
     "SearchBackendFactory",
 ]

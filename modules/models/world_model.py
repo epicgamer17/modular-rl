@@ -1,13 +1,10 @@
-from typing import List, Optional, Tuple, Dict, Any, Union
+from typing import List, Optional, Tuple, Dict, Any, Union, Callable
 import torch
 from torch import nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from configs.agents.muzero import MuZeroConfig
-from agents.factories.backbone import BackboneFactory
 from modules.embeddings.action_fusion import ActionFusion
-from agents.factories.head import HeadFactory
 from modules.utils import scale_gradient, _normalize_hidden_state
 from modules.models.inference_output import WorldModelOutput
 
@@ -17,16 +14,14 @@ class DeterministicDynamics(nn.Module):
         self,
         latent_dimensions: Tuple[int, ...],
         num_actions: int,
-        dynamics_backbone_config: Any,
+        dynamics_fn: Callable[[Tuple[int, ...]], nn.Module],
         action_embedding_dim: int,
     ):
         super().__init__()
         self.dynamics_fusion = ActionFusion(
             num_actions, action_embedding_dim, latent_dimensions
         )
-        self.dynamics = BackboneFactory.create(
-            dynamics_backbone_config, latent_dimensions
-        )
+        self.dynamics = dynamics_fn(input_shape=latent_dimensions)
         self.output_shape = self.dynamics.output_shape
 
     def forward(
@@ -44,12 +39,11 @@ class StochasticDynamics(nn.Module):
         latent_dimensions: Tuple[int, ...],
         num_actions: int,
         num_chance: int,
-        arch_config: Any,
         observation_shape: Tuple[int, ...],
-        dynamics_backbone_config: Any,
-        afterstate_dynamics_backbone_config: Any,
-        chance_probability_head_config: Any,
-        chance_encoder_backbone_config: Any,
+        dynamics_fn: Callable[[Tuple[int, ...]], nn.Module],
+        afterstate_dynamics_fn: Callable[[Tuple[int, ...]], nn.Module],
+        sigma_head_fn: Callable[..., nn.Module],
+        encoder_fn: Callable[[Tuple[int, ...]], nn.Module],
         action_embedding_dim: int,
         use_true_chance_codes: bool = False,
     ):
@@ -62,23 +56,17 @@ class StochasticDynamics(nn.Module):
         self.afterstate_fusion = ActionFusion(
             num_actions, action_embedding_dim, latent_dimensions
         )
-        self.afterstate_dynamics = BackboneFactory.create(
-            afterstate_dynamics_backbone_config, latent_dimensions
-        )
+        self.afterstate_dynamics = afterstate_dynamics_fn(input_shape=latent_dimensions)
 
         # 2. Dynamics Phase
         self.dynamics_fusion = ActionFusion(
             self.num_chance, action_embedding_dim, latent_dimensions
         )
-        self.dynamics = BackboneFactory.create(
-            dynamics_backbone_config, latent_dimensions
-        )
+        self.dynamics = dynamics_fn(input_shape=latent_dimensions)
         self.output_shape = self.dynamics.output_shape
 
         # 3. Chance Prediction
-        self.sigma_head = HeadFactory.create(
-            chance_probability_head_config,
-            arch_config,
+        self.sigma_head = sigma_head_fn(
             input_shape=latent_dimensions,
             num_chance_codes=self.num_chance,
         )
@@ -86,9 +74,7 @@ class StochasticDynamics(nn.Module):
         # 4. Chance Encoder
         encoder_input_shape = list(observation_shape)
         encoder_input_shape[0] *= 2  # Double channels for stacked obs
-        self.encoder = BackboneFactory.create(
-            chance_encoder_backbone_config, tuple(encoder_input_shape)
-        )
+        self.encoder = encoder_fn(input_shape=tuple(encoder_input_shape))
         # Map flattened backbone output to codes using a foolproof dummy pass
         from modules.utils import get_flat_dim
         flat_dim = get_flat_dim(self.encoder, tuple(encoder_input_shape))
@@ -161,18 +147,18 @@ class WorldModel(nn.Module):
         self,
         latent_dimensions: Tuple[int, ...],
         num_actions: int,
-        arch_config: Any,
         stochastic: bool = False,
         num_chance: int = 0,
         observation_shape: Optional[Tuple[int, ...]] = None,
         use_true_chance_codes: bool = False,
         num_players: int = 1,
-        env_heads_config: Dict[str, Any] = None,
-        dynamics_backbone_config: Any = None,
-        afterstate_dynamics_backbone_config: Any = None,
-        chance_probability_head_config: Any = None,
-        chance_encoder_backbone_config: Any = None,
+        env_head_fns: Dict[str, Callable[..., nn.Module]] = None,
+        dynamics_fn: Callable[[Tuple[int, ...]], nn.Module] = None,
+        afterstate_dynamics_fn: Callable[[Tuple[int, ...]], nn.Module] = None,
+        sigma_head_fn: Callable[..., nn.Module] = None,
+        encoder_fn: Callable[[Tuple[int, ...]], nn.Module] = None,
         action_embedding_dim: int = 16,
+        **kwargs,
     ):
         super().__init__()
         self.num_actions = num_actions
@@ -184,12 +170,11 @@ class WorldModel(nn.Module):
                 latent_dimensions=latent_dimensions,
                 num_actions=num_actions,
                 num_chance=num_chance,
-                arch_config=arch_config,
                 observation_shape=observation_shape,
-                dynamics_backbone_config=dynamics_backbone_config,
-                afterstate_dynamics_backbone_config=afterstate_dynamics_backbone_config,
-                chance_probability_head_config=chance_probability_head_config,
-                chance_encoder_backbone_config=chance_encoder_backbone_config,
+                dynamics_fn=dynamics_fn,
+                afterstate_dynamics_fn=afterstate_dynamics_fn,
+                sigma_head_fn=sigma_head_fn,
+                encoder_fn=encoder_fn,
                 action_embedding_dim=action_embedding_dim,
                 use_true_chance_codes=use_true_chance_codes,
             )
@@ -197,7 +182,7 @@ class WorldModel(nn.Module):
             self.dynamics_pipeline = DeterministicDynamics(
                 latent_dimensions=latent_dimensions,
                 num_actions=num_actions,
-                dynamics_backbone_config=dynamics_backbone_config,
+                dynamics_fn=dynamics_fn,
                 action_embedding_dim=action_embedding_dim,
             )
 
@@ -205,18 +190,18 @@ class WorldModel(nn.Module):
         self.heads = nn.ModuleDict()
 
         # Iterate over configured environment heads
-        for head_name, head_config in (env_heads_config or {}).items():
-            if head_config is None:
-                continue
+        if env_head_fns:
+            for head_name, head_fn in env_head_fns.items():
+                if head_fn is None:
+                    continue
 
-            self.heads[head_name] = HeadFactory.create(
-                head_config,
-                arch_config=arch_config,
-                input_shape=self.dynamics_pipeline.output_shape,
-                num_players=num_players,
-                num_actions=num_actions,
-                num_chance_codes=num_chance,
-            )
+                self.heads[head_name] = head_fn(
+                    input_shape=self.dynamics_pipeline.output_shape,
+                    num_players=num_players,
+                    num_actions=num_actions,
+                    num_chance_codes=num_chance,
+                    name=head_name,
+                )
 
         self.register_buffer("_device_indicator", torch.empty(0))
 

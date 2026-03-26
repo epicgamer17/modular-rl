@@ -6,10 +6,8 @@ from modules.models.inference_output import (
     InferenceOutput,
 )
 from modules.models.world_model import WorldModel
-from agents.factories.backbone import BackboneFactory
 from modules.backbones.recurrent import RecurrentBackbone
 from modules.backbones.transformer import TransformerBackbone
-from agents.factories.head import HeadFactory
 
 
 from agents.learner.losses.representations import get_representation
@@ -25,11 +23,10 @@ class AgentNetwork(nn.Module):
         self,
         input_shape: Tuple[int, ...],
         num_actions: int,
-        arch_config: Any,
-        representation_config: Optional[Any] = None,
-        world_model_config: Optional[Any] = None,
-        prediction_backbone_config: Optional[Any] = None,
-        heads_config: Dict[str, Any] = None,
+        representation_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
+        world_model_fn: Optional[Callable[..., nn.Module]] = None,
+        memory_core_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
+        head_fns: Dict[str, Callable[..., nn.Module]] = None,
         stochastic: bool = False,
         num_players: int = 1,
         num_chance_codes: int = 0,
@@ -38,7 +35,6 @@ class AgentNetwork(nn.Module):
         super().__init__()
         self.input_shape = input_shape
         self.num_actions = num_actions
-        self.arch_config = arch_config
         self.stochastic = stochastic
 
         # --- DYNAMIC ASSEMBLY ---
@@ -46,10 +42,8 @@ class AgentNetwork(nn.Module):
         self.components["behavior_heads"] = nn.ModuleDict()
 
         # 1. Representation Phase (The Encoder)
-        if representation_config is not None:
-            self.components["representation"] = BackboneFactory.create(
-                representation_config, input_shape
-            )
+        if representation_fn is not None:
+            self.components["representation"] = representation_fn(input_shape=input_shape)
             current_head_input_shape = self.components["representation"].output_shape
         else:
             ident = nn.Identity()
@@ -60,49 +54,34 @@ class AgentNetwork(nn.Module):
         self.latent_dim = current_head_input_shape
 
         # 2. Environment Phase (The Physics Engine)
-        if world_model_config is not None:
-            self.components["world_model"] = WorldModel(
+        if world_model_fn is not None:
+            self.components["world_model"] = world_model_fn(
                 latent_dimensions=self.latent_dim,
                 num_actions=num_actions,
-                arch_config=arch_config,
-                stochastic=getattr(world_model_config, "stochastic", False),
-                num_chance=getattr(world_model_config, "num_chance", 0),
-                observation_shape=getattr(world_model_config.game, "observation_shape", None),
-                use_true_chance_codes=getattr(world_model_config, "use_true_chance_codes", False),
                 num_players=num_players,
-                env_heads_config=world_model_config.env_heads,
-                dynamics_backbone_config=world_model_config.dynamics_backbone,
-                afterstate_dynamics_backbone_config=getattr(world_model_config, "afterstate_dynamics_backbone", None),
-                chance_probability_head_config=getattr(world_model_config, "chance_probability_head", None),
-                chance_encoder_backbone_config=getattr(world_model_config, "chance_encoder_backbone", None),
-                action_embedding_dim=getattr(world_model_config, "action_embedding_dim", 16),
             )
 
         # 3. Behavior Phase: Temporal Memory (Backbones)
         if (
-            prediction_backbone_config is not None
+            memory_core_fn is not None
             and "world_model" not in self.components
         ):
-            backbone = BackboneFactory.create(
-                prediction_backbone_config, current_head_input_shape
-            )
+            backbone = memory_core_fn(input_shape=current_head_input_shape)
             if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
                 self.components["memory_core"] = backbone
                 current_head_input_shape = backbone.output_shape
             else:
                 raise ValueError(
-                    "prediction_backbone should be an RNN/Transformer. For spatial embedding, use representation_backbone."
+                    "memory_core should be an RNN/Transformer. For spatial embedding, use representation_backbone."
                 )
 
         # 3. Behavior Phase: Behavioral Heads (Policy, Value, Q, etc.)
-        if heads_config:
-            for head_name, head_config in heads_config.items():
-                if head_config is None:
+        if head_fns:
+            for head_name, head_fn in head_fns.items():
+                if head_fn is None:
                     continue
 
-                self.components["behavior_heads"][head_name] = HeadFactory.create(
-                    head_config,
-                    arch_config=arch_config,
+                self.components["behavior_heads"][head_name] = head_fn(
                     input_shape=current_head_input_shape,
                     num_actions=self.num_actions,
                     num_players=num_players,

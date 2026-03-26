@@ -249,22 +249,20 @@ class NFSPTrainer(BaseTrainer):
         sl_config = config.sl_configs[0]
 
         # Networks (Best Response + Target, and Average Strategy)
+        from agents.factories.builders import make_backbone_fn, make_head_fn
+
+        rl_rep_fn = make_backbone_fn(getattr(rl_config, "representation_backbone", None))
+        rl_head_fns = {
+            name: make_head_fn(h_cfg)
+            for name, h_cfg in rl_config.heads.items()
+        }
+
         network_kwargs = {
             "input_shape": self.obs_dim,
             "num_actions": self.num_actions,
-            "arch_config": rl_config.arch,
-            "representation_config": getattr(
-                rl_config, "representation_backbone", None
-            ),
-            "heads_config": rl_config.heads,
+            "representation_fn": rl_rep_fn,
+            "head_fns": rl_head_fns,
             "num_players": self.num_players,
-            "validator_params": {
-                "minibatch_size": rl_config.minibatch_size,
-                "num_actions": self.num_actions,
-                "atom_size": (
-                    rl_config.atom_size if hasattr(rl_config, "atom_size") else 1
-                ),
-            },
         }
         self.br_agent_network = AgentNetwork(**network_kwargs).to(device)
         self.br_target_agent_network = AgentNetwork(**network_kwargs).to(device)
@@ -272,17 +270,18 @@ class NFSPTrainer(BaseTrainer):
 
         update_target_network(self.br_agent_network, self.br_target_agent_network)
 
+        sl_rep_fn = make_backbone_fn(getattr(sl_config, "representation_backbone", None))
+        sl_head_fns = {
+            name: make_head_fn(h_cfg)
+            for name, h_cfg in sl_config.heads.items()
+        }
+
         self.avg_agent_network = AgentNetwork(
             input_shape=self.obs_dim,
             num_actions=self.num_actions,
-            arch_config=sl_config.arch,
-            representation_config=getattr(sl_config, "representation_backbone", None),
-            heads_config=sl_config.heads,
+            representation_fn=sl_rep_fn,
+            head_fns=sl_head_fns,
             num_players=self.num_players,
-            validator_params={
-                "minibatch_size": sl_config.minibatch_size,
-                "num_actions": self.num_actions,
-            },
         ).to(device)
 
         if self.config.multi_process:

@@ -1,4 +1,4 @@
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict, Any, Callable
 import torch
 from torch import nn, Tensor
 from .base import BaseHead, HeadOutput
@@ -9,7 +9,6 @@ from agents.learner.losses.representations import (
 )
 from configs.modules.architecture_config import ArchitectureConfig
 from configs.modules.backbones.base import BackboneConfig
-from agents.factories.backbone import BackboneFactory
 from modules.backbones.mlp import build_dense, NoisyLinear
 
 
@@ -29,10 +28,11 @@ class SimSiamProjectorHead(BaseHead):
         pred_hidden_dim: int,
         pred_output_dim: int,
         representation: Optional[BaseRepresentation] = None,
-        neck_config: Optional[BackboneConfig] = None,
+        neck_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
         noisy_sigma: float = 0.0,
         name: Optional[str] = None,
         input_source: str = "default",
+        **kwargs,
     ):
         if representation is None:
             representation = IdentityRepresentation(num_features=pred_output_dim)
@@ -40,14 +40,19 @@ class SimSiamProjectorHead(BaseHead):
         super().__init__(
             input_shape,
             representation,
-            neck_config,
+            neck_fn=neck_fn,
             noisy_sigma=noisy_sigma,
             name=name,
             input_source=input_source,
         )
 
         # 1. Heads now build their own feature architecture (neck)
-        self.neck = BackboneFactory.create(neck_config, input_shape)
+        if self.neck_fn is not None:
+            self.neck = self.neck_fn(input_shape=input_shape)
+        else:
+            self.neck = nn.Identity()
+            self.neck.output_shape = input_shape
+
         self.output_shape = self.neck.output_shape
         self.flat_dim = self._get_flat_dim(self.neck, input_shape)
 

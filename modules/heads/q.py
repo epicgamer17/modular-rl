@@ -1,11 +1,10 @@
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict, Any, Callable
 import torch
 from torch import nn, Tensor
 
 from .base import BaseHead, HeadOutput
 from configs.modules.backbones.base import BackboneConfig
 from agents.learner.losses.representations import BaseRepresentation
-from agents.factories.backbone import BackboneFactory
 from modules.backbones.mlp import build_dense, NoisyLinear
 
 
@@ -19,24 +18,31 @@ class QHead(BaseHead):
         self,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
-        hidden_backbone_config: BackboneConfig,
+        hidden_backbone_fn: Callable[[Tuple[int, ...]], nn.Module],
         num_actions: int,
-        neck_config: Optional[BackboneConfig] = None,
+        neck_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
         noisy_sigma: float = 0.0,
         name: Optional[str] = None,
         input_source: str = "default",
+        **kwargs,
     ):
         super().__init__(
             input_shape,
             representation,
-            neck_config,
+            neck_fn=neck_fn,
             noisy_sigma=noisy_sigma,
             name=name,
             input_source=input_source,
+            **kwargs,
         )
 
         # 1. Heads now build their own feature architecture (neck)
-        self.neck = BackboneFactory.create(neck_config, input_shape)
+        if self.neck_fn is not None:
+            self.neck = self.neck_fn(input_shape=input_shape)
+        else:
+            self.neck = nn.Identity()
+            self.neck.output_shape = input_shape
+
         self.output_shape = self.neck.output_shape
         self.flat_dim = self._get_flat_dim(self.neck, input_shape)
 
@@ -44,9 +50,7 @@ class QHead(BaseHead):
         self.noisy = noisy_sigma != 0
 
         # 2. Hidden Layers are now a Backbone!
-        self.hidden_layers = BackboneFactory.create(
-            hidden_backbone_config, (self.flat_dim,)
-        )
+        self.hidden_layers = hidden_backbone_fn(input_shape=(self.flat_dim,))
 
         # 3. Final Output Layer
         self.output_layer = build_dense(
@@ -126,25 +130,32 @@ class DuelingQHead(BaseHead):
         self,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
-        value_hidden_backbone_config: BackboneConfig,
-        advantage_hidden_backbone_config: BackboneConfig,
+        value_hidden_backbone_fn: Callable[[Tuple[int, ...]], nn.Module],
+        advantage_hidden_backbone_fn: Callable[[Tuple[int, ...]], nn.Module],
         num_actions: int,
-        neck_config: Optional[BackboneConfig] = None,
+        neck_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
         noisy_sigma: float = 0.0,
         name: Optional[str] = None,
         input_source: str = "default",
+        **kwargs,
     ):
         super().__init__(
             input_shape,
             representation,
-            neck_config,
+            neck_fn=neck_fn,
             noisy_sigma=noisy_sigma,
             name=name,
             input_source=input_source,
+            **kwargs,
         )
 
         # 1. Heads now build their own feature architecture (neck)
-        self.neck = BackboneFactory.create(neck_config, input_shape)
+        if self.neck_fn is not None:
+            self.neck = self.neck_fn(input_shape=input_shape)
+        else:
+            self.neck = nn.Identity()
+            self.neck.output_shape = input_shape
+
         self.output_shape = self.neck.output_shape
         self.flat_dim = self._get_flat_dim(self.neck, input_shape)
 
@@ -152,9 +163,7 @@ class DuelingQHead(BaseHead):
         self.noisy = noisy_sigma != 0
 
         # 2. Value Stream (Backbone + Output)
-        self.value_hidden = BackboneFactory.create(
-            value_hidden_backbone_config, (self.flat_dim,)
-        )
+        self.value_hidden = value_hidden_backbone_fn(input_shape=(self.flat_dim,))
         self.value_output = build_dense(
             in_features=self.value_hidden.output_shape[0],
             out_features=self.representation.num_features,
@@ -162,9 +171,7 @@ class DuelingQHead(BaseHead):
         )
 
         # 3. Advantage Stream (Backbone + Output)
-        self.advantage_hidden = BackboneFactory.create(
-            advantage_hidden_backbone_config, (self.flat_dim,)
-        )
+        self.advantage_hidden = advantage_hidden_backbone_fn(input_shape=(self.flat_dim,))
         self.advantage_output = build_dense(
             in_features=self.advantage_hidden.output_shape[0],
             out_features=self.representation.num_features * self.num_actions,

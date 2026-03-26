@@ -36,14 +36,48 @@ class MuZeroTrainer(BaseTrainer):
             self.player_id_mapping = {"player_0": 0}
 
         # 1. Initialize Network
+        from agents.factories.builders import make_backbone_fn, make_head_fn
+        from functools import partial
+        from modules.models.world_model import WorldModel
+
+        # Build functional components
+        representation_fn = make_backbone_fn(getattr(config, "representation_backbone", None))
+        
+        # World Model setup
+        wm_cfg = config.world_model
+        env_head_fns = {
+            name: make_head_fn(h_cfg)
+            for name, h_cfg in wm_cfg.env_heads.items()
+        }
+        
+        world_model_fn = partial(
+            WorldModel,
+            stochastic=getattr(wm_cfg, "stochastic", False),
+            num_chance=getattr(wm_cfg, "num_chance", 0),
+            observation_shape=getattr(wm_cfg.game, "observation_shape", None),
+            use_true_chance_codes=getattr(wm_cfg, "use_true_chance_codes", False),
+            env_head_fns=env_head_fns,
+            dynamics_fn=make_backbone_fn(wm_cfg.dynamics_backbone),
+            afterstate_dynamics_fn=make_backbone_fn(getattr(wm_cfg, "afterstate_dynamics_backbone", None)),
+            sigma_head_fn=make_head_fn(getattr(wm_cfg, "chance_probability_head", None)),
+            encoder_fn=make_backbone_fn(getattr(wm_cfg, "chance_encoder_backbone", None)),
+            action_embedding_dim=getattr(wm_cfg, "action_embedding_dim", 16),
+        )
+
+        head_fns = {}
+        for name, h_cfg in config.heads.items():
+            head_fns[name] = make_head_fn(h_cfg)
+        
+        # Ensure projector is included if specified separately
+        if hasattr(config, "projector") and config.projector:
+            head_fns["projector"] = make_head_fn(config.projector)
+
         self.agent_network = AgentNetwork(
             input_shape=self.obs_dim,
             num_actions=self.num_actions,
-            arch_config=config.arch,
-            representation_config=getattr(config, "representation_backbone", None),
-            world_model_config=config.world_model,
-            heads_config=config.heads,
-            projector_config=config.projector,
+            representation_fn=representation_fn,
+            world_model_fn=world_model_fn,
+            head_fns=head_fns,
             stochastic=config.stochastic,
             num_players=config.game.num_players,
             num_chance_codes=config.num_chance,

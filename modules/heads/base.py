@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict, Any, Callable
 import torch
 from torch import nn, Tensor
 from modules.utils import get_flat_dim
@@ -29,15 +29,17 @@ class BaseHead(nn.Module, ABC):
         self,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
-        neck_config: Optional[BackboneConfig] = None,
+        neck_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
         noisy_sigma: float = 0.0,
         name: Optional[str] = None,
         input_source: str = "default",
+        **kwargs,
     ):
         super().__init__()
         self.noisy_sigma = noisy_sigma
         self.input_shape = input_shape
         self.representation = representation
+        self.neck_fn = neck_fn
         self.name = name or self.__class__.__name__
         self.input_source = input_source
 
