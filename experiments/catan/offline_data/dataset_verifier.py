@@ -344,20 +344,15 @@ def process_and_verify_single(
         current_turn_color = play_order[0]
         _colonist_to_color_idx = {c: i for i, c in enumerate(play_order)}
 
-        # --- Data collection lists ---
-        # BC mode:  all lists are T-aligned (one entry per transition).
-        # RL mode:  obs/mask/to_play/terminated/done are state-aligned (T+1),
-        #           actions/rewards are transition-aligned (T).
-        #           The terminal state entry is appended after the loop.
-        axial_list: list = []
-        spatial_list: list = []
-        vec_list: list = []
-        act_list: list = []
-        mask_list: list = []
-        # RL-only transition-aligned
-        reward_list: list = []
-        # RL-only state-aligned (pre-action states only; terminal appended post-loop)
-        to_play_list: list = []
+        # --- Data collection lists [STRICT T-ALIGNED] ---
+        axial_list = []
+        spatial_list = []
+        vec_list = []
+        act_list = []
+        mask_list = []
+        reward_list = []
+        to_play_list = []
+        dones_list = []
 
         done_parsing = False
         game_ended = False
@@ -400,15 +395,10 @@ def process_and_verify_single(
                     tracker.is_moving_robber = False
 
                     c_idx_discard = _colonist_to_color_idx[acting_player]
-                    catanatron_color_discard = stepper.env.unwrapped.game.state.colors[
-                        c_idx_discard
-                    ]
-                    agent_id_discard = stepper.env.unwrapped.agent_map[
-                        catanatron_color_discard
-                    ]
-                    all_obs_discard = _collect_all_obs(
-                        stepper.env.unwrapped, agent_id_discard
-                    )
+                    catanatron_color_discard = env.game.state.colors[c_idx_discard]
+                    agent_id_discard = env.agent_map[catanatron_color_discard]
+
+                    all_obs_discard = _collect_all_obs(env, agent_id_discard)
 
                     # Determine if we should record this transition based on winners_only
                     record_transition = not (
@@ -420,14 +410,16 @@ def process_and_verify_single(
                         spatial_list.append(all_obs_discard["obs_spatial"])
                         vec_list.append(all_obs_discard["obs_vec"])
                         act_list.append(DISCARD_IDX)
-                        mask_list.append(_get_action_mask(stepper.env.unwrapped))
-
-                        if mode == "rl":
-                            to_play_list.append(c_idx_discard)
-                            reward_list.append(0.0)
+                        mask_list.append(_get_action_mask(env))
+                        to_play_list.append(c_idx_discard)
+                        reward_list.append(0.0)
+                        dones_list.append(False)
 
                     stepper.step_and_override(DISCARD_IDX, None, None)
-                    if stepper.env.unwrapped.game.winning_color() is not None:
+                    if env.game.winning_color() is not None:
+                        if record_transition:
+                            reward_list[-1] = 1.0
+                            dones_list[-1] = True
                         game_ended = True
                         break
                 else:
@@ -437,7 +429,7 @@ def process_and_verify_single(
                 done_parsing = True
                 break
 
-            # Sync Path B Phase to Catanatron's current True Phase
+            # Sync Path B Phase back to Catanatron's current True Phase
             stepper._update_true_bank()
             stepper._recount_vps()
             env.game.playable_actions = generate_playable_actions(env.game.state)
@@ -452,12 +444,11 @@ def process_and_verify_single(
             # ======================================================================
 
             c_idx = _colonist_to_color_idx[acting_player]
-            catanatron_color = stepper.env.unwrapped.game.state.colors[c_idx]
-            player_ports = (
-                stepper.env.unwrapped.game.state.board.get_player_port_resources(
-                    catanatron_color
-                )
+            catanatron_color = env.game.state.colors[c_idx]
+            player_ports = env.game.state.board.get_player_port_resources(
+                catanatron_color
             )
+
             current_ratios = {1: 4, 2: 4, 3: 4, 4: 4, 5: 4}
             if None in player_ports:
                 current_ratios = {k: 3 for k in current_ratios}
@@ -473,8 +464,7 @@ def process_and_verify_single(
                 current_turn_color = sc["currentState"]["currentTurnPlayerColor"]
 
             if result:
-                # We explicitly filter out DISCARD actions parsed from the JSON because
-                # we already forced them into the dataset via the Drain Loop above!
+                # Filter out DISCARD actions parsed from JSON (already handled by Drain Loop)
                 filtered_result = [
                     (idx, fr, fdc) for (idx, fr, fdc) in result if idx != DISCARD_IDX
                 ]
@@ -486,14 +476,12 @@ def process_and_verify_single(
                     for i, (action_idx, forced_roll, forced_dev_card) in enumerate(
                         filtered_result
                     ):
-                        game = stepper.env.unwrapped.game
+                        game = env.game
                         stepper._update_true_bank()
                         stepper._recount_vps()
                         game.playable_actions = generate_playable_actions(game.state)
 
-                        valid_actions = (
-                            stepper.env.unwrapped._get_valid_action_indices()
-                        )
+                        valid_actions = env._get_valid_action_indices()
                         action_type, _ = ACTIONS_ARRAY[action_idx]
 
                         if (
@@ -515,10 +503,10 @@ def process_and_verify_single(
                             )
                             return None
 
-                        agent_id = stepper.env.unwrapped.agent_map[catanatron_color]
-                        obs_a = stepper.env.unwrapped.observe(agent_id)["observation"]
+                        agent_id = env.agent_map[catanatron_color]
+                        obs_a = env.observe(agent_id)["observation"]
 
-                        # Compare Channels 0-44 (Exclude bank and road lengths which are computed differently)
+                        # Compare Channels 0-44 (Common state representation)
                         if not np.allclose(obs_a[:45], obs_b[:45], atol=1e-5):
                             print(f"\n❌ TENSOR MISMATCH IN: {Path(json_path).name}")
                             _print_rich_desync_report(
@@ -532,9 +520,8 @@ def process_and_verify_single(
                             )
                             return None
 
-                        all_obs = _collect_all_obs(stepper.env.unwrapped, agent_id)
+                        all_obs = _collect_all_obs(env, agent_id)
 
-                        # Determine if we should record this transition based on winners_only
                         record_transition = not (
                             mode == "bc"
                             and winners_only
@@ -546,15 +533,15 @@ def process_and_verify_single(
                             spatial_list.append(all_obs["obs_spatial"])
                             vec_list.append(all_obs["obs_vec"])
                             act_list.append(action_idx)
-                            mask_list.append(_get_action_mask(stepper.env.unwrapped))
+                            mask_list.append(_get_action_mask(env))
+                            to_play_list.append(c_idx)
+                            reward_list.append(0.0)
+                            dones_list.append(False)
 
-                            if mode == "rl":
-                                to_play_list.append(c_idx)
-                                reward_list.append(0.0)
-
-                        if stepper.env.unwrapped.game.winning_color() is not None:
+                        if env.game.winning_color() is not None:
                             if mode == "rl" and record_transition:
                                 reward_list[-1] = 1.0
+                                dones_list[-1] = True
                             game_ended = True
                             done_parsing = True
                             break
@@ -565,29 +552,13 @@ def process_and_verify_single(
                         if i == len(filtered_result) - 1:
                             stepper.flush_corrections()
             else:
-                # FIX: Even if there were no actions parsed (e.g. player trades, passive
-                # resource gains from other players rolling), flush the pending resources!
                 stepper.flush_corrections()
-
-        # RL mode: append the terminal state entry (state T, the state AFTER the last action).
-        # This makes obs/masks/to_plays/terminated/dones T+1-aligned while actions/rewards
-        # remain T-aligned, matching the MuZero rollout actor's sequence format.
-        if mode == "rl" and game_ended and act_list:
-            # Use the last pre-action obs as a placeholder for the true terminal obs
-            # (we do not step on the winning action, so the exact post-action obs is unavailable).
-            # terminated=True is sufficient for MuZero to zero-bootstrap at this position.
-            axial_list.append(axial_list[-1].copy())
-            spatial_list.append(spatial_list[-1].copy())
-            vec_list.append(vec_list[-1].copy())
-            mask_list.append(np.zeros(NUM_ACTIONS, dtype=bool))
-            to_play_list.append(to_play_list[-1])
 
         if not act_list:
             return None
 
         if mode == "bc":
             return {
-                # DOWNCAST TO FLOAT16 AND INT16 TO SAVE 50% RAM AND DISK
                 "obs_axial": np.stack(axial_list).astype(np.float16),
                 "obs_spatial": np.stack(spatial_list).astype(np.float16),
                 "obs_vec": np.stack(vec_list).astype(np.float16),
@@ -595,26 +566,18 @@ def process_and_verify_single(
                 "action_masks": np.stack(mask_list).astype(bool),
             }
         else:
-            # State-aligned arrays have T+1 entries (indices 0..T).
-            # Transition-aligned arrays have T entries (indices 0..T-1).
-            terminated = np.zeros(len(axial_list), dtype=bool)
-            dones = np.zeros(len(axial_list), dtype=bool)
-            if game_ended:
-                terminated[-1] = True
-                dones[-1] = True
             return {
-                # State-aligned (T+1)
                 "obs_axial": np.stack(axial_list).astype(np.float16),
                 "obs_spatial": np.stack(spatial_list).astype(np.float16),
                 "obs_vec": np.stack(vec_list).astype(np.float16),
                 "action_masks": np.stack(mask_list).astype(bool),
                 "to_plays": np.array(to_play_list, dtype=np.int16),
-                "terminated": terminated,
-                "dones": dones,
-                # Transition-aligned (T)
                 "actions": np.array(act_list, dtype=np.int16),
                 "rewards": np.array(reward_list, dtype=np.float16),
+                "dones": np.array(dones_list, dtype=bool),
+                "game_lengths": np.array([len(act_list)], dtype=np.int16),
             }
+
     finally:
         # THIS IS THE CRITICAL FIX: Destroy the environment and force GC
         if stepper and hasattr(stepper, "env"):
@@ -653,12 +616,6 @@ def process_chunk_and_save(
         final_dataset = {
             k: np.concatenate([g[k] for g in per_game], axis=0) for k in keys
         }
-
-        # RL specific additions
-        if mode == "rl":
-            final_dataset["game_lengths"] = np.array(
-                [g["actions"].shape[0] for g in per_game], dtype=np.int16
-            )
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         with gzip.open(output_path, "wb") as f:

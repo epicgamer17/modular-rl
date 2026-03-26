@@ -2,24 +2,33 @@ import torch
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Protocol, runtime_checkable, Tuple
 
+
 @runtime_checkable
 class LossRepresentation(Protocol):
     """
     Contract for mathematical representations of values (scalars, distributions, etc.).
     """
+
     @property
     def num_features(self) -> int: ...
     def to_inference(self, logits: torch.Tensor) -> Any: ...
     def to_expected_value(self, logits: torch.Tensor) -> torch.Tensor: ...
     def to_representation(self, scalar_targets: torch.Tensor) -> torch.Tensor: ...
-    def format_target(self, targets: Dict[str, torch.Tensor], target_key: str = "values") -> torch.Tensor: ...
+    def format_target(
+        self, targets: Dict[str, torch.Tensor], target_key: str = "values"
+    ) -> torch.Tensor: ...
+
 
 @runtime_checkable
 class DistributionalRepresentation(LossRepresentation, Protocol):
     """
     Contract for representations that support Bellman projections onto a fixed grid.
     """
-    def project_onto_grid(self, shifted_support: torch.Tensor, probabilities: torch.Tensor) -> torch.Tensor: ...
+
+    def project_onto_grid(
+        self, shifted_support: torch.Tensor, probabilities: torch.Tensor
+    ) -> torch.Tensor: ...
+
 
 class BaseLoss(ABC):
     """
@@ -100,14 +109,20 @@ class BaseLoss(ABC):
         flat_pred = pred.reshape(B * T, *orig_shape[2:])
         flat_target = formatted_target.reshape(B * T, *orig_shape[2:])
 
+        flat_mask = self.get_mask(targets).reshape(B * T).bool()
         # Performance optimization: ensure targets are probability distributions before computing loss
         # Only applicable if we have multiple features (e.g. atoms/bins) and not just a single scalar
         if flat_target.shape[-1] > 1:
             # We use a broad check to catch mass loss in Bellman projections
             t_sum = flat_target.sum(dim=-1)
-            assert torch.allclose(t_sum, torch.ones_like(t_sum), atol=1e-3), \
-                f"{self.__class__.__name__}: Categorical targets must sum to 1.0, got {t_sum.mean().item()}"
+            # Filter the sums to ONLY check valid states according to the mask
+            valid_t_sum = t_sum[flat_mask]
 
+            # Only run the assertion if there are valid targets in the batch
+            if valid_t_sum.numel() > 0:
+                assert torch.allclose(
+                    valid_t_sum, torch.ones_like(valid_t_sum), atol=1e-3
+                ), f"{self.__class__.__name__}: Valid categorical targets must sum to 1.0, got {valid_t_sum.mean().item()}, {flat_target}"
         raw_loss = self.loss_fn(flat_pred, flat_target, reduction="none")
 
         # 4. Collapse and Reshape to [B, T] result
