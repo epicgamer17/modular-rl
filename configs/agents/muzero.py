@@ -221,6 +221,7 @@ class MuZeroConfig(
 
         # Mixin: Search (MCTS)
         self.parse_search_params()
+        self.eval_use_search: bool = self.parse_field("eval_use_search", True)
 
         self.temperature_schedule = self.parse_schedule_config(
             "temperature_schedule",

@@ -259,11 +259,7 @@ class MuZeroTrainer(BaseTrainer):
         )
 
         # 3. Log collection stats
-        for res in results:
-            for score in res.get("batch_scores", []):
-                self.stats.append("score", float(score))
-            for length in res.get("batch_lengths", []):
-                self.stats.append("episode_length", float(length))
+        self._record_collection_metrics(results)
 
         # 3. Learning step
         if self.buffer.size >= self.config.min_replay_buffer_size:

@@ -29,12 +29,12 @@ class BaseTrainer:
         self.device = device
         self.name = name
         self.stats = stats if stats is not None else StatTracker(name=name)
-        
+
         # Priority: 1. test_agents args, 2. config.game.test_agents, 3. empty list
         self.test_agents = test_agents
         if self.test_agents is None:
             self.test_agents = getattr(config.game, "test_agents", [])
-        
+
         self._env = env
 
         # Detect player_id for PettingZoo environments
@@ -71,11 +71,15 @@ class BaseTrainer:
         """Initializes the EvaluatorActor via an Executor."""
         from agents.workers.actors import EvaluatorActor
         from agents.environments.adapters import GymAdapter
-        from agents.action_selectors.selectors import ArgmaxSelector, LegalMovesMaskDecorator
+        from agents.action_selectors.selectors import (
+            ArgmaxSelector,
+            LegalMovesMaskDecorator,
+        )
 
         # 1. Initialize Executor if not already done
         if self.executor is None:
             from agents.factories.executor import create_executor
+
             self.executor = create_executor(self.config)
 
         # 2. Prepare worker args
@@ -83,15 +87,20 @@ class BaseTrainer:
         env_factory = self.config.game.env_factory
         # Ensure evaluator respects legal moves!
         selector = LegalMovesMaskDecorator(ArgmaxSelector())
+
+        # Priority: Use SearchPolicySource if available (e.g. MuZero), otherwise standard policy_source
+        active_policy_source = getattr(self, "search_policy_source", self.policy_source)
+
         worker_args = (
             adapter_cls,
             (env_factory,),
             self.agent_network,
-            self.policy_source,
+            active_policy_source,
             None,  # Index 4 (buffer placeholder)
             selector,  # action_selector
             getattr(self.config, "actor_device", "cpu"),
             getattr(self.config.game, "num_actions", None),
+            self.num_players,
             self.test_agents,
         )
 
@@ -114,12 +123,18 @@ class BaseTrainer:
         # Update step (weights are shared via shared_memory if multi_process=True)
         self._tester_step = step
 
-        # Signal executor to run test
-        self.executor.request_work(EvaluatorActor, num_episodes=self.test_trials)
+        # Signal executor to run test with optional search toggle
+        self.executor.request_work(
+            EvaluatorActor,
+            num_episodes=self.test_trials,
+            use_search=getattr(self.config, "eval_use_search", True),
+        )
 
         # If local, run synchronously now
         if not self.config.multi_process:
-            results, _ = self.executor.collect_data(num_steps=None, worker_type=EvaluatorActor)
+            results, _ = self.executor.collect_data(
+                num_steps=None, worker_type=EvaluatorActor
+            )
             for res in results:
                 self._process_test_results(res, step)
 
@@ -131,7 +146,9 @@ class BaseTrainer:
             return
 
         # Fetch whatever is available in the result queue for EvaluatorActor
-        results, _ = self.executor.collect_data(num_steps=None, worker_type=EvaluatorActor)
+        results, _ = self.executor.collect_data(
+            num_steps=None, worker_type=EvaluatorActor
+        )
         if results:
             # We only care about the most recent test result for logging
             # The result from EvaluatorActor.evaluate is a dict with 'score', etc.
@@ -147,13 +164,24 @@ class BaseTrainer:
 
     def _process_test_results(self, res: Dict[str, Any], step: int):
         """Logs results from EvaluatorActor."""
-        if "score" in res:
-            self.stats.append("test_score", res["score"], subkey="avg")
-            print(f"[test] score: {res['score']:.3f} (step {step})")
-
-        if "avg_length" in res:
-            self.stats.append("episode_length", res["avg_length"], subkey="test")
-            print(f"[test] avg_length: {res['avg_length']:.1f}")
+        for key, value in res.items():
+            if key == "score":
+                self.stats.append("test_score", value, subkey="avg")
+                print(f"[test] score: {value:.3f} (step {step})")
+            elif key == "avg_length":
+                self.stats.append("episode_length", value, subkey="test")
+                print(f"[test] avg_length: {value:.1f}")
+            elif key.startswith("vs_"):
+                # Structured results for Matrix Evaluation:
+                # f"vs_{opp_name}_score": {"p0": score0, "p1": score1, "avg": avg_score}
+                if isinstance(value, dict):
+                    for subkey, subval in value.items():
+                        self.stats.append(key, subval, subkey=subkey)
+                    if "avg" in value:
+                        print(f"[test] {key}: {value['avg']:.3f}")
+                else:
+                    self.stats.append(key, value, subkey="avg")
+                    print(f"[test] {key}: {value:.3f}")
 
     def _get_adapter_class(self):
         """Dynamically selects the correct environment adapter."""
@@ -282,7 +310,11 @@ class BaseTrainer:
             elif isinstance(value, dict):
                 for subkey, subvalue in value.items():
                     # Ensure subvalue is detached and converted to float if it's a scalar tensor
-                    val = subvalue.detach().cpu().item() if torch.is_tensor(subvalue) else subvalue
+                    val = (
+                        subvalue.detach().cpu().item()
+                        if torch.is_tensor(subvalue)
+                        else subvalue
+                    )
                     self.stats.set(key, val, subkey=subkey)
             else:
                 # Ensure value is detached and converted to float if it's a scalar tensor
@@ -342,6 +374,10 @@ class BaseTrainer:
             "test_score",
         ]
 
+        if self.num_players > 1:
+            for p in range(self.num_players):
+                stat_keys.append(f"avg_score_p{p}")
+
         # Add test_score vs other agents if applicable
         for agent in self.test_agents:
             stat_keys.append(f"vs_{agent.name}_score")
@@ -353,7 +389,11 @@ class BaseTrainer:
 
         for key in stat_keys:
             if key not in self.stats.stats:
-                if "test_score" in key or "_score" in key:
+                if (
+                    "test_score" in key
+                    or "_score" in key
+                    or (key == "score" and self.num_players > 1)
+                ):
                     self.stats._init_key(key, subkeys=test_subkeys)
                 else:
                     self.stats._init_key(key)
@@ -383,3 +423,29 @@ class BaseTrainer:
                 PlotType.BEST_FIT_LINE,
                 PlotType.VARIATION_FILL,
             )
+
+    def _record_collection_metrics(self, results: List[Dict[str, Any]]):
+        """Standardized recording of collection metrics (score, lengths) from workers."""
+        for res in results:
+            for score in res.get("batch_scores", []):
+                # If plural players, record as subkeys
+                if isinstance(score, (list, np.ndarray)) and len(score) > 1:
+                    data = {f"p{i}": float(s) for i, s in enumerate(score)}
+                    data["avg"] = float(np.mean(score))
+                    self.stats.append("score", data)
+                else:
+                    # Single player or scalar score
+                    self.stats.append("score", float(score))
+            
+            for length in res.get("batch_lengths", []):
+                self.stats.append("episode_length", float(length))
+
+            # 2. Worker summaries and rolling stats
+            for key, value in res.items():
+                if key in ["batch_scores", "batch_lengths"]:
+                    continue
+                
+                # Log avg_score_pX or throughput metrics
+                if any(tag in key for tag in ["avg_score", "fps", "steps_per_second"]):
+                    if isinstance(value, (int, float, np.number)):
+                        self.stats.append(key, float(value))

@@ -11,6 +11,7 @@ from agents.workers.state_management import SequenceManager
 from replay_buffers.modular_buffer import ModularReplayBuffer
 from agents.workers.payloads import TaskRequest, TaskType, WorkerPayload
 from agents.action_selectors.selectors import BaseActionSelector
+from agents.action_selectors.types import InferenceResult
 
 
 class BaseActor(ABC):
@@ -138,8 +139,9 @@ class RolloutActor(BaseActor):
         self.completed_lengths = []
 
         # Track current episode progress across envs
+        self.num_players = num_players
         self.current_lengths = np.zeros(self.num_envs)
-        self.current_scores = np.zeros(self.num_envs)
+        self.current_scores = np.zeros((self.num_envs, num_players))
 
     def setup(self) -> None:
         """Prepares the network for rollout (eval mode)."""
@@ -171,12 +173,20 @@ class RolloutActor(BaseActor):
 
     def get_state(self) -> Dict[str, Any]:
         """Returns rolling statistics for logging."""
+        scores = np.array(self.completed_scores) if self.completed_scores else np.zeros((0, self.num_players))
+        avg_score_vec = np.mean(scores, axis=0) if scores.size > 0 else np.zeros(self.num_players)
+        
+        # Format scores based on player count
+        if self.num_players == 1:
+            score_metrics = {"avg_score": float(avg_score_vec[0])}
+        else:
+            score_metrics = {f"avg_score_p{p}": float(avg_score_vec[p]) for p in range(self.num_players)}
+            score_metrics["avg_score"] = float(np.mean(avg_score_vec))
+            
         return {
             "total_steps": self.total_steps,
             "episodes_completed": self.episodes_completed,
-            "avg_score": (
-                np.mean(self.completed_scores) if self.completed_scores else 0.0
-            ),
+            **score_metrics,
             "avg_length": (
                 np.mean(self.completed_lengths) if self.completed_lengths else 0.0
             ),
@@ -223,15 +233,16 @@ class RolloutActor(BaseActor):
 
             # 4. Process Transitions and Boundary Logic
             for i in range(self.num_envs):
-                # Update rolling accumulators
-                self.current_scores[i] += rewards[i].item()
-                self.current_lengths[i] += 1
-
                 # Build the step dictionary manually for each environment
                 p_id = 0
                 if "player_id" in self.info:
                     p_ids = self.info["player_id"]
-                    p_id = p_ids[i].item() if torch.is_tensor(p_ids) else p_ids[i]
+                    # Player ID is 0-indexed integer
+                    p_id = int(p_ids[i].item() if torch.is_tensor(p_ids) else p_ids[i])
+
+                # Update rolling accumulators for CURRENT PLAYER
+                self.current_scores[i, p_id] += rewards[i].item()
+                self.current_lengths[i] += 1
 
                 step_dict = {
                     "observation": next_obs[i].cpu().numpy(),
@@ -266,15 +277,15 @@ class RolloutActor(BaseActor):
                     self.buffer.store_aggregate(completed_seq)
 
                     self.episodes_completed += 1
-                    ep_score = float(self.current_scores[i])
+                    ep_score = self.current_scores[i].copy()
                     ep_len = int(self.current_lengths[i])
-
+                    
                     self.completed_scores.append(ep_score)
                     self.completed_lengths.append(ep_len)
                     batch_scores.append(ep_score)
                     batch_lengths.append(ep_len)
-
-                    self.current_scores[i] = 0.0
+                    
+                    self.current_scores[i].fill(0.0)
                     self.current_lengths[i] = 0
 
                     if len(self.completed_scores) > 100:
@@ -394,6 +405,7 @@ class EvaluatorActor(BaseActor):
         action_selector: Optional[BaseActionSelector] = None,
         actor_device: str = "cpu",
         num_actions: Optional[int] = None,
+        num_players: int = 1,
         test_agents: Optional[List[Any]] = None,
         worker_id: int = 0,
         **kwargs,
@@ -410,6 +422,7 @@ class EvaluatorActor(BaseActor):
             action_selector: Optional action selection provider for evaluation.
             actor_device: Device to use for the environment and network.
             num_actions: Number of actions in the environment.
+            num_players: Number of players in the environment.
             test_agents: Optional list of agents for evaluation.
             worker_id: Worker identifier.
         """
@@ -425,6 +438,7 @@ class EvaluatorActor(BaseActor):
             action_selector is not None
         ), "ActionSelector is mandatory for EvaluatorActor (Null Object Pattern). Provide a valid selector (e.g., ArgmaxSelector)."
         self.action_selector = action_selector
+        self.num_players = num_players
         self.test_agents = test_agents
         self.num_envs = self.adapter.num_envs
 
@@ -456,90 +470,113 @@ class EvaluatorActor(BaseActor):
                 f"EvaluatorActor only supports {TaskType.EVALUATE}, got {request.task_type}"
             )
 
-        metrics = self.evaluate(request.batch_size)
+        metrics = self.evaluate(request.batch_size, **request.kwargs)
         return WorkerPayload(worker_type=self.__class__.__name__, metrics=metrics)
 
     @torch.inference_mode()
-    def evaluate(self, num_episodes: int) -> Dict[str, Any]:
+    def evaluate(self, num_episodes: int, **kwargs) -> Dict[str, Any]:
         """
-        Runs evaluation episodes until num_episodes are completed.
-        Returns final averaged metrics.
+        Performs Matrix Evaluation: Students plays round-robin tournament
+        as each player position against each opponent in the test_agents roster.
         """
-        obs, info = self.adapter.reset()
-        current_rewards = torch.zeros(self.num_envs)
-        current_lengths = torch.zeros(self.num_envs, dtype=torch.int)
-        finished_rewards = []
-        finished_lengths = []
+        results = {}
+        all_avg_scores = []
+        total_lengths = []
+        
+        # Determine if we have opponents. If not, just evaluate student alone.
+        opponents = self.test_agents if self.test_agents else [None]
+        
+        for opponent in opponents:
+            opp_name = opponent.name if opponent else "self"
+            opp_scores = []
+            player_scores = {p: [] for p in range(self.num_players)}
+            
+            # Rounds: Student takes each position
+            for student_pos in range(self.num_players):
+                for _ in range(num_episodes):
+                    obs, info = self.adapter.reset()
+                    episode_length = 0
+                    student_total_reward = 0.0
+                    done = False
+                    trunc = False
+                    
+                    while not (done or trunc):
+                        # 1. Identify current player from adapter info
+                        current_player_idx = info.get("player_id")
+                        if current_player_idx is not None:
+                            # Standardized player_id is a tensor [1] or scalar
+                            if torch.is_tensor(current_player_idx):
+                                current_player_idx = int(current_player_idx.item())
+                            else:
+                                current_player_idx = int(current_player_idx)
+                        else:
+                            current_player_idx = 0
+                            
+                        # 2. Assign policy source (Student or Expert)
+                        if current_player_idx == student_pos:
+                            # Student uses search toggle
+                            use_search = kwargs.get("use_search", True)
+                            from agents.action_selectors.policy_sources import SearchPolicySource
+                            if use_search and isinstance(self.policy_source, SearchPolicySource):
+                                result = self.policy_source.get_inference(
+                                    obs, info, agent_network=self.agent_network, exploration=False
+                                )
+                            else:
+                                output = self.agent_network.obs_inference(obs)
+                                result = InferenceResult.from_inference_output(output)
+                        else:
+                            # Expert/Opponent
+                            if opponent is not None:
+                                output = opponent.obs_inference(obs, info=info, adapter=self.adapter)
+                                result = InferenceResult.from_inference_output(output)
+                            else:
+                                # Fallback if playing against self/None
+                                output = self.agent_network.obs_inference(obs)
+                                result = InferenceResult.from_inference_output(output)
 
-        while len(finished_rewards) < num_episodes:
-            # Force greedy behavior via exploration=False
-            result = self.policy_source.get_inference(
-                obs, info, agent_network=self.agent_network, exploration=False
-            )
+                        # 3. Select action
+                        from agents.action_selectors.types import InferenceResult
+                        if not isinstance(result, InferenceResult):
+                             result = InferenceResult.from_inference_output(result)
 
-            # 1. Routing Trick: Check for hardcoded test agents (Guaranteed Tensor[B] from Adapter)
-            player_ids = info.get("player_id", None)
+                        actions, _ = self.action_selector.select_action(
+                            result, info, exploration=False
+                        )
+                        
+                        # 4. Step environment
+                        obs, rewards, dones, truncs, info = self.adapter.step(actions)
+                        
+                        # Accumulate reward for the student position from ALL sources
+                        # PettingZooAdapter.step now provides 'all_rewards' in info
+                        all_rewards = info.get("all_rewards")
+                        if all_rewards is not None:
+                            if isinstance(all_rewards, dict):
+                                agent_id = self.adapter.agents[student_pos]
+                                student_total_reward += all_rewards.get(agent_id, 0.0)
+                            elif torch.is_tensor(all_rewards):
+                                # Parallel batched info
+                                student_total_reward += all_rewards[student_pos].item()
+                        else:
+                            # Fallback for Gym: rewards is a scalar for the only player
+                            student_total_reward += rewards.item()
 
-            # For simplicity in evaluation, assume a single player per environment at each step
-            # or use the first if batched (Evaluator usually uses B=1)
-            current_player = player_ids[0] if player_ids is not None else None
+                        # In AEC, episode ends when done=True for any agent in some envs, 
+                        # or specifically for the current agent.
+                        done = bool(dones.any().item())
+                        trunc = bool(truncs.any().item())
+                        episode_length += 1
 
-            # Resolve agent if available
-            agent = None
-            if self.test_agents and current_player is not None:
-                if isinstance(self.test_agents, dict):
-                    # Handle dict-based routing
-                    agent = self.test_agents.get(current_player.item())
-                elif isinstance(self.test_agents, list) and current_player.item() < len(
-                    self.test_agents
-                ):
-                    # Handle list-based routing
-                    agent = self.test_agents[current_player.item()]
+                    opp_scores.append(student_total_reward)
+                    player_scores[student_pos].append(student_total_reward)
+                    total_lengths.append(episode_length)
 
-            if agent is not None:
-                # Test agent contract: act(obs, info)
-                if hasattr(agent, "act"):
-                    actions = agent.act(obs, info)
-                else:
-                    # Fallback to Student if agent is None or invalid
-                    actions, _ = self.action_selector.select_action(
-                        result, info, exploration=False
-                    )
-            else:
-                # 2. Standard Student Inference (Null Object Pattern)
-                # NO BRANCHING. Responsibility lives strictly in the selector.
-                actions, _ = self.action_selector.select_action(
-                    result, info, exploration=False
-                )
+            # Aggregate for this opponent
+            results[f"vs_{opp_name}_score"] = {
+                "avg": float(np.mean(opp_scores)),
+                **{f"p{p}": float(np.mean(player_scores[p])) for p in range(self.num_players)}
+            }
+            all_avg_scores.append(np.mean(opp_scores))
 
-            next_obs, rewards, terminals, truncations, infos = self.adapter.step(
-                actions
-            )
-            current_rewards += rewards
-            current_lengths += 1
-
-            for i in range(self.num_envs):
-                if terminals[i] or truncations[i]:
-                    reward_val = current_rewards[i].item()
-                    length_val = current_lengths[i].item()
-                    finished_rewards.append(reward_val)
-                    finished_lengths.append(length_val)
-                    self.total_reward += reward_val
-                    self.episodes_completed += 1
-                    current_rewards[i] = 0.0
-                    current_lengths[i] = 0
-
-            obs, info = next_obs, infos
-
-        avg_score = (
-            sum(finished_rewards) / len(finished_rewards) if finished_rewards else 0.0
-        )
-        avg_length = (
-            sum(finished_lengths) / len(finished_lengths) if finished_lengths else 0.0
-        )
-        return {
-            "score": avg_score,
-            "avg_length": avg_length,
-            "num_episodes": len(finished_rewards),
-            "total_reward_accumulated": self.total_reward,
-        }
+        results["score"] = float(np.mean(all_avg_scores)) if all_avg_scores else 0.0
+        results["avg_length"] = float(np.mean(total_lengths)) if total_lengths else 0.0
+        return results

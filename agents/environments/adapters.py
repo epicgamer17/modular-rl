@@ -265,10 +265,13 @@ class PettingZooAdapter(BaseAdapter):
             action = actions.item() if actions.numel() == 1 else actions[0].item()
             self.env.step(action)
             
-            # Formatting rewards: return reward for the agent who just moved
+            # Capture ALL rewards before possible auto-reset
             reward = float(self.env.rewards.get(acting_player, 0.0))
+            all_rewards = self.env.rewards.copy() if hasattr(self.env, "rewards") else {acting_player: reward}
             
-            obs, _, term, trunc, info = self.env.last()
+            obs, _, term, trunc, env_info = self.env.last()
+            info = env_info.copy()
+            info["all_rewards"] = all_rewards
 
             # Auto-reset for AEC: if episode is over, reset and get fresh root state
             # In AEC, we usually reset when agent_selection is None or via flags
@@ -293,7 +296,11 @@ class PettingZooAdapter(BaseAdapter):
                 for i, a in enumerate(self.agents)
             }
             obs_dict, reward_dict, term_dict, trunc_dict, info_dict = self.env.step(action_dict)
-            
+            for a in self.agents:
+                if a not in info_dict:
+                    info_dict[a] = {}
+                info_dict[a]["all_rewards"] = reward_dict
+
             # Auto-reset for Parallel API
             # Standard PettingZoo Parallel environments return 'done' for all agents when episode ends
             episode_over = any(term_dict.values()) or any(trunc_dict.values())
