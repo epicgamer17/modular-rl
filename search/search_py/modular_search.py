@@ -387,17 +387,29 @@ class ModularSearch:
             )
             # Standardize back to a list of dicts for Python MCTS loops
             # This is slow but modular_search is slow anyway.
-            batched_info = [
-                {
-                    k: (
-                        v[i].item()
-                        if torch.is_tensor(v[i]) and v[i].numel() == 1
-                        else v[i]
-                    )
-                    for k, v in batched_info.items()
-                }
-                for i in range(B)
-            ]
+            new_batched_info = []
+            for i in range(B):
+                item_dict = {}
+                for k, v in batched_info.items():
+                    # If v is a collection that matches the batch size, index it
+                    if hasattr(v, "__getitem__") and not isinstance(v, (str, bytes, dict)):
+                        # Some collections like tensors or arrays
+                        try:
+                            if len(v) == B:
+                                val = v[i]
+                            else:
+                                val = v
+                        except:
+                            val = v
+                    else:
+                        val = v
+                    
+                    # Convert single-element tensors to scalars for Python loops
+                    if torch.is_tensor(val) and val.numel() == 1:
+                        val = val.item()
+                    item_dict[k] = val
+                new_batched_info.append(item_dict)
+            batched_info = new_batched_info
 
         assert all(
             "player" in i for i in batched_info
@@ -435,12 +447,7 @@ class ModularSearch:
         legal_moves_batch = get_legal_moves(batched_info)
         if legal_moves_batch is None:
             legal_moves_batch = [list(range(self.num_actions))] * B
-        elif (
-            len(legal_moves_batch) == 1
-            and isinstance(legal_moves_batch[0], list)
-            and len(legal_moves_batch[0]) == B
-        ):
-            legal_moves_batch = legal_moves_batch[0]
+
 
         # 2. Expand all B roots
         min_max_stats_list = []
@@ -1510,7 +1517,10 @@ class ModularSearch:
 
         if recurrent_inputs:
             full_states = [x["state"] for x in recurrent_inputs]
-            batched_states = type(full_states[0]).batch(full_states)
+            if isinstance(full_states[0], dict):
+                batched_states = batch_recurrent_state(full_states)
+            else:
+                batched_states = type(full_states[0]).batch(full_states)
 
             act_list = []
             for x in recurrent_inputs:

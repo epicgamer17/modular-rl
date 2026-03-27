@@ -63,6 +63,7 @@ class RolloutActor(BaseActor):
         num_actions: Optional[int] = None,
         num_players: int = 1,
         test_agents: Optional[List[Any]] = None,
+        flush_incomplete: bool = True,
         worker_id: int = 0,
         **kwargs,
     ):
@@ -80,6 +81,10 @@ class RolloutActor(BaseActor):
             num_actions: Number of actions in the environment.
             num_players: Number of players in the game.
             test_agents: Optional list of agents for evaluation.
+            flush_incomplete: If True (PPO default), force-flush active sequences at the
+                end of each collect() call to produce fixed-length chunks. If False
+                (MuZero), only store sequences that terminated naturally so every stored
+                slot has a valid MCTS policy.
             worker_id: Unique ID for this worker.
         """
         self.worker_id = worker_id
@@ -97,6 +102,7 @@ class RolloutActor(BaseActor):
         ), "ActionSelector is mandatory for RolloutActor (Null Object Pattern). Provide a valid selector (e.g., CategoricalSelector, ArgmaxSelector)."
         self.action_selector = action_selector
         self.buffer = buffer
+        self.flush_incomplete = flush_incomplete
 
         self.num_envs = self.adapter.num_envs
         self.seq_manager = SequenceManager(num_players, self.num_envs)
@@ -304,6 +310,18 @@ class RolloutActor(BaseActor):
             self.total_steps += batch_steps
 
         # 6. Force-Flush at Chunk Boundary (PPO Bootstrap)
+        # Only flush incomplete sequences when explicitly enabled (PPO needs fixed-length
+        # chunks for GAE; MuZero must store complete episodes so every slot has a policy).
+        if not self.flush_incomplete:
+            return {
+                **self.get_state(),
+                "steps_this_call": steps_this_call,
+                "batch_scores": batch_scores,
+                "batch_lengths": batch_lengths,
+                "duration": time.time() - start_time,
+                "steps_per_second": steps_this_call / (time.time() - (start_time + 1e-6)),
+            }
+
         # Calculate bootstrap values for all active trajectories
         with torch.inference_mode():
             final_result = self.policy_source.get_inference(

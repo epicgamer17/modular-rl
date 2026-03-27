@@ -95,7 +95,14 @@ class UniversalLearner:
         self.max_grad_norm = max_grad_norm or clipnorm
 
         # 5. Validation (Moved from network)
-        self.validator = ShapeValidator(**(validator_params or {}))
+        v_params = dict(validator_params or {})
+        if "num_players" not in v_params:
+            # Fallback to network's num_players if available
+            v_params["num_players"] = getattr(self.agent_network, "num_players", 1)
+        if "num_actions" not in v_params:
+            v_params["num_actions"] = self.num_actions
+            
+        self.validator = ShapeValidator(**v_params)
 
         # Normalize optimizers and schedulers into dictionaries
         if isinstance(optimizer, dict):

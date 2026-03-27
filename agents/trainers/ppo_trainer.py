@@ -113,6 +113,7 @@ class PPOTrainer(BaseTrainer):
             validator_params={
                 "minibatch_size": config.minibatch_size,
                 "num_actions": self.num_actions,
+                "num_players": getattr(config.game, "num_players", 1),
             },
         )
 

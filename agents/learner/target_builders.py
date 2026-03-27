@@ -321,8 +321,6 @@ class PassThroughTargetBuilder(BaseTargetBuilder):
                 current_targets[key] = batch[key]
 
 
-
-
 class SequencePadder(BaseTargetBuilder):
     """Modifier: Pads transition-aligned data (length K) to state-aligned length (T)."""
 
@@ -353,7 +351,7 @@ class SequenceMaskBuilder(BaseTargetBuilder):
         current_targets["value_mask"] = base_mask.clone()
         current_targets["masks"] = base_mask.clone()
         current_targets["policy_mask"] = batch.get(
-            "has_valid_obs_mask", base_mask
+            "has_valid_action_mask", base_mask
         ).clone()
 
         # Rewards are transitions; root (t=0) does not get a reward prediction
@@ -361,10 +359,9 @@ class SequenceMaskBuilder(BaseTargetBuilder):
         reward_mask[:, 0] = False
         current_targets["reward_mask"] = reward_mask
 
-        # To-Play is state-aligned, but we might not want loss on the root if the representation doesn't predict it
-        to_play_mask = batch.get("has_valid_obs_mask", base_mask).clone()
+        # To-Play is state-aligned; exclude root and terminal states (no player to predict after game ends)
+        to_play_mask = batch.get("has_valid_action_mask", base_mask).clone()
         to_play_mask[:, 0] = False
-        to_play_mask &= reward_mask  # Cap at terminal states
         current_targets["to_play_mask"] = to_play_mask
 
 
@@ -455,7 +452,9 @@ class SequenceTargetPipeline(TargetBuilderPipeline):
     required padding, masking, and infrastructure.
     """
 
-    def __init__(self, algorithmic_builders: List[BaseTargetBuilder], unroll_steps: int):
+    def __init__(
+        self, algorithmic_builders: List[BaseTargetBuilder], unroll_steps: int
+    ):
         # 1. The pure math (e.g., ChanceTargetBuilder, DistributionalTargetBuilder)
         builders = list(algorithmic_builders)
 

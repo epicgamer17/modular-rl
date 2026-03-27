@@ -53,7 +53,7 @@ class SelectorFactory:
             raise ValueError(f"Unknown selector type: {base_type}")
 
         # Create the inner-most selector
-        selector = cls.REGISTRY[base_type](config=base_cfg, **base_kwargs)
+        selector = cls.REGISTRY[base_type](**base_kwargs)
 
         # 1.5 Automatically wrap with LegalMovesMaskDecorator (MANDATORY)
         # Since base selectors (Argmax, Categorical, EpsilonGreedy) no longer handle masks,

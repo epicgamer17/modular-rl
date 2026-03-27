@@ -120,9 +120,33 @@ class BaseLoss(ABC):
 
             # Only run the assertion if there are valid targets in the batch
             if valid_t_sum.numel() > 0:
-                assert torch.allclose(
-                    valid_t_sum, torch.ones_like(valid_t_sum), atol=1e-3
-                ), f"{self.__class__.__name__}: Valid categorical targets must sum to 1.0, got {valid_t_sum.mean().item()}, {flat_target}"
+                is_correct = torch.isclose(valid_t_sum, torch.ones_like(valid_t_sum), atol=1e-3)
+                if not torch.all(is_correct):
+                    # 1. Identify failing indices
+                    invalid_indices = (~is_correct).nonzero(as_tuple=True)[0]
+                    # Map back to the original flattened index
+                    full_indices = flat_mask.nonzero(as_tuple=True)[0][invalid_indices]
+                    
+                    # 2. Extract offending data
+                    offending_targets = flat_target[full_indices]
+                    offending_sums = valid_t_sum[invalid_indices]
+                    
+                    # 3. Format detailed error report
+                    msg = (
+                        f"\n[CRITICAL] {self.__class__.__name__}: Categorical targets MUST sum to 1.0 (Probability Mass Loss detected).\n"
+                        f"Found {len(invalid_indices)} invalid rows out of {len(valid_t_sum)} valid training samples.\n"
+                        f"Mean Sum: {valid_t_sum.mean().item():.4f}\n"
+                        f"Example Violations (showing up to 5):\n"
+                    )
+                    
+                    for i in range(min(5, len(invalid_indices))):
+                        idx = full_indices[i].item()
+                        b_idx, t_idx = idx // T, idx % T
+                        s = offending_sums[i].item()
+                        t_vals = offending_targets[i].detach().cpu().tolist()
+                        msg += f"  -> [Batch {b_idx}, Step {t_idx}] Sum: {s:.6f} | Target: {t_vals}\n"
+                    
+                    raise AssertionError(msg)
         raw_loss = self.loss_fn(flat_pred, flat_target, reduction="none")
 
         # 4. Collapse and Reshape to [B, T] result

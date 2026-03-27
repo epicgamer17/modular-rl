@@ -147,6 +147,7 @@ class RainbowTrainer(BaseTrainer):
                 "minibatch_size": config.minibatch_size,
                 "unroll_steps": getattr(config, "unroll_steps", 0),
                 "num_actions": self.num_actions,
+                "num_players": getattr(config.game, "num_players", 1),
                 "atom_size": config.atom_size if hasattr(config, "atom_size") else 1,
             },
         )

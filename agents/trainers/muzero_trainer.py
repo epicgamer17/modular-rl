@@ -26,6 +26,8 @@ class MuZeroTrainer(BaseTrainer):
         test_agents: List = None,
     ):
         super().__init__(config, env, device, name, stats, test_agents)
+        print(f"Trainer Config Unroll Steps: {config.unroll_steps}")
+        print(f"Trainer Config Batch Size: {config.minibatch_size}")
 
         # Create player_id_mapping for multi-player games
         if hasattr(env, "possible_agents"):
@@ -96,7 +98,7 @@ class MuZeroTrainer(BaseTrainer):
         inner_selector = LegalMovesMaskDecorator(CategoricalSelector())
         self.action_selector = TemperatureSelector(
             inner_selector=inner_selector,
-            config=config,
+            schedule_config=config.temperature_schedule,
         )
 
         # 3. The Facts (Replay Buffer)
@@ -138,6 +140,7 @@ class MuZeroTrainer(BaseTrainer):
                 "minibatch_size": config.minibatch_size,
                 "unroll_steps": config.unroll_steps,
                 "num_actions": self.num_actions,
+                "num_players": getattr(config.game, "num_players", 1),
                 "atom_size": (
                     (config.support_range * 2) + 1
                     if hasattr(config, "support_range") and config.support_range
@@ -163,7 +166,6 @@ class MuZeroTrainer(BaseTrainer):
         self.search_policy_source = SearchPolicySource(
             search_engine=search_engine,
             agent_network=self.agent_network,
-            config=config,
         )
 
         # Decide between single and vector adapter
@@ -182,6 +184,8 @@ class MuZeroTrainer(BaseTrainer):
             getattr(config, "actor_device", "cpu"),
             getattr(config.game, "num_actions", None),
             getattr(config.game, "num_players", 1),
+            None,   # test_agents
+            False,  # flush_incomplete: MuZero stores only complete episodes
         )
         
         num_rollout_workers = config.num_workers if hasattr(config, "num_workers") else 1

@@ -57,6 +57,7 @@ class SearchPolicySource(BasePolicySource):
         self,
         search_engine: Any,
         agent_network: Optional[AgentNetwork],
+        **kwargs,
     ):
         self.search = search_engine
         self.agent_network = agent_network
@@ -74,13 +75,28 @@ class SearchPolicySource(BasePolicySource):
         agent_network = kwargs.get("agent_network", self.agent_network)
 
         # Populate info["player"] from to_play kwarg if not already present
-        if "player" not in info and "to_play" in kwargs:
-            info = dict(info)
-            info["player"] = kwargs["to_play"]
+        to_play = kwargs.get("to_play")
+        if to_play is not None:
+            if isinstance(info, dict):
+                if "player" not in info:
+                    info = {**info, "player": to_play}
+            elif isinstance(info, list):
+                # If it's a list, we might need to update each element
+                # or assume it's already correct. We'll be conservative.
+                new_info = []
+                for i, item in enumerate(info):
+                    if isinstance(item, dict) and "player" not in item:
+                        # If to_play is a list matching info, use corresponding element
+                        p = to_play[i] if (isinstance(to_play, (list, np.ndarray, torch.Tensor)) and len(to_play) == len(info)) else to_play
+                        new_info.append({**item, "player": p})
+                    else:
+                        new_info.append(item)
+                info = new_info
 
         assert (
-            "player" in info
-        ), "info must contain 'player', or pass to_play as a kwarg"
+            (isinstance(info, dict) and "player" in info) or
+            (isinstance(info, list) and all(isinstance(i, dict) and "player" in i for i in info))
+        ), "info must contain 'player' in all entries, or pass to_play as a kwarg"
 
         start_time = time.time()
         res = self.search.run_vectorized(obs, info, agent_network)

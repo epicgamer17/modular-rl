@@ -11,8 +11,8 @@ DEFAULT_EPSILON = 0.05
 
 
 class BaseActionSelector(ABC):
-    def __init__(self, config: Optional[Any] = None):
-        self.config = config
+    def __init__(self, **kwargs):
+        pass
 
     @abstractmethod
     def select_action(
@@ -89,10 +89,8 @@ class LegalMovesMaskDecorator(BaseActionSelector):
 
 
 class CategoricalSelector(BaseActionSelector):
-    def __init__(self, config: Optional[Any] = None, exploration: bool = True):
-        super().__init__(config)
-        # We keep this for backward compatibility with SelectorFactory/Configs that might pass it,
-        # but select_action argument takes precedence.
+    def __init__(self, exploration: bool = True, **kwargs):
+        super().__init__(**kwargs)
         self.default_exploration = exploration
 
     def select_action(
@@ -101,41 +99,43 @@ class CategoricalSelector(BaseActionSelector):
         info: Dict[str, Any],
         exploration: Optional[bool] = None,
         **kwargs,
-    ):
-        # Resolve exploration flag
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        """
+        Samples from Categorical(probs) or Categorical(logits).
+        """
+        # Resolve exploration vs exploitation flags
         should_explore = (
             exploration if exploration is not None else self.default_exploration
         )
 
-        metadata = {}
-
         from torch.distributions import Categorical
 
+        # 1. Resolve Distribution
         if result.logits is not None:
-            policy = Categorical(logits=result.logits)
+            dist = Categorical(logits=result.logits)
+        elif result.probs is not None:
+            dist = Categorical(probs=result.probs)
         else:
-            assert (
-                result.probs is not None
-            ), "CategoricalSelector requires result.logits or result.probs"
-            policy = Categorical(probs=result.probs)
+            raise ValueError(
+                "CategoricalSelector requires result.logits or result.probs"
+            )
 
-        # Use 'policy_dist' for decorators (like PPODecorator)
-        # Use 'policy' for the replay buffer (must be a tensor/numpy)
-        metadata["policy_dist"] = policy
-        metadata["policy"] = policy.probs.detach()
-
+        # 2. Selection logic
         if should_explore:
-            action = policy.sample()
+            action = dist.sample()
         else:
-            # policy.logits is the canonical form for argmax (log-scale preserves ordering)
-            action = torch.argmax(policy.logits, dim=-1)
+            # Deterministic Selection (Argmax) on logits
+            action = torch.argmax(dist.logits, dim=-1)
+
+        # 3. Metadata Injection
+        metadata = {"policy_dist": dist}
 
         return action, metadata
 
 
 class EpsilonGreedySelector(BaseActionSelector):
-    def __init__(self, config: Optional[Any] = None, epsilon: float = 0.05):
-        super().__init__(config)
+    def __init__(self, epsilon: float = 0.05, **kwargs):
+        super().__init__(**kwargs)
         self.epsilon = epsilon
 
     def select_action(

@@ -35,6 +35,7 @@ class AgentNetwork(nn.Module):
         super().__init__()
         self.input_shape = input_shape
         self.num_actions = num_actions
+        self.num_players = num_players
         self.stochastic = stochastic
 
         # --- DYNAMIC ASSEMBLY ---

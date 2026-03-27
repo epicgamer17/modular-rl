@@ -1065,14 +1065,19 @@ class NStepUnrollProcessor(OutputProcessor):
 
         for u in range(self.unroll_steps + 1):
             is_consistent = dynamics_mask[:, u]
+            
+            # Defensive: even if 'consistent' by same_game/done logic, if the policy is missing (all zeros), 
+            raw_p = raw_policies[:, u]
+            target_policies[is_consistent, u] = raw_p[is_consistent]
+            # No fallback; let it be zero if raw is zero to surface errors
 
-            target_policies[is_consistent, u] = raw_policies[is_consistent, u]
-            target_policies[~is_consistent, u] = 1.0 / self.num_actions
 
-            # Pass the clean raw integer value directly
+
+            # To_play targets follow general consistency
             tp_indices = torch.clamp(raw_to_plays[:, u].long(), 0, self.num_players - 1)
             target_to_plays[range(batch_size), u, tp_indices] = 1.0
             target_to_plays[~is_consistent, u] = 0
+
 
             target_dones[is_consistent, u] = raw_dones[is_consistent, u]
             target_dones[~is_consistent, u] = True

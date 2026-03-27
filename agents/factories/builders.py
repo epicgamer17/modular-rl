@@ -88,8 +88,11 @@ def make_backbone_fn(config: Optional[BackboneConfig]) -> Optional[Callable]:
     
     return partial(cls, **kwargs)
 
-def make_head_fn(config: HeadConfig, **kwargs) -> Callable:
+def make_head_fn(config: Optional[HeadConfig], **kwargs) -> Optional[Callable]:
     """Returns a partial that instantiates a Head module."""
+    if config is None:
+        return None
+        
     config_type = type(config)
     if config_type not in HEAD_MAPPING:
         raise ValueError(f"No head module registered for config type: {config_type}")

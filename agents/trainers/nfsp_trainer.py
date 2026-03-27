@@ -375,6 +375,11 @@ class NFSPTrainer(BaseTrainer):
                     per_beta_schedule=self.rl_per_beta_schedule,
                 ),
             ],
+            validator_params={
+                "minibatch_size": rl_config.minibatch_size,
+                "num_actions": self.num_actions,
+                "num_players": self.num_players,
+            },
         )
 
         # 2) SL buffer + learner (Average Strategy)
@@ -421,6 +426,11 @@ class NFSPTrainer(BaseTrainer):
             lr_scheduler=sl_scheduler,
             clipnorm=sl_config.clipnorm,
             callbacks=[ResetNoiseCallback()],
+            validator_params={
+                "minibatch_size": sl_config.minibatch_size,
+                "num_actions": self.num_actions,
+                "num_players": self.num_players,
+            },
         )
 
         # Schedules/params for actors (best response exploration)
