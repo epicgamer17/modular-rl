@@ -1,94 +1,113 @@
 import torch
-import math
 import pytest
+import math
 from search.aos_search.tree import FlatTree
 from search.aos_search.batched_mcts import _backpropagate, UNEXPANDED_SENTINEL
 from search.aos_search.backpropogation import average_discounted_backprop
 
 pytestmark = pytest.mark.unit
 
-def test_value_backpropagation_discounting():
-    """
-    Ensure values strictly discount and accumulate up the tree.
+# Analytical Oracles: (path_config, expected, num_players, discount, description)
+BACKPROP_CASES = [
+    ([(1, 0.0), (1, 1.0), (0, 0.0, 0.0)], [-1.0, 1.0, 0.0, 0.0], 2, 1.0, "2P: two p1s, reward for p1 on p0 turn, end on p0"),
+    ([(1, 0.0), (1, 1.0), (1, 0.0, 0.0)], [-1.0, 1.0, 0.0, 0.0], 2, 1.0, "2P: two p1s, reward for p1 on p0 turn, end on p1"),
+    ([(1, 0.0), (1, 1.0), (0, 1.0, 0.0)], [-2.0, 2.0, 1.0, 0.0], 2, 1.0, "2P: two p1s, both actions get reward, end on p0"),
+    ([(1, 0.0), (1, 1.0), (1, 1.0, 0.0)], [-2.0, 2.0, 1.0, 0.0], 2, 1.0, "2P: two p1s, both actions get reward, end on p1"),
+    ([(1, 1.0), (1, 1.0), (0, 0.0, 0.0)], [0.0, 1.0, 0.0, 0.0], 2, 1.0, "2P: Two p1 turns (but p0 got reward), end on p0"),
+    ([(1, 1.0), (1, 1.0), (1, 0.0, 0.0)], [0.0, 1.0, 0.0, 0.0], 2, 1.0, "2P: Two p1 turns (but p0 got reward), end on p1"),
+    ([(1, 0.0), (0, 1.0), (1, 0.0, 0.0)], [-1.0, 1.0, 0.0, 0.0], 2, 1.0, "2P: alt game, p1 wins on first move"),
+    ([(1, 0.0), (0, 1.0), (1, 0.0), (0, 0.0, 0.0)], [-1.0, 1.0, 0.0, 0.0, 0.0], 2, 1.0, "2P: alt game, p1 wins on first move (extra leaf)"),
+    ([(1, 0.0), (0, 0.0), (1, 1.0, 0.0)], [1.0, -1.0, 1.0, 0.0], 2, 1.0, "2P: alt game, p0 wins"),
+    ([(1, 0.0), (0, 0.0), (1, 0.0), (0, 1.0, 0.0)], [-1.0, 1.0, -1.0, 1.0, 0.0], 2, 1.0, "2P: alt game, p1 wins"),
+    ([(1, 0.0), (0, 0.0), (1, 0.0, 1.0)], [-1.0, 1.0, -1.0, 1.0], 2, 1.0, "2P: alt game with leaf value"),
+    ([(1, 0.0), (0, 0.0), (1, 0.0), (0, 0.0, 1.0)], [1.0, -1.0, 1.0, -1.0, 1.0], 2, 1.0, "2P: alt game with leaf value"),
+    ([(0, 1.0), (0, 1.0), (0, 1.0, 0.0)], [3.0, 2.0, 1.0, 0.0], 2, 1.0, "2P: All p0 turns"),
+    ([(0, 0.0), (0, 0.0), (0, 0.0, 4.0)], [4.0, 4.0, 4.0, 4.0], 2, 1.0, "2P: All p0 turns with leaf value"),
+    ([(1, 0.0), (1, 1.0), (0, 0.0, 4.0)], [3.0, -3.0, -4.0, 4.0], 2, 1.0, "2P: Two p1 turns with leaf value"),
+    ([(1, 0.0), (1, 1.0), (1, 0.0, 4.0)], [-5.0, 5.0, 4.0, 4.0], 2, 1.0, "2P: Two p1 turns with leaf value"),
+    ([(1, 0.0), (1, 1.0), (1, 0.0), (0, 0.0, 4.0)], [3.0, -3.0, -4.0, -4.0, 4.0], 2, 1.0, "2P: Two p1 turns with leaf value"),
+    ([(0, 1.0), (0, 2.0), (0, 3.0, 0.0)], [6.0, 5.0, 3.0, 0.0], 1, 1.0, "1P: All rewards sum up"),
+    ([(0, 1.0), (0, 0.0), (0, 0.0, 5.0)], [6.0, 5.0, 5.0, 5.0], 1, 1.0, "1P: Rewards + leaf value"),
+    ([(1, 0.0), (2, 0.0), (0, 1.0), (0, 0.0, 0.0)], [-1.0, -1.0, 1.0, 0.0, 0.0], 3, 1.0, "3P: Player 2 wins"),
     
-    Setup:
-    - Root (Node 0) -> Action 0 -> Node 1 -> Action 0 -> Node 2
-    - Reward transitioning from Node 1 to Node 2: 0.5
-    - Leaf evaluation at Node 2: 1.0
-    - Discount factor gamma: 0.9
-    
-    Expected Calculation:
-    - Target Q at Node 1: r(Node 1, Node 2) + gamma * V(Node 2)
-      = 0.5 + 0.9 * 1.0 = 1.4
-    - Target Q at Node 0: r(Node 0, Node 1) + gamma * Q(Node 1)
-      = 0.0 + 0.9 * 1.4 = 1.26
-    """
-    device = torch.device("cpu")
-    batch_size = 1
-    max_nodes = 5
+    # Discounting Cases (gamma < 1.0)
+    ([(0, 1.0), (0, 1.0, 1.0)], [2.71, 1.9, 1.0], 1, 0.9, "1P: Discounting gamma=0.9"),
+    ([(1, 1.0), (0, 0.0, 1.0)], [1.81, -0.9, 1.0], 2, 0.9, "2P: Discounting gamma=0.9, alt turns"),
+    ([(1, 0.0), (1, 1.0, 1.0)], [-1.71, 1.9, 1.0], 2, 0.9, "2P: Discounting gamma=0.9, non-alt turns P1->P1"),
+]
+
+def make_mock_tree(path_config, num_players, device):
+    """Reconstructs the FlatTree path based on the oracle configuration."""
+    B = 1
+    max_nodes = len(path_config) + 1
     num_actions = 2
+    tree = FlatTree.allocate(B, max_nodes, num_actions, 0, device)
     
-    # 1. Allocate tree
-    tree = FlatTree.allocate(batch_size, max_nodes, num_actions, 0, device)
+    path_nodes_list = []
+    path_actions_list = []
     
-    # 2. Setup linear path relationships
-    # Node 0 -> Action 0 -> Node 1 (already implicitly at index 1)
-    # Node 1 -> Action 0 -> Node 2 (already implicitly at index 2)
-    tree.children_index[0, 0, 0] = 1
-    tree.children_index[0, 1, 0] = 2
+    current_node = 0
+    tree.to_play[0, 0] = 0
     
-    # 3. Setup rewards
-    # Reward from Node 1 to Node 2 is 0.5
-    tree.children_rewards[0, 1, 0] = 0.5
+    for i, step in enumerate(path_config):
+        to_play_next, reward = step[0], step[1]
+        path_nodes_list.append(current_node)
+        
+        next_node = i + 1
+        action = 0 
+        
+        tree.children_index[0, current_node, action] = next_node
+        tree.children_rewards[0, current_node, action] = reward
+        tree.to_play[0, next_node] = to_play_next
+        
+        path_actions_list.append(action)
+        current_node = next_node
+        
+    path_nodes_list.append(current_node)
     
-    # 4. Setup path data for backprop
-    # Indices: [Root, Node 1, Node 2]
-    path_nodes = torch.tensor([[0, 1, 2, 0, 0]], dtype=torch.int32, device=device)
-    # Actions: [Action 0 from Root, Action 0 from Node 1]
-    path_actions = torch.tensor([[0, 0, UNEXPANDED_SENTINEL, UNEXPANDED_SENTINEL]], dtype=torch.int32, device=device)
-    # Depth is 2 (2 actions taken)
-    depths = torch.tensor([2], dtype=torch.int32, device=device)
+    padded_nodes = torch.zeros((1, max_nodes), dtype=torch.int32, device=device)
+    padded_nodes[0, :len(path_nodes_list)] = torch.tensor(path_nodes_list, dtype=torch.int32)
     
-    # 5. Setup leaf value (V at node 2)
-    leaf_values = torch.tensor([1.0], dtype=torch.float32, device=device)
-    # Player ID (used for perspective)
-    leaf_to_play = torch.tensor([0], dtype=torch.long, device=device)
+    padded_actions = torch.full((1, max_nodes - 1), UNEXPANDED_SENTINEL, dtype=torch.int32, device=device)
+    padded_actions[0, :len(path_actions_list)] = torch.tensor(path_actions_list, dtype=torch.int32)
     
-    # 6. Run backpropagation
-    discount = 0.9
+    depths = torch.tensor([len(path_actions_list)], dtype=torch.int32, device=device)
+    
+    last = path_config[-1]
+    leaf_to_play = last[0]
+    leaf_value = last[2] if len(last) > 2 else 0.0
+    
+    tree.node_values[0, current_node] = leaf_value
+    tree.node_visits[0, current_node] = 1
+    
+    return tree, padded_nodes, padded_actions, depths, leaf_to_play, leaf_value
+
+@pytest.mark.parametrize("path_config, expected, num_players, discount, desc", BACKPROP_CASES)
+def test_muzero_multiplayer_backpropagation_aos(path_config, expected, num_players, discount, desc):
+    """Verifies the aos_search backpropagation against analytical oracles (including discounting)."""
+    device = torch.device("cpu")
+    tree, path_nodes, path_actions, depths, leaf_to_play, leaf_value = make_mock_tree(path_config, num_players, device)
+    
     _backpropagate(
         tree=tree,
         path_nodes=path_nodes,
         path_actions=path_actions,
         depths=depths,
-        leaf_values=leaf_values,
-        leaf_to_play=leaf_to_play,
+        leaf_values=torch.tensor([leaf_value], dtype=torch.float32, device=device),
+        leaf_to_play=torch.tensor([leaf_to_play], dtype=torch.long, device=device),
         discount=discount,
-        B=batch_size,
+        B=1,
         device=device,
         backprop_fn=average_discounted_backprop,
-        num_players=1 # For simplicity, 1 player game
+        num_players=num_players
     )
     
-    # 7. Assertions
-    # Visit counts should increment by 1
-    # Note: FlatTree.allocate might initialize them to 0. 
-    # Root might have visits = 1 if it's the root simulation, but here we just check increment.
-    assert tree.node_visits[0, 0] == 1, "Root visit count should be 1"
-    assert tree.node_visits[0, 1] == 1, "Node 1 visit count should be 1"
+    active_len = len(path_config) + 1
+    resulting_values = []
+    for i in range(active_len):
+        resulting_values.append(tree.node_values[0, i].item())
+        
+    expected_tensor = torch.tensor(expected, dtype=torch.float32)
+    resulting_tensor = torch.tensor(resulting_values, dtype=torch.float32)
     
-    # Q-values (stored in children_values)
-    # Node 1's Q-value for Action 0 (leading to Node 2)
-    q_val_n1 = tree.children_values[0, 1, 0].item()
-    expected_q_n1 = 1.4
-    assert math.isclose(q_val_n1, expected_q_n1, rel_tol=1e-6), f"Node 1 Q-value {q_val_n1} != {expected_q_n1}"
-    
-    # Root's Q-value for Action 0 (leading to Node 1)
-    q_val_root = tree.children_values[0, 0, 0].item()
-    expected_q_root = 1.26
-    assert math.isclose(q_val_root, expected_q_root, rel_tol=1e-6), f"Root Q-value {q_val_root} != {expected_q_root}"
-    
-    # Node values (V)
-    # Node 1's value should match its mean Q
-    assert math.isclose(tree.node_values[0, 1].item(), expected_q_n1, rel_tol=1e-6)
-    assert math.isclose(tree.node_values[0, 0].item(), expected_q_root, rel_tol=1e-6)
+    torch.testing.assert_close(resulting_tensor, expected_tensor, msg=f"AOS Backend Failed: {desc}")

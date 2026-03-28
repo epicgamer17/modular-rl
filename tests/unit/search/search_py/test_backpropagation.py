@@ -1,6 +1,6 @@
 import torch
-import math
 import pytest
+import math
 from search.search_py.nodes import DecisionNode
 from search.search_py.backpropogation import AverageDiscountedReturnBackpropagator
 from search.search_py.min_max_stats import MinMaxStats
@@ -8,71 +8,94 @@ from search.search_py.min_max_stats import MinMaxStats
 pytestmark = pytest.mark.unit
 
 class MockConfig:
-    def __init__(self, discount_factor=0.9):
+    def __init__(self, num_players, discount_factor=1.0):
         self.discount_factor = discount_factor
-        self.game = type('obj', (object,), {'num_players': 1})
+        self.game = type('obj', (object,), {'num_players': num_players})
 
-def test_search_py_value_backpropagation_discounting():
-    """
-    Ensure values strictly discount and accumulate up the tree in search_py.
+# Analytical Oracles: (path_config, expected, num_players, discount, description)
+BACKPROP_CASES = [
+    ([(1, 0.0), (1, 1.0), (0, 0.0, 0.0)], [-1.0, 1.0, 0.0, 0.0], 2, 1.0, "2P: two p1s, reward for p1 on p0 turn, end on p0"),
+    ([(1, 0.0), (1, 1.0), (1, 0.0, 0.0)], [-1.0, 1.0, 0.0, 0.0], 2, 1.0, "2P: two p1s, reward for p1 on p0 turn, end on p1"),
+    ([(1, 0.0), (1, 1.0), (0, 1.0, 0.0)], [-2.0, 2.0, 1.0, 0.0], 2, 1.0, "2P: two p1s, both actions get reward, end on p0"),
+    ([(1, 0.0), (1, 1.0), (1, 1.0, 0.0)], [-2.0, 2.0, 1.0, 0.0], 2, 1.0, "2P: two p1s, both actions get reward, end on p1"),
+    ([(1, 1.0), (1, 1.0), (0, 0.0, 0.0)], [0.0, 1.0, 0.0, 0.0], 2, 1.0, "2P: Two p1 turns (but p0 got reward), end on p0"),
+    ([(1, 1.0), (1, 1.0), (1, 0.0, 0.0)], [0.0, 1.0, 0.0, 0.0], 2, 1.0, "2P: Two p1 turns (but p0 got reward), end on p1"),
+    ([(1, 0.0), (0, 1.0), (1, 0.0, 0.0)], [-1.0, 1.0, 0.0, 0.0], 2, 1.0, "2P: alt game, p1 wins on first move"),
+    ([(1, 0.0), (0, 1.0), (1, 0.0), (0, 0.0, 0.0)], [-1.0, 1.0, 0.0, 0.0, 0.0], 2, 1.0, "2P: alt game, p1 wins on first move (extra leaf)"),
+    ([(1, 0.0), (0, 0.0), (1, 1.0, 0.0)], [1.0, -1.0, 1.0, 0.0], 2, 1.0, "2P: alt game, p0 wins"),
+    ([(1, 0.0), (0, 0.0), (1, 0.0), (0, 1.0, 0.0)], [-1.0, 1.0, -1.0, 1.0, 0.0], 2, 1.0, "2P: alt game, p1 wins"),
+    ([(1, 0.0), (0, 0.0), (1, 0.0, 1.0)], [-1.0, 1.0, -1.0, 1.0], 2, 1.0, "2P: alt game with leaf value"),
+    ([(1, 0.0), (0, 0.0), (1, 0.0), (0, 0.0, 1.0)], [1.0, -1.0, 1.0, -1.0, 1.0], 2, 1.0, "2P: alt game with leaf value"),
+    ([(0, 1.0), (0, 1.0), (0, 1.0, 0.0)], [3.0, 2.0, 1.0, 0.0], 2, 1.0, "2P: All p0 turns"),
+    ([(0, 0.0), (0, 0.0), (0, 0.0, 4.0)], [4.0, 4.0, 4.0, 4.0], 2, 1.0, "2P: All p0 turns with leaf value"),
+    ([(1, 0.0), (1, 1.0), (0, 0.0, 4.0)], [3.0, -3.0, -4.0, 4.0], 2, 1.0, "2P: Two p1 turns with leaf value"),
+    ([(1, 0.0), (1, 1.0), (1, 0.0, 4.0)], [-5.0, 5.0, 4.0, 4.0], 2, 1.0, "2P: Two p1 turns with leaf value"),
+    ([(1, 0.0), (1, 1.0), (1, 0.0), (0, 0.0, 4.0)], [3.0, -3.0, -4.0, -4.0, 4.0], 2, 1.0, "2P: Two p1 turns with leaf value"),
+    ([(0, 1.0), (0, 2.0), (0, 3.0, 0.0)], [6.0, 5.0, 3.0, 0.0], 1, 1.0, "1P: All rewards sum up"),
+    ([(0, 1.0), (0, 0.0), (0, 0.0, 5.0)], [6.0, 5.0, 5.0, 5.0], 1, 1.0, "1P: Rewards + leaf value"),
+    ([(1, 0.0), (2, 0.0), (0, 1.0), (0, 0.0, 0.0)], [-1.0, -1.0, 1.0, 0.0, 0.0], 3, 1.0, "3P: Player 2 wins"),
     
-    Setup:
-    - Root (Node 0) -> Action 0 -> Node 1 -> Action 0 -> Node 2
-    - Reward transitioning from Node 1 to Node 2: 0.5
-    - Leaf evaluation at Node 2: 1.0 (Node 2's predicted value)
-    - Discount factor gamma: 0.9
+    # Discounting Cases (gamma < 1.0)
+    ([(0, 1.0), (0, 1.0, 1.0)], [2.71, 1.9, 1.0], 1, 0.9, "1P: Discounting gamma=0.9"),
+    ([(1, 1.0), (0, 0.0, 1.0)], [1.81, -0.9, 1.0], 2, 0.9, "2P: Discounting gamma=0.9, alt turns"),
+    ([(1, 0.0), (1, 1.0, 1.0)], [-1.71, 1.9, 1.0], 2, 0.9, "2P: Discounting gamma=0.9, non-alt turns P1->P1"),
+]
+
+def make_mock_search_path(path_config, num_players):
+    """Reconstructs the Node tree based on the tuple config."""
+    policy = torch.tensor([1.0, 0.0])
     
-    Expected Calculation:
-    - Target Q at Node 1: r(Node 1, Node 2) + gamma * V(Node 2)
-      = 0.5 + 0.9 * 1.0 = 1.4
-    - Target Q at Node 0: r(Node 0, Node 1) + gamma * Q(Node 1)
-      = 0.0 + 0.9 * 1.4 = 1.26
-    """
-    # 1. Setup Nodes
     root = DecisionNode(prior=1.0)
-    n1 = DecisionNode(prior=1.0, parent=root)
-    n2 = DecisionNode(prior=1.0, parent=n1)
-    
-    # Expand nodes to initialize vectorized stats
-    # num_actions = 1
     root.expand(
-        allowed_actions=torch.tensor([0]),
+        allowed_actions=torch.tensor([0, 1]),
         to_play=0,
-        priors=torch.tensor([1.0]),
-        network_policy=torch.tensor([1.0]),
+        priors=policy,
+        network_policy=policy,
         network_state={},
         reward=0.0,
         value=0.0
     )
-    n1.expand(
-        allowed_actions=torch.tensor([0]),
-        to_play=0,
-        priors=torch.tensor([1.0]),
-        network_policy=torch.tensor([1.0]),
-        network_state={},
-        reward=0.0, # reward from Root -> n1
-        value=0.0
-    )
-    n2.expand(
-        allowed_actions=torch.tensor([0]),
-        to_play=0,
-        priors=torch.tensor([1.0]),
-        network_policy=torch.tensor([1.0]),
-        network_state={},
-        reward=0.5, # reward from n1 -> n2
-        value=1.0 # Leaf value
-    )
     
-    # 2. Setup Backprop
+    search_path = [root]
+    action_path = []
+    
+    node = root
+    for i, step in enumerate(path_config):
+        to_play_next, reward = step[0], step[1]
+        action = 0
+        action_path.append(action)
+        
+        next_node = DecisionNode(prior=1.0, parent=node)
+        node.children[action] = next_node
+        
+        next_node.expand(
+            allowed_actions=torch.tensor([0, 1]),
+            to_play=to_play_next,
+            priors=policy,
+            network_policy=policy,
+            network_state={},
+            reward=reward,
+            value=0.0
+        )
+        
+        node = next_node
+        search_path.append(node)
+
+    last = path_config[-1]
+    leaf_value = last[2] if len(last) > 2 else 0.0
+    leaf_to_play = last[0]
+    
+    return search_path, action_path, leaf_to_play, leaf_value
+
+@pytest.mark.parametrize("path_config, expected, num_players, discount, desc", BACKPROP_CASES)
+def test_muzero_multiplayer_backpropagation_py(path_config, expected, num_players, discount, desc):
+    """Verifies the search_py backpropagation against analytical oracles (including discounting)."""
+    search_path, action_path, leaf_to_play, leaf_value = make_mock_search_path(path_config, num_players)
+    
     bp = AverageDiscountedReturnBackpropagator()
-    search_path = [root, n1, n2]
-    action_path = [0, 0]
-    leaf_value = 1.0
-    leaf_to_play = 0
     min_max_stats = MinMaxStats(known_bounds=None)
-    config = MockConfig(discount_factor=0.9)
+    config = MockConfig(num_players=num_players, discount_factor=discount)
     
-    # 3. Run Backpropagation
     bp.backpropagate(
         search_path=search_path,
         action_path=action_path,
@@ -82,21 +105,11 @@ def test_search_py_value_backpropagation_discounting():
         config=config
     )
     
-    # 4. Assertions
-    # Visit counts
-    assert root.visits == 1
-    assert n1.visits == 1
-    assert n2.visits == 1
+    resulting_values = []
+    for node in search_path:
+        resulting_values.append(node.value())
+        
+    expected_tensor = torch.tensor(expected, dtype=torch.float32)
+    resulting_tensor = torch.tensor(resulting_values, dtype=torch.float32)
     
-    # Child stats
-    # n1.child_values[0] should be 1.4
-    val_n1 = n1.child_values[0].item()
-    assert math.isclose(val_n1, 1.4, rel_tol=1e-6), f"n1 child val {val_n1} != 1.4"
-    
-    # root.child_values[0] should be 1.26
-    val_root = root.child_values[0].item()
-    assert math.isclose(val_root, 1.26, rel_tol=1e-6), f"root child val {val_root} != 1.26"
-    
-    # Node values (value_sum / visits)
-    assert math.isclose(n1.value(), 1.4, rel_tol=1e-6), f"n1 node value {n1.value()} != 1.4"
-    assert math.isclose(root.value(), 1.26, rel_tol=1e-6), f"root node value {root.value()} != 1.26"
+    torch.testing.assert_close(resulting_tensor, expected_tensor, msg=f"Python Backend Failed: {desc}")
