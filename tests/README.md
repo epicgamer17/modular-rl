@@ -62,6 +62,32 @@ Execution: Runs in tens of minutes to hours.
 
 CI Target: Runs on Releases or Weekly.
 
+## 🤝 Contract Testing: Protecting Architectural Assumptions
+
+While pure math unit tests ensure the agent learns efficiently, **Contract Tests** ensure the agent doesn't crash 18 hours into a training run due to a shape mismatch or a broken dictionary payload.
+
+In RL, modules act like microservices. Contract tests verify the strict formatting agreements between these modules (tensors, padding conventions, structural invariants) without validating the underlying math. These live inside `tests/unit/` (often named `test_[module]_contracts.py`) and execute in Tier 1.
+
+### The 4 Core RL Contracts
+
+When adding or modifying components, ensure the following contracts are explicitly tested:
+
+**1. The Padding & Alignment Contract**
+* **The Rule:** If a trajectory ends prematurely, the unrolled sequence must still equal length $K$. Padded steps must be zeroed, and the generated loss mask must explicitly ignore these indices during `.backward()`.
+* **The Test:** Pass a sequence of length 2 into a module expecting length 5. Assert `shape == 5`, assert indices `[2:] == 0.0`, and assert the loss mask correctly identifies the invalid steps.
+
+**2. The Terminal State Invariant**
+* **The Rule:** The value of a terminal state is strictly `0.0`, regardless of neural network predictions.
+* **The Test:** Pass a batch where `done = True`. Assert the bootstrap target values for those specific indices equal exactly `0.0`.
+
+**3. The Shape and DType Contract**
+* **The Rule:** PyTorch silently broadcasts mismatched tensors and promotes data types, causing silent memory bloat or massive logical errors.
+* **The Test:** Isolate module boundaries (e.g., the transition between the Representation and Dynamics network). Explicitly `assert output.dtype == torch.float32` and `assert output.shape == (B, hidden_dim)`.
+
+**4. The Dictionary/Payload Contract**
+* **The Rule:** Distributed workers (Ray Actors) and Replay Buffers must agree on the exact keys of the transition payloads.
+* **The Test:** Mock an environment step and assert `set(payload.keys()) == {"obs", "action", "reward", "done", "policy_logits"}`. Trigger extreme edge cases (like an empty dictionary) to ensure the buffer handles them gracefully.
+
 ⚖️ The 5 Rules of RL Test Driven Development
 When adding tests to this repository, strictly adhere to the following rules:
 
