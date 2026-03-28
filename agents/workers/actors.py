@@ -256,7 +256,13 @@ class RolloutActor(BaseActor):
                 # Optional metadata
                 if result.value is not None:
                     step_dict["value"] = result.value[i].item()
-                if result.probs is not None:
+                
+                # MuZero Specific: Prioritize target_policies (visit counts) for the buffer
+                # search_policy_source provides this in 'extras'
+                target_p = result.extras.get("target_policies")
+                if target_p is not None:
+                    step_dict["policy"] = target_p[i].cpu().numpy()
+                elif result.probs is not None:
                     step_dict["policy"] = result.probs[i].cpu().numpy()
 
                 lp = metadata.get("log_prob")
