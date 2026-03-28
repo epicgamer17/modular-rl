@@ -33,7 +33,7 @@ double MinMaxStats::normalize(const double value) const {
         }
         return (value - min_) / denom;
     }
-    return value;
+    return 0.0;
 }
 
 double MinMaxStats::min() const {

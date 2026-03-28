@@ -142,7 +142,7 @@ class VectorizedMinMaxStats:
         delta = hi - lo  # [B, 1] or [B]
 
         # Branchless normalization (matches mctx behaviour):
-        # when min == max, q_values == lo, so numerator == 0 → 0 / eps = 0.0.
+        # when min == max, q_values == lo, so numerator == 0 -> 0 / eps = 0.0.
         # No conditional needed; clamping the denominator is sufficient.
         # The final clamp(0.0, 1.0) strictly bounds everything (e.g. v_mix bootstrap).
         return ((q_values - lo) / delta.clamp(min=self.epsilon)).clamp(0.0, 1.0)
@@ -212,3 +212,4 @@ class StaticMinMaxStats:
         ), f"q_values must be float32, got {q_values.dtype}"
         q_range = max(self.maximum - self.minimum, 1e-8)
         return ((q_values - self.minimum) / q_range).clamp(0.0, 1.0)
+
