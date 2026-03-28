@@ -25,6 +25,7 @@ class AgentNetwork(nn.Module):
         num_actions: int,
         representation_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
         world_model_fn: Optional[Callable[..., nn.Module]] = None,
+        prediction_backbone_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
         memory_core_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
         head_fns: Dict[str, Callable[..., nn.Module]] = None,
         stochastic: bool = False,
@@ -61,6 +62,18 @@ class AgentNetwork(nn.Module):
                 num_actions=num_actions,
                 num_players=num_players,
             )
+
+        # 2b. Prediction Backbone (MuZero: transforms latent before behavior heads)
+        if prediction_backbone_fn is not None:
+            self.components["prediction_backbone"] = prediction_backbone_fn(
+                input_shape=current_head_input_shape
+            )
+            current_head_input_shape = self.components["prediction_backbone"].output_shape
+
+        # MuZero Parity: Inject the shared prediction backbone into the world model
+        # if it's a stochastic dynamics pipeline (required for shared sigma features).
+        if "world_model" in self.components and "prediction_backbone" in self.components:
+            self.components["world_model"].set_prediction_backbone(self.components["prediction_backbone"])
 
         # 3. Behavior Phase: Temporal Memory (Backbones)
         if (
@@ -191,6 +204,10 @@ class AgentNetwork(nn.Module):
             latent.unsqueeze(1), B_val, 1, state=recurrent_state
         )
 
+        # Apply prediction_backbone if present
+        if "prediction_backbone" in self.components:
+            features = self.components["prediction_backbone"](features)
+
         outputs = {}
         extras = {}
         network_state = dict(recurrent_state) if recurrent_state else {}
@@ -275,6 +292,10 @@ class AgentNetwork(nn.Module):
         B, T = latents.shape[:2]
         flat_memory, _ = self._apply_spatial_temporal(latents, B, T)
 
+        # Apply prediction_backbone if present (MuZero: transforms latent for behavior heads)
+        if "prediction_backbone" in self.components:
+            flat_memory = self.components["prediction_backbone"](flat_memory)
+
         # 3. The Feature Pool (Strict Contract, No Fallbacks!)
         feature_pool = {"default": flat_memory}
         if flat_as is not None:
@@ -346,6 +367,10 @@ class AgentNetwork(nn.Module):
             latent.unsqueeze(1), B_val, 1, state=network_state
         )
 
+        # Apply prediction_backbone if present
+        if "prediction_backbone" in self.components:
+            features = self.components["prediction_backbone"](features)
+
         outputs = {}
         next_recurrent_state = {}
         # 3. State Propagation (Blindly update from components)
@@ -371,25 +396,31 @@ class AgentNetwork(nn.Module):
     def afterstate_inference(
         self, recurrent_state: Dict[str, Tensor], action: Tensor
     ) -> InferenceOutput:
-        if "world_model" in self.components or not self.stochastic:
+        if "world_model" not in self.components or not self.stochastic:
             raise NotImplementedError(
                 "afterstate_inference requires a stochastic world_model."
             )
 
-        dynamics_h = recurrent_state.get("dynamics")
-
         wm_output = self.components["world_model"].afterstate_recurrent_inference(
-            {"dynamics": dynamics_h}, action
+            recurrent_state, action
         )
 
         afterstate_latent = wm_output.afterstate_features
+        processed_latent = wm_output.features
+        # If the world model didn't apply a backbone (e.g. Identity), ensure we apply ours
+        if (
+            "prediction_backbone" in self.components
+            and wm_output.features is not None
+            and torch.allclose(wm_output.features, afterstate_latent)
+        ):
+            processed_latent = self.components["prediction_backbone"](afterstate_latent)
 
         afterstate_head = self.components["behavior_heads"].get("afterstate_value")
         recurrent_state_after = dict(recurrent_state)
         recurrent_state_after.update(wm_output.next_state)
 
         head_out_as = afterstate_head(
-            afterstate_latent,
+            processed_latent,
             state=recurrent_state,
             afterstate_features=afterstate_latent,
             is_inference=True,

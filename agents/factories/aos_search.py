@@ -78,7 +78,9 @@ def _build_valid_mask(
     - list of ints (flat) — replicated across batch items
     - list of lists of ints (per-item) — mapped element-wise
     """
-    legal_moves = info.get("legal_moves", None) if isinstance(info, dict) else None
+    legal_moves = None
+    if isinstance(info, dict):
+        legal_moves = info.get("legal_moves_mask", info.get("legal_moves", None))
     if legal_moves is None:
         return None
 
@@ -189,7 +191,11 @@ class MCTSPipeline:
             with ``target_policy [B, A]``, ``exploratory_policy [B, A]``,
             and ``best_actions [B]``.
         """
-        batched_to_play = batched_info["player"]
+        batched_to_play = batched_info.get("player_id", batched_info.get("player"))
+        assert batched_to_play is not None, (
+            "Environment info must contain 'player_id' or 'player' for multi-player search. "
+            f"Got keys: {list(batched_info.keys())}"
+        )
         if not torch.is_tensor(batched_to_play):
             batched_to_play = torch.tensor(
                 batched_to_play, dtype=torch.int8, device=self.device
@@ -214,7 +220,7 @@ class MCTSPipeline:
             return torch.zeros(shape, dtype=tensor.dtype, device=tensor.device)
 
         # Blindly map over whatever opaque structure the network returned!
-        state_buffer = pytree.tree_map(allocate_buffer, outputs.network_state)
+        state_buffer = pytree.tree_map(allocate_buffer, outputs.recurrent_state)
 
         # ------------------------------------------------------------------
         # 2. Functional modifiers (applied at the root)
@@ -242,14 +248,14 @@ class MCTSPipeline:
             num_codes=self.num_codes,
             device=self.device,
         )
-        tree.network_state_buffer = state_buffer
+        tree.recurrent_state_buffer = state_buffer
 
         # Write root state (node 0) into the buffer
         def write_root(buffer_tensor, root_tensor):
             if buffer_tensor is not None:
                 buffer_tensor[:, 0] = root_tensor
 
-        pytree.tree_map(write_root, tree.network_state_buffer, outputs.network_state)
+        pytree.tree_map(write_root, tree.recurrent_state_buffer, outputs.recurrent_state)
 
         # Root is node 0.  Write initial network value and PRISTINE policy priors.
         root_v = outputs.value.float()  # [B]

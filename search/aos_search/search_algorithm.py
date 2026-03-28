@@ -19,6 +19,7 @@ class ModularSearch:
                 self._run_mcts, fullgraph=compile_cfg.fullgraph
             )
 
+    @torch.inference_mode()
     def run(
         self,
         observation,
@@ -50,13 +51,17 @@ class ModularSearch:
         ), f"AOS modular_search.run() expects exactly 1 observation, got {B}."
 
         # Normalize player to a [1] tensor so both int and tensor inputs are accepted.
-        player_raw = info["player"]
+        player_raw = info.get("player_id", info.get("player"))
+        assert player_raw is not None, (
+            "Environment info must contain 'player_id' or 'player' for multi-player search. "
+            f"Got keys: {list(info.keys())}"
+        )
         if not torch.is_tensor(player_raw):
             player_raw = torch.tensor([player_raw], dtype=torch.int8)
         assert (
             player_raw.shape[0] == 1
         ), f"AOS modular_search.run() player batch mismatch: {player_raw.shape}"
-        batched_info = {**info, "player": player_raw}
+        batched_info = {**info, "player_id": player_raw, "player": player_raw}
 
         # Extract scalar player for logging / metadata
         to_play = int(player_raw[0].item())
@@ -65,18 +70,19 @@ class ModularSearch:
 
         return (
             so.root_values[0].item(),
-            so.exploratory_policy[0].cpu(),
-            so.target_policy[0].cpu(),
+            so.exploratory_policy[0].detach().cpu(),
+            so.target_policy[0].detach().cpu(),
             so.best_actions[0].item(),
             {
                 "network_value": so.root_values[
                     0
                 ].item(),  # AOS returns the network value in tree for now
                 "search_value": so.root_values[0].item(),
-                "search_policy": so.target_policy[0].cpu().tolist(),
+                "search_policy": so.target_policy[0].detach().cpu().tolist(),
             },
         )
 
+    @torch.inference_mode()
     def run_vectorized(
         self,
         batched_obs,
@@ -102,16 +108,25 @@ class ModularSearch:
         B = batched_obs.shape[0]
         # Normalize list-of-dicts to dict-of-tensors (mirrors Python backend behavior)
         if isinstance(batched_info, list):
+            players = [info.get("player_id", info.get("player")) for info in batched_info]
+            assert all(p is not None for p in players), (
+                "Every info dict in batched_info must contain 'player_id' or 'player'."
+            )
             batched_info = {
-                "player": torch.tensor(
-                    [info["player"] for info in batched_info], dtype=torch.int8
-                ),
+                "player_id": torch.tensor(players, dtype=torch.int8),
+                "player": torch.tensor(players, dtype=torch.int8),
                 **{
                     k: [info[k] for info in batched_info]
                     for k in batched_info[0]
-                    if k != "player"
+                    if k not in ["player", "player_id"]
                 },
             }
+        
+        # Ensure 'player' key exists for the internal MCTS pipeline if it only looks for 'player'
+        if "player_id" in batched_info and "player" not in batched_info:
+            batched_info["player"] = batched_info["player_id"]
+        elif "player" in batched_info and "player_id" not in batched_info:
+            batched_info["player_id"] = batched_info["player"]
         assert (
             batched_info["player"].shape[0] == B
         ), f"AOS modular_search.run_vectorized() batch mismatch: {B} vs {batched_info['player'].shape[0]}"
@@ -124,15 +139,15 @@ class ModularSearch:
         )
 
         B = batched_obs.shape[0]
-        root_values = so.root_values.cpu().tolist()
-        exploratory_policies = [so.exploratory_policy[i].cpu() for i in range(B)]
-        target_policies = [so.target_policy[i].cpu() for i in range(B)]
-        best_actions = so.best_actions.cpu().tolist()
+        root_values = so.root_values.detach().cpu().tolist()
+        exploratory_policies = [so.exploratory_policy[i].detach().cpu() for i in range(B)]
+        target_policies = [so.target_policy[i].detach().cpu() for i in range(B)]
+        best_actions = so.best_actions.detach().cpu().tolist()
         search_metadata_list = [
             {
                 "network_value": root_values[i],
                 "search_value": root_values[i],
-                "search_policy": target_policies[i].tolist(),
+                "search_policy": target_policies[i].detach().cpu().tolist(),
             }
             for i in range(B)
         ]

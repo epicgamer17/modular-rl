@@ -566,8 +566,9 @@ PYBIND11_MODULE(search_cpp, m) {
           int num_actions = static_cast<int>(probs_view.shape(1));
           // to_play is now extracted per-environment from the info dictionary
 
-          py::object network_state = outputs.attr("network_state");
-          py::list unbatched_states = network_state.attr("unbatch")();
+          py::object recurrent_state = outputs.attr("recurrent_state");
+          py::object unbatch_func = py::module_::import("modules.models.inference_output").attr("unbatch_recurrent_state");
+          py::list unbatched_states = unbatch_func(recurrent_state);
           
           py::list info_list;
           if (py::isinstance<py::dict>(batched_info)) {
@@ -595,7 +596,10 @@ PYBIND11_MODULE(search_cpp, m) {
               std::vector<double> priors(num_actions);
               for (int a = 0; a < num_actions; ++a) priors[a] = probs_view(b, a);
               int to_play;
-              py::object player_raw = info_list[b].attr("get")("player");
+              py::object player_raw = info_list[b].attr("get")("player_id", py::none());
+              if (player_raw.is_none()) {
+                  player_raw = info_list[b].attr("get")("player");
+              }
               if (py::hasattr(player_raw, "item")) {
                   to_play = player_raw.attr("item")().cast<int>();
               } else {
@@ -603,6 +607,27 @@ PYBIND11_MODULE(search_cpp, m) {
               }
 
               py::object legal = info_list[b].attr("get")("legal_moves", py::none());
+              if (legal.is_none()) {
+                  py::object legal_mask = info_list[b].attr("get")("legal_moves_mask", py::none());
+                  if (!legal_mask.is_none()) {
+                      if (py::hasattr(legal_mask, "cpu")) {
+                          legal_mask = legal_mask.attr("cpu")();
+                      }
+                      if (py::hasattr(legal_mask, "tolist")) {
+                          py::list mask_list = legal_mask.attr("tolist")();
+                          py::list legal_list;
+                          const auto mask_len = py::len(mask_list);
+                          for (py::ssize_t a = 0; a < mask_len; ++a) {
+                              py::object is_legal = mask_list[a];
+                              const bool legal_bool = py::cast<bool>(is_legal);
+                              if (legal_bool) {
+                                  legal_list.append(py::int_(a));
+                              }
+                          }
+                          legal = legal_list;
+                      }
+                  }
+              }
               std::vector<int> allowed;
               if (!legal.is_none()) {
                   if (py::hasattr(legal, "tolist")) {
@@ -651,13 +676,8 @@ PYBIND11_MODULE(search_cpp, m) {
                       }
                   }
 
-                  py::object first_state = hidden_states[0];
-                  py::object batched_hidden_state;
-                  if (py::hasattr(py::type::of(first_state), "batch")) {
-                      batched_hidden_state = py::type::of(first_state).attr("batch")(hidden_states);
-                  } else {
-                      batched_hidden_state = py::module_::import("torch").attr("stack")(hidden_states);
-                  }
+                  py::object batch_func = py::module_::import("modules.models.inference_output").attr("batch_recurrent_state");
+                  py::object batched_hidden_state = batch_func(hidden_states);
 
                   py::object h_outputs = agent_network.attr("hidden_state_inference")(
                       batched_hidden_state,
@@ -688,7 +708,8 @@ PYBIND11_MODULE(search_cpp, m) {
                   py::array_t<int> h_to_plays = h_outputs.attr("to_play")
                       .attr("cpu")().attr("detach")().attr("int")().attr("numpy")()
                       .cast<py::array_t<int>>();
-                  py::list h_unbatched_states = h_outputs.attr("network_state").attr("unbatch")();
+                  py::object h_recurrent_state = h_outputs.attr("recurrent_state");
+                  py::list h_unbatched_states = py::module_::import("modules.models.inference_output").attr("unbatch_recurrent_state")(h_recurrent_state);
 
                   auto h_values_view = h_values.unchecked<1>();
                   auto h_rewards_view = h_rewards.unchecked<1>();
@@ -716,7 +737,67 @@ PYBIND11_MODULE(search_cpp, m) {
                   }
               }
 
-              // TODO: Afterstate inference if total_afterstate > 0
+              if (total_afterstates > 0) {
+                  // 1. Gather actions and parent states
+                  py::list afterstate_actions;
+                  std::vector<py::object> afterstate_parent_states;
+                  for (int b = 0; b < B; ++b) {
+                      for (size_t i = 0; i < requests[b].afterstate_request_ids.size(); ++i) {
+                          int64_t handle = requests[b].afterstate_parent_state_handles[i];
+                          afterstate_parent_states.push_back(state_registries[b][handle]);
+                          afterstate_actions.append(requests[b].afterstate_actions[i]);
+                      }
+                  }
+
+                  py::object batched_afterstate_state = batch_func(afterstate_parent_states);
+                  py::object a_outputs = agent_network.attr("afterstate_inference")(
+                      batched_afterstate_state,
+                      py::module_::import("torch").attr("tensor")(afterstate_actions, py::arg("device") = py::getattr(agent_network, "device", py::none()))
+                  );
+
+                  py::array_t<double> a_values = a_outputs.attr("value")
+                      .attr("cpu")().attr("detach")().attr("double")().attr("numpy")()
+                      .cast<py::array_t<double>>();
+                  
+                  py::object a_chance_dist = a_outputs.attr("chance");
+                  py::array_t<double> a_probs;
+                  if (py::hasattr(a_chance_dist, "probs") && !py::getattr(a_chance_dist, "probs").is_none()) {
+                      a_probs = py::getattr(a_chance_dist, "probs")
+                          .attr("cpu")().attr("detach")().attr("double")().attr("numpy")()
+                          .cast<py::array_t<double>>();
+                  } else {
+                      a_probs = py::module_::import("torch").attr("softmax")(
+                              py::getattr(a_chance_dist, "logits"), -1)
+                          .attr("cpu")().attr("detach")().attr("double")().attr("numpy")()
+                          .cast<py::array_t<double>>();
+                  }
+
+                  py::object a_recurrent_state = a_outputs.attr("recurrent_state");
+                  py::list a_unbatched_states = py::module_::import("modules.models.inference_output").attr("unbatch_recurrent_state")(a_recurrent_state);
+
+                  auto a_values_view = a_values.unchecked<1>();
+                  auto a_probs_view = a_probs.unchecked<2>();
+                  int num_codes = (int)a_probs.shape(1);
+
+                  int global_a_idx = 0;
+                  for (int b = 0; b < B; ++b) {
+                      search::AfterstateInferenceUpdateBatch update;
+                      update.num_codes = num_codes;
+                      for (size_t i = 0; i < requests[b].afterstate_request_ids.size(); ++i) {
+                          int64_t next_handle = (int64_t)state_registries[b].size();
+                          state_registries[b][next_handle] = a_unbatched_states[global_a_idx];
+
+                          update.request_ids.push_back(requests[b].afterstate_request_ids[i]);
+                          update.next_state_handles.push_back(next_handle);
+                          update.values.push_back(a_values_view(global_a_idx));
+                          
+                          for (int c = 0; c < num_codes; ++c) update.code_probs.push_back(a_probs_view(global_a_idx, c));
+                          global_a_idx++;
+                      }
+                      engines[b]->update_leaves_and_backprop({}, update);
+                  }
+              }
+
               
               sims_done += search_batch_size;
           }

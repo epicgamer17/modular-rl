@@ -101,14 +101,12 @@ class ReanalyzeActor(BaseActor):
         if not all_obs:
             return {"reanalyzed_steps": 0}
 
-        # 2. The Flattening Trick: [B, T, ...] -> [B*T, ...]
-        # This allows running the fast MCTS backend on a single massive batch
-        flat_obs = torch.cat(all_obs, dim=0).to(self.network.device)
+        flat_obs = torch.cat(all_obs, dim=0).to(self.agent_network.device)
 
         # 3. Generating Fresh Targets
         # The search_policy_source handles vectorized execution automatically
         result = self.search_policy_source.get_inference(
-            flat_obs, all_infos, agent_network=self.network
+            flat_obs, all_infos, agent_network=self.agent_network
         )
 
         # Extract target policies (visit counts) and root values

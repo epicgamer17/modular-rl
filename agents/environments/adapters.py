@@ -82,12 +82,14 @@ class GymAdapter(BaseAdapter):
             
         obs, reward, terminated, truncated, info = self.env.step(action)
         
-        # Auto-reset logic: if episode ends, reset and return fresh obs for next step
+        # Auto-reset logic: preserve terminal obs, then reset for next episode
         if terminated or truncated:
+            info["terminal_observation"] = torch.as_tensor(
+                obs, dtype=torch.float32, device=self.device
+            ).unsqueeze(0)
             new_obs, reset_info = self.env.reset()
             if reset_info:
                 info.update(reset_info)
-            # We return the new_obs so the Actor can start the next episode immediately
             obs = new_obs
             
         return (
@@ -208,15 +210,26 @@ class VectorAdapter(BaseAdapter):
             mask = torch.ones((self.num_envs, self.num_actions), dtype=torch.bool, device=self.device)
             processed["legal_moves_mask"] = mask
             
-        # 3. Standardize player indexing: Guaranteed to be Tensor[B]
-        if "player" in processed:
-            p_id = torch.as_tensor(processed["player"], dtype=torch.int64, device=self.device)
-            # Ensure it is at least 1D (B,)
-            if p_id.dim() == 0:
-                p_id = p_id.unsqueeze(0)
-            processed["player_id"] = p_id
+        # Standardize player indexing: Guaranteed to be Tensor[B]
+        p_id_raw = processed.get("player_id", processed.get("player"))
+        # If we have multiple envs/players, we MUST have a player identity
+        if getattr(self, "num_players", 1) > 1 or self.num_envs > 1:
+            assert p_id_raw is not None, (
+                "For multi-player or vectorized environments, 'player_id' or 'player' must be in info. "
+                "Check your environment wrappers/adapters."
+            )
+            
+        if p_id_raw is not None:
+             p_id = torch.as_tensor(p_id_raw, dtype=torch.int64, device=self.device)
         else:
-            processed["player_id"] = torch.zeros(self.num_envs, dtype=torch.int64, device=self.device)
+            p_id = torch.zeros(self.num_envs, dtype=torch.int64, device=self.device)
+            
+        # Ensure it is at least 1D (B,)
+        if p_id.dim() == 0:
+            p_id = p_id.unsqueeze(0)
+        processed["player_id"] = p_id
+        # Keep legacy key for backward compatibility
+        processed["player"] = p_id
             
         return processed
 
@@ -273,9 +286,11 @@ class PettingZooAdapter(BaseAdapter):
             info = env_info.copy()
             info["all_rewards"] = all_rewards
 
-            # Auto-reset for AEC: if episode is over, reset and get fresh root state
-            # In AEC, we usually reset when agent_selection is None or via flags
+            # Auto-reset for AEC: preserve terminal obs, then reset
             if term or trunc:
+                info["terminal_observation"] = torch.as_tensor(
+                    obs, dtype=torch.float32, device=self.device
+                ).unsqueeze(0)
                 self.env.reset()
                 new_obs, _, _, _, reset_info = self.env.last()
                 obs = new_obs
@@ -301,10 +316,14 @@ class PettingZooAdapter(BaseAdapter):
                     info_dict[a] = {}
                 info_dict[a]["all_rewards"] = reward_dict
 
-            # Auto-reset for Parallel API
-            # Standard PettingZoo Parallel environments return 'done' for all agents when episode ends
+            # Auto-reset for Parallel API: preserve terminal obs, then reset
             episode_over = any(term_dict.values()) or any(trunc_dict.values())
             if episode_over:
+                terminal_obs_list = np.stack([obs_dict[a] for a in self.agents])
+                for i, a in enumerate(self.agents):
+                    if a not in info_dict:
+                        info_dict[a] = {}
+                    info_dict[a]["terminal_observation"] = terminal_obs_list[i]
                 new_obs_dict, reset_info_dict = self.env.reset()
                 obs_dict = new_obs_dict
                 if reset_info_dict:
@@ -326,8 +345,14 @@ class PettingZooAdapter(BaseAdapter):
     def _process_info_aec(self, info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         info = (info or {}).copy()
         agent = self.env.agent_selection
+        # PettingZoo AEC: agent_selection is the only source of truth for current player
+        if len(self.agents) > 1:
+            assert agent is not None, "PettingZoo AEC environment missing agent_selection for multi-agent game."
+            
         idx = self.agents.index(agent) if agent in self.agents else 0
-        info["player_id"] = torch.tensor([idx], dtype=torch.int64, device=self.device)
+        p_id = torch.tensor([idx], dtype=torch.int64, device=self.device)
+        info["player_id"] = p_id
+        info["player"] = p_id
         
         if "legal_moves" in info and self.num_actions is not None:
             mask = torch.zeros((1, self.num_actions), dtype=torch.bool, device=self.device)
@@ -345,7 +370,8 @@ class PettingZooAdapter(BaseAdapter):
     def _process_info_parallel(self, info_dict: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         """Aggregates per-agent info from Parallel environments into batched tensors."""
         processed = {
-            "player_id": torch.tensor(list(range(len(self.agents))), dtype=torch.int64, device=self.device)
+            "player_id": torch.tensor(list(range(len(self.agents))), dtype=torch.int64, device=self.device),
+            "player": torch.tensor(list(range(len(self.agents))), dtype=torch.int64, device=self.device)
         }
         
         if self.num_actions is not None:

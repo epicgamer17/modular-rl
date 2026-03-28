@@ -359,8 +359,8 @@ class SequenceMaskBuilder(BaseTargetBuilder):
         reward_mask[:, 0] = False
         current_targets["reward_mask"] = reward_mask
 
-        # To-Play is state-aligned; exclude root and terminal states (no player to predict after game ends)
-        to_play_mask = batch.get("has_valid_action_mask", base_mask).clone()
+        # To-Play is state-aligned; exclude root and post terminal (no player to predict after game ends)
+        to_play_mask = batch.get("has_valid_obs_mask", base_mask).clone()
         to_play_mask[:, 0] = False
         current_targets["to_play_mask"] = to_play_mask
 
@@ -430,7 +430,7 @@ class LatentConsistencyBuilder(BaseTargetBuilder):
         # NOT strict inference_mode tensors which crash loss functions.
         with torch.no_grad():
             initial_out = network.obs_inference(flat_obs)
-            real_latents = initial_out.network_state.dynamics
+            real_latents = initial_out.recurrent_state["dynamics"]
 
             # No more .clone() hacks!
             # real_latents is already safely detached.

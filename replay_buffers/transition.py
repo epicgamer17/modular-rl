@@ -25,6 +25,9 @@ class Transition:
     truncated: bool
     legal_moves: Optional[List[int]] = None
     next_legal_moves: Optional[List[int]] = None
+    value: Optional[float] = None
+    policy: Optional[Any] = None
+    log_prob: Optional[float] = None
     metadata: Optional[dict] = None
 
 

@@ -66,12 +66,17 @@ def get_legal_moves(info: dict | list[dict]):
         return lm
 
     if isinstance(info, list):
-        legal_moves = [_sanitize_moves(i.get("legal_moves", None)) for i in info]
+        legal_moves = []
+        for i in info:
+            lm = i.get("legal_moves_mask", i.get("legal_moves", None))
+            legal_moves.append(_sanitize_moves(lm))
+
         for legal_list in legal_moves:
             if legal_list is not None:
                 assert len(legal_list) > 0, "Legal moves list is empty"
     else:
-        lm = _sanitize_moves(info.get("legal_moves", None))
+        lm = info.get("legal_moves_mask", info.get("legal_moves", None))
+        lm = _sanitize_moves(lm)
         if lm is None:
             return None
         assert len(lm) > 0, "Legal moves list is empty"

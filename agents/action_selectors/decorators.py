@@ -70,20 +70,37 @@ class TemperatureSelector(BaseActionSelector):
         self._last_step: int = -1
 
     def _get_temperature(self, current_step: int, exploration: Optional[bool]) -> float:
-        """Advances the schedule to current_step and returns the temperature."""
+        """Returns the temperature for a specific absolute step."""
         if exploration is False:
             return 0.0
 
-        if current_step > self._last_step:
-            self.schedule.step(current_step - self._last_step)
+        current_step = max(int(current_step), 0)
+        if self.use_training_steps and current_step > self._last_step:
             self._last_step = current_step
-        elif current_step < self._last_step:
-            # Reset on new episode or training step rollback
-            self.schedule = create_schedule(self.schedule_config)
-            self.schedule.step(current_step)
-            self._last_step = current_step
+        return float(self.schedule.get_value(step=current_step))
 
-        return self.schedule.get_value()
+    def _resolve_temperature_steps(
+        self,
+        current_step: Any,
+        batch_size: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        default_step = max(self._last_step, 0) if self.use_training_steps else 0
+        if current_step is None:
+            current_step = default_step
+
+        steps = torch.as_tensor(current_step, device=device, dtype=torch.long)
+        if steps.dim() == 0:
+            return steps.repeat(batch_size)
+
+        steps = steps.reshape(-1)
+        if steps.numel() == 1:
+            return steps.repeat(batch_size)
+        if steps.numel() != batch_size:
+            raise ValueError(
+                f"TemperatureSelector expected 1 or {batch_size} step values, got {steps.numel()}."
+            )
+        return steps
 
     def select_action(
         self,
@@ -101,8 +118,6 @@ class TemperatureSelector(BaseActionSelector):
         else:
             current_step = kwargs.get("episode_step", 0)
 
-        temp = self._get_temperature(current_step, exploration)
-
         # Resolve to logits (temperature only makes sense on logits)
         if result.logits is not None:
             logits = result.logits
@@ -116,14 +131,46 @@ class TemperatureSelector(BaseActionSelector):
                 "TemperatureSelector requires result.logits, result.probs, or result.q_values"
             )
 
-        # Apply temperature
-        if temp == 0.0:
-            # Greedy selection on current logits (already masked by LegalMovesMaskDecorator)
-            best_actions = logits.argmax(dim=-1)
-            logits = torch.full_like(logits, -float("inf"))
-            logits.scatter_(1, best_actions.unsqueeze(1), 0.0)
-        elif temp != 1.0:
-            logits = logits / temp
+        mask = info.get("legal_moves_mask")
+        needs_squeeze = logits.dim() == 1
+        if needs_squeeze:
+            logits = logits.unsqueeze(0)
+            if mask is not None and torch.is_tensor(mask) and mask.dim() == 1:
+                mask = mask.unsqueeze(0)
+
+        steps = self._resolve_temperature_steps(
+            current_step=current_step,
+            batch_size=logits.shape[0],
+            device=logits.device,
+        )
+
+        heated_rows = []
+        for row_idx, row_logits in enumerate(logits):
+            temp = self._get_temperature(int(steps[row_idx].item()), exploration)
+            if temp == 0.0:
+                select_logits = row_logits
+                if mask is not None:
+                    select_logits = torch.where(
+                        mask[row_idx],
+                        select_logits,
+                        torch.tensor(
+                            -1e9,
+                            device=select_logits.device,
+                            dtype=select_logits.dtype,
+                        ),
+                    )
+                best_action = select_logits.argmax(dim=-1)
+                heated_row = torch.full_like(row_logits, -float("inf"))
+                heated_row[best_action] = 0.0
+            elif temp != 1.0:
+                heated_row = row_logits / temp
+            else:
+                heated_row = row_logits
+            heated_rows.append(heated_row)
+
+        logits = torch.stack(heated_rows, dim=0)
+        if needs_squeeze:
+            logits = logits.squeeze(0)
 
         # Return a new frozen result with the heated logits
         result = dataclasses.replace(result, logits=logits, probs=None)
@@ -137,8 +184,5 @@ class TemperatureSelector(BaseActionSelector):
         Intercepts training_step broadcasts to track global step for the schedule.
         """
         if self.use_training_steps and "training_step" in params_dict:
-            step = int(params_dict["training_step"])
-            if step > self._last_step:
-                self.schedule.step(step - self._last_step)
-                self._last_step = step
+            self._last_step = max(self._last_step, int(params_dict["training_step"]))
         self.inner_selector.update_parameters(params_dict)

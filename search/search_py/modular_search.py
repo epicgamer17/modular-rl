@@ -176,10 +176,11 @@ class ModularSearch:
         trajectory_action=None,
         exploration: bool = True,
     ):
-        assert "player" in info, "info must contain 'player'. Got keys: " + str(
-            list(info.keys())
+        assert "player_id" in info or "player" in info, (
+            "Environment info must contain 'player_id' or 'player' for multi-player search. "
+            f"Got keys: {list(info.keys())}"
         )
-        player_raw = info["player"]
+        player_raw = info.get("player_id", info.get("player"))
         to_play: int = int(
             player_raw.item() if torch.is_tensor(player_raw) else player_raw
         )
@@ -237,7 +238,15 @@ class ModularSearch:
 
         # 2. Value Processing
         # Value is already expected value from InferenceOutput
-        v_pi_scalar = float(val_raw)
+        if self.config.support_range is not None:
+            if val_raw.numel() > 1:
+                v_pi_scalar = support_to_scalar(
+                    val_raw, self.config.support_range
+                ).item()
+            else:
+                v_pi_scalar = val_raw.item()
+        else:
+            v_pi_scalar = float(val_raw)
 
         # 5. Apply Prior Injectors (Stackable)
         for injector in self.prior_injectors:
@@ -349,13 +358,13 @@ class ModularSearch:
 
         return (
             root.value(),
-            exploratory_policy,
-            target_policy,
+            exploratory_policy.detach(),
+            target_policy.detach(),
             best_action,
             {
-                "network_policy": network_policy,
+                "network_policy": network_policy.detach(),
                 "network_value": v_pi_scalar,
-                "search_policy": target_policy,
+                "search_policy": target_policy.detach(),
                 "search_value": root.value(),
             },
         )
@@ -412,9 +421,9 @@ class ModularSearch:
             batched_info = new_batched_info
 
         assert all(
-            "player" in i for i in batched_info
-        ), "Every info dict in batched_info must contain 'player'."
-        batched_to_play: List[int] = [i["player"] for i in batched_info]
+            "player_id" in i or "player" in i for i in batched_info
+        ), "Every info dict in batched_info must contain 'player_id' or 'player'."
+        batched_to_play: List[int] = [i.get("player_id", i.get("player")) for i in batched_info]
         self._set_node_configs()
 
         B = (
@@ -474,7 +483,16 @@ class ModularSearch:
             network_policy_dist = Categorical(logits=masked_logits[0].cpu())
             policy_dist_for_injectors = network_policy_dist
 
-            v_pi_scalar = float(val_raw[b])
+            # Handle distributional value support
+            if self.config.support_range is not None:
+                if val_raw[b].numel() > 1:
+                    v_pi_scalar = support_to_scalar(
+                        val_raw[b : b + 1], self.config.support_range
+                    ).item()
+                else:
+                    v_pi_scalar = val_raw[b].item()
+            else:
+                v_pi_scalar = float(val_raw[b])
 
             # Apply Prior Injectors
             for injector in self.prior_injectors:
@@ -579,7 +597,7 @@ class ModularSearch:
             search_metadata_list.append(
                 {
                     "network_policy": network_policies[b],
-                    "network_value": float(val_raw[b]),
+                    "network_value": v_pi_scalar,
                     "search_policy": target_policy,
                     "search_value": root.value(),
                 }
@@ -587,8 +605,8 @@ class ModularSearch:
 
         return (
             root_values,
-            exploratory_policies,
-            target_policies,
+            [p.detach() for p in exploratory_policies],
+            [p.detach() for p in target_policies],
             best_actions,
             search_metadata_list,
         )

@@ -270,7 +270,9 @@ class ModularReplayBuffer:
 
         # If it's a PyTorch tensor on a different device (like GPU), move it to CPU for the buffer
         if torch.is_tensor(val) and val.device.type != "cpu":
-            val = val.cpu()
+            val = val.detach().cpu()
+        elif torch.is_tensor(val):
+            val = val.detach()
 
         self.buffers[name][idx] = val
 

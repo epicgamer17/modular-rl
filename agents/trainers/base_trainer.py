@@ -69,7 +69,7 @@ class BaseTrainer:
 
     def setup_tester(self):
         """Initializes the EvaluatorActor via an Executor."""
-        from agents.workers.actors import EvaluatorActor
+        from agents.workers.evaluator import EvaluatorActor
         from agents.environments.adapters import GymAdapter
         from agents.action_selectors.selectors import (
             ArgmaxSelector,
@@ -88,6 +88,10 @@ class BaseTrainer:
         # Ensure evaluator respects legal moves!
         selector = LegalMovesMaskDecorator(ArgmaxSelector())
 
+        # NEW: use the TestFactory to populate evaluation test suites
+        from agents.factories.evaluator import TestFactory
+        test_types = TestFactory.create_default_test_types(self.config)
+
         # Priority: Use SearchPolicySource if available (e.g. MuZero), otherwise standard policy_source
         active_policy_source = getattr(self, "search_policy_source", self.policy_source)
 
@@ -101,7 +105,7 @@ class BaseTrainer:
             getattr(self.config, "actor_device", "cpu"),
             getattr(self.config.game, "num_actions", None),
             self.num_players,
-            self.test_agents,
+            test_types,
         )
 
         # 3. Launch EvaluatorActor
@@ -112,7 +116,7 @@ class BaseTrainer:
         Triggers evaluation. For LocalExecutor, this runs immediately.
         For TorchMPExecutor, it ensures weights are synced.
         """
-        from agents.workers.actors import EvaluatorActor
+        from agents.workers.evaluator import EvaluatorActor
 
         if not self._tester_launched:
             self.setup_tester()
@@ -140,7 +144,7 @@ class BaseTrainer:
 
     def poll_test(self):
         """Polls for background test results from the executor."""
-        from agents.workers.actors import EvaluatorActor
+        from agents.workers.evaluator import EvaluatorActor
 
         if self.executor is None or not self.config.multi_process:
             return
@@ -164,6 +168,9 @@ class BaseTrainer:
 
     def _process_test_results(self, res: Dict[str, Any], step: int):
         """Logs results from EvaluatorActor."""
+        if not res:
+            return
+
         for key, value in res.items():
             if key == "score":
                 self.stats.append("test_score", value, subkey="avg")
@@ -171,17 +178,28 @@ class BaseTrainer:
             elif key == "avg_length":
                 self.stats.append("episode_length", value, subkey="test")
                 print(f"[test] avg_length: {value:.1f}")
-            elif key.startswith("vs_"):
-                # Structured results for Matrix Evaluation:
-                # f"vs_{opp_name}_score": {"p0": score0, "p1": score1, "avg": avg_score}
-                if isinstance(value, dict):
-                    for subkey, subval in value.items():
-                        self.stats.append(key, subval, subkey=subkey)
-                    if "avg" in value:
-                        print(f"[test] {key}: {value['avg']:.3f}")
-                else:
-                    self.stats.append(key, value, subkey="avg")
-                    print(f"[test] {key}: {value:.3f}")
+            elif isinstance(value, dict):
+                # This could be a TestType result or a structured vs_score
+                # Flatten for logging
+                avg_val = None
+                for subkey, subval in value.items():
+                    if isinstance(subval, (int, float, np.number)):
+                        # If it's the main score for this test type, log it to a specific key
+                        if subkey == "score":
+                            stat_key = f"{key}_score"
+                            self.stats.append(stat_key, float(subval), subkey="avg")
+                            avg_val = float(subval)
+                        else:
+                            # Sub-metrics (p0, p1, min, max, etc.)
+                            stat_key = f"{key}_{subkey}"
+                            self.stats.append(stat_key, float(subval))
+                
+                if avg_val is not None:
+                    print(f"[test] {key}: {avg_val:.3f}")
+            else:
+                # Fallback for other scalar metrics
+                if isinstance(value, (int, float, np.number)):
+                    self.stats.append(key, float(value))
 
     def _get_adapter_class(self):
         """Dynamically selects the correct environment adapter."""
@@ -374,10 +392,6 @@ class BaseTrainer:
             "test_score",
         ]
 
-        if self.num_players > 1:
-            for p in range(self.num_players):
-                stat_keys.append(f"avg_score_p{p}")
-
         # Add test_score vs other agents if applicable
         for agent in self.test_agents:
             stat_keys.append(f"vs_{agent.name}_score")
@@ -392,7 +406,6 @@ class BaseTrainer:
                 if (
                     "test_score" in key
                     or "_score" in key
-                    or (key == "score" and self.num_players > 1)
                 ):
                     self.stats._init_key(key, subkeys=test_subkeys)
                 else:
@@ -428,14 +441,16 @@ class BaseTrainer:
         """Standardized recording of collection metrics (score, lengths) from workers."""
         for res in results:
             for score in res.get("batch_scores", []):
-                # If plural players, record as subkeys
-                if isinstance(score, (list, np.ndarray)) and len(score) > 1:
-                    data = {f"p{i}": float(s) for i, s in enumerate(score)}
-                    data["avg"] = float(np.mean(score))
-                    self.stats.append("score", data)
+                # If plural players, record only the first player to the main 'score' plot
+                # to avoid visual clutter (the user requested only p1 scores).
+                # Standardize score extraction: 
+                # If plural players or non-scalar array/tensor, extract the first player's score.
+                if hasattr(score, "__len__") and len(score) > 0:
+                    val = float(score[0])
                 else:
                     # Single player or scalar score
-                    self.stats.append("score", float(score))
+                    val = float(score)
+                self.stats.append("score", val)
             
             for length in res.get("batch_lengths", []):
                 self.stats.append("episode_length", float(length))
@@ -445,7 +460,7 @@ class BaseTrainer:
                 if key in ["batch_scores", "batch_lengths"]:
                     continue
                 
-                # Log avg_score_pX or throughput metrics
-                if any(tag in key for tag in ["avg_score", "fps", "steps_per_second"]):
+                # Log throughput metrics
+                if any(tag in key for tag in ["fps", "steps_per_second"]):
                     if isinstance(value, (int, float, np.number)):
                         self.stats.append(key, float(value))

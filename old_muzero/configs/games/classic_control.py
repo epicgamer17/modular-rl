@@ -1,0 +1,26 @@
+from .game import GameConfig
+
+
+import gymnasium as gym
+
+
+def make_env(render_mode=None):
+    return gym.make("CartPole-v1", render_mode=render_mode)
+
+
+class ClassicControlConfig(GameConfig):
+    def __init__(self, make_env=make_env):
+        super(ClassicControlConfig, self).__init__(
+            num_actions=2,
+            max_score=500,
+            min_score=-500,
+            is_discrete=True,
+            is_image=False,
+            is_deterministic=True,  # i think it is deterministic (pretty sure if you input the same actions the same thing will happen, it just has a random start state)
+            has_legal_moves=False,
+            perfect_information=True,
+            multi_agent=False,
+            num_players=1,
+            # has_intermediate_rewards=True,
+            make_env=make_env,
+        )

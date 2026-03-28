@@ -15,6 +15,7 @@ from configs.modules.heads.policy import PolicyHeadConfig
 from configs.modules.heads.chance_probability import ChanceProbabilityHeadConfig
 from configs.modules.heads.value import ValueHeadConfig
 from configs.modules.heads.reward import RewardHeadConfig, ValuePrefixRewardHeadConfig
+from configs.modules.heads.continuation import ContinuationHeadConfig
 from configs.modules.heads.base import HeadConfig
 from configs.modules.architecture_config import ArchitectureConfig
 import torch.nn.functional as F

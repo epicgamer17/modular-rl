@@ -114,22 +114,14 @@ class RolloutActor(BaseActor):
         # Seed the initial state for each environment sequence
         # Sequence contract: len(obs) == len(action) + 1
         for i in range(self.num_envs):
-            player_id = 0
-            if "player_id" in self.info:
-                p_id_batch = self.info["player_id"]
-                player_id = (
-                    p_id_batch[i].item()
-                    if torch.is_tensor(p_id_batch)
-                    else p_id_batch[i]
-                )
-
             self.seq_manager.append(
                 i,
                 {
                     "observation": self.obs[i].cpu().numpy(),
                     "terminated": False,
                     "truncated": False,
-                    "player_id": player_id,
+                    "player_id": self._get_player_id(self.info, i),
+                    "legal_moves": self._get_legal_moves(self.info, i),
                 },
             )
 
@@ -140,8 +132,86 @@ class RolloutActor(BaseActor):
 
         # Track current episode progress across envs
         self.num_players = num_players
-        self.current_lengths = np.zeros(self.num_envs)
+        self.current_lengths = np.zeros(self.num_envs, dtype=np.int64)
         self.current_scores = np.zeros((self.num_envs, num_players))
+
+    def _get_batched_value(self, value: Any, index: int) -> Any:
+        if value is None:
+            return None
+        if torch.is_tensor(value):
+            if value.dim() == 0:
+                return value
+            return value[index]
+        if isinstance(value, np.ndarray):
+            if value.ndim == 0:
+                return value.item()
+            return value[index]
+        if isinstance(value, (list, tuple)):
+            return value[index]
+        return value
+
+    def _get_info_value(
+        self, info: Optional[Dict[str, Any]], key: str, index: int, default: Any = None
+    ) -> Any:
+        if not isinstance(info, dict):
+            return default
+        return self._get_batched_value(info.get(key), index) if key in info else default
+
+    def _get_player_id(self, info: Optional[Dict[str, Any]], index: int) -> int:
+        player = self._get_info_value(info, "player_id", index, default=None)
+        if player is None:
+            player = self._get_info_value(info, "player", index, default=0)
+
+        if torch.is_tensor(player):
+            player = player.item()
+        elif isinstance(player, np.generic):
+            player = player.item()
+
+        return int(player)
+
+    def _legal_moves_from_value(self, value: Any) -> Optional[List[int]]:
+        if value is None:
+            return None
+        if torch.is_tensor(value):
+            if value.dtype == torch.bool:
+                return torch.where(value)[0].cpu().tolist()
+            return value.view(-1).cpu().tolist()
+        if isinstance(value, np.ndarray):
+            if value.dtype == np.bool_:
+                return np.flatnonzero(value).tolist()
+            return value.reshape(-1).tolist()
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        return [int(value)]
+
+    def _get_legal_moves(
+        self, info: Optional[Dict[str, Any]], index: int
+    ) -> Optional[List[int]]:
+        if not isinstance(info, dict):
+            return None
+
+        mask = self._get_info_value(info, "legal_moves_mask", index, default=None)
+        if mask is not None:
+            return self._legal_moves_from_value(mask)
+
+        legal_moves = self._get_info_value(info, "legal_moves", index, default=None)
+        return self._legal_moves_from_value(legal_moves)
+
+    def _merge_selection_metadata(
+        self, result: InferenceResult, metadata: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        merged = dict(result.extras or {})
+        for key, value in metadata.items():
+            if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+                merged[key] = {**merged[key], **value}
+            else:
+                merged[key] = value
+
+        if merged.get("policy") is None and result.probs is not None:
+            merged["policy"] = result.probs.detach()
+        if merged.get("value") is None and result.value is not None:
+            merged["value"] = result.value.detach()
+        return merged
 
     def setup(self) -> None:
         """Prepares the network for rollout (eval mode)."""
@@ -223,8 +293,9 @@ class RolloutActor(BaseActor):
             # 2. Resilient Action Extraction (Null Object Pattern)
             # NO BRANCHING. Responsibility live strictly in the selector.
             actions, metadata = self.action_selector.select_action(
-                result, self.info, exploration=True
+                result, self.info, exploration=True, episode_step=self.current_lengths
             )
+            merged_metadata = self._merge_selection_metadata(result, metadata)
 
             # 3. Step the Adapter (Hides messy environment library logic)
             next_obs, rewards, terminals, truncations, infos = self.adapter.step(
@@ -234,18 +305,25 @@ class RolloutActor(BaseActor):
             # 4. Process Transitions and Boundary Logic
             for i in range(self.num_envs):
                 # Build the step dictionary manually for each environment
-                p_id = 0
-                if "player_id" in self.info:
-                    p_ids = self.info["player_id"]
-                    # Player ID is 0-indexed integer
-                    p_id = int(p_ids[i].item() if torch.is_tensor(p_ids) else p_ids[i])
+                p_id = self._get_player_id(self.info, i)
 
                 # Update rolling accumulators for CURRENT PLAYER
                 self.current_scores[i, p_id] += rewards[i].item()
                 self.current_lengths[i] += 1
 
+                # Use terminal observation if adapter preserved it, else fall back to next_obs
+                is_done = terminals[i].item() or truncations[i].item()
+                if is_done and "terminal_observation" in infos:
+                    term_obs = infos["terminal_observation"]
+                    if torch.is_tensor(term_obs):
+                        obs_np = term_obs[i].cpu().numpy() if term_obs.dim() > 1 else term_obs.cpu().numpy()
+                    else:
+                        obs_np = term_obs[i] if hasattr(term_obs, '__getitem__') else term_obs
+                else:
+                    obs_np = next_obs[i].cpu().numpy()
+
                 step_dict = {
-                    "observation": next_obs[i].cpu().numpy(),
+                    "observation": obs_np,
                     "action": actions[i].item(),
                     "reward": rewards[i].item(),
                     "terminated": terminals[i].item(),
@@ -254,20 +332,39 @@ class RolloutActor(BaseActor):
                 }
 
                 # Optional metadata
-                if result.value is not None:
-                    step_dict["value"] = result.value[i].item()
-                if result.probs is not None:
-                    step_dict["policy"] = result.probs[i].cpu().numpy()
-
-                lp = metadata.get("log_prob")
-                if lp is not None:
-                    step_dict["log_prob"] = lp[i].item()
-
-                mask = self.info.get("legal_moves_mask")
-                if mask is not None:
-                    step_dict["legal_moves"] = (
-                        torch.where(mask[i])[0].cpu().numpy().tolist()
+                value = self._get_batched_value(merged_metadata.get("value"), i)
+                if value is not None:
+                    step_dict["value"] = (
+                        value.item() if torch.is_tensor(value) else float(value)
                     )
+
+                policy = merged_metadata.get(
+                    "target_policies", merged_metadata.get("policy")
+                )
+                policy = self._get_batched_value(policy, i)
+                if policy is not None:
+                    if torch.is_tensor(policy):
+                        step_dict["policy"] = policy.detach().cpu().numpy()
+                    elif isinstance(policy, np.ndarray):
+                        step_dict["policy"] = policy
+                    else:
+                        step_dict["policy"] = np.asarray(policy)
+
+                lp = self._get_batched_value(merged_metadata.get("log_prob"), i)
+                if lp is not None:
+                    step_dict["log_prob"] = (
+                        lp.item() if torch.is_tensor(lp) else float(lp)
+                    )
+
+                # IMPORTANT: Use MASK[t+1] from INFOS for the NEW OBSERVATION.
+                # The reset mask [0] was added to the seed above.
+                next_legal_moves = None
+                if not (
+                    is_done and isinstance(infos, dict) and "terminal_observation" in infos
+                ):
+                    next_legal_moves = self._get_legal_moves(infos, i)
+                if next_legal_moves is not None:
+                    step_dict["legal_moves"] = next_legal_moves
 
                 # Store in SequenceManager
                 self.seq_manager.append(i, step_dict)
@@ -293,22 +390,14 @@ class RolloutActor(BaseActor):
                         self.completed_lengths.pop(0)
 
                     # Seed the START of the new episode (hidden in next_obs for auto-resetting envs)
-                    new_p_id = 0
-                    if "player_id" in infos:
-                        next_p_ids = infos["player_id"]
-                        new_p_id = (
-                            next_p_ids[i].item()
-                            if torch.is_tensor(next_p_ids)
-                            else next_p_ids[i]
-                        )
-
                     self.seq_manager.append(
                         i,
                         {
                             "observation": next_obs[i].cpu().numpy(),
                             "terminated": False,
                             "truncated": False,
-                            "player_id": new_p_id,
+                            "player_id": self._get_player_id(infos, i),
+                            "legal_moves": self._get_legal_moves(infos, i),
                         },
                     )
 
@@ -359,22 +448,14 @@ class RolloutActor(BaseActor):
 
                 # 7. Seed the NEXT chunk starting with this observation
                 # (Ensures the first transition of the next collect() has s_0)
-                p_id = 0
-                if "player_id" in self.info:
-                    p_id_batch = self.info["player_id"]
-                    p_id = (
-                        p_id_batch[i].item()
-                        if torch.is_tensor(p_id_batch)
-                        else p_id_batch[i]
-                    )
-
                 self.seq_manager.append(
                     i,
                     {
                         "observation": self.obs[i].cpu().numpy(),
                         "terminated": False,
                         "truncated": False,
-                        "player_id": p_id,
+                        "player_id": self._get_player_id(self.info, i),
+                        "legal_moves": self._get_legal_moves(self.info, i),
                     },
                 )
 
@@ -388,195 +469,4 @@ class RolloutActor(BaseActor):
         }
 
 
-class EvaluatorActor(BaseActor):
-    """
-    Dedicated worker for evaluation and testing.
-    Runs greedy episodes without a Replay Buffer or Sequence Manager.
-    Accumulates internal metrics for averaged reporting.
-    """
-
-    def __init__(
-        self,
-        adapter_cls: Type[BaseAdapter],
-        adapter_args: Tuple[Any, ...],
-        network: AgentNetwork,
-        policy_source: BasePolicySource,
-        buffer: Optional[ModularReplayBuffer],
-        action_selector: Optional[BaseActionSelector] = None,
-        actor_device: str = "cpu",
-        num_actions: Optional[int] = None,
-        num_players: int = 1,
-        test_agents: Optional[List[Any]] = None,
-        worker_id: int = 0,
-        **kwargs,
-    ):
-        """
-        Initializes the EvaluatorActor.
-
-        Args:
-            adapter_cls: EnvironmentAdapter class.
-            adapter_args: Arguments for the adapter class.
-            network: Greedy network for performance evaluation.
-            policy_source: Inference provider.
-            buffer: Placeholder for argument consistency (not used).
-            action_selector: Optional action selection provider for evaluation.
-            actor_device: Device to use for the environment and network.
-            num_actions: Number of actions in the environment.
-            num_players: Number of players in the environment.
-            test_agents: Optional list of agents for evaluation.
-            worker_id: Worker identifier.
-        """
-        self.worker_id = worker_id
-        device = torch.device(actor_device)
-        self.adapter = adapter_cls(
-            *adapter_args, device=device, num_actions=num_actions
-        )
-
-        self.agent_network = network
-        self.policy_source = policy_source
-        assert (
-            action_selector is not None
-        ), "ActionSelector is mandatory for EvaluatorActor (Null Object Pattern). Provide a valid selector (e.g., ArgmaxSelector)."
-        self.action_selector = action_selector
-        self.num_players = num_players
-        self.test_agents = test_agents
-        self.num_envs = self.adapter.num_envs
-
-        self.total_reward = 0.0
-        self.episodes_completed = 0
-
-    def setup(self) -> None:
-        self.agent_network.eval()
-
-    def update_parameters(
-        self,
-        weights: Optional[Dict[str, torch.Tensor]] = None,
-        hyperparams: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        if weights:
-            clean_params = {k.replace("_orig_mod.", ""): v for k, v in weights.items()}
-            self.agent_network.load_state_dict(clean_params, strict=False)
-
-    def get_state(self) -> Dict[str, Any]:
-        return {
-            "episodes_completed": self.episodes_completed,
-            "total_reward": self.total_reward,
-            "average_reward": self.total_reward / max(1, self.episodes_completed),
-        }
-
-    def execute(self, request: TaskRequest) -> WorkerPayload:
-        if request.task_type != TaskType.EVALUATE:
-            raise ValueError(
-                f"EvaluatorActor only supports {TaskType.EVALUATE}, got {request.task_type}"
-            )
-
-        metrics = self.evaluate(request.batch_size, **request.kwargs)
-        return WorkerPayload(worker_type=self.__class__.__name__, metrics=metrics)
-
-    @torch.inference_mode()
-    def evaluate(self, num_episodes: int, **kwargs) -> Dict[str, Any]:
-        """
-        Performs Matrix Evaluation: Students plays round-robin tournament
-        as each player position against each opponent in the test_agents roster.
-        """
-        results = {}
-        all_avg_scores = []
-        total_lengths = []
-        
-        # Determine if we have opponents. If not, just evaluate student alone.
-        opponents = self.test_agents if self.test_agents else [None]
-        
-        for opponent in opponents:
-            opp_name = opponent.name if opponent else "self"
-            opp_scores = []
-            player_scores = {p: [] for p in range(self.num_players)}
-            
-            # Rounds: Student takes each position
-            for student_pos in range(self.num_players):
-                for _ in range(num_episodes):
-                    obs, info = self.adapter.reset()
-                    episode_length = 0
-                    student_total_reward = 0.0
-                    done = False
-                    trunc = False
-                    
-                    while not (done or trunc):
-                        # 1. Identify current player from adapter info
-                        current_player_idx = info.get("player_id")
-                        if current_player_idx is not None:
-                            # Standardized player_id is a tensor [1] or scalar
-                            if torch.is_tensor(current_player_idx):
-                                current_player_idx = int(current_player_idx.item())
-                            else:
-                                current_player_idx = int(current_player_idx)
-                        else:
-                            current_player_idx = 0
-                            
-                        # 2. Assign policy source (Student or Expert)
-                        if current_player_idx == student_pos:
-                            # Student uses search toggle
-                            use_search = kwargs.get("use_search", True)
-                            from agents.action_selectors.policy_sources import SearchPolicySource
-                            if use_search and isinstance(self.policy_source, SearchPolicySource):
-                                result = self.policy_source.get_inference(
-                                    obs, info, agent_network=self.agent_network, exploration=False
-                                )
-                            else:
-                                output = self.agent_network.obs_inference(obs)
-                                result = InferenceResult.from_inference_output(output)
-                        else:
-                            # Expert/Opponent
-                            if opponent is not None:
-                                output = opponent.obs_inference(obs, info=info, adapter=self.adapter)
-                                result = InferenceResult.from_inference_output(output)
-                            else:
-                                # Fallback if playing against self/None
-                                output = self.agent_network.obs_inference(obs)
-                                result = InferenceResult.from_inference_output(output)
-
-                        # 3. Select action
-                        from agents.action_selectors.types import InferenceResult
-                        if not isinstance(result, InferenceResult):
-                             result = InferenceResult.from_inference_output(result)
-
-                        actions, _ = self.action_selector.select_action(
-                            result, info, exploration=False
-                        )
-                        
-                        # 4. Step environment
-                        obs, rewards, dones, truncs, info = self.adapter.step(actions)
-                        
-                        # Accumulate reward for the student position from ALL sources
-                        # PettingZooAdapter.step now provides 'all_rewards' in info
-                        all_rewards = info.get("all_rewards")
-                        if all_rewards is not None:
-                            if isinstance(all_rewards, dict):
-                                agent_id = self.adapter.agents[student_pos]
-                                student_total_reward += all_rewards.get(agent_id, 0.0)
-                            elif torch.is_tensor(all_rewards):
-                                # Parallel batched info
-                                student_total_reward += all_rewards[student_pos].item()
-                        else:
-                            # Fallback for Gym: rewards is a scalar for the only player
-                            student_total_reward += rewards.item()
-
-                        # In AEC, episode ends when done=True for any agent in some envs, 
-                        # or specifically for the current agent.
-                        done = bool(dones.any().item())
-                        trunc = bool(truncs.any().item())
-                        episode_length += 1
-
-                    opp_scores.append(student_total_reward)
-                    player_scores[student_pos].append(student_total_reward)
-                    total_lengths.append(episode_length)
-
-            # Aggregate for this opponent
-            results[f"vs_{opp_name}_score"] = {
-                "avg": float(np.mean(opp_scores)),
-                **{f"p{p}": float(np.mean(player_scores[p])) for p in range(self.num_players)}
-            }
-            all_avg_scores.append(np.mean(opp_scores))
-
-        results["score"] = float(np.mean(all_avg_scores)) if all_avg_scores else 0.0
-        results["avg_length"] = float(np.mean(total_lengths)) if total_lengths else 0.0
-        return results
+# EvaluatorActor moved to agents/workers/evaluator.py

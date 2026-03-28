@@ -44,7 +44,8 @@ class MuZeroTrainer(BaseTrainer):
 
         # Build functional components
         representation_fn = make_backbone_fn(getattr(config, "representation_backbone", None))
-        
+        prediction_backbone_fn = make_backbone_fn(getattr(config, "prediction_backbone", None))
+
         # World Model setup
         wm_cfg = config.world_model
         env_head_fns = {
@@ -79,6 +80,7 @@ class MuZeroTrainer(BaseTrainer):
             num_actions=self.num_actions,
             representation_fn=representation_fn,
             world_model_fn=world_model_fn,
+            prediction_backbone_fn=prediction_backbone_fn,
             head_fns=head_fns,
             stochastic=config.stochastic,
             num_players=config.game.num_players,
@@ -241,7 +243,15 @@ class MuZeroTrainer(BaseTrainer):
     def train_step(self) -> Dict[str, Any]:
         """Perform one training step (batch of gradients)."""
         # 1. Update weights and trigger work
-        self.executor.update_parameters(weights=self.agent_network.state_dict())
+        # Skip redundant weight sync if using shared memory on CPU
+        weights = None
+        if not getattr(self.config, "multi_process", False) or self.device.type != "cpu":
+            weights = self.agent_network.state_dict()
+        
+        self.executor.update_parameters(
+            weights=weights,
+            hyperparams={"training_step": self.training_step},
+        )
         
         # 2. Collect data via actor
         from agents.workers.actors import RolloutActor

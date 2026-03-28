@@ -128,7 +128,10 @@ class CategoricalSelector(BaseActionSelector):
             action = torch.argmax(dist.logits, dim=-1)
 
         # 3. Metadata Injection
-        metadata = {"policy_dist": dist}
+        metadata = {
+            "policy_dist": dist,
+            "policy": dist.probs.detach(),
+        }
 
         return action, metadata
 

@@ -51,6 +51,7 @@ class StochasticDynamics(nn.Module):
         self.num_actions = num_actions
         self.num_chance = num_chance
         self.use_true_chance_codes = use_true_chance_codes
+        self.prediction_backbone = nn.Identity()
 
         # 1. Afterstate Phase
         self.afterstate_fusion = ActionFusion(
@@ -124,12 +125,19 @@ class StochasticDynamics(nn.Module):
         afterstate = self.afterstate_dynamics(fused)
         afterstate = _normalize_hidden_state(afterstate)
 
-        head_out = self.sigma_head(afterstate, is_inference=True)
+        # Apply the shared prediction backbone (MuZero parity)
+        # Fallback to identity if not explicitly set via set_prediction_backbone
+        processed_afterstate = self.prediction_backbone(afterstate)
+        head_out = self.sigma_head(processed_afterstate, is_inference=True)
         return {
             "afterstate_features": afterstate,
+            "processed_afterstate": processed_afterstate,
             "chance_logits": head_out.training_tensor,
             "chance_dist": head_out.inference_tensor,
         }
+
+    def set_prediction_backbone(self, backbone: nn.Module):
+        self.prediction_backbone = backbone
 
     def recurrent_step(self, state: Tensor, chance_code: Tensor) -> Dict[str, Tensor]:
         fused = self.dynamics_fusion(state, chance_code)
@@ -205,6 +213,10 @@ class WorldModel(nn.Module):
 
         self.register_buffer("_device_indicator", torch.empty(0))
 
+    def set_prediction_backbone(self, backbone: nn.Module):
+        if hasattr(self, "dynamics_pipeline") and hasattr(self.dynamics_pipeline, "set_prediction_backbone"):
+            self.dynamics_pipeline.set_prediction_backbone(backbone)
+
     @property
     def device(self) -> torch.device:
         """Determines the device the world model is currently on using a buffer indicator."""
@@ -271,7 +283,7 @@ class WorldModel(nn.Module):
         }
 
         return WorldModelOutput(
-            features=torch.empty(0),
+            features=res["processed_afterstate"],
             afterstate_features=res["afterstate_features"],
             chance=res["chance_logits"],
             chance_dist=res["chance_dist"],

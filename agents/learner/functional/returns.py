@@ -25,6 +25,7 @@ def compute_unrolled_n_step_targets(
     gamma: float,
     n_step: int,
     unroll_steps: int,
+    **kwargs,
 ) -> Tuple[Tensor, Tensor]:
     """
     Vectorized N-step target calculation for unrolled sequences.
@@ -98,8 +99,7 @@ def compute_unrolled_n_step_targets(
     ).sum(dim=2) > 0
     
     boot_is_valid = (
-        valid_mask[:, safe_boot_indices]
-        & (~hit_terminated_in_window)
+        (~hit_terminated_in_window)
         & (~raw_terminated[:, safe_boot_indices])
     )
 
@@ -115,15 +115,35 @@ def compute_unrolled_n_step_targets(
     # Grounding: Past game end = 0.0
     target_values = target_values * valid_mask[:, :num_windows].float()
 
-    # 4. Filter Instant Rewards
+    # 4. Filter Instant Rewards (or Value Prefix if enabled)
     target_rewards = torch.zeros(
         (batch_size, num_windows), dtype=torch.float32, device=device
     )
-    t_rew = raw_rewards[:, : num_windows - 1]
-    mask_slice = valid_mask[:, : num_windows - 1]
     
-    target_slice = torch.zeros_like(target_rewards[:, 1:])
-    target_slice[mask_slice] = t_rew[mask_slice]
-    target_rewards[:, 1:] = target_slice
+    use_value_prefix = kwargs.get("use_value_prefix", False)
+    lstm_horizon_len = kwargs.get("lstm_horizon_len", 5)
+
+    if use_value_prefix:
+        prefix_sum = torch.zeros(batch_size, device=device)
+        for u in range(1, num_windows):
+            # Reset prefix sum every horizon_len transitions
+            if (u - 1) % lstm_horizon_len == 0:
+                prefix_sum = torch.zeros(batch_size, device=device)
+            
+            # Add reward from transition (u-1 -> u)
+            rew_u = raw_rewards[:, u - 1]
+            prefix_sum = prefix_sum + rew_u
+            
+            # Assign to target_rewards at step u
+            mask_u = valid_mask[:, u - 1]
+            target_rewards[mask_u, u] = prefix_sum[mask_u]
+    else:
+        # Standard: target_rewards[u] = raw_rewards[u-1]
+        t_rew = raw_rewards[:, : num_windows - 1]
+        mask_slice = valid_mask[:, : num_windows - 1]
+        
+        target_slice = torch.zeros_like(target_rewards[:, 1:])
+        target_slice[mask_slice] = t_rew[mask_slice]
+        target_rewards[:, 1:] = target_slice
 
     return target_values, target_rewards

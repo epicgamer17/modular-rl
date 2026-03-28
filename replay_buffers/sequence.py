@@ -124,4 +124,7 @@ class Sequence:
                 truncated=truncated,
                 legal_moves=legal_moves,
                 next_legal_moves=next_legal_moves,
+                value=self.value_history[i] if self.value_history else None,
+                policy=self.policy_history[i] if self.policy_history else None,
+                log_prob=self.log_prob_history[i] if self.log_prob_history else None,
             )

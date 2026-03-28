@@ -62,6 +62,7 @@ class SearchPolicySource(BasePolicySource):
         self.search = search_engine
         self.agent_network = agent_network
 
+    @torch.inference_mode()
     def get_inference(
         self, obs: torch.Tensor, info: Dict[str, Any], **kwargs
     ) -> InferenceResult:
@@ -74,23 +75,27 @@ class SearchPolicySource(BasePolicySource):
         exploration = kwargs.get("exploration", True)
         agent_network = kwargs.get("agent_network", self.agent_network)
 
+        # Always shallow copy info to prevent in-place mutations leaking back to actor/env
+        if isinstance(info, dict):
+            info = info.copy()
+        elif isinstance(info, list):
+            info = [i.copy() if isinstance(i, dict) else i for i in info]
+
         # Populate info["player"] from to_play kwarg if not already present
         to_play = kwargs.get("to_play")
         if to_play is not None:
             if isinstance(info, dict):
                 if "player" not in info:
-                    info = {**info, "player": to_play}
+                    info["player"] = to_play
             elif isinstance(info, list):
                 # If it's a list, we might need to update each element
-                # or assume it's already correct. We'll be conservative.
                 new_info = []
                 for i, item in enumerate(info):
                     if isinstance(item, dict) and "player" not in item:
                         # If to_play is a list matching info, use corresponding element
                         p = to_play[i] if (isinstance(to_play, (list, np.ndarray, torch.Tensor)) and len(to_play) == len(info)) else to_play
-                        new_info.append({**item, "player": p})
-                    else:
-                        new_info.append(item)
+                        item["player"] = p
+                    new_info.append(item)
                 info = new_info
 
         assert (
@@ -99,7 +104,40 @@ class SearchPolicySource(BasePolicySource):
         ), "info must contain 'player' in all entries, or pass to_play as a kwarg"
 
         start_time = time.time()
-        res = self.search.run_vectorized(obs, info, agent_network)
+        
+        # Optimization: Use search.run for batch size 1 to avoid redundant list processing
+        if obs.shape[0] == 1:
+            single_info = info[0] if isinstance(info, list) else info
+            # modular_search.run() expects (obs, info, agent_network)
+            res_single = self.search.run(obs, single_info, agent_network, exploration=exploration)
+            # res_single is (root_value, exploratory_policy, target_policy, best_action, search_metadata)
+            
+            search_duration = time.time() - start_time
+            
+            # Construct tensors with [1, ...] shapes - Detach for safety
+            probs = torch.as_tensor(res_single[1], device=obs.device, dtype=torch.float32).detach().unsqueeze(0)
+            value = torch.as_tensor([res_single[0]], device=obs.device, dtype=torch.float32).detach().unsqueeze(-1)
+            action = torch.as_tensor([res_single[3]], device=obs.device, dtype=torch.long).detach()
+            
+            # Metadata keys for target policies and search metadata
+            target_policies_tensor = torch.as_tensor(res_single[2], device=obs.device, dtype=torch.float32).detach().unsqueeze(0)
+            
+            return InferenceResult(
+                probs=probs,
+                value=value,
+                action=action,
+                extras={
+                    "target_policies": target_policies_tensor,
+                    "search_duration": search_duration,
+                    "search_metadata": [res_single[4]],
+                    "best_actions": action,
+                    "value": value.squeeze(-1), # [1]
+                    "root_value": value.squeeze(-1), # [1]
+                },
+            )
+
+        # Vectorized path for B > 1
+        res = self.search.run_vectorized(obs, info, agent_network, exploration=exploration)
         (
             root_values,
             exploratory_policies,
@@ -114,13 +152,13 @@ class SearchPolicySource(BasePolicySource):
             [
                 torch.as_tensor(
                     p, device=obs.device, dtype=torch.float32
-                ).contiguous()
+                ).detach().contiguous()
                 for p in exploratory_policies
             ]
         )
         values = torch.as_tensor(
             root_values, device=obs.device, dtype=torch.float32
-        )
+        ).detach()
 
         # Standardize values to [B, 1] for potential Multi-Player Reward mapping
         if values.dim() == 1:
@@ -131,13 +169,13 @@ class SearchPolicySource(BasePolicySource):
             [
                 torch.as_tensor(
                     p, device=obs.device, dtype=torch.float32
-                ).contiguous()
+                ).detach().contiguous()
                 for p in target_policies
             ]
         )
         best_actions_tensor = torch.as_tensor(
             best_actions, device=obs.device, dtype=torch.long
-        )
+        ).detach()
 
         return InferenceResult(
             probs=probs,

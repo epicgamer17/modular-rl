@@ -212,31 +212,27 @@ def batched_mcts_step(
             return tensor[inverse_indices]
 
         # Reconstruct full-sized outputs for the decision batch
-        # value: [U, ...] -> [D, ...]
         full_value = outputs_unique.value[inverse_indices]
         full_reward = outputs_unique.reward[inverse_indices]
         full_to_play = outputs_unique.to_play[inverse_indices]
-        full_net_state = pytree.tree_map(expand_fn, outputs_unique.recurrent_state)
+        full_recurrent_state = pytree.tree_map(expand_fn, outputs_unique.recurrent_state)
 
         # Policy is a special case (Distribution object)
-        # We assume the policy data (logits/probs) can be expanded
-        policy_data = (
-            outputs_unique.policy.logits
-            if outputs_unique.policy.logits is not None
-            else outputs_unique.policy.probs
-        )
-        full_policy_data = policy_data[inverse_indices]
-
-        if outputs_unique.policy.logits is not None:
+        # We extract the underlying parameters (probs or logits)
+        if hasattr(outputs_unique.policy, "logits") and outputs_unique.policy.logits is not None:
+            policy_data = outputs_unique.policy.logits
+            full_policy_data = policy_data[inverse_indices]
             full_policy = dists.Categorical(logits=full_policy_data)
         else:
+            policy_data = outputs_unique.policy.probs
+            full_policy_data = policy_data[inverse_indices]
             full_policy = dists.Categorical(probs=full_policy_data)
 
         outputs_decision = InferenceOutput(
             value=full_value,
             reward=full_reward,
             to_play=full_to_play,
-            recurrent_state=full_net_state,
+            recurrent_state=full_recurrent_state,
             policy=full_policy,
         )
 
@@ -341,7 +337,7 @@ def batched_mcts_step(
     ):
         sample_state = outputs_chance.recurrent_state
 
-    network_state_chunks_pytree = None
+    recurrent_state_chunks_pytree = None
     if sample_state is not None:
         # Preallocate a full [B_total, ...] pytree
         def allocate_b_total(tensor):
@@ -351,7 +347,7 @@ def batched_mcts_step(
                 (B_total, *tensor.shape[1:]), dtype=tensor.dtype, device=device
             )
 
-        network_state_t = pytree.tree_map(allocate_b_total, sample_state)
+        recurrent_state_t = pytree.tree_map(allocate_b_total, sample_state)
 
         # Scatter Decision States
         if outputs_decision is not None:
@@ -361,7 +357,7 @@ def batched_mcts_step(
                     t_tot[is_decision] = t_dec
 
             pytree.tree_map(
-                scatter_dec, network_state_t, outputs_decision.recurrent_state
+                scatter_dec, recurrent_state_t, outputs_decision.recurrent_state
             )
 
         # Scatter Chance States
@@ -372,7 +368,7 @@ def batched_mcts_step(
                     t_tot[is_chance] = t_cha
 
             pytree.tree_map(
-                scatter_cha, network_state_t, outputs_chance.recurrent_state
+                scatter_cha, recurrent_state_t, outputs_chance.recurrent_state
             )
 
         # Chunk the states for Phase 3
@@ -381,7 +377,7 @@ def batched_mcts_step(
                 return tensor
             return tensor.chunk(search_batch_size, dim=0)
 
-        network_state_chunks_pytree = pytree.tree_map(make_chunks, network_state_t)
+        recurrent_state_chunks_pytree = pytree.tree_map(make_chunks, recurrent_state_t)
 
     # Scatter decision node results
     if outputs_decision is not None:
@@ -389,16 +385,27 @@ def batched_mcts_step(
         rewards_t[is_decision] = outputs_decision.reward
         to_plays_t[is_decision] = outputs_decision.to_play
 
-        num_act = outputs_decision.policy.logits.shape[-1]
-        policy_logits_t[is_decision, :num_act] = outputs_decision.policy.logits
+        # Extract policy parameters safely (handling Distribution object)
+        if hasattr(outputs_decision.policy, "logits") and outputs_decision.policy.logits is not None:
+            p_data = outputs_decision.policy.logits
+        else:
+            p_data = outputs_decision.policy.probs
+        
+        num_act = p_data.shape[-1]
+        policy_logits_t[is_decision, :num_act] = p_data
 
     # Scatter chance node results
     if outputs_chance is not None:
         leaf_values_t[is_chance] = outputs_chance.value
         # .reward is inherently 0 due to torch.zeros
 
-        num_codes = outputs_chance.policy.logits.shape[-1]
-        policy_logits_t[is_chance, :num_codes] = outputs_chance.policy.logits
+        if hasattr(outputs_chance.policy, "logits") and outputs_chance.policy.logits is not None:
+            c_data = outputs_chance.policy.logits
+        else:
+            c_data = outputs_chance.policy.probs
+
+        num_codes = c_data.shape[-1]
+        policy_logits_t[is_chance, :num_codes] = c_data
 
         # Inherit parent's to_play from the tree
         inherited_to_play = tree.to_play[
@@ -446,16 +453,16 @@ def batched_mcts_step(
     for k in range(search_batch_size):
         path_nodes, path_actions, depths = paths[k]
 
-        # Extract the k-th chunk of the network_state pytree
-        network_state_k = None
-        if network_state_chunks_pytree is not None:
+        # Extract the k-th chunk of the recurrent_state pytree
+        recurrent_state_k = None
+        if recurrent_state_chunks_pytree is not None:
 
             def extract_k(chunks):
                 if not isinstance(chunks, tuple) and not isinstance(chunks, list):
                     return chunks
                 return chunks[k]
 
-            network_state_k = pytree.tree_map(extract_k, network_state_chunks_pytree)
+            recurrent_state_k = pytree.tree_map(extract_k, recurrent_state_chunks_pytree)
 
         leaf_values = _expand_write(
             tree,
@@ -468,7 +475,7 @@ def batched_mcts_step(
             to_plays_chunks[k].detach().to(torch.int8),
             B,
             device,
-            network_state=network_state_k,
+            recurrent_state=recurrent_state_k,
             decision_modifier_fn=decision_modifier_fn,
             chance_modifier_fn=chance_modifier_fn,
         )
@@ -747,7 +754,7 @@ def _expand_write(
     to_plays: torch.Tensor,
     B: int,
     device: torch.device,
-    network_state: Any = None,
+    recurrent_state: Any = None,
     decision_modifier_fn=None,
     chance_modifier_fn=None,
 ) -> torch.Tensor:
@@ -806,13 +813,13 @@ def _expand_write(
         alloc_parents = parent_indices.long()[alloc_mask]
         alloc_actions = leaf_actions.long()[alloc_mask]
 
-        if network_state is not None:
+        if recurrent_state is not None:
 
             def scatter_alloc(buffer_tensor, new_tensor):
                 if torch.is_tensor(buffer_tensor) and torch.is_tensor(new_tensor):
                     buffer_tensor[alloc_idx, alloc_nodes] = new_tensor[alloc_mask]
 
-            pytree.tree_map(scatter_alloc, tree.recurrent_state_buffer, network_state)
+            pytree.tree_map(scatter_alloc, tree.recurrent_state_buffer, recurrent_state)
 
         # to_plays handling
         if to_plays.dim() > 1:

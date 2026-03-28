@@ -183,10 +183,6 @@ def build_universal_learner(
     if epsilon_schedule is not None:
         callbacks.append(EpsilonGreedySchedulerCallback(epsilon_schedule))
 
-    # Weight Broadcasting
-    if weight_broadcast_fn is not None:
-        callbacks.append(WeightBroadcastCallback(weight_broadcast_fn))
-
     return UniversalLearner(
         agent_network=agent_network,
         device=device,

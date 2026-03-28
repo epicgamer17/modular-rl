@@ -486,6 +486,20 @@ class StatTracker:
     def _to_numpy(self, data: List[Any], reduce: bool = True) -> np.ndarray:
         if not data:
             return np.array([])
+        
+        # Filter out non-numeric/non-tensor types (like dicts from incorrect append calls)
+        # to prevent "Could not infer dtype" RuntimeErrors.
+        filtered_data = []
+        for x in data:
+            if isinstance(x, (int, float, np.number, torch.Tensor)):
+                filtered_data.append(x)
+            elif torch.is_tensor(x):
+                filtered_data.append(x)
+        data = filtered_data
+
+        if not data:
+            return np.array([])
+
         if isinstance(data[0], torch.Tensor):
             if data[0].ndim > 0:
                 tensor_data = torch.stack(data)
