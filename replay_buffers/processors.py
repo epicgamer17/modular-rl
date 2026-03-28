@@ -1160,6 +1160,8 @@ class NStepUnrollProcessor(OutputProcessor):
             gamma=self.gamma,
             n_step=self.n_step,
             unroll_steps=self.unroll_steps,
+            lstm_horizon_len=self.lstm_horizon_len,
+            value_prefix=self.value_prefix,
         )
 
 

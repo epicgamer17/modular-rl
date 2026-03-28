@@ -119,3 +119,110 @@ def test_muzero_targets_terminal_state_invariant():
     assert math.isclose(target_values[0, 0].item(), expected_t0, rel_tol=1e-6)
     assert math.isclose(target_values[0, 1].item(), expected_t1, rel_tol=1e-6)
 
+def test_value_prefix_lstm_horizon_reset():
+    """
+    CONTRACT: When horizon_id hits a multiple of lstm_horizon_len, 
+    the accumulated value_prefix must reset to 0.
+    """
+    B, L = 1, 10
+    device = torch.device("cpu")
+    
+    raw_rewards = torch.ones((B, L), device=device)
+    raw_values = torch.zeros((B, L), device=device)
+    raw_to_plays = torch.zeros((B, L), dtype=torch.long, device=device)
+    raw_terminated = torch.zeros((B, L), dtype=torch.bool, device=device)
+    valid_mask = torch.ones((B, L), dtype=torch.bool, device=device)
+
+    # Run the system under test
+    _, target_rewards = compute_unrolled_n_step_targets(
+        raw_rewards=raw_rewards,
+        raw_values=raw_values,
+        raw_to_plays=raw_to_plays,
+        raw_terminated=raw_terminated,
+        valid_mask=valid_mask,
+        gamma=1.0,
+        unroll_steps=5,
+        n_step=3,
+        lstm_horizon_len=2, # Reset every 2 steps
+        value_prefix=True
+    )
+
+    # Analytical expected accumulated prefix
+    # s0: 0
+    # s1: r0 = 1
+    # s2: r1 = 1 (reset at t=2 starts from r1)
+    # s3: r1+r2 = 2
+    # s4: r3 = 1 (reset at t=4 starts from r3)
+    # s5: r3+r4 = 2
+    expected_rewards = torch.tensor([[0.0, 1.0, 1.0, 2.0, 1.0, 2.0]], dtype=torch.float32, device=device)
+    torch.testing.assert_close(target_rewards, expected_rewards)
+
+def test_two_player_n_step_sign_flips():
+    """
+    MATH: Two-player alternating value_prefix must flip the sign 
+    for rewards from the opposing player.
+    """
+    B, L = 1, 10
+    device = torch.device("cpu")
+    
+    # rewards = [1, 2, 3, 4, ...]
+    raw_rewards = torch.arange(1, L + 1, dtype=torch.float32, device=device).unsqueeze(0)
+    raw_values = torch.zeros((B, L), device=device)
+    
+    # Alternating players: 0, 1, 0, 1...
+    raw_to_plays = (torch.arange(L, device=device) % 2).unsqueeze(0)
+    raw_terminated = torch.zeros((B, L), dtype=torch.bool, device=device)
+    valid_mask = torch.ones((B, L), dtype=torch.bool, device=device)
+
+    _, target_rewards = compute_unrolled_n_step_targets(
+        raw_rewards=raw_rewards,
+        raw_values=raw_values,
+        raw_to_plays=raw_to_plays,
+        raw_terminated=raw_terminated,
+        valid_mask=valid_mask,
+        gamma=1.0,
+        unroll_steps=3,
+        n_step=3,
+        value_prefix=True,
+        lstm_horizon_len=None # Large horizon implicitly
+    )
+
+    # u=0 -> 0
+    # u=1 -> P0 gets +1 -> prefix = 1
+    # u=2 -> P1 gets +2 -> prefix = 1 + (-2) = -1
+    # u=3 -> P0 gets +3 -> prefix = -1 + 3 = 2
+    expected_rewards = torch.tensor([[0.0, 1.0, -1.0, 2.0]], dtype=torch.float32, device=device)
+    torch.testing.assert_close(target_rewards, expected_rewards)
+
+def test_discounted_value_prefix():
+    """
+    MATH: Value prefix targets are raw cumulative sums and DO NOT use gamma 
+    (EfficientZero cumulative reward head predicts the sum).
+    """
+    from agents.learner.functional.returns import compute_unrolled_n_step_targets
+    
+    B, L = 1, 10
+    device = torch.device("cpu")
+    
+    raw_rewards = torch.ones((B, L), device=device)
+    raw_values = torch.zeros((B, L), device=device)
+    raw_to_plays = torch.zeros((B, L), dtype=torch.long, device=device)
+    raw_terminated = torch.zeros((B, L), dtype=torch.bool, device=device)
+    valid_mask = torch.ones((B, L), dtype=torch.bool, device=device)
+
+    # Even with gamma=0.9, the prefix should be 1.0, 2.0, 3.0...
+    _, target_rewards = compute_unrolled_n_step_targets(
+        raw_rewards=raw_rewards,
+        raw_values=raw_values,
+        raw_to_plays=raw_to_plays,
+        raw_terminated=raw_terminated,
+        valid_mask=valid_mask,
+        gamma=0.9,
+        unroll_steps=3,
+        n_step=3,
+        value_prefix=True,
+        lstm_horizon_len=None 
+    )
+
+    expected_rewards = torch.tensor([[0.0, 1.0, 2.0, 3.0]], dtype=torch.float32, device=device)
+    torch.testing.assert_close(target_rewards, expected_rewards)

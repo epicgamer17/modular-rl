@@ -25,10 +25,13 @@ def compute_unrolled_n_step_targets(
     gamma: float,
     n_step: int,
     unroll_steps: int,
+    lstm_horizon_len: Optional[int] = None,
+    value_prefix: bool = False,
 ) -> Tuple[Tensor, Tensor]:
     """
     Vectorized N-step target calculation for unrolled sequences.
     Handles multi-player two-player zero-sum value transformation (signs).
+    Supports EfficientZero value_prefix (cumulative rewards) and horizon resets.
     
     Args:
         raw_rewards: [B, L] 
@@ -39,10 +42,12 @@ def compute_unrolled_n_step_targets(
         gamma: float
         n_step: int
         unroll_steps: int
+        lstm_horizon_len: Optional frequency for value_prefix resets.
+        value_prefix: If True, returns cumulative rewards instead of instant ones.
         
     Returns:
         target_values: [B, unroll_steps + 1]
-        target_rewards: [B, unroll_steps + 1] (instant rewards, not prefix)
+        target_rewards: [B, unroll_steps + 1] (instant or prefix rewards)
     """
     device = raw_rewards.device
     batch_size = raw_rewards.shape[0]
@@ -52,8 +57,6 @@ def compute_unrolled_n_step_targets(
     # 1. Setup Windows
     # [B, num_windows, n_step]
     def unfold(tensor, length, size):
-        if tensor.dim() == 2:
-            return tensor[:, :length].unfold(1, size, 1)
         return tensor[:, :length].unfold(1, size, 1)
 
     rewards_windows = unfold(raw_rewards, required_len, n_step)
@@ -61,7 +64,7 @@ def compute_unrolled_n_step_targets(
     terminated_windows = unfold(raw_terminated, required_len, n_step)
     valid_windows = unfold(valid_mask, required_len, n_step)
 
-    # 2. Compute Segmented Sums
+    # 2. Compute Segmented Sums (for Value Targets)
     gammas = (
         gamma ** torch.arange(n_step, dtype=torch.float32, device=device)
     ).reshape(1, 1, n_step)
@@ -115,15 +118,42 @@ def compute_unrolled_n_step_targets(
     # Grounding: Past game end = 0.0
     target_values = target_values * valid_mask[:, :num_windows].float()
 
-    # 4. Filter Instant Rewards
+    # 4. Compute Reward Targets (Instant or Prefix)
     target_rewards = torch.zeros(
         (batch_size, num_windows), dtype=torch.float32, device=device
     )
-    t_rew = raw_rewards[:, : num_windows - 1]
-    mask_slice = valid_mask[:, : num_windows - 1]
     
-    target_slice = torch.zeros_like(target_rewards[:, 1:])
-    target_slice[mask_slice] = t_rew[mask_slice]
-    target_rewards[:, 1:] = target_slice
+    if not value_prefix:
+        # Standard instant rewards: s_t reward is r_{t-1} (transition s_{t-1} -> s_t)
+        t_rew = raw_rewards[:, : num_windows - 1]
+        mask_slice = valid_mask[:, : num_windows - 1]
+        target_slice = torch.zeros_like(target_rewards[:, 1:])
+        target_slice[mask_slice] = t_rew[mask_slice]
+        target_rewards[:, 1:] = target_slice
+    else:
+        # EfficientZero Value Prefix: cumulative rewards in the current LSTM horizon
+        root_to_play = raw_to_plays[:, 0].unsqueeze(1)
+        prefix_signs = torch.where(raw_to_plays == root_to_play, 1.0, -1.0)
+        signed_raw_rewards = raw_rewards * prefix_signs
+        
+        # [B, L+1] with 0 padding at start
+        cumsum = torch.cat(
+            [torch.zeros((batch_size, 1), device=device), torch.cumsum(signed_raw_rewards, dim=1)],
+            dim=1
+        )
+        
+        for t in range(1, num_windows):
+            # Horizon reset logic: s_t prefix sum starts from latest (t % horizon == 0)
+            if lstm_horizon_len:
+                h_start = (t // lstm_horizon_len) * lstm_horizon_len
+                sub_idx = max(0, h_start - 1)
+            else:
+                sub_idx = 0
+                
+            # target_rewards[t] = sum(r_k for k in range(sub_idx, t))
+            target_rewards[:, t] = cumsum[:, t] - cumsum[:, sub_idx]
+            
+        # Mask by validity
+        target_rewards = target_rewards * valid_mask[:, :num_windows].float()
 
     return target_values, target_rewards
