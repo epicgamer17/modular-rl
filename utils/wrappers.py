@@ -5,7 +5,6 @@ import gymnasium.spaces
 import numpy as np
 from pettingzoo.utils.env import ActionType, AECEnv, AgentID, ObsType
 from gymnasium.spaces import Box, Discrete
-from supersuit.utils.frame_stack import stack_init, stack_obs, stack_obs_space
 from collections import deque
 from utils.utils import action_mask_to_legal_moves
 from pettingzoo.utils.wrappers.base import BaseWrapper

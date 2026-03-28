@@ -30,7 +30,6 @@ dependencies = [
     "hypothesis",
     "pettingzoo",
     "dill",
-    "supersuit",
     "hyperopt",
     "catanatron",
     "pillow",
