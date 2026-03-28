@@ -146,11 +146,8 @@ PyJWT==2.11.0
 pynvml==13.0.1
 PyOpenGL==3.1.9
 pyparsing==3.1.2
-PyQt5-Qt5==5.15.13
-PyQt5-sip==12.13.0
-PyQt6==6.7.0
-PyQt6-Qt6==6.7.0
-PyQt6-sip==13.6.0
+PyQt5>=5.15.10
+PyQt6>=6.5.0
 pyro-api==0.1.2
 pyro-ppl==1.9.1
 pytest==9.0.1
