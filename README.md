@@ -10,49 +10,47 @@ A high-performance, modular framework for Reinforcement Learning research, desig
 
 The "Modular RL Architecture" project solves the complexity of modern RL development by isolating neural network math from environment logic and optimization pipelines. Whether you are experimenting with latent world models or tuning proximal policy updates, this framework ensures that components are pluggable, testable, and scalable.
 
-### Key Philosophy
-- **The Blind Learner**: Optimization is decoupled from network architecture.
-- **Game Logic Isolation**: Neural networks are pure mathematical functions; rules live in action selectors.
-- **Opaque Tokens**: Actor/Search trees treat network states as opaque, preserving abstraction boundaries.
+### 🧠 Core Philosophy
+This framework is built on the principle of **Strict Separation of Concerns**. We maintain a "Blind" boundary between components:
+- **The Blind Learner**: The optimization pipeline (Learner) is completely blind to the neural network's architecture (LSTM, ResNet, etc.). It asks for raw math and computes the loss.
+- **The Blind Actor/Tree**: The MCTS Tree and Actors treat the network's recurrent state as an **Opaque Token**, storing and passing it back without inspecting its contents.
+- **Game Logic Isolation**: Neural networks are pure mathematical functions. Action masking and legal move filtering happen strictly *outside* the network in action selectors or search trees.
 
 ---
 
-## 📸 Visuals
+## 🏗️ Project Structure & Domain Boundaries
 
-### Rainbow DQN Performance
-![CartPole Training](file:///Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/readme-figs/Rainbow_ClassicControl_CartPole-v1-episode-154.mp4)
-*Example: Rainbow DQN mastering CartPole-v1.*
+| Directory | Domain | Responsibility |
+|---|---|---|
+| `modules/` | **The Compute Graph** | Pure PyTorch Neural Networks. No knowledge of RL logic. |
+| `agents/trainers/` | **Orchestration** | Interfaces with all components to run the training loop. |
+| `agents/learner/` | **Optimization** | The Loss Pipeline and Optimizer (e.g., `UniversalLearner`). |
+| `agents/action_selectors/`| **The Bridge** | Translates network math into environment actions; handles masking. |
+| `replay_buffers/` | **The Fact Store** | High-performance transition storage with vectorized processing. |
+| `search/` | **The Imagination** | CPU-bound MCTS (Backends: Python, C++, AOS). |
+| `losses/` | **Math Kernels** | Vectorized loss computations (e.g., C51, TD, Value). |
+| `custom_gym_envs_pkg/` | **Environments** | Repository for specialized and custom Gymnasium environments. |
 
 ---
 
 ## 🚀 Features & Algorithms
 
-### 🌈 Rainbow DQN (Integrated Improvements)
-Mix and match components via configuration:
-- **DQN** & **Double DQN** (Overestimation bias reduction)
-- **Prioritized Experience Replay** (Important transition sampling)
-- **Dueling DQN** (Value/Advantage separation)
-- **Noisy Networks** (Adaptive exploration)
-- **N-Step Returns** & **Categorical DQN (C51)**
+### 🌈 Rainbow DQN (Value-Based)
+Integrated improvements including **Double DQN**, **Prioritized Experience Replay**, **Dueling Architectures**, **Noisy Networks**, **N-Step Returns**, and **Categorical DQN (C51)**.
 
-### ♟️ Model-Based & Policy Gradient
-- **MuZero**: Planning with learned environment dynamics.
-- **AlphaZero**: MCTS integrated with deep policy/value networks.
-- **PPO (Proximal Policy Optimization)**: Stable and reliable policy gradients.
+### ♟️ MuZero & AlphaZero (Model-Based)
+State-of-the-art planning with learned environment dynamics. Supports **Stochastic World Models**, **Gumbel MuZero**, and **EfficientZero** optimizations.
+
+### 🎯 Policy Gradient & Others
+- **PPO (Proximal Policy Optimization)**: Stable and reliable policy gradients with generalized advantage estimation.
 - **NFSP (Neural Fictitious Self-Play)**: Nash equilibrium approximation for multi-agent games.
-
-### 🎮 Supported Environments
-- **Classic Control**: CartPole, Acrobot, LunarLander.
-- **Board Games**: Tic-Tac-Toe, Connect 4.
-- **Card Games**: LeDuc Hold'em.
-- **Custom**: Easy to plug in any Gymnasium-compatible environment.
+- **Imitation Learning**: Behavior cloning and policy imitation.
 
 ---
 
 ## 🛠️ Installation
 
 ### Prerequisites
-- **OS**: macOS (fully supported), Linux, or Windows.
 - **Python**: 3.10 or higher.
 - **Hardware**: CUDA/MPS supported (automatically detected).
 
@@ -62,91 +60,76 @@ Mix and match components via configuration:
 git clone https://github.com/epicgamer17/modular-rl.git
 cd modular-rl
 
-# Install dependencies
+# Install core dependencies
 pip install -r requirements.txt
 
-# Install as editable package
+# Install the framework and custom environments in editable mode
 pip install -e .
+pip install -e custom_gym_envs_pkg/
 ```
 
 ---
 
-## 📖 Usage Examples
+## 📖 Usage Example: MuZero on Tic-Tac-Toe
 
-### Training a Rainbow Agent
+The framework uses a `Trainer` + `Config` paradigm. Below is a minimal example of running a MuZero smoke test:
+
 ```python
-from agents.rainbow_dqn import RainbowDQN
-from agent_configs.rainbow_config import RainbowConfig
-from configs.games.cartpole_config import CartPoleConfig
+import torch
+from agents.trainers.muzero_trainer import MuZeroTrainer
+from configs.agents.muzero import MuZeroConfig
+from configs.games.tictactoe import TicTacToeConfig
 
 # 1. Initialize configurations
-config = RainbowConfig(learning_rate=0.00025, buffer_size=100_000)
-game_config = CartPoleConfig()
+game_config = TicTacToeConfig()
+params = {
+    "training_steps": 1000,
+    "num_simulations": 50,
+    "unroll_steps": 5,
+    "batch_size": 256,
+    "device": "cuda" if torch.cuda.is_available() else "cpu",
+}
+config = MuZeroConfig(config_dict=params, game_config=game_config)
 
 # 2. Setup and train
-agent = RainbowDQN(config, game_config)
-agent.train(total_steps=100_000)
-```
-
-### Running MuZero via Launcher
-For performance-critical tasks, use the `launcher.py` pattern to ensure optimal memory and thread affinity:
-```bash
-python launcher.py run_muzero --env CartPole-v1 --config configs/muzero_default.yaml
+trainer = MuZeroTrainer(
+    config=config,
+    env=game_config.env_factory(),
+    device=torch.device(params["device"])
+)
+trainer.train()
 ```
 
 ---
 
 ## 🧪 Testing
 
-We maintain a rigorous test suite using `pytest`.
+We maintain a rigorous test suite using `pytest` markers for isolation:
 
 ```bash
-# Run all core tests
-pytest tests/
+# Run fast unit tests
+pytest tests/ -m unit
 
-# Run a specific algorithm smoke test
-pytest tests/trainers/test_trainer_muzero_end_to_end_smoke.py
+# Run integration tests (component interactions)
+pytest tests/ -m integration
+
+# Run long training smoke tests
+pytest tests/ -m slow
 ```
-
----
-
-## 🤝 Contributing
-
-We are currently **not accepting external contributions** on this specific branch. This repository serves as a focused research environment. For major suggestions, please open an issue for discussion.
-
----
-
-## 🏗️ Project Structure
-
-```text
-├── agents/             # Optimization (Learners) & Action Selectors
-├── modules/            # Pure PyTorch Compute Graphs (Backbones, Heads)
-├── replay_buffers/     # High-performance Transition Fact Stores
-├── search/             # CPU-bound Imagination (MCTS)
-├── losses/             # Vectorized Loss Pipelines
-├── configs/            # Game and Agent hyperparameters
-└── custom_gym_envs/    # Specialized RL environments
-```
-
----
-
-## 🩺 Support & Community
-
-For bug reports, feature requests, or questions regarding the implementation details, please use the **[GitHub Issue Tracker](https://github.com/epicgamer17/modular-rl/issues)**. 
 
 ---
 
 ## 🎓 Authors & Credits
 
 - **Primary Author**: epicgamer17
-- **Contributors**: Ezra Huang (minor early contributions).
+- **Contributors**: Ezra Huang
 - **Core Resources**: 
     - [Rainbow is all you need](https://github.com/Curt-Park/rainbow-is-all-you-need)
     - [37 Implementation Details of PPO](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/)
-    - See the `papers/` directory for full academic references.
+    - [MuZero: Mastering Atari, Go, Chess and Shogi by Planning with a Learned Model](https://arxiv.org/abs/1911.08265)
 
 ---
 
 ## 📄 License
 
-This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details (or standard MIT terms if file is missing).
+This project is licensed under the **MIT License**.
