@@ -18,7 +18,7 @@ box2d-py==2.3.5
 bravado==11.1.0
 bravado-core==6.1.1
 bs4==0.0.2
--e git+https://github.com/epicgamer17/catanatron.git@6c7e69aa80a72ff38acb7f11aeb140a5aca92b8d#egg=catanatron
+-e git+https://github.com/epicgamer17/catanatron.git@integration#egg=catanatron
 certifi==2025.1.31
 charset-normalizer==3.3.2
 click==8.2.1
