@@ -1,0 +1,115 @@
+import pytest
+import torch
+from agents.learner.functional.losses import (
+    compute_clipped_surrogate_loss,
+    compute_categorical_kl_div,
+    compute_mse_loss
+)
+
+pytestmark = pytest.mark.unit
+
+def test_compute_clipped_surrogate_loss_analytical():
+    """
+    Tier 1: Analytical Oracle Test for PPO Clipped Surrogate Objective.
+    Verifies clipping logic for both positive and negative advantages.
+    """
+    # 1. Setup parameters
+    clip_param = 0.2 # range [0.8, 1.2]
+    ent_coeff = 0.1
+    
+    # log_probs represent current policy, target_log_probs represent old policy
+    # ratio = exp(log_probs - target_log_probs)
+    
+    # Case 1: Advantage > 0, Ratio > 1+eps (Should clip)
+    # log_prob = 0.4, target_log_prob = 0.0 -> ratio = exp(0.4) ~ 1.49 (> 1.2)
+    log_probs_1 = torch.tensor([0.4])
+    target_log_probs_1 = torch.tensor([0.0])
+    adv_1 = torch.tensor([10.0])
+    ent_1 = torch.tensor([1.0])
+    
+    # Expected:
+    # ratio = exp(0.4) = 1.4918246976412703
+    # surr1 = 1.4918246976412703 * 10 = 14.918246976412703
+    # surr2 = 1.2 * 10 = 12.0
+    # min(surr1, surr2) = 12.0
+    # loss = -12.0 - 0.1 * 1.0 = -12.1
+    
+    loss_1 = compute_clipped_surrogate_loss(
+        log_probs_1, target_log_probs_1, adv_1, clip_param, ent_1, ent_coeff
+    )
+    torch.testing.assert_close(loss_1, torch.tensor([-12.1]))
+    
+    # Case 2: Advantage > 0, Ratio < 1-eps (Should NOT clip)
+    # log_prob = -0.4, target_log_prob = 0.0 -> ratio = exp(-0.4) ~ 0.67 (< 0.8)
+    log_probs_2 = torch.tensor([-0.4])
+    target_log_probs_2 = torch.tensor([0.0])
+    adv_2 = torch.tensor([10.0])
+    ent_2 = torch.tensor([1.0])
+    
+    # Expected:
+    # ratio = exp(-0.4) = 0.6703200460356393
+    # surr1 = 6.703200460356393
+    # surr2 = 0.8 * 10 = 8.0
+    # min(surr1, surr2) = 6.703200460356393
+    # loss = -6.703200460356393 - 0.1 = -6.803200460356393
+    
+    loss_2 = compute_clipped_surrogate_loss(
+        log_probs_2, target_log_probs_2, adv_2, clip_param, ent_2, ent_coeff
+    )
+    torch.testing.assert_close(loss_2, torch.tensor([-6.803200460356393]))
+
+    # Case 3: Advantage < 0, Ratio > 1+eps (Should NOT clip)
+    # ratio ~ 1.49, adv = -10.0
+    # surr1 = 1.49 * -10 = -14.9
+    # surr2 = 1.2 * -10 = -12.0
+    # min(-14.9, -12.0) = -14.9 (NOT clipped, we are worsening our performance on a bad action)
+    # loss = -(-14.9) - 0.1 = 14.9 - 0.1 = 14.8
+    
+    loss_3 = compute_clipped_surrogate_loss(
+        log_probs_1, target_log_probs_1, -adv_1, clip_param, ent_1, ent_coeff
+    )
+    # ratio_val = 1.4918246976412703
+    # expected = - (ratio_val * -10.0) - 0.1 = 14.918246976412703 - 0.1 = 14.818246976412703
+    torch.testing.assert_close(loss_3, torch.tensor([14.818246976412703]))
+
+    # Case 4: Advantage < 0, Ratio < 1-eps (Should clip)
+    # ratio ~ 0.67, adv = -10.0
+    # surr1 = 0.67 * -10 = -6.7
+    # surr2 = 0.8 * -10 = -8.0
+    # min(-6.7, -8.0) = -8.0 (CLIPPED to 1-eps)
+    # loss = -(-8.0) - 0.1 = 8.0 - 0.1 = 7.9
+    
+    loss_4 = compute_clipped_surrogate_loss(
+        log_probs_2, target_log_probs_2, -adv_2, clip_param, ent_2, ent_coeff
+    )
+    torch.testing.assert_close(loss_4, torch.tensor([7.9]))
+
+def test_compute_categorical_kl_div():
+    """
+    Verifies KL divergence calculation between logits and target probabilities.
+    """
+    # Pred: [0.5, 0.5] -> logits [0, 0]
+    # Target: [0.9, 0.1]
+    pred_logits = torch.tensor([[0.0, 0.0]])
+    target_probs = torch.tensor([[0.9, 0.1]])
+    
+    # log_p_pred = [-ln(2), -ln(2)] ~ [-0.693, -0.693]
+    # KL = sum(p_target * (ln(p_target) - ln(p_pred)))
+    # KL = 0.9 * (ln(0.9) - (-ln(2))) + 0.1 * (ln(0.1) - (-ln(2)))
+    # KL = 0.9 * (ln(0.9) + ln(2)) + 0.1 * (ln(0.1) + ln(2))
+    # KL = 0.9 * ln(1.8) + 0.1 * ln(0.2)
+    # KL = 0.9 * 0.5877866649 + 0.1 * (-1.6094379124)
+    # KL = 0.5290079984 - 0.1609437912 = 0.3680642072
+    
+    kl = compute_categorical_kl_div(pred_logits, target_probs)
+    torch.testing.assert_close(kl, torch.tensor([0.3680642072]))
+
+def test_compute_mse_loss():
+    """
+    Simple wrapper for MSE test.
+    """
+    pred = torch.tensor([1.0, 2.0])
+    target = torch.tensor([1.5, 1.5])
+    # MSE = (0.5^2 + 0.5^2) = 0.25 + 0.25 = 0.5 (if reduction='none', returns per element [0.25, 0.25])
+    mse = compute_mse_loss(pred, target, reduction='none')
+    torch.testing.assert_close(mse, torch.tensor([0.25, 0.25]))
