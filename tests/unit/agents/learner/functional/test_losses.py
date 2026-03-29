@@ -113,3 +113,52 @@ def test_compute_mse_loss():
     # MSE = (0.5^2 + 0.5^2) = 0.25 + 0.25 = 0.5 (if reduction='none', returns per element [0.25, 0.25])
     mse = compute_mse_loss(pred, target, reduction='none')
     torch.testing.assert_close(mse, torch.tensor([0.25, 0.25]))
+
+def test_compute_ppo_value_loss_analytical():
+    """
+    Tier 1: Analytical Oracle Test for PPO Value Loss Clipping.
+    Verifies that the loss correctly identifies the conservative 'max' 
+    between unclipped and clipped squared errors.
+    """
+    from agents.learner.functional.losses import compute_ppo_value_loss
+    v_old = torch.tensor([1.0])
+    v_target = torch.tensor([2.0])
+    clip_param = 0.1 # range [0.9, 1.1]
+    
+    # Case 1: v_pred is within bounds [0.9, 1.1]
+    # v_pred = 1.05
+    # unclipped = (1.05 - 2.0)^2 = (-0.95)^2 = 0.9025
+    # clipped = 1.0 + 0.05 = 1.05
+    # clipped_err = 0.9025
+    # loss = 0.5 * 0.9025 = 0.45125
+    v_pred_1 = torch.tensor([1.05])
+    loss_1 = compute_ppo_value_loss(v_pred_1, v_old, v_target, clip_param)
+    torch.testing.assert_close(loss_1, torch.tensor([0.45125]))
+    
+    # Case 2: v_pred is out of bounds [0.9, 1.1], moving towards target
+    # v_pred = 1.4
+    # unclipped = (1.4 - 2.0)^2 = 0.36
+    # clipped = 1.1
+    # clipped_err = (1.1 - 2.0)^2 = 0.81
+    # max(0.36, 0.81) = 0.81
+    # loss = 0.5 * 0.81 = 0.405
+    v_pred_2 = torch.tensor([1.4])
+    loss_2 = compute_ppo_value_loss(v_pred_2, v_old, v_target, clip_param)
+    torch.testing.assert_close(loss_2, torch.tensor([0.405]))
+    
+    # Case 3: v_pred is out of bounds, moving AWAY from target
+    # v_pred = 0.5
+    # unclipped = (0.5 - 2.0)^2 = 2.25
+    # clipped = 0.9
+    # clipped_err = (0.9 - 2.0)^2 = 1.21
+    # max(2.25, 1.21) = 2.25
+    # loss = 0.5 * 2.25 = 1.125
+    v_pred_3 = torch.tensor([0.5])
+    loss_3 = compute_ppo_value_loss(v_pred_3, v_old, v_target, clip_param)
+    torch.testing.assert_close(loss_3, torch.tensor([1.125]))
+    
+    # Case 4: No clipping (clip_param = None)
+    # v_pred = 1.4
+    # loss = 0.5 * 0.36 = 0.18
+    loss_4 = compute_ppo_value_loss(v_pred_2, v_old, v_target, None)
+    torch.testing.assert_close(loss_4, torch.tensor([0.18]))
