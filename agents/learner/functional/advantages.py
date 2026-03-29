@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 from typing import Tuple
 from agents.learner.functional.returns import discounted_cumulative_sums
 
@@ -33,3 +34,19 @@ def compute_gae(
     returns = advantages + values
     
     return advantages, returns
+
+
+def normalize_advantages(advantages: torch.Tensor, eps: float = 1e-10) -> torch.Tensor:
+    """
+    Normalizes advantages to have mean 0 and std 1.
+    
+    Args:
+        advantages: [B, ...] tensor
+        eps: constant for numerical stability
+        
+    Returns:
+        normalized_advantages: [B, ...] tensor
+    """
+    mean = advantages.mean()
+    std = advantages.std()
+    return (advantages - mean) / (std + eps)

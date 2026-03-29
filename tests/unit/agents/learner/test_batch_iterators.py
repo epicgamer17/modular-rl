@@ -17,12 +17,18 @@ def test_ppo_epoch_iterator_shuffling_and_minibatch():
     
     # 1. Setup a simple PPO-style buffer
     max_size = 10
-    config = [BufferConfig("observations", shape=(1,), dtype=torch.float32)]
+    config = [
+        BufferConfig("observations", shape=(1,), dtype=torch.float32),
+        BufferConfig("advantages", shape=(1,), dtype=torch.float32)
+    ]
     buffer = ModularReplayBuffer(max_size=max_size, buffer_configs=config, batch_size=max_size)
     
     # 2. Fill the buffer with unique values [0, 1, ..., 9]
     for i in range(max_size):
-        buffer.store(observations=torch.tensor([float(i)]))
+        buffer.store(
+            observations=torch.tensor([float(i)]),
+            advantages=torch.tensor([float(i)])
+        )
     
     assert buffer.size == max_size
     
@@ -97,28 +103,54 @@ def test_ppo_epoch_iterator_uneven_split():
     sorted_values, _ = torch.sort(all_values)
     torch.testing.assert_close(sorted_values, torch.arange(max_size, dtype=torch.float32))
 
-def test_ppo_epoch_iterator_device_moving():
+def test_ppo_epoch_iterator_device_moving_and_norm():
     """
-    Verfies that the iterator correctly moves mini-batches to the target device.
-    (Testing with CPU as default since CI might not have GPU/MPS, but checks the .device attribute).
+    Verfies that the iterator correctly moves mini-batches to the target device
+    and performs advantage normalization.
     """
+    from replay_buffers.processors import AdvantageNormalizer
+    
     device = torch.device("cpu")
     max_size = 4
-    config = [BufferConfig("observations", shape=(1,), dtype=torch.float32)]
-    buffer = ModularReplayBuffer(max_size=max_size, buffer_configs=config, batch_size=max_size)
+    # PPO Batch needs specific keys for AdvantageNormalizer
+    config = [
+        BufferConfig("observations", shape=(1,), dtype=torch.float32),
+        BufferConfig("actions", shape=(), dtype=torch.int64),
+        BufferConfig("advantages", shape=(), dtype=torch.float32),
+        BufferConfig("returns", shape=(), dtype=torch.float32),
+        BufferConfig("log_prob", shape=(), dtype=torch.float32),
+        BufferConfig("legal_moves_masks", shape=(1,), dtype=torch.bool),
+    ]
+    buffer = ModularReplayBuffer(
+        max_size=max_size, 
+        buffer_configs=config, 
+        batch_size=max_size,
+        output_processor=AdvantageNormalizer()
+    )
     
     for i in range(max_size):
-        buffer.store(observations=torch.tensor([float(i)]))
+        buffer.store(
+            observations=torch.tensor([float(i)]),
+            actions=torch.tensor(0),
+            advantages=torch.tensor(float(i) * 10.0), # Non-normalized root data
+            returns=torch.tensor(0.0),
+            log_prob=torch.tensor(0.0),
+            legal_moves_masks=torch.tensor([True])
+        )
         
     iterator = PPOEpochIterator(
         replay_buffer=buffer,
         num_epochs=1,
         num_minibatches=2,
-        device=device
+        device=device,
+        normalize_advantages=True
     )
     
     for batch in iterator:
         assert batch["observations"].device.type == "cpu"
-        # We also check that non-tensors are preserved (if any)
-        # Replay buffer sample for PPO might include 'indices' which are numpy in this framework
-        # but the iterator moves them only if they are tensors.
+        assert batch["advantages"].device.type == "cpu"
+        
+        # Verify Normalization: Mean 0, Std 1 per mini-batch
+        # Note: with size 2 (num_samples 4 / 2 minibatches), std will be 1 exactly.
+        torch.testing.assert_close(batch["advantages"].mean(), torch.tensor(0.0), atol=1e-6, rtol=1e-6)
+        torch.testing.assert_close(batch["advantages"].std(), torch.tensor(1.0), atol=1e-6, rtol=1e-6)

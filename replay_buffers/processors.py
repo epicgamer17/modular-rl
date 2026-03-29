@@ -1174,10 +1174,10 @@ class AdvantageNormalizer(OutputProcessor):
         # In PPO we usually sample the whole filled rollout and then minibatch in the learner.
         sl = slice(None) if indices is None else indices
 
+        from agents.learner.functional.advantages import normalize_advantages
+        
         advantages = buffers["advantages"][sl].to(torch.float32)
-        advantage_mean = advantages.mean()
-        advantage_std = advantages.std()
-        normalized_advantages = (advantages - advantage_mean) / (advantage_std + 1e-10)
+        normalized_advantages = normalize_advantages(advantages)
 
         return dict(
             observations=buffers["observations"][sl],

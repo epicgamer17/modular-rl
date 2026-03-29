@@ -72,11 +72,13 @@ class PPOEpochIterator:
         num_epochs: int,
         num_minibatches: int,
         device: torch.device,
+        normalize_advantages: bool = True,
     ):
         self.replay_buffer = replay_buffer
         self.num_epochs = num_epochs
         self.num_minibatches = num_minibatches
         self.device = device
+        self.normalize_advantages = normalize_advantages
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         batch = self.replay_buffer.sample()
@@ -96,4 +98,10 @@ class PPOEpochIterator:
                     )
                     for k, v in batch.items()
                 }
+                
+                # Advantage Normalization (at the mini-batch level)
+                if self.normalize_advantages and "advantages" in sub_batch:
+                    from agents.learner.functional.advantages import normalize_advantages
+                    sub_batch["advantages"] = normalize_advantages(sub_batch["advantages"])
+                    
                 yield sub_batch
