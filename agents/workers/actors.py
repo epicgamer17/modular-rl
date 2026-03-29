@@ -233,32 +233,55 @@ class RolloutActor(BaseActor):
 
             # 4. Process Transitions and Boundary Logic
             for i in range(self.num_envs):
-                # Build the step dictionary manually for each environment
-                p_id = 0
+                # Capture player info for scores before possibly using next state's info
+                p_id_acting = 0
                 if "player_id" in self.info:
-                    p_ids = self.info["player_id"]
-                    # Player ID is 0-indexed integer
-                    p_id = int(p_ids[i].item() if torch.is_tensor(p_ids) else p_ids[i])
+                    p_ids_acting = self.info["player_id"]
+                    p_id_acting = int(p_ids_acting[i].item() if torch.is_tensor(p_ids_acting) else p_ids_acting[i])
 
-                # Update rolling accumulators for CURRENT PLAYER
-                self.current_scores[i, p_id] += rewards[i].item()
+                self.current_scores[i, p_id_acting] += rewards[i].item()
                 self.current_lengths[i] += 1
 
+                # Determine next state's player ID
+                p_id_next = 0
+                if "player_id" in infos:
+                    p_ids_next = infos["player_id"]
+                    p_id_next = int(p_ids_next[i].item() if torch.is_tensor(p_ids_next) else p_ids_next[i])
+
+                # Build step dictionary. Default to next_obs, but check for terminal data.
+                obs_history_val = next_obs[i].cpu().numpy()
+                player_id_val = p_id_next
+                
+                is_done = bool(terminals[i].item() or truncations[i].item())
+                if is_done and "terminal_observation" in infos:
+                    # Use preserved terminal observation instead of reset observation
+                    obs_history_val = infos["terminal_observation"]
+                    if isinstance(obs_history_val, torch.Tensor):
+                        obs_history_val = obs_history_val[i].cpu().numpy()
+                    elif isinstance(obs_history_val, list):
+                        obs_history_val = obs_history_val[i]
+                    
+                    # Use preserved terminal info for player_id
+                    if "terminal_info" in infos:
+                        t_info = infos["terminal_info"]
+                        if "player_id" in t_info:
+                            p_t_ids = t_info["player_id"]
+                            player_id_val = int(p_t_ids[i].item() if torch.is_tensor(p_t_ids) else p_t_ids[i])
+
                 step_dict = {
-                    "observation": next_obs[i].cpu().numpy(),
+                    "observation": obs_history_val,
                     "action": actions[i].item(),
                     "reward": rewards[i].item(),
                     "terminated": terminals[i].item(),
                     "truncated": truncations[i].item(),
-                    "player_id": p_id,
+                    "player_id": player_id_val,
                 }
 
                 # Optional metadata
                 if result.value is not None:
                     step_dict["value"] = result.value[i].item()
                 
-                # MuZero Specific: Prioritize target_policies (visit counts) for the buffer
-                # search_policy_source provides this in 'extras'
+                # Search target policies
                 target_p = result.extras.get("target_policies")
                 if target_p is not None:
                     step_dict["policy"] = target_p[i].cpu().numpy()
@@ -278,7 +301,8 @@ class RolloutActor(BaseActor):
                 # Store in SequenceManager
                 self.seq_manager.append(i, step_dict)
 
-                if terminals[i].item() or truncations[i].item():
+                if is_done:
+                    # Flush the completed episode
                     completed_seq = self.seq_manager.flush(i)
                     self.buffer.store_aggregate(completed_seq)
 
@@ -298,28 +322,19 @@ class RolloutActor(BaseActor):
                         self.completed_scores.pop(0)
                         self.completed_lengths.pop(0)
 
-                    # Seed the START of the new episode (hidden in next_obs for auto-resetting envs)
-                    new_p_id = 0
-                    if "player_id" in infos:
-                        next_p_ids = infos["player_id"]
-                        new_p_id = (
-                            next_p_ids[i].item()
-                            if torch.is_tensor(next_p_ids)
-                            else next_p_ids[i]
-                        )
-
+                    # Seed the NEW episode with the reset observation (already in next_obs)
                     self.seq_manager.append(
                         i,
                         {
                             "observation": next_obs[i].cpu().numpy(),
                             "terminated": False,
                             "truncated": False,
-                            "player_id": new_p_id,
+                            "player_id": p_id_next, 
                         },
                     )
 
-            self.obs = next_obs
-            self.info = infos
+            # Update global state for next step
+            self.obs, self.info = next_obs, infos
 
             # Record metrics
             batch_steps = self.num_envs

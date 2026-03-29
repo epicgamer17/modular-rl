@@ -84,6 +84,10 @@ class GymAdapter(BaseAdapter):
         
         # Auto-reset logic: if episode ends, reset and return fresh obs for next step
         if terminated or truncated:
+            # Preserve terminal state for MuZero/Sequence processing
+            info["terminal_observation"] = obs
+            info["terminal_info"] = self._process_info(info)
+
             new_obs, reset_info = self.env.reset()
             if reset_info:
                 info.update(reset_info)
@@ -276,6 +280,10 @@ class PettingZooAdapter(BaseAdapter):
             # Auto-reset for AEC: if episode is over, reset and get fresh root state
             # In AEC, we usually reset when agent_selection is None or via flags
             if term or trunc:
+                # Capture terminal data BEFORE reset
+                info["terminal_observation"] = obs
+                info["terminal_info"] = self._process_info_aec(info)
+
                 self.env.reset()
                 new_obs, _, _, _, reset_info = self.env.last()
                 obs = new_obs

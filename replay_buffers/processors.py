@@ -1020,12 +1020,13 @@ class NStepUnrollProcessor(OutputProcessor):
             > 0
         )
 
-        # Obs/Value Mask: Valid states (including terminal states), consistent with game ID and episode boundary
-        obs_mask = same_game & (~post_done_mask)
+        # Obs/Value Mask: Valid states (including terminal states), consistent with game ID.
+        # We allow post-terminal steps for regression targets (EfficientZero)
+        # constrained only by game ID boundaries.
+        obs_mask = same_game
 
-        # Dynamics/Policy Mask: Valid transitions (excluding terminal states)
-        # We cannot predict next state or policy FROM a terminal state
-        dynamics_mask = obs_mask & (~raw_dones)
+        # Dynamics/Policy Mask: Valid transitions (excluding terminal states and post-terminal)
+        dynamics_mask = same_game & (~post_done_mask) & (~raw_dones)
 
         # 5. Compute N-Step Targets
         target_values, target_rewards = self._compute_n_step_targets(
@@ -1068,10 +1069,15 @@ class NStepUnrollProcessor(OutputProcessor):
             target_policies[is_consistent, u] = raw_p[is_consistent]
             # No fallback; let it be zero if raw is zero to surface errors
 
-            # To_play targets follow general consistency
+            # To_play targets follow a specific contract:
+            # - Masked at root (u=0)
+            # - Masked post-terminal (post_done_mask)
+            # - Included at terminal
+            is_consistent_tp = (u > 0) & (~post_done_mask[:, u]) & same_game[:, u]
+
             tp_indices = torch.clamp(raw_to_plays[:, u].long(), 0, self.num_players - 1)
             target_to_plays[range(batch_size), u, tp_indices] = 1.0
-            target_to_plays[~is_consistent, u] = 0
+            target_to_plays[~is_consistent_tp, u] = 0
 
             target_dones[is_consistent, u] = raw_dones[is_consistent, u]
             target_dones[~is_consistent, u] = True
@@ -1085,6 +1091,12 @@ class NStepUnrollProcessor(OutputProcessor):
                 target_actions[~is_consistent, u] = int(
                     np.random.randint(0, self.num_actions)
                 )
+
+        # Contract: Initial state (root) should always have a terminal flag of False
+        # to correctly signal state/mask resets in recurrent unrolls.
+        assert not target_dones[
+            :, 0
+        ].all(), "Initial state (root) should always have a terminal flag of False"
 
         # 7. Unroll Observations
         obs_indices = all_indices[:, : self.unroll_steps + 1]
