@@ -251,3 +251,43 @@ def test_discounted_value_prefix():
         [[0.0, 1.0, 2.0, 3.0]], dtype=torch.float32, device=device
     )
     torch.testing.assert_close(target_rewards, expected_rewards)
+
+
+def test_terminal_state_invariant():
+    """
+    Tier 1 Unit Test: Terminal State Invariant
+    - pass a mock batch where done=True at the current step.
+    - assert the bootstrapped target value z_t for that specific index 
+      equals exactly 0.0 (or terminal reward logic).
+    """
+    from agents.learner.functional.returns import compute_unrolled_n_step_targets
+
+    B, L = 1, 10
+    device = torch.device("cpu")
+
+    raw_rewards = torch.ones((B, L), device=device)
+    raw_values = torch.ones((B, L), device=device) * 0.5
+    raw_to_plays = torch.zeros((B, L), dtype=torch.long, device=device)
+    raw_terminated = torch.zeros((B, L), dtype=torch.bool, device=device)
+    
+    # Set done = True at the exact current step (t=0) and also t=2
+    raw_terminated[0, 0] = True
+    raw_terminated[0, 2] = True
+    
+    valid_mask = torch.ones((B, L), dtype=torch.bool, device=device)
+
+    target_values, _ = compute_unrolled_n_step_targets(
+        raw_rewards=raw_rewards,
+        raw_values=raw_values,
+        raw_to_plays=raw_to_plays,
+        raw_terminated=raw_terminated,
+        valid_mask=valid_mask,
+        gamma=0.9,
+        unroll_steps=3,
+        n_step=3,
+    )
+
+    # z_t (value target) at t=0 must be exactly 0.0 because state t=0 is a terminal state.
+    assert target_values[0, 0].item() == 0.0, f"Expected 0.0 for terminal step 0, got {target_values[0, 0].item()}"
+    # z_t at t=2 must be exactly 0.0 because state t=2 is a terminal state.
+    assert target_values[0, 2].item() == 0.0, f"Expected 0.0 for terminal step 2, got {target_values[0, 2].item()}"

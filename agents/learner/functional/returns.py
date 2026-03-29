@@ -115,8 +115,8 @@ def compute_unrolled_n_step_targets(
         boot_is_valid, boot_term, torch.tensor(0.0, device=device)
     )
     
-    # Grounding: Past game end = 0.0
-    target_values = target_values * valid_mask[:, :num_windows].float()
+    # Grounding: Past game end = 0.0, and terminal states themselves have 0 future value
+    target_values = target_values * valid_mask[:, :num_windows].float() * (~raw_terminated[:, :num_windows]).float()
 
     # 4. Compute Reward Targets (Instant or Prefix)
     target_rewards = torch.zeros(
