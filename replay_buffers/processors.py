@@ -894,11 +894,9 @@ class GAEProcessor(InputProcessor):
         rewards = np.array(sequence.rewards, dtype=np.float32)
         values = np.array(sequence.value_history, dtype=np.float32)
 
-        # 3. Append the bootstrap value to the value array
-        values_appended = np.append(values, last_val)
-
         # 4. Calculate GAE and Returns using pure math from functional/advantages.py
         from agents.learner.functional.advantages import compute_gae
+
 
         advantages, returns = compute_gae(
             rewards=rewards,
