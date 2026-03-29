@@ -291,3 +291,51 @@ def test_terminal_state_invariant():
     assert target_values[0, 0].item() == 0.0, f"Expected 0.0 for terminal step 0, got {target_values[0, 0].item()}"
     # z_t at t=2 must be exactly 0.0 because state t=2 is a terminal state.
     assert target_values[0, 2].item() == 0.0, f"Expected 0.0 for terminal step 2, got {target_values[0, 2].item()}"
+
+def test_n_step_bootstrapping():
+    """
+    Tier 1 Unit Test: Explicit n-step bootstrapping precision math.
+    - Hardcode a 3-step reward sequence and a network value prediction.
+    - Manually calculate the discounted n-step return (gamma = 0.997).
+    - Assert the PyTorch implementation matches the exact float.
+    """
+    from agents.learner.functional.returns import compute_unrolled_n_step_targets
+
+    B, L = 1, 4
+    device = torch.device("cpu")
+    gamma = 0.997
+
+    # 3-step reward sequence from t=0 to t=3: r(S0->1), r(S1->2), r(S2->3), and then bootstrap V(S_3)
+    # So the sequence of raw_rewards aligned to the states is [1.5, -0.5, 2.0, 0.0]
+    # And V(S_3) = 1.2 at index 3.
+    raw_rewards = torch.tensor([[1.5, -0.5, 2.0, 0.0]], device=device)
+    
+    # We just need raw_values[0, 3] = 1.2
+    raw_values = torch.tensor([[0.0, 0.0, 0.0, 1.2]], device=device)
+    
+    raw_to_plays = torch.zeros((B, L), dtype=torch.long, device=device)
+    raw_terminated = torch.zeros((B, L), dtype=torch.bool, device=device)
+    valid_mask = torch.ones((B, L), dtype=torch.bool, device=device)
+
+    # Math expectation for n_step=3, target starting from t=0:
+    # G_0 = r(0->1) + gamma * r(1->2) + gamma^2 * r(2->3) + gamma^3 * V(S_3)
+    # G_0 = 1.5 + (0.997) * (-0.5) + (0.997^2) * 2.0 + (0.997^3) * 1.2
+    # G_0 = 1.5 - 0.4985 + 1.988018 + 1.18924076
+    # G_0 = 4.17875876
+    expected_g0 = 4.17875876
+
+    target_values, _ = compute_unrolled_n_step_targets(
+        raw_rewards=raw_rewards,
+        raw_values=raw_values,
+        raw_to_plays=raw_to_plays,
+        raw_terminated=raw_terminated,
+        valid_mask=valid_mask,
+        gamma=gamma,
+        unroll_steps=1,  # just look at root target
+        n_step=3,
+    )
+
+    import math
+    print(f"Target is: {target_values[0, 0].item()}")
+    # Use torch's assert close for float32 tolerance effectively
+    torch.testing.assert_close(target_values[0, 0], torch.tensor(expected_g0, dtype=torch.float32), atol=1e-5, rtol=1e-5)
