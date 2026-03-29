@@ -102,17 +102,29 @@ class ClippedSurrogateLoss(BaseLoss):
         ), f"ClippedSurrogateLoss ratio vs advantages: {ratio.shape} vs {advantages.shape}"
         from agents.learner.functional.losses import compute_clipped_surrogate_loss
 
+        entropy = dist.entropy()
         loss = compute_clipped_surrogate_loss(
             log_prob,
             target_log_prob,
             advantages,
             self.clip_param,
-            dist.entropy(),
+            entropy,
             self.entropy_coefficient,
         )
 
         # 3. Stats for full sequence
         with torch.no_grad():
-            approx_kl = (target_log_prob - log_prob).mean()
+            log_ratio = log_prob - target_log_prob
+            ratio = torch.exp(log_ratio)
+            
+            # PPO robust approx_kl: ((ratio - 1) - log_ratio).mean()
+            approx_kl = ((ratio - 1.0) - log_ratio).mean()
+            
+            # Clip fraction: Fraction of batch where ratio is outside [1-eps, 1+eps]
+            clipfrac = (torch.abs(ratio - 1.0) > self.clip_param).float().mean()
 
-        return loss, {"approx_kl": approx_kl.item()}
+        return loss, {
+            "approxkl": approx_kl.item(),
+            "clipfrac": clipfrac.item(),
+            "entropy_loss": entropy.mean().item(),
+        }

@@ -25,6 +25,7 @@ def build_ppo_loss_pipeline(config, agent_network, device):
                 clip_param=config.clip_param,
                 entropy_coefficient=config.entropy_coefficient,
                 optimizer_name="policy",
+                name="policy_loss",
             ),
             ClippedValueLoss(
                 device=device,
@@ -33,6 +34,7 @@ def build_ppo_loss_pipeline(config, agent_network, device):
                 target_key="returns",
                 optimizer_name="value",
                 loss_factor=config.critic_coefficient,
+                name="value_loss",
             ),
         ]
     )
