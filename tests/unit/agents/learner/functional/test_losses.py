@@ -162,3 +162,45 @@ def test_compute_ppo_value_loss_analytical():
     # loss = 0.5 * 0.36 = 0.18
     loss_4 = compute_ppo_value_loss(v_pred_2, v_old, v_target, None)
     torch.testing.assert_close(loss_4, torch.tensor([0.18]))
+
+def test_compute_entropy_bonus_analytical():
+    """
+    Tier 1: Analytical Oracle Test for PPO Entropy Bonus.
+    Verifies that the entropy bonus is correctly subtracted from the loss,
+    acting as a maximization term (bonus) to encourage exploration.
+    """
+    clip_param = 0.2
+    
+    # We fix the surrogate loss part so we can easily isolate the entropy
+    log_probs = torch.tensor([0.0])
+    target_log_probs = torch.tensor([0.0]) # ratio = 1.0
+    adv = torch.tensor([10.0])
+    
+    # Surrogate without entropy:
+    # ratio = 1.0, surr1 = 1.0 * 10 = 10， surr2 = 1.0 * 10 = 10
+    # min = 10, loss_base = -10.0
+    
+    # Case 1: Zero entropy
+    ent_1 = torch.tensor([0.0])
+    ent_coeff = 0.1
+    # Expected: -10.0 - 0.1 * 0.0 = -10.0
+    loss_1 = compute_clipped_surrogate_loss(
+        log_probs, target_log_probs, adv, clip_param, ent_1, ent_coeff
+    )
+    torch.testing.assert_close(loss_1, torch.tensor([-10.0]))
+    
+    # Case 2: Positive entropy (should decrease loss = higher bonus)
+    ent_2 = torch.tensor([2.0])
+    # Expected: -10.0 - 0.1 * 2.0 = -10.2
+    loss_2 = compute_clipped_surrogate_loss(
+        log_probs, target_log_probs, adv, clip_param, ent_2, ent_coeff
+    )
+    torch.testing.assert_close(loss_2, torch.tensor([-10.2]))
+    
+    # Case 3: Larger entropy coefficient
+    ent_coeff_large = 0.5
+    # Expected: -10.0 - 0.5 * 2.0 = -11.0
+    loss_3 = compute_clipped_surrogate_loss(
+        log_probs, target_log_probs, adv, clip_param, ent_2, ent_coeff_large
+    )
+    torch.testing.assert_close(loss_3, torch.tensor([-11.0]))
