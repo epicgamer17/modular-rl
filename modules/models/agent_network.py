@@ -44,15 +44,19 @@ class AgentNetwork(nn.Module):
 
         # 1. Representation Phase (The Encoder)
         if representation_fn is not None:
-            self.components["representation"] = representation_fn(input_shape=input_shape)
-            current_head_input_shape = self.components["representation"].output_shape
+            self.components["representation"] = representation_fn(
+                input_shape=input_shape
+            )
+            # Safe shape extraction
+            self.latent_dim = getattr(
+                self.components["representation"], "output_shape", input_shape
+            )
         else:
             ident = nn.Identity()
-            ident.output_shape = input_shape
             self.components["representation"] = ident
-            current_head_input_shape = input_shape
+            self.latent_dim = input_shape
 
-        self.latent_dim = current_head_input_shape
+        current_head_input_shape = self.latent_dim
 
         # 2. Environment Phase (The Physics Engine)
         if world_model_fn is not None:
@@ -63,18 +67,13 @@ class AgentNetwork(nn.Module):
             )
 
         # 3. Behavior Phase: Temporal Memory (Backbones)
-        if (
-            memory_core_fn is not None
-            and "world_model" not in self.components
-        ):
+        if memory_core_fn is not None and "world_model" not in self.components:
             backbone = memory_core_fn(input_shape=current_head_input_shape)
-            if isinstance(backbone, (RecurrentBackbone, TransformerBackbone)):
-                self.components["memory_core"] = backbone
-                current_head_input_shape = backbone.output_shape
-            else:
-                raise ValueError(
-                    "memory_core should be an RNN/Transformer. For spatial embedding, use representation_backbone."
-                )
+            self.components["memory_core"] = backbone
+            # Use output_shape if available, else assume it's passthrough/identity
+            current_head_input_shape = getattr(
+                backbone, "output_shape", current_head_input_shape
+            )
 
         # 3. Behavior Phase: Behavioral Heads (Policy, Value, Q, etc.)
         if head_fns:
@@ -93,9 +92,15 @@ class AgentNetwork(nn.Module):
         self.register_buffer("_device_indicator", torch.empty(0))
 
     def initialize(
-        self, kernel_initializer: Optional[Union[str, Callable[..., Any]]] = None
+        self,
+        kernel_initializer: Optional[Union[str, Callable[..., Any]]] = None,
+        gain: float = 1.0,
     ) -> None:
         """Unified initialization via component-owned strategies."""
+        # 0. Prevent double initialization if called via recursive apply
+        if getattr(self, "_is_initialized", False):
+            return
+
         # 1. Custom Initializers (Hone-in on components that own their math)
         for m in self.modules():
             if hasattr(m, "init_weights") and callable(m.init_weights):
@@ -114,11 +119,11 @@ class AgentNetwork(nn.Module):
 
             name = str(initializer).lower()
             if name == "orthogonal":
-                nn.init.orthogonal_(m.weight, gain=1.0)
+                nn.init.orthogonal_(m.weight, gain=gain)
             elif name == "xavier_uniform":
-                nn.init.xavier_uniform_(m.weight)
+                nn.init.xavier_uniform_(m.weight, gain=gain)
             elif name == "xavier_normal":
-                nn.init.xavier_normal_(m.weight)
+                nn.init.xavier_normal_(m.weight, gain=gain)
             elif name == "kaiming_uniform":
                 nn.init.kaiming_uniform_(m.weight, nonlinearity="relu")
             elif name == "kaiming_normal":
@@ -140,6 +145,7 @@ class AgentNetwork(nn.Module):
                     m._is_initialized = True
 
         self.apply(fallback_init)
+        self._is_initialized = True
 
     @property
     def device(self) -> torch.device:

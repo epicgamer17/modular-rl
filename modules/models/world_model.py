@@ -22,7 +22,7 @@ class DeterministicDynamics(nn.Module):
             num_actions, action_embedding_dim, latent_dimensions
         )
         self.dynamics = dynamics_fn(input_shape=latent_dimensions)
-        self.output_shape = self.dynamics.output_shape
+        self.output_shape = getattr(self.dynamics, "output_shape", latent_dimensions)
 
     def forward(
         self, current_latent: Tensor, action: Tensor, **kwargs
@@ -63,7 +63,7 @@ class StochasticDynamics(nn.Module):
             self.num_chance, action_embedding_dim, latent_dimensions
         )
         self.dynamics = dynamics_fn(input_shape=latent_dimensions)
-        self.output_shape = self.dynamics.output_shape
+        self.output_shape = getattr(self.dynamics, "output_shape", latent_dimensions)
 
         # 3. Chance Prediction
         self.sigma_head = sigma_head_fn(
