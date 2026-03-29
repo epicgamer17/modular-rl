@@ -333,3 +333,71 @@ def test_gradient_accumulation_correctness():
     # Sum is (L1/2 + L2/2) = (L1 + L2)/2. YES!
     assert torch.allclose(net1.fc_v.weight, net2.fc_v.weight, atol=1e-5), "Weight update mismatch with gradient accumulation"
     assert torch.allclose(net1.fc_p.weight, net2.fc_p.weight, atol=1e-5), "Weight update mismatch with gradient accumulation"
+
+def test_global_gradient_clipping():
+    """
+    Tier 1: Global Gradient Clipping test.
+    Verifies that providing a small `clipnorm` or `max_grad_norm` actively restricts 
+    the parameter updates compared to an unclipped optimization step.
+    """
+    torch.manual_seed(42)
+    device = torch.device("cpu")
+    obs_dim = 8
+    num_actions = 4
+    
+    # Setup two identical networks
+    net_unclipped = SimpleNetwork(obs_dim, num_actions)
+    net_clipped = SimpleNetwork(obs_dim, num_actions)
+    net_clipped.load_state_dict(net_unclipped.state_dict())
+    
+    initial_v_weight = net_unclipped.fc_v.weight.detach().clone()
+    
+    # Unclipped Learner
+    v_loss = ValueLoss(device=device, representation=ScalarRepresentation())
+    config = MockConfig(num_actions=num_actions, minibatch_size=2, unroll_steps=2)
+    pipeline1 = LossPipeline(config=config, modules=[v_loss])
+    
+    # We use a large learning rate so the unclipped step is massive 
+    # and the clipped step is significantly restrained.
+    learner_unclipped = UniversalLearner(
+        agent_network=net_unclipped, 
+        device=device, 
+        num_actions=num_actions,
+        observation_dimensions=(obs_dim,), 
+        observation_dtype=torch.float32,
+        target_builder=MockTargetBuilder(), 
+        loss_pipeline=pipeline1,
+        optimizer=torch.optim.SGD(net_unclipped.parameters(), lr=10.0),
+        validator_params={"minibatch_size": 2, "unroll_steps": 2}
+    )
+
+    # Clipped Learner
+    pipeline2 = LossPipeline(config=config, modules=[v_loss])
+    # clipnorm is extremely small to forcefully trigger aggressive clipping
+    learner_clipped = UniversalLearner(
+        agent_network=net_clipped, 
+        device=device, 
+        num_actions=num_actions,
+        observation_dimensions=(obs_dim,), 
+        observation_dtype=torch.float32,
+        target_builder=MockTargetBuilder(), 
+        loss_pipeline=pipeline2,
+        optimizer=torch.optim.SGD(net_clipped.parameters(), lr=10.0),
+        clipnorm=0.001,
+        validator_params={"minibatch_size": 2, "unroll_steps": 2}
+    )
+
+    batch = {"observations": torch.randn(2, 3, obs_dim), "weights": torch.ones(2), "metrics": {}}
+
+    list(learner_unclipped.step([batch]))
+    list(learner_clipped.step([batch]))
+
+    # Calculate L2 norm of the update vectors
+    unclipped_update_norm = torch.linalg.norm(net_unclipped.fc_v.weight - initial_v_weight)
+    clipped_update_norm = torch.linalg.norm(net_clipped.fc_v.weight - initial_v_weight)
+
+    # The update norm of the clipped network MUST be strictly smaller than the unclipped one
+    assert clipped_update_norm < unclipped_update_norm, (
+        f"Gradient clipping failed! "
+        f"Clipped update norm: {clipped_update_norm}, Unclipped update norm: {unclipped_update_norm}"
+    )
