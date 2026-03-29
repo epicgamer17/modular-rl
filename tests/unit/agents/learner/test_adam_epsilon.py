@@ -95,9 +95,7 @@ def test_ppo_adam_epsilon_config():
     device = torch.device("cpu")
     
     components = build_ppo(config, net, device)
-    
-    assert components["optimizers"]["policy"].param_groups[0]["eps"] == 1e-5
-    assert components["optimizers"]["value"].param_groups[0]["eps"] == 1e-5
+    assert components["optimizers"]["default"].param_groups[0]["eps"] == 1e-5
 
 def test_rainbow_adam_epsilon_config():
     """Verify that Rainbow registry respects adam_epsilon configuration."""

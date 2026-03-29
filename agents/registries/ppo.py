@@ -24,7 +24,7 @@ def build_ppo_loss_pipeline(config, agent_network, device):
                 representation=pol_rep,
                 clip_param=config.clip_param,
                 entropy_coefficient=config.entropy_coefficient,
-                optimizer_name="policy",
+                optimizer_name="default",
                 name="policy_loss",
             ),
             ClippedValueLoss(
@@ -32,7 +32,7 @@ def build_ppo_loss_pipeline(config, agent_network, device):
                 representation=val_rep,
                 clip_param=config.clip_param,
                 target_key="returns",
-                optimizer_name="value",
+                optimizer_name="default",
                 loss_factor=config.critic_coefficient,
                 name="value_loss",
             ),
@@ -70,17 +70,13 @@ def build_ppo(config: Any, agent_network: Any, device: torch.device) -> Dict[str
         else:
             return opt_cls(params, lr=config.learning_rate)
 
-    optimizers["policy"] = create_opt(
-        agent_network.components["behavior_heads"]["policy_logits"].parameters(),
-        getattr(config, "actor", config),
-    )
-    optimizers["value"] = create_opt(
-        agent_network.components["behavior_heads"]["state_value"].parameters(),
-        getattr(config, "critic", config),
+    # Standard PPO trains the entire network (backbone + heads) together
+    optimizers["default"] = create_opt(
+        agent_network.parameters(),
+        config,
     )
 
-    lr_schedulers["policy"] = get_lr_scheduler(optimizers["policy"], config)
-    lr_schedulers["value"] = get_lr_scheduler(optimizers["value"], config)
+    lr_schedulers["default"] = get_lr_scheduler(optimizers["default"], config)
 
     # 3. Callbacks
     callbacks = []
