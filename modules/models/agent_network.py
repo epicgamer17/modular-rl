@@ -91,10 +91,11 @@ class AgentNetwork(nn.Module):
 
         self.register_buffer("_device_indicator", torch.empty(0))
 
+    import math
     def initialize(
         self,
         kernel_initializer: Optional[Union[str, Callable[..., Any]]] = None,
-        gain: float = 1.0,
+        gain: float = 1.4142135623730951, # math.sqrt(2)
     ) -> None:
         """Unified initialization via component-owned strategies."""
         # 0. Prevent double initialization if called via recursive apply

@@ -106,13 +106,12 @@ def test_ppo_epoch_iterator_uneven_split():
 def test_ppo_epoch_iterator_device_moving_and_norm():
     """
     Verfies that the iterator correctly moves mini-batches to the target device
-    and performs advantage normalization.
+    and performs advantage normalization strictly at the mini-batch level.
     """
-    from replay_buffers.processors import AdvantageNormalizer
+    from replay_buffers.processors import PPOBatchProcessor
     
     device = torch.device("cpu")
     max_size = 4
-    # PPO Batch needs specific keys for AdvantageNormalizer
     config = [
         BufferConfig("observations", shape=(1,), dtype=torch.float32),
         BufferConfig("actions", shape=(), dtype=torch.int64),
@@ -125,7 +124,7 @@ def test_ppo_epoch_iterator_device_moving_and_norm():
         max_size=max_size, 
         buffer_configs=config, 
         batch_size=max_size,
-        output_processor=AdvantageNormalizer()
+        output_processor=PPOBatchProcessor()
     )
     
     for i in range(max_size):
@@ -146,6 +145,11 @@ def test_ppo_epoch_iterator_device_moving_and_norm():
         normalize_advantages=True
     )
     
+    # 1. Assert that the raw sampled batch from the buffer is NOT normalized
+    raw_batch = buffer.sample()
+    assert raw_batch["advantages"].mean().item() != 0.0, "Advantages were incorrectly normalized at the whole-batch level by the PPOBatchProcessor."
+    
+    # 2. Iterate and confirm that the mini-batches ARE normalized
     for batch in iterator:
         assert batch["observations"].device.type == "cpu"
         assert batch["advantages"].device.type == "cpu"

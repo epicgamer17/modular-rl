@@ -897,7 +897,6 @@ class GAEProcessor(InputProcessor):
         # 4. Calculate GAE and Returns using pure math from functional/advantages.py
         from agents.learner.functional.advantages import compute_gae
 
-
         advantages, returns = compute_gae(
             rewards=rewards,
             values=values,
@@ -1063,19 +1062,16 @@ class NStepUnrollProcessor(OutputProcessor):
 
         for u in range(self.unroll_steps + 1):
             is_consistent = dynamics_mask[:, u]
-            
-            # Defensive: even if 'consistent' by same_game/done logic, if the policy is missing (all zeros), 
+
+            # Defensive: even if 'consistent' by same_game/done logic, if the policy is missing (all zeros),
             raw_p = raw_policies[:, u]
             target_policies[is_consistent, u] = raw_p[is_consistent]
             # No fallback; let it be zero if raw is zero to surface errors
-
-
 
             # To_play targets follow general consistency
             tp_indices = torch.clamp(raw_to_plays[:, u].long(), 0, self.num_players - 1)
             target_to_plays[range(batch_size), u, tp_indices] = 1.0
             target_to_plays[~is_consistent, u] = 0
-
 
             target_dones[is_consistent, u] = raw_dones[is_consistent, u]
             target_dones[~is_consistent, u] = True
@@ -1163,9 +1159,11 @@ class NStepUnrollProcessor(OutputProcessor):
         )
 
 
-class AdvantageNormalizer(OutputProcessor):
+# TODO: shoud we remove this?
+class PPOBatchProcessor(OutputProcessor):
     """
-    Normalizes advantages and formats batches for policy gradient methods.
+    Formats batches for policy gradient methods.
+    Does NOT normalize advantages (handled at the mini-batch iterator level).
     """
 
     def process_batch(
@@ -1174,15 +1172,10 @@ class AdvantageNormalizer(OutputProcessor):
         # In PPO we usually sample the whole filled rollout and then minibatch in the learner.
         sl = slice(None) if indices is None else indices
 
-        from agents.learner.functional.advantages import normalize_advantages
-        
-        advantages = buffers["advantages"][sl].to(torch.float32)
-        normalized_advantages = normalize_advantages(advantages)
-
         return dict(
             observations=buffers["observations"][sl],
             actions=buffers["actions"][sl],
-            advantages=normalized_advantages,
+            advantages=buffers["advantages"][sl],
             returns=buffers["returns"][sl],
             log_prob=buffers["log_prob"][sl],
             legal_moves_masks=buffers["legal_moves_masks"][sl],

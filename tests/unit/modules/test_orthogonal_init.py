@@ -32,8 +32,10 @@ def is_orthogonal(tensor: torch.Tensor, gain: float = 1.0, tol: float = 1e-5) ->
         
     return torch.allclose(product, expected, atol=tol)
 
+import math
+
 def test_orthogonal_initialization_defaults():
-    """Verify that AgentNetwork uses orthogonal initialization by default with gain=1.0."""
+    """Verify that AgentNetwork uses orthogonal initialization by default with gain=math.sqrt(2)."""
     torch.manual_seed(42)
     
     # Create simple components
@@ -53,11 +55,11 @@ def test_orthogonal_initialization_defaults():
         head_fns={"policy": lambda **kwargs: PolicyHead(representation=rep, **kwargs)}
     )
     
-    # Defaults to orthogonal with gain=1.0 for the backbone
+    # Defaults to orthogonal with gain=math.sqrt(2) for the backbone
     net.initialize()
     
     backbone_layer = next(m for m in net.components["memory_core"].modules() if isinstance(m, nn.Linear))
-    assert is_orthogonal(backbone_layer.weight, gain=1.0), "Backbone should have gain 1.0 by default"
+    assert is_orthogonal(backbone_layer.weight, gain=math.sqrt(2)), "Backbone should have gain sqrt(2) by default"
     
     policy_head = net.components["behavior_heads"]["policy"]
     assert is_orthogonal(policy_head.output_layer.weight, gain=0.01), "Policy output should have gain 0.01 (component-owned)"
