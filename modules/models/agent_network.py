@@ -139,11 +139,15 @@ class AgentNetwork(nn.Module):
         # 2. Global Fallback for generic layers not initialized by components.
         def fallback_init(m):
             if isinstance(m, (nn.Conv2d, nn.Linear, nn.ConvTranspose2d)):
-                if not getattr(m, "_is_initialized", False):
+                is_init = getattr(m, "_is_initialized", False)
+                if not is_init:
+                    # print(f"DEBUG_AGP_INIT: Initializing {m} with gain {gain}")
                     apply_initializer(m)
                     if m.bias is not None:
                         nn.init.constant_(m.bias, 0.0)
                     m._is_initialized = True
+                # else:
+                #     print(f"DEBUG_AGP_INIT: Skipped {m} (Already initialized)")
 
         self.apply(fallback_init)
         self._is_initialized = True
