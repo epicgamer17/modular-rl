@@ -479,15 +479,34 @@ def get_lr_scheduler(
     """
     Returns a learning rate scheduler based on the configuration.
     """
-    scheduler_type = getattr(config, "lr_scheduler", None)
+    # Unify on 'lr_schedule' as requested by the user
+    schedule = getattr(config, "lr_schedule", None)
+
+    # Determine scheduler type (string or from ScheduleConfig object)
+    if schedule is not None and hasattr(schedule, "type"):
+        scheduler_type = schedule.type
+    else:
+        scheduler_type = schedule
+
     if scheduler_type is None or scheduler_type == "constant":
         return torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0, total_iters=0)
 
     if scheduler_type == "linear":
-        # Note: In our framework, we often use training_steps as total_iters
+        # Total iterations usually comes from training_steps
         total_iters = getattr(config, "training_steps", 1000)
+
+        # Support decay to a final factor (default to 0.1 for backward compatibility)
+        # If using ScheduleConfig, derive the factor from initial/final values
+        end_factor = 0.1
+        if schedule is not None and hasattr(schedule, "final") and hasattr(schedule, "initial"):
+            if schedule.initial is not None and schedule.initial != 0 and schedule.final is not None:
+                end_factor = schedule.final / schedule.initial
+        else:
+            # Fallback to direct config attribute if available
+            end_factor = getattr(config, "lr_final_factor", 0.1)
+
         return torch.optim.lr_scheduler.LinearLR(
-            optimizer, start_factor=1.0, end_factor=0.1, total_iters=total_iters
+            optimizer, start_factor=1.0, end_factor=end_factor, total_iters=total_iters
         )
     elif scheduler_type == "step":
         return torch.optim.lr_scheduler.StepLR(
