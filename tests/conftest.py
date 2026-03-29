@@ -1,3 +1,4 @@
+import gymnasium
 import copy
 import pytest
 import torch
