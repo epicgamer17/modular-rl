@@ -24,7 +24,6 @@ ffmpeg
 *.pdf
 *.egg-info/
 .pytest_cache/
-*.ipynb
 .coverage
 .hypothesis/*
 .hypothesis

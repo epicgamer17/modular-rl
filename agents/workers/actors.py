@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple, Type
 
 from modules.models.agent_network import AgentNetwork
-from agents.action_selectors.policy_sources import BasePolicySource
+from agents.action_selectors.policy_sources import BasePolicySource, SearchPolicySource, NetworkPolicySource
 from agents.environments.adapters import BaseAdapter
 from agents.workers.state_management import SequenceManager
 from replay_buffers.modular_buffer import ModularReplayBuffer
@@ -497,47 +497,45 @@ class EvaluatorActor(BaseActor):
     @torch.inference_mode()
     def evaluate(self, num_episodes: int, **kwargs) -> Dict[str, Any]:
         """
-        Performs Matrix Evaluation: Students plays round-robin tournament
-        as each player position against each opponent in the test_agents roster.
+        Standardized Evaluation Driver.
+        Supports Gym (1P), Self-Play (MP), and Matrix (Vs Agent) evaluation.
         """
-        results = {}
-        all_avg_scores = []
-        total_lengths = []
-        
-        # Determine if we have opponents. If not, just evaluate student alone.
+        # Determine Mode
         opponents = self.test_agents if self.test_agents else [None]
+        is_multiplayer = self.num_players > 1
+        is_vs_agents = self.test_agents is not None
+        
+        results = {}
+        all_student_scores = []
+        all_episode_lengths = []
+        
+        # Track per-position scores for VS AGENT mode
+        # pos_scores[agent_name][position] = list of total rewards
+        pos_scores: Dict[str, Dict[int, List[float]]] = {}
         
         for opponent in opponents:
-            opp_name = opponent.name if opponent else "self"
-            opp_scores = []
-            player_scores = {p: [] for p in range(self.num_players)}
+            opp_name = opponent.name if hasattr(opponent, 'name') else "self"
+            pos_scores[opp_name] = {p: [] for p in range(self.num_players)}
             
-            # Rounds: Student takes each position
+            # Matrix Evaluation: Student takes every position against this opponent
+            # For 1P (Gym), student_pos is always 0.
             for student_pos in range(self.num_players):
                 for _ in range(num_episodes):
                     obs, info = self.adapter.reset()
                     episode_length = 0
-                    student_total_reward = 0.0
+                    student_ep_reward = 0.0
                     done = False
                     trunc = False
                     
                     while not (done or trunc):
-                        # 1. Identify current player from adapter info
-                        current_player_idx = info.get("player_id")
-                        if current_player_idx is not None:
-                            # Standardized player_id is a tensor [1] or scalar
-                            if torch.is_tensor(current_player_idx):
-                                current_player_idx = int(current_player_idx.item())
-                            else:
-                                current_player_idx = int(current_player_idx)
-                        else:
-                            current_player_idx = 0
-                            
-                        # 2. Assign policy source (Student or Expert)
-                        if current_player_idx == student_pos:
-                            # Student uses search toggle
+                        # 1. Identify current player
+                        curr_p = info.get("player_id", 0)
+                        if torch.is_tensor(curr_p):
+                            curr_p = int(curr_p.item())
+                        
+                        # 2. Select strategy
+                        if curr_p == student_pos:
                             use_search = kwargs.get("use_search", True)
-                            from agents.action_selectors.policy_sources import SearchPolicySource
                             if use_search and isinstance(self.policy_source, SearchPolicySource):
                                 result = self.policy_source.get_inference(
                                     obs, info, agent_network=self.agent_network, exploration=False
@@ -546,58 +544,78 @@ class EvaluatorActor(BaseActor):
                                 output = self.agent_network.obs_inference(obs)
                                 result = InferenceResult.from_inference_output(output)
                         else:
-                            # Expert/Opponent
-                            if opponent is not None:
-                                output = opponent.obs_inference(obs, info=info, adapter=self.adapter)
-                                result = InferenceResult.from_inference_output(output)
+                            # Opponent (Mock or other Agent)
+                            # Fallback if opponent is None but we are in MP (Self-Play)
+                            acting_agent = opponent if opponent is not None else self.agent_network
+                            if hasattr(acting_agent, "obs_inference"):
+                                out_opp = acting_agent.obs_inference(obs, info=info)
+                                result = InferenceResult.from_inference_output(out_opp)
                             else:
-                                # Fallback if playing against self/None
-                                output = self.agent_network.obs_inference(obs)
-                                result = InferenceResult.from_inference_output(output)
+                                # Standard nn.Module fallback
+                                out_opp = acting_agent(obs)
+                                result = InferenceResult.from_inference_output(out_opp)
 
-                        # 3. Select action
-                        from agents.action_selectors.types import InferenceResult
-                        if not isinstance(result, InferenceResult):
-                             result = InferenceResult.from_inference_output(result)
-
+                        # 3. Take Action
                         actions, _ = self.action_selector.select_action(
                             result, info, exploration=False
                         )
                         
-                        # 4. Step environment
-                        obs, rewards, dones, truncs, info = self.adapter.step(actions)
+                        # 4. Environment Step
+                        obs, rewards, terminals, truncations, info = self.adapter.step(actions)
                         
-                        # Accumulate reward for the student position from ALL sources
-                        # PettingZooAdapter.step now provides 'all_rewards' in info
+                        # 5. Reward Extraction
                         all_rewards = info.get("all_rewards")
                         if all_rewards is not None:
-                            if isinstance(all_rewards, dict):
+                            # Standard MP Interface
+                            if isinstance(all_rewards, (list, tuple, np.ndarray, torch.Tensor)):
+                                student_ep_reward += float(all_rewards[student_pos])
+                            elif isinstance(all_rewards, dict):
                                 agent_id = self.adapter.agents[student_pos]
-                                student_total_reward += all_rewards.get(agent_id, 0.0)
-                            elif torch.is_tensor(all_rewards):
-                                # Parallel batched info
-                                student_total_reward += all_rewards[student_pos].item()
+                                student_ep_reward += float(all_rewards.get(agent_id, 0.0))
                         else:
-                            # Fallback for Gym: rewards is a scalar for the only player
-                            student_total_reward += rewards.item()
-
-                        # In AEC, episode ends when done=True for any agent in some envs, 
-                        # or specifically for the current agent.
-                        done = bool(dones.any().item())
-                        trunc = bool(truncs.any().item())
+                            # Gym Fallback: rewards is assumed to be student reward
+                            student_ep_reward += float(rewards.item())
+                            
+                        done = bool(terminals.any().item())
+                        trunc = bool(truncations.any().item())
                         episode_length += 1
+                        
+                    pos_scores[opp_name][student_pos].append(student_ep_reward)
+                    all_student_scores.append(student_ep_reward)
+                    all_episode_lengths.append(episode_length)
 
-                    opp_scores.append(student_total_reward)
-                    player_scores[student_pos].append(student_total_reward)
-                    total_lengths.append(episode_length)
+        # AGGREGATION PHASE
+        if not is_multiplayer:
+            # 1P Mode: Min, Max, Mean
+            results["mean_score"] = float(np.mean(all_student_scores))
+            results["min_score"] = float(np.min(all_student_scores))
+            results["max_score"] = float(np.max(all_student_scores))
+        elif not is_vs_agents:
+            # Self-Play Mode: Mean across episodes (Player 1 focus usually)
+            # Actually, calculate mean for p0 as student
+            self_play_scores = pos_scores["self"][0]
+            results["mean_score"] = float(np.mean(self_play_scores))
+        else:
+            # Vs Agents Mode: Per agent details + Global position scores
+            total_per_pos = {p: [] for p in range(self.num_players)}
+            
+            for opp_name, scores_dict in pos_scores.items():
+                opp_all = []
+                for p, s_list in scores_dict.items():
+                    opp_all.extend(s_list)
+                    total_per_pos[p].extend(s_list)
+                
+                results[f"vs_{opp_name}_score"] = {
+                    "mean": float(np.mean(opp_all)),
+                    **{f"p{p+1}": float(np.mean(s_list)) for p, s_list in scores_dict.items()}
+                }
+            
+            # Global per-position summaries
+            for p in range(self.num_players):
+                results[f"p{p+1}_score"] = float(np.mean(total_per_pos[p]))
+            results["mean_score"] = float(np.mean(all_student_scores))
 
-            # Aggregate for this opponent
-            results[f"vs_{opp_name}_score"] = {
-                "avg": float(np.mean(opp_scores)),
-                **{f"p{p}": float(np.mean(player_scores[p])) for p in range(self.num_players)}
-            }
-            all_avg_scores.append(np.mean(opp_scores))
-
-        results["score"] = float(np.mean(all_avg_scores)) if all_avg_scores else 0.0
-        results["avg_length"] = float(np.mean(total_lengths)) if total_lengths else 0.0
+        results["avg_length"] = float(np.mean(all_episode_lengths))
+        results["episodes_completed"] = len(all_episode_lengths)
+        
         return results

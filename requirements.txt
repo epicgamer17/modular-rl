@@ -122,7 +122,7 @@ packaging==26.0
 pandas==2.2.2
 parso==0.8.4
 peft==0.17.0
-pettingzoo==1.25.0
+pettingzoo==1.24.1
 pexpect==4.9.0
 pillow==10.3.0
 platformdirs==4.2.2
