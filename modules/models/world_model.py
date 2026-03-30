@@ -282,10 +282,26 @@ class WorldModel(nn.Module):
         return WorldModelOutput(
             features=next_hidden_state,
             reward=predictions["reward_logits"],
-            to_play_logits=predictions["to_play_logits"] if "to_play_logits" in self.heads else None,
-            to_play=predictions["to_play_logits_extra"] if "to_play_logits" in self.heads else None,
-            continuation_logits=predictions["continuation_logits"] if "continuation_logits" in self.heads else None,
-            continuation=predictions["continuation_logits_extra"] if "continuation_logits" in self.heads else None,
+            to_play_logits=(
+                predictions["to_play_logits"]
+                if "to_play_logits" in self.heads
+                else None
+            ),
+            to_play=(
+                predictions["to_play_logits_extra"]
+                if "to_play_logits" in self.heads
+                else None
+            ),
+            continuation_logits=(
+                predictions["continuation_logits"]
+                if "continuation_logits" in self.heads
+                else None
+            ),
+            continuation=(
+                predictions["continuation_logits_extra"]
+                if "continuation_logits" in self.heads
+                else None
+            ),
             next_state=new_state,
             instant_reward=predictions["reward_logits_extra"],
         )
