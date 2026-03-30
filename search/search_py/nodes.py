@@ -173,11 +173,10 @@ class ChanceNode:
         else:
             term = 0.0
 
-        # Anchor to the raw network value (v̂_π). Fall back only when
-        # network_value has not been set (should not happen at the root).
-        v_net = self.network_value if self.network_value is not None else self.value()
-
-        v_mix = (v_net + term) / (1.0 + sum_N)
+        # NOTE: Old MuZero parity testing only. Restore the legacy v_mix anchor
+        # so bootstrapping tracks the running search value rather than the raw
+        # network value.
+        v_mix = (self.value() + term) / (1.0 + sum_N)
         self._v_mix = v_mix
         return v_mix
 
@@ -375,11 +374,10 @@ class DecisionNode:
         else:
             term = 0.0
 
-        # Anchor to the raw network value (v̂_π). Fall back only when
-        # network_value has not been set (e.g. internal non-root nodes).
-        v_net = self.network_value if self.network_value is not None else self.value()
-
-        v_mix = (v_net + term) / (1.0 + sum_N)
+        # NOTE: Old MuZero parity testing only. Restore the legacy v_mix anchor
+        # so bootstrapping tracks the running search value rather than the raw
+        # network value.
+        v_mix = (self.value() + term) / (1.0 + sum_N)
         self._v_mix = v_mix
         assert v_mix is not None, "v_mix must not be None"
         return v_mix
@@ -409,15 +407,10 @@ class DecisionNode:
 
         q_vis = self.child_values[visited_mask]
 
-        # Use the pure network policy for weighting (Paper Eq. 33).
-        # Fall back to child_priors only when network_policy is unavailable
-        # (e.g. internal nodes expanded without a stored network_policy).
-        base_priors = (
-            self.network_policy
-            if self.network_policy is not None
-            else self.child_priors
-        )
-        p_vis = base_priors[visited_mask]
+        # NOTE: Old MuZero parity testing only. Restore the legacy weighting
+        # contract that uses the live search priors rather than the clean
+        # network policy.
+        p_vis = self.child_priors[visited_mask]
 
         p_vis_sum = p_vis.sum()
         expected_q_vis = (p_vis * q_vis).sum()

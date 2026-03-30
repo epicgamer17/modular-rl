@@ -258,8 +258,9 @@ class ModularSearch:
             policy, legal_moves, selection_count, trajectory_action
         )
 
+        # NOTE: Old MuZero parity testing only. The legacy search only seeded the
+        # root visit count here and did not preload the root value accumulator.
         root.visits += 1
-        root.value_sum += v_pi_scalar
 
         # 7. Expand Root
         root.expand(
@@ -494,8 +495,9 @@ class ModularSearch:
             )
 
             root = roots[b]
+            # NOTE: Old MuZero parity testing only. Match the legacy root init
+            # path and avoid preloading the root value accumulator.
             root.visits += 1
-            root.value_sum += v_pi_scalar
             root.expand(
                 allowed_actions=selected_actions,
                 to_play=batched_to_play[b],

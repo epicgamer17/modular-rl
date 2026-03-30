@@ -17,10 +17,14 @@ class DeterministicDynamics(nn.Module):
         dynamics_fn: Callable[[Tuple[int, ...]], nn.Module],
         action_encoder: ActionEncoder,
         use_bn: bool = False,
+        fusion_use_bias: bool | None = None,
     ):
         super().__init__()
         self.dynamics_fusion = ActionFusion(
-            action_encoder, latent_dimensions, use_bn=use_bn
+            action_encoder,
+            latent_dimensions,
+            use_bn=use_bn,
+            use_bias=fusion_use_bias,
         )
         self.dynamics = dynamics_fn(input_shape=latent_dimensions)
         self.output_shape = getattr(self.dynamics, "output_shape", latent_dimensions)
@@ -52,6 +56,7 @@ class StochasticDynamics(nn.Module):
         chance_encoder: ActionEncoder,
         use_true_chance_codes: bool = False,
         use_bn: bool = False,
+        fusion_use_bias: bool | None = None,
     ):
         super().__init__()
         self.num_chance = num_chance
@@ -59,13 +64,19 @@ class StochasticDynamics(nn.Module):
 
         # 1. Afterstate Phase
         self.afterstate_fusion = ActionFusion(
-            action_encoder, latent_dimensions, use_bn=use_bn
+            action_encoder,
+            latent_dimensions,
+            use_bn=use_bn,
+            use_bias=fusion_use_bias,
         )
         self.afterstate_dynamics = afterstate_dynamics_fn(input_shape=latent_dimensions)
 
         # 2. Dynamics Phase
         self.dynamics_fusion = ActionFusion(
-            chance_encoder, latent_dimensions, use_bn=use_bn
+            chance_encoder,
+            latent_dimensions,
+            use_bn=use_bn,
+            use_bias=fusion_use_bias,
         )
         self.dynamics = dynamics_fn(input_shape=latent_dimensions)
         self.output_shape = getattr(self.dynamics, "output_shape", latent_dimensions)
@@ -172,6 +183,8 @@ class WorldModel(nn.Module):
         is_spatial: Optional[bool] = None,
         action_encoder: Optional[ActionEncoder] = None,
         use_bn: bool = False,
+        single_action_plane: bool = False,
+        fusion_use_bias: bool | None = None,
         **kwargs,
     ):
         super().__init__()
@@ -186,6 +199,7 @@ class WorldModel(nn.Module):
                 is_discrete=is_discrete,
                 action_embedding_dim=action_embedding_dim,
                 is_spatial=is_spatial,
+                single_action_plane=single_action_plane,
             )
 
         # 1. Dynamics Strategy
@@ -210,6 +224,7 @@ class WorldModel(nn.Module):
                 chance_encoder=chance_encoder,
                 use_true_chance_codes=use_true_chance_codes,
                 use_bn=use_bn,
+                fusion_use_bias=fusion_use_bias,
             )
         else:
             self.dynamics_pipeline = DeterministicDynamics(
@@ -217,6 +232,7 @@ class WorldModel(nn.Module):
                 dynamics_fn=dynamics_fn,
                 action_encoder=action_encoder,
                 use_bn=use_bn,
+                fusion_use_bias=fusion_use_bias,
             )
 
         # 2. Environment Heads

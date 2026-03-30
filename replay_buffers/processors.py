@@ -1020,10 +1020,9 @@ class NStepUnrollProcessor(OutputProcessor):
             > 0
         )
 
-        # Obs/Value Mask: Valid states (including terminal states), consistent with game ID.
-        # We allow post-terminal steps for regression targets (EfficientZero)
-        # constrained only by game ID boundaries.
-        obs_mask = same_game
+        # NOTE: Old MuZero parity testing only. Restrict obs/value targets to the
+        # old contract that excluded post-terminal steps.
+        obs_mask = same_game & (~post_done_mask)
 
         # Dynamics/Policy Mask: Valid transitions (excluding terminal states and post-terminal)
         dynamics_mask = same_game & (~post_done_mask) & (~raw_dones)
@@ -1064,20 +1063,18 @@ class NStepUnrollProcessor(OutputProcessor):
         for u in range(self.unroll_steps + 1):
             is_consistent = dynamics_mask[:, u]
 
-            # Defensive: even if 'consistent' by same_game/done logic, if the policy is missing (all zeros),
             raw_p = raw_policies[:, u]
             target_policies[is_consistent, u] = raw_p[is_consistent]
-            # No fallback; let it be zero if raw is zero to surface errors
-
-            # To_play targets follow a specific contract:
-            # - Masked at root (u=0)
-            # - Masked post-terminal (post_done_mask)
-            # - Included at terminal
-            is_consistent_tp = (u > 0) & (~post_done_mask[:, u]) & same_game[:, u]
+            # NOTE: Old MuZero parity testing only. Restore the legacy fallback so
+            # invalid policy rows do not become all-zero training targets.
+            target_policies[~is_consistent, u] = 1.0 / self.num_actions
 
             tp_indices = torch.clamp(raw_to_plays[:, u].long(), 0, self.num_players - 1)
             target_to_plays[range(batch_size), u, tp_indices] = 1.0
-            target_to_plays[~is_consistent_tp, u] = 0
+
+            # NOTE: Old MuZero parity testing only. Restore the legacy masking
+            # contract that drops terminal/post-terminal to-play targets.
+            target_to_plays[~is_consistent, u] = 0
 
             target_dones[is_consistent, u] = raw_dones[is_consistent, u]
             target_dones[~is_consistent, u] = True

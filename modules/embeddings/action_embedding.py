@@ -72,6 +72,7 @@ def get_action_encoder(
     is_discrete: bool = True,
     action_embedding_dim: int = 16,
     is_spatial: Optional[bool] = None,
+    single_action_plane: bool = False,
 ) -> ActionEncoder:
     """
     Factory to select and construct the correct ActionEncoder.
@@ -104,6 +105,16 @@ def get_action_encoder(
     # 2. Construction
     if use_spatial:
         h, w = latent_dimensions[1], latent_dimensions[2]
+        if single_action_plane:
+            module = SpatialActionEmbedding(
+                num_actions,
+                h,
+                w,
+                embedding_dim=action_embedding_dim,
+                single_action_plane=True,
+            )
+            return ActionEncoder(module, embedding_dim=action_embedding_dim)
+
         module = SpatialActionEmbedding(num_actions, h, w)
         # Spatial embedding always produces 1 channel, so dim=1
         return ActionEncoder(module, embedding_dim=1)

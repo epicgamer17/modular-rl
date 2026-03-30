@@ -11,11 +11,17 @@ class ActionFusion(nn.Module):
     """Embeds an action and fuses it into a latent state."""
 
     def __init__(
-        self, encoder: ActionEncoder, input_shape: Tuple[int, ...], use_bn: bool = False
+        self,
+        encoder: ActionEncoder,
+        input_shape: Tuple[int, ...],
+        use_bn: bool = False,
+        use_bias: bool | None = None,
     ):
         super().__init__()
         self.encoder = encoder
         embedding_dim = encoder.embedding_dim
+        if use_bias is None:
+            use_bias = not use_bn
 
         # If image (C, H, W), use Conv. If vector (D,), use Linear.
         if len(input_shape) == 3:
@@ -25,13 +31,13 @@ class ActionFusion(nn.Module):
                 input_shape[0],
                 3,
                 padding=1,
-                bias=not use_bn,
+                bias=use_bias,
             )
             self.bn = nn.BatchNorm2d(input_shape[0]) if use_bn else nn.Identity()
         else:
             # Vector: input_shape[0] is dimension
             self.fusion = nn.Linear(
-                input_shape[0] + embedding_dim, input_shape[0], bias=not use_bn
+                input_shape[0] + embedding_dim, input_shape[0], bias=use_bias
             )
             self.bn = nn.BatchNorm1d(input_shape[0]) if use_bn else nn.Identity()
 

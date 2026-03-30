@@ -349,6 +349,8 @@ class SequenceMaskBuilder(BaseTargetBuilder):
         base_mask = batch.get(
             "is_same_game", torch.ones((B, T), device=device, dtype=torch.bool)
         )
+        obs_mask = batch.get("has_valid_obs_mask")
+        action_mask = batch.get("has_valid_action_mask")
         # raw_dones[t] is True if s_t is terminal
         raw_dones = batch.get("dones", torch.zeros((B, T), device=device, dtype=torch.bool))
         
@@ -362,12 +364,18 @@ class SequenceMaskBuilder(BaseTargetBuilder):
             > 0
         )
 
-        # Values are valid everywhere within the same game (including terminal and post-terminal)
-        current_targets["value_mask"] = base_mask.clone()
-        current_targets["masks"] = base_mask.clone()
-        
+        # NOTE: Old MuZero parity testing only. Prefer the replay-processor
+        # observation mask when available so post-terminal states stay masked out.
+        value_mask = obs_mask.bool() if obs_mask is not None else base_mask.clone()
+        current_targets["value_mask"] = value_mask
+        current_targets["masks"] = value_mask.clone()
+
         # Policy is masked on terminal states and after (no actions to take)
-        current_targets["policy_mask"] = base_mask & (~post_done_mask) & (~raw_dones)
+        current_targets["policy_mask"] = (
+            action_mask.bool()
+            if action_mask is not None
+            else (base_mask & (~post_done_mask) & (~raw_dones))
+        )
 
         # Rewards are predicted everywhere except the root (t=0). 
         # This includes terminal transition (r_k) and and transitions after terminal (r > k).
@@ -375,9 +383,9 @@ class SequenceMaskBuilder(BaseTargetBuilder):
         reward_mask[:, 0] = False
         current_targets["reward_mask"] = reward_mask
 
-        # To-Play is state-aligned; includes terminal state but masks root AND post-terminal
-        # Post-terminal states do not have a defined next player.
-        to_play_mask = base_mask & (~post_done_mask)
+        # NOTE: Old MuZero parity testing only. Match the legacy replay contract
+        # where to_play targets were only valid on dynamics-consistent steps.
+        to_play_mask = base_mask & (~post_done_mask) & (~raw_dones)
         to_play_mask[:, 0] = False
         current_targets["to_play_mask"] = to_play_mask
         
