@@ -28,11 +28,17 @@ tests/
 │   ├── test_local_executor.py              #   ↳ Fast 2-epoch local loop
 │   └── test_torch_mp_executor.py           #   ↳ Fast 2-epoch multiprocessing loop
 │
-└── regression/                             # Tier 4: Organized by algorithm/paper
-    ├── ppo/                                #   ↳ Verifies PPO's 37 implementation details
-    └── muzero/                             #   ↳ Verifies MuZero can solve tic-tac-toe
-🚥 The 4-Tier Testing Pipeline
-To maintain high developer velocity while ensuring mathematical rigor, tests are divided into four tiers based on execution time and determinism:
+├── regression/                             # Tier 4: Organized by algorithm/paper
+│   ├── ppo/                                #   ↳ Verifies PPO's 37 implementation details
+│   └── muzero/                             #   ↳ Verifies MuZero can solve tic-tac-toe
+│
+└── performance/                            # Tier 5: Throughput and Efficiency
+    ├── micro/                              # Isolated component speed (e.g., Replay Buffer inserts)
+    ├── sub_systems/                        # Interaction speed (e.g., MCTS + Neural Net)
+    └── scaling/                            # Concurrency (e.g., Ray workers, multi-threading)
+
+🚥 The 5-Tier Testing Pipeline
+To maintain high developer velocity while ensuring mathematical rigor, tests are divided into five tiers based on execution time and determinism:
 
 Tier 1: Unit (Core Math & Logic)
 Scope: Isolated functions (Segment trees, GAE, MuZero MinMax stats, tensor shapes).
@@ -68,6 +74,27 @@ While pure math unit tests ensure the agent learns efficiently, **Contract Tests
 
 In RL, modules act like microservices. Contract tests verify the strict formatting agreements between these modules (tensors, padding conventions, structural invariants) without validating the underlying math. These live inside `tests/unit/` (often named `test_[module]_contracts.py`) and execute in Tier 1.
 
+The 3 Tiers of Efficiency Tests
+To get the insights you are looking for, break your benchmarks down into these three categories:
+
+Micro-Benchmarks (The Isolated Baseline):
+
+Goal: How fast is pure MCTS without the neural network? How fast is the replay buffer?
+
+Implementation: Mock the neural network inference step to return a random tensor instantly. Run 10,000 MCTS simulations and measure pure CPU traversal/expansion speed.
+
+Sub-system Benchmarks (The Interaction):
+
+Goal: How does batched neural network inference affect MCTS throughput?
+
+Implementation: Combine the actual MCTS logic with the actual PyTorch model. Benchmark unbatched inference vs. batched inference.
+
+Scaling Benchmarks (The Distributed Reality):
+
+Goal: Does adding Ray workers actually increase Frames Per Second (FPS), or does IPC (Inter-Process Communication) overhead ruin it?
+
+Implementation: Spin up a dummy environment. Measure the FPS with 1 worker. Spin up 4 workers. Assert that the 4-worker FPS is at least > 2.5x the 1-worker FPS (accounting for overhead).
+
 ### The 4 Core RL Contracts
 
 When adding or modifying components, ensure the following contracts are explicitly tested:
@@ -100,6 +127,17 @@ Explicit Tensor Shapes: A massive portion of PyTorch bugs stem from accidental b
 The "Gradient Flow" Check: When testing complex pipelines, compute a dummy loss, call .backward(), and explicitly assert that .grad is not None for active networks, and is None for frozen/target networks.
 
 Mock the Environment: Unit tests should never instantiate an actual Gym or Pufferlib environment. Pass synthetic PyTorch tensors (torch.randn(...)) to represent observations. Isolate agent logic from environment logic.
+
+⚡ The 4 Rules of Performance Testing
+Performance tests live in tests/performance/. Unlike unit tests, they do not test if the math is right; they test how fast it executes. To prevent flaky CI pipelines, adhere to these rules:
+
+The Warm-Up Rule: Code execution speed changes drastically after the first run due to PyTorch memory caching, CPU cache warming, and JIT compilation (e.g., torch.compile). Always run a "dummy" loop 10 times before starting the benchmark timer.
+
+Relative over Absolute Assertions: CI runners have highly variable CPU speeds. Never assert throughput > 1000 iter/sec. Instead, assert relative algorithmic improvements: assert batched_throughput > unbatched_throughput * 1.5 or assert worker_pool_4x.fps > worker_pool_1x.fps * 2.0.
+
+Strict Isolation for Compute: When testing MCTS tree-search speed, completely mock the PyTorch network inference. When testing PyTorch inference throughput, mock the MCTS tree. You must know exactly which component is bottlenecking.
+
+Track, Don't Fail: Use tools like pytest-benchmark. Configure the pipeline to generate a JSON report of the speeds rather than failing the build. Track these over time to easily spot commits that introduce silent regressions in throughput.
 
 🚀 Getting Started
 Run the fast unit tests locally before pushing:
