@@ -99,7 +99,42 @@ class SearchPolicySource(BasePolicySource):
         ), "info must contain 'player' in all entries, or pass to_play as a kwarg"
 
         start_time = time.time()
-        res = self.search.run_vectorized(obs, info, agent_network)
+        # 0. Check batch size
+        B = (
+            obs.shape[0] if torch.is_tensor(obs) else len(obs)
+        )
+        if B == 1:
+            # Squeeze observation for search.run (expects no batch dimension)
+            # The User says: "policy source modifies the shape correctly for the single .run"
+            single_obs = obs[0]
+            
+            # Standardize info to a single dict for .run
+            # Search expects info["player"] to exist.
+            if isinstance(info, list):
+                single_info = info[0]
+            elif isinstance(info, dict) and "player" not in info:
+                # AO style dict-of-tensors: extract first element
+                single_info = {
+                    k: (v[0] if hasattr(v, "__getitem__") and len(v) == B else v)
+                    for k, v in info.items()
+                }
+            else:
+                single_info = info
+
+            # .run returns a flatter result, wrap it into lists
+            root_v, expl_p, target_p, best_a, sm = self.search.run(
+                single_obs, single_info, agent_network, exploration=exploration
+            )
+            res = (
+                [root_v],
+                [expl_p],
+                [target_p],
+                [best_a],
+                [sm],
+            )
+        else:
+            res = self.search.run_vectorized(obs, info, agent_network, exploration=exploration)
+
         (
             root_values,
             exploratory_policies,
@@ -107,6 +142,7 @@ class SearchPolicySource(BasePolicySource):
             best_actions,
             sm_list,
         ) = res
+
 
         search_duration = time.time() - start_time
 
