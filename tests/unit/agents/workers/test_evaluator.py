@@ -120,12 +120,12 @@ def test_gym_evaluator_metrics():
     results = evaluator.evaluate(num_episodes=3)
 
     # Verify keys
-    assert "mean_score" in results
+    assert "score" in results
     assert "min_score" in results
     assert "max_score" in results
 
     # Since all episodes were 10 steps of 1.0 reward
-    assert results["mean_score"] == 10.0
+    assert results["score"] == 10.0
     assert results["min_score"] == 10.0
     assert results["max_score"] == 10.0
 
@@ -157,9 +157,11 @@ def test_self_play_evaluator_metrics():
 
     results = evaluator.evaluate(num_episodes=2)
 
-    # Key should be mean_score (for p1)
-    assert "mean_score" in results
-    assert results["mean_score"] == 2.0
+    # Key should be score (for p0)
+    assert "score" in results
+    assert results["score"]["avg"] == 2.0
+    assert results["score"]["p0"] == 2.0
+    assert results["score"]["p1"] == 2.0
 
 
 def test_vs_agent_evaluator_metrics():
@@ -193,17 +195,15 @@ def test_vs_agent_evaluator_metrics():
 
     results = evaluator.evaluate(num_episodes=1)
 
-    # Structure: vs_random_score: {p1: 1.0, p2: 1.0, mean: 1.0}
-    # And top level: p1_score, p2_score, mean_score
+    # Structure: vs_random_score: {p0: 1.0, p1: 1.0, avg: 1.0}
+    # And top level: score: {avg: 1.0, p0: 1.0, p1: 1.0}
 
     assert "vs_random_score" in results
+    assert results["vs_random_score"]["p0"] == 1.0
     assert results["vs_random_score"]["p1"] == 1.0
-    assert results["vs_random_score"]["p2"] == 1.0
+    assert results["vs_random_score"]["avg"] == 1.0
 
-    assert "p1_score" in results
-    assert "p2_score" in results
-    assert "mean_score" in results
-
-    assert results["p1_score"] == 1.0
-    assert results["p2_score"] == 1.0
-    assert results["mean_score"] == 1.0
+    assert "score" in results
+    assert results["score"]["p0"] == 1.0
+    assert results["score"]["p1"] == 1.0
+    assert results["score"]["avg"] == 1.0
