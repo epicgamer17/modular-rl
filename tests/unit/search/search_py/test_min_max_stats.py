@@ -32,3 +32,13 @@ def test_min_max_stats_strict_known_bounds():
     # Updating within bounds should not shift the normalization
     stats.update(0.0)
     assert stats.normalize(0.5) == 0.75
+
+def test_min_max_stats_known_bounds_apply_on_first_call():
+    """CONTRACT: Known bounds must affect the very first normalize call."""
+    stats = MinMaxStats(known_bounds=[-1.0, 1.0])
+
+    # The first normalize call should use the configured range immediately,
+    # not the uninitialized fallback path.
+    assert stats.normalize(-1.0) == 0.0
+    assert stats.normalize(0.0) == pytest.approx(0.5)
+    assert stats.normalize(1.0) == 1.0
