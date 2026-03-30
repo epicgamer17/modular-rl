@@ -181,7 +181,3 @@ def test_rollout_actor_collection_real_tictactoe():
         # (Recursive check or just trust the probabilistic nature of the test)
 
     print("RolloutActor Sampling Contract Verified!")
-
-
-if __name__ == "__main__":
-    test_rollout_actor_collection_real_tictactoe()

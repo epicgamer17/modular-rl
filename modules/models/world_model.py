@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from modules.embeddings.action_fusion import ActionFusion
+from modules.embeddings.action_embedding import ActionEncoder, get_action_encoder
 from modules.utils import scale_gradient, _normalize_hidden_state
 from modules.models.inference_output import WorldModelOutput
 
@@ -13,13 +14,13 @@ class DeterministicDynamics(nn.Module):
     def __init__(
         self,
         latent_dimensions: Tuple[int, ...],
-        num_actions: int,
         dynamics_fn: Callable[[Tuple[int, ...]], nn.Module],
-        action_embedding_dim: int,
+        action_encoder: ActionEncoder,
+        use_bn: bool = False,
     ):
         super().__init__()
         self.dynamics_fusion = ActionFusion(
-            num_actions, action_embedding_dim, latent_dimensions
+            action_encoder, latent_dimensions, use_bn=use_bn
         )
         self.dynamics = dynamics_fn(input_shape=latent_dimensions)
         self.output_shape = getattr(self.dynamics, "output_shape", latent_dimensions)
@@ -41,30 +42,30 @@ class StochasticDynamics(nn.Module):
     def __init__(
         self,
         latent_dimensions: Tuple[int, ...],
-        num_actions: int,
         num_chance: int,
         observation_shape: Tuple[int, ...],
         dynamics_fn: Callable[[Tuple[int, ...]], nn.Module],
         afterstate_dynamics_fn: Callable[[Tuple[int, ...]], nn.Module],
         sigma_head_fn: Callable[..., nn.Module],
         encoder_fn: Callable[[Tuple[int, ...]], nn.Module],
-        action_embedding_dim: int,
+        action_encoder: ActionEncoder,
+        chance_encoder: ActionEncoder,
         use_true_chance_codes: bool = False,
+        use_bn: bool = False,
     ):
         super().__init__()
-        self.num_actions = num_actions
         self.num_chance = num_chance
         self.use_true_chance_codes = use_true_chance_codes
 
         # 1. Afterstate Phase
         self.afterstate_fusion = ActionFusion(
-            num_actions, action_embedding_dim, latent_dimensions
+            action_encoder, latent_dimensions, use_bn=use_bn
         )
         self.afterstate_dynamics = afterstate_dynamics_fn(input_shape=latent_dimensions)
 
         # 2. Dynamics Phase
         self.dynamics_fusion = ActionFusion(
-            self.num_chance, action_embedding_dim, latent_dimensions
+            chance_encoder, latent_dimensions, use_bn=use_bn
         )
         self.dynamics = dynamics_fn(input_shape=latent_dimensions)
         self.output_shape = getattr(self.dynamics, "output_shape", latent_dimensions)
@@ -167,32 +168,55 @@ class WorldModel(nn.Module):
         sigma_head_fn: Callable[..., nn.Module] = None,
         encoder_fn: Callable[[Tuple[int, ...]], nn.Module] = None,
         action_embedding_dim: int = 16,
+        is_discrete: bool = True,
+        is_spatial: Optional[bool] = None,
+        action_encoder: Optional[ActionEncoder] = None,
+        use_bn: bool = False,
         **kwargs,
     ):
         super().__init__()
         self.num_actions = num_actions
         self.stochastic = stochastic
 
+        # 0. Action Encoder Selection
+        if action_encoder is None:
+            action_encoder = get_action_encoder(
+                num_actions,
+                latent_dimensions,
+                is_discrete=is_discrete,
+                action_embedding_dim=action_embedding_dim,
+                is_spatial=is_spatial,
+            )
+
         # 1. Dynamics Strategy
         if self.stochastic:
+            # Chance encoder is usually just a simple EfficientZero style embedding
+            chance_encoder = get_action_encoder(
+                num_chance,
+                latent_dimensions,
+                is_discrete=True,
+                action_embedding_dim=action_embedding_dim,
+                is_spatial=False, # Chance codes are indices, not spatial
+            )
             self.dynamics_pipeline = StochasticDynamics(
                 latent_dimensions=latent_dimensions,
-                num_actions=num_actions,
                 num_chance=num_chance,
                 observation_shape=observation_shape,
                 dynamics_fn=dynamics_fn,
                 afterstate_dynamics_fn=afterstate_dynamics_fn,
                 sigma_head_fn=sigma_head_fn,
                 encoder_fn=encoder_fn,
-                action_embedding_dim=action_embedding_dim,
+                action_encoder=action_encoder,
+                chance_encoder=chance_encoder,
                 use_true_chance_codes=use_true_chance_codes,
+                use_bn=use_bn,
             )
         else:
             self.dynamics_pipeline = DeterministicDynamics(
                 latent_dimensions=latent_dimensions,
-                num_actions=num_actions,
                 dynamics_fn=dynamics_fn,
-                action_embedding_dim=action_embedding_dim,
+                action_encoder=action_encoder,
+                use_bn=use_bn,
             )
 
         # 2. Environment Heads

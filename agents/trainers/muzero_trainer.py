@@ -64,6 +64,9 @@ class MuZeroTrainer(BaseTrainer):
             sigma_head_fn=make_head_fn(getattr(wm_cfg, "chance_probability_head", None)),
             encoder_fn=make_backbone_fn(getattr(wm_cfg, "chance_encoder_backbone", None)),
             action_embedding_dim=getattr(wm_cfg, "action_embedding_dim", 16),
+            is_discrete=getattr(config.game, "is_discrete", True),
+            is_spatial=getattr(config.game, "is_image", False),
+            use_bn=getattr(wm_cfg, "use_bn", False),
         )
 
         head_fns = {}
