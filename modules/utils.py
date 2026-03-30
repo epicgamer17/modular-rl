@@ -10,8 +10,11 @@ from typing import TYPE_CHECKING, Iterable, Optional, Tuple, Any, Callable
 @torch.inference_mode()
 def get_flat_dim(module: nn.Module, input_shape: Tuple[int, ...]) -> int:
     """Foolproof calculation of flattened output dimension using a dummy pass."""
+    was_training = module.training
     dummy_input = torch.zeros(1, *input_shape)
+    module.eval()
     dummy_output = module(dummy_input)
+    module.train(was_training)
     return dummy_output.flatten(1, -1).shape[1]
 
 
