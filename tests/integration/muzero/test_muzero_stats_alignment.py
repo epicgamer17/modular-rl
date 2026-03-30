@@ -4,6 +4,7 @@ import pytest
 from agents.trainers.muzero_trainer import MuZeroTrainer
 from stats.stats import StatTracker
 from configs.agents.muzero import MuZeroConfig
+from configs.games.tictactoe import TicTacToeConfig
 
 pytestmark = pytest.mark.integration
 
@@ -12,7 +13,35 @@ class MockAgent:
     def __init__(self, name):
         self.name = name
 
-def test_muzero_trainer_stats_alignment(make_muzero_config_dict, tictactoe_game_config):
+def get_base_muzero_config_dict():
+    """A complete, minimal valid config for MuZero (Inlined for standalone test)."""
+    return {
+        "minibatch_size": 2,
+        "min_replay_buffer_size": 0,
+        "num_simulations": 3,
+        "discount_factor": 0.99,
+        "unroll_steps": 3,
+        "lr_init": 0.01,
+        "architecture": {"backbone": {"type": "identity"}},
+        "action_selector": {"base": {"type": "categorical"}},
+        "policy_head": {
+            "output_strategy": {"type": "categorical"},
+            "neck": {"type": "identity"},
+        },
+        "value_head": {
+            "output_strategy": {"type": "muzero"},
+            "neck": {"type": "identity"},
+        },
+        "reward_head": {
+            "output_strategy": {"type": "muzero"},
+            "neck": {"type": "identity"},
+        },
+        "agent_type": "muzero",
+        "to_play_head": {"output_strategy": {"type": "categorical"}},
+        "executor_type": "local",
+    }
+
+def test_muzero_trainer_stats_alignment():
     """
     Standardized integration test to confirm that:
     1. Training scores (MP) are correctly mapped to 'score' with 'p0', 'p1', 'avg'.
@@ -24,14 +53,8 @@ def test_muzero_trainer_stats_alignment(make_muzero_config_dict, tictactoe_game_
     device = torch.device("cpu")
     
     # 1. Setup real config for TicTacToe
-    config_dict = make_muzero_config_dict(
-        minibatch_size=2,
-        unroll_steps=1,
-        num_simulations=5,
-        executor_type="local",
-        # Ensure heads matches MuZero requirements
-        to_play_head={"output_strategy": {"type": "categorical"}},
-    )
+    config_dict = get_base_muzero_config_dict()
+    tictactoe_game_config = TicTacToeConfig()
     
     config = MuZeroConfig(config_dict, tictactoe_game_config)
     
@@ -109,11 +132,4 @@ def test_muzero_trainer_stats_alignment(make_muzero_config_dict, tictactoe_game_
     print("\n[SUCCESS] MuZero Trainer stats are correctly aligned with TicTacToe environment.")
 
 if __name__ == "__main__":
-    from tests.conftest import base_muzero_config_dict, make_muzero_config_dict, tictactoe_game_config
-    
-    # Manual fixture orchestration
-    base_dict = base_muzero_config_dict()
-    make_fn = make_muzero_config_dict(base_dict)
-    game_cfg = tictactoe_game_config()
-    
-    test_muzero_trainer_stats_alignment(make_fn, game_cfg)
+    test_muzero_trainer_stats_alignment()
