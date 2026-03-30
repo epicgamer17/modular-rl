@@ -29,7 +29,7 @@ class ActionEncoder(nn.Module):
         Encodes actions into the target domain shape.
 
         Args:
-            action: (B, A) tensor where A is action_space_size. 
+            action: (B, A) tensor where A is action_space_size.
                     Expects one-hot encoded discrete actions or raw continuous actions.
             target_shape: The shape of the destination hidden state to match.
                           Length 2 -> Vector output (B, D)
@@ -105,24 +105,18 @@ def get_action_encoder(
     # 2. Construction
     if use_spatial:
         h, w = latent_dimensions[1], latent_dimensions[2]
-        if single_action_plane:
-            module = SpatialActionEmbedding(
-                num_actions,
-                h,
-                w,
-                embedding_dim=action_embedding_dim,
-                single_action_plane=True,
-            )
-            return ActionEncoder(module, embedding_dim=action_embedding_dim)
+        module = SpatialActionEmbedding(
+            num_actions,
+            h,
+            w,
+            embedding_dim=action_embedding_dim,
+        )
+        return ActionEncoder(module, embedding_dim=action_embedding_dim)
 
-        module = SpatialActionEmbedding(num_actions, h, w)
-        # Spatial embedding always produces 1 channel, so dim=1
-        return ActionEncoder(module, embedding_dim=1)
-    
     if not is_discrete:
         module = ContinuousActionEmbedding(num_actions, action_embedding_dim)
         return ActionEncoder(module, embedding_dim=action_embedding_dim)
-    
+
     # Default: EfficientZero style discrete projection
     module = EfficientZeroActionEmbedding(num_actions, action_embedding_dim)
     return ActionEncoder(module, embedding_dim=action_embedding_dim)

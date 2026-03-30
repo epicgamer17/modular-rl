@@ -76,15 +76,6 @@ def build_agent_network(
         def wm_builder(
             latent_dimensions: Tuple[int, ...], num_actions: int, num_players: int
         ) -> WorldModel:
-            # NOTE: Old MuZero parity testing only. Legacy deterministic spatial
-            # dynamics used a single action plane instead of a localized one-hot
-            # board map, and the fusion layer itself was bias-free.
-            legacy_single_action_plane = (
-                (not stochastic)
-                and getattr(config.game, "is_image", False)
-                and len(latent_dimensions) == 3
-                and num_actions == (latent_dimensions[1] * latent_dimensions[2])
-            )
             return WorldModel(
                 latent_dimensions=latent_dimensions,
                 num_actions=num_actions,
@@ -102,7 +93,6 @@ def build_agent_network(
                 is_discrete=getattr(config.game, "is_discrete", True),
                 is_spatial=getattr(config.game, "is_image", False),
                 use_bn=getattr(wm_cfg, "use_bn", False),
-                single_action_plane=legacy_single_action_plane,
                 fusion_use_bias=False,
             )
 
