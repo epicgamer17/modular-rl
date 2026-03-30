@@ -34,11 +34,11 @@ class DeterministicDynamics(nn.Module):
     ) -> Dict[str, Tensor]:
         next_latent_unnorm = self.dynamics_fusion(current_latent, action)
         next_latent_unnorm = self.dynamics(next_latent_unnorm)
-        
+
         next_latent_norm = _normalize_hidden_state(next_latent_unnorm)
         return {
-            "next_latent": next_latent_norm, 
-            "unnormalized_latent": next_latent_unnorm
+            "next_latent": next_latent_norm,
+            "unnormalized_latent": next_latent_unnorm,
         }
 
 
@@ -93,6 +93,7 @@ class StochasticDynamics(nn.Module):
         self.encoder = encoder_fn(input_shape=tuple(encoder_input_shape))
         # Map flattened backbone output to codes using a foolproof dummy pass
         from modules.utils import get_flat_dim
+
         flat_dim = get_flat_dim(self.encoder, tuple(encoder_input_shape))
         self.chance_projector = nn.Linear(flat_dim, self.num_chance)
 
@@ -154,7 +155,7 @@ class StochasticDynamics(nn.Module):
         latent_unnorm = self.dynamics(fused)
         return {
             "next_latent": _normalize_hidden_state(latent_unnorm),
-            "unnormalized_latent": latent_unnorm
+            "unnormalized_latent": latent_unnorm,
         }
 
 
@@ -210,7 +211,7 @@ class WorldModel(nn.Module):
                 latent_dimensions,
                 is_discrete=True,
                 action_embedding_dim=action_embedding_dim,
-                is_spatial=False, # Chance codes are indices, not spatial
+                is_spatial=False,  # Chance codes are indices, not spatial
             )
             self.dynamics_pipeline = StochasticDynamics(
                 latent_dimensions=latent_dimensions,
@@ -259,8 +260,6 @@ class WorldModel(nn.Module):
         """Determines the device the world model is currently on using a buffer indicator."""
         return self._device_indicator.device
 
-
-
     def recurrent_inference(
         self,
         hidden_state: Tensor,
@@ -279,10 +278,10 @@ class WorldModel(nn.Module):
 
         for name, head in self.heads.items():
             # MuZero Optimization (EfficientZero/MuZero contract):
-            # The Reward head should receive the UNNORMALIZED state.
+            # The Reward head should receive the NORMALIZED state.
+            # (Matches legacy MuzeroWorldModel behavior for stability)
+            # TODO: maybe the head inputs should be unormalized though
             input_features = next_hidden_state
-            if "reward" in name:
-                input_features = step_results.get("unnormalized_latent", next_hidden_state)
 
             head_out = head(
                 input_features, state=head_state, is_inference=True, **kwargs
@@ -298,13 +297,13 @@ class WorldModel(nn.Module):
 
         return WorldModelOutput(
             features=next_hidden_state,
-            reward=predictions.get("reward_logits"),
-            to_play_logits=predictions.get("to_play_logits"),
-            to_play=predictions.get("to_play_logits_extra"),
-            continuation_logits=predictions.get("continuation_logits"),
-            continuation=predictions.get("continuation_logits_extra"),
+            reward=predictions["reward_logits"],
+            to_play_logits=predictions["to_play_logits"] if "to_play_logits" in self.heads else None,
+            to_play=predictions["to_play_logits_extra"] if "to_play_logits" in self.heads else None,
+            continuation_logits=predictions["continuation_logits"] if "continuation_logits" in self.heads else None,
+            continuation=predictions["continuation_logits_extra"] if "continuation_logits" in self.heads else None,
             next_state=new_state,
-            instant_reward=predictions.get("reward_logits_extra"),
+            instant_reward=predictions["reward_logits_extra"],
         )
 
     def afterstate_recurrent_inference(
@@ -354,10 +353,9 @@ class WorldModel(nn.Module):
 
         # Initial head prediction for root
         for name, head in self.heads.items():
-            # Reward head should receive unnormalized features
+            # Reward head should receive normalized features
+            # TODO: maybe the head inputs should be unnormalized though
             input_features = current_latent
-            if "reward" in name:
-                input_features = initial_unnormalized_state if initial_unnormalized_state is not None else current_latent
 
             head_out = head(
                 input_features, state=current_head_state, is_inference=False, **kwargs
@@ -396,11 +394,13 @@ class WorldModel(nn.Module):
             # 3. Heads Phase
             for name, head in self.heads.items():
                 input_features = next_latent
-                if "reward" in name:
-                    input_features = step_results.get("unnormalized_latent", next_latent)
+                # TODO: maybe the head inputs should be unnormalized though
 
                 head_out = head(
-                    input_features, state=current_head_state, is_inference=False, **kwargs
+                    input_features,
+                    state=current_head_state,
+                    is_inference=False,
+                    **kwargs,
                 )
                 head_sequences[name].append(head_out.training_tensor)
 

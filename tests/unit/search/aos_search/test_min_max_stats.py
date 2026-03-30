@@ -40,6 +40,17 @@ def test_min_max_stats_strict_known_bounds():
     stats.update(torch.tensor([0.0], dtype=torch.float32), torch.tensor([True]))
     assert stats.normalize(q).item() == 0.75
 
+def test_static_min_max_stats_known_bounds_apply_on_first_call():
+    """CONTRACT: Fixed bounds must affect the first normalize call immediately."""
+    stats = StaticMinMaxStats(minimum=-1.0, maximum=1.0)
+
+    first = stats.normalize(torch.tensor([-1.0, 0.0, 1.0], dtype=torch.float32))
+
+    assert first.shape == (3,)
+    assert first[0].item() == 0.0
+    assert first[1].item() == pytest.approx(0.5)
+    assert first[2].item() == 1.0
+
 def test_vectorized_normalization_batching():
     """Verify separate bounds for separate batch elements."""
     device = torch.device("cpu")

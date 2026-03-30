@@ -26,12 +26,26 @@ def test_dynamics_hidden_state_scaling():
         def forward(self, x):
             return self.net(x)
 
+    from modules.heads.base import BaseHead, HeadOutput
+
+    class MockHead(BaseHead):
+        def __init__(self, **kwargs):
+            from agents.learner.losses.representations import ScalarRepresentation
+            super().__init__(input_shape=(64,), representation=ScalarRepresentation(), name="reward_logits")
+        def forward(self, x, **kwargs):
+            return HeadOutput(
+                training_tensor=torch.zeros_like(x[:, 0]),
+                inference_tensor=torch.zeros_like(x[:, 0]),
+                state={}, metrics={}
+            )
+
     model = WorldModel(
         latent_dimensions=(hidden_dim,),
         num_actions=num_actions,
         stochastic=False,
         dynamics_fn=MockDynamics,
-        action_embedding_dim=16
+        action_embedding_dim=16,
+        env_head_fns={"reward_logits": lambda **kwargs: MockHead()}
     )
     
     latent = torch.randn((B, hidden_dim)) * 10.0

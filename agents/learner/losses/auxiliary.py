@@ -23,7 +23,7 @@ class ConsistencyLoss(BaseLoss):
             target_key="targets_latent",
             mask_key=mask_key,
             representation=representation,
-            loss_fn=F.cross_entropy,
+            loss_fn=F.mse_loss,  # TODO: This should be cosine similarity
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
             name=name,

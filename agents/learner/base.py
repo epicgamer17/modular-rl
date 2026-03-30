@@ -252,6 +252,41 @@ class UniversalLearner:
                 current_targets=targets,  # Mutated in-place!
             )
 
+        import os
+        if os.environ.get("DEBUG_LEARNER", "0") == "1":
+            print("\n" + "="*80)
+            print(f"🧠 LEARNER DEBUG (Step {self.training_step})")
+            print("="*80)
+            
+            print("\n--- BATCH (INPUTS/MASKS) ---")
+            for k, v in batch.items():
+                if torch.is_tensor(v) and str(v.dtype) in ("torch.bool", "torch.int64", "torch.int32", "torch.int8"):
+                    # Only print discrete/boolean variables (like actions, done, valid masks) to save screen space
+                    print(f"📦 {k} {list(v.shape)}:\n{v}\n")
+            
+            print("\n--- PREDICTIONS ---")
+            for k, v in predictions.items():
+                if torch.is_tensor(v):
+                    print(f"🔸 {k} {list(v.shape)}:\n{v}\n")
+                    
+            print("\n--- TARGETS ---")
+            for k, v in targets.items():
+                if torch.is_tensor(v):
+                    print(f"🎯 {k} {list(v.shape)}:\n{v}\n")
+            
+            # Print gradient scales if present in targets (these act as masks)
+            if "gradient_scales" in targets:
+                scales = targets["gradient_scales"]
+                print("\n--- GRADIENT SCALES (MASKS) ---")
+                if isinstance(scales, dict):
+                    for k, v in scales.items():
+                        if torch.is_tensor(v):
+                            print(f"⚖️ {k} {list(v.shape)}:\n{v}\n")
+                elif torch.is_tensor(scales):
+                     print(f"⚖️ gradient_scales {list(scales.shape)}:\n{scales}\n")
+                        
+            print("="*80 + "\n")
+
         weights = batch.get("weights")
         if weights is not None and torch.is_tensor(weights):
             weights = weights.to(self.device, non_blocking=True).float().contiguous()

@@ -38,55 +38,14 @@ class MuZeroTrainer(BaseTrainer):
             self.player_id_mapping = {"player_0": 0}
 
         # 1. Initialize Network
-        from agents.factories.builders import make_backbone_fn, make_head_fn
-        from functools import partial
-        from modules.models.world_model import WorldModel
+        from agents.factories.model import build_agent_network
 
-        # Build functional components
-        representation_fn = make_backbone_fn(getattr(config, "representation_backbone", None))
-        
-        # World Model setup
-        wm_cfg = config.world_model
-        env_head_fns = {
-            name: make_head_fn(h_cfg)
-            for name, h_cfg in wm_cfg.env_heads.items()
-        }
-        
-        world_model_fn = partial(
-            WorldModel,
-            stochastic=getattr(wm_cfg, "stochastic", False),
-            num_chance=getattr(wm_cfg, "num_chance", 0),
-            observation_shape=getattr(wm_cfg.game, "observation_shape", None),
-            use_true_chance_codes=getattr(wm_cfg, "use_true_chance_codes", False),
-            env_head_fns=env_head_fns,
-            dynamics_fn=make_backbone_fn(wm_cfg.dynamics_backbone),
-            afterstate_dynamics_fn=make_backbone_fn(getattr(wm_cfg, "afterstate_dynamics_backbone", None)),
-            sigma_head_fn=make_head_fn(getattr(wm_cfg, "chance_probability_head", None)),
-            encoder_fn=make_backbone_fn(getattr(wm_cfg, "chance_encoder_backbone", None)),
-            action_embedding_dim=getattr(wm_cfg, "action_embedding_dim", 16),
-            is_discrete=getattr(config.game, "is_discrete", True),
-            is_spatial=getattr(config.game, "is_image", False),
-            use_bn=getattr(wm_cfg, "use_bn", False),
-        )
-
-        head_fns = {}
-        for name, h_cfg in config.heads.items():
-            head_fns[name] = make_head_fn(h_cfg)
-        
-        # Ensure projector is included if specified separately
-        if hasattr(config, "projector") and config.projector:
-            head_fns["projector"] = make_head_fn(config.projector)
-
-        self.agent_network = AgentNetwork(
-            input_shape=self.obs_dim,
+        self.agent_network = build_agent_network(
+            config=config,
+            obs_dim=self.obs_dim,
             num_actions=self.num_actions,
-            representation_fn=representation_fn,
-            world_model_fn=world_model_fn,
-            head_fns=head_fns,
-            stochastic=config.stochastic,
-            num_players=config.game.num_players,
-            num_chance_codes=config.num_chance,
-        ).to(device)
+            device=device,
+        )
 
         if config.kernel_initializer is not None:
             self.agent_network.initialize(config.kernel_initializer)
@@ -96,7 +55,7 @@ class MuZeroTrainer(BaseTrainer):
 
         # 2. Initialize Action Selector (MCTS)
         from agents.action_selectors.selectors import LegalMovesMaskDecorator
-        
+
         # We wrap with LegalMovesMaskDecorator first, then Temperature
         inner_selector = LegalMovesMaskDecorator(CategoricalSelector())
         self.action_selector = TemperatureSelector(
@@ -130,6 +89,7 @@ class MuZeroTrainer(BaseTrainer):
         )
         # 5. Initialize Executor
         from agents.factories.executor import create_executor
+
         self.executor = create_executor(config)
 
         # 7. The Orchestrator (Universal Learner)
@@ -159,13 +119,19 @@ class MuZeroTrainer(BaseTrainer):
         from agents.workers.actors import RolloutActor
         from agents.workers.specialized_actors import ReanalyzeActor
         from agents.environments.adapters import GymAdapter, VectorAdapter
-        from agents.action_selectors.policy_sources import NetworkPolicySource, SearchPolicySource
+        from agents.action_selectors.policy_sources import (
+            NetworkPolicySource,
+            SearchPolicySource,
+        )
 
         # Policy sources
         self.policy_source = NetworkPolicySource(self.agent_network)
         # MuZero uses MCTS for rollout
         from agents.factories.search import SearchBackendFactory
-        search_engine = SearchBackendFactory.create(config, device=self.device, num_actions=self.num_actions)
+
+        search_engine = SearchBackendFactory.create(
+            config, device=self.device, num_actions=self.num_actions
+        )
         self.search_policy_source = SearchPolicySource(
             search_engine=search_engine,
             agent_network=self.agent_network,
@@ -187,12 +153,16 @@ class MuZeroTrainer(BaseTrainer):
             getattr(config, "actor_device", "cpu"),
             getattr(config.game, "num_actions", None),
             getattr(config.game, "num_players", 1),
-            None,   # test_agents
+            None,  # test_agents
             False,  # flush_incomplete: MuZero stores only complete episodes
         )
-        
-        num_rollout_workers = config.num_workers if hasattr(config, "num_workers") else 1
-        self.executor.launch_workers(RolloutActor, rollout_args, num_workers=num_rollout_workers)
+
+        num_rollout_workers = (
+            config.num_workers if hasattr(config, "num_workers") else 1
+        )
+        self.executor.launch_workers(
+            RolloutActor, rollout_args, num_workers=num_rollout_workers
+        )
 
         # Reanalyze Worker Args (if enabled)
         if getattr(config, "use_reanalyze", False):
@@ -203,7 +173,9 @@ class MuZeroTrainer(BaseTrainer):
                 config,
             )
             num_reanalyze_workers = getattr(config, "num_reanalyze_workers", 1)
-            self.executor.launch_workers(ReanalyzeActor, reanalyze_args, num_workers=num_reanalyze_workers)
+            self.executor.launch_workers(
+                ReanalyzeActor, reanalyze_args, num_workers=num_reanalyze_workers
+            )
 
         # 6. Compile network for the learner (main process)
         if config.compilation.enabled:
@@ -248,20 +220,22 @@ class MuZeroTrainer(BaseTrainer):
             weights=self.agent_network.state_dict(),
             hyperparams={"training_step": self.training_step},
         )
-        
+
         # 2. Collect data via actor
         from agents.workers.actors import RolloutActor
         from agents.workers.specialized_actors import ReanalyzeActor
-        
-        # Request re-analysis if enabled (non-blocking if num_steps is None, 
+
+        # Request re-analysis if enabled (non-blocking if num_steps is None,
         # but here we might want to trigger it)
         if getattr(self.config, "use_reanalyze", False):
-            self.executor.request_work(ReanalyzeActor, batch_size=self.config.minibatch_size)
+            self.executor.request_work(
+                ReanalyzeActor, batch_size=self.config.minibatch_size
+            )
 
         # Collect 'replay_interval' steps
         results, collection_stats = self.executor.collect_data(
             num_steps=getattr(self.config, "replay_interval", 1),
-            worker_type=RolloutActor
+            worker_type=RolloutActor,
         )
 
         # 3. Log collection stats
@@ -327,10 +301,12 @@ class MuZeroTrainer(BaseTrainer):
             if key not in self.stats.stats:
                 if key == "test_score":
                     if self.config.game.num_players > 1:
-                        subkeys = [f"p{i}" for i in range(self.config.game.num_players)] + ["avg"]
+                        subkeys = [
+                            f"p{i}" for i in range(self.config.game.num_players)
+                        ] + ["avg"]
                         self.stats._init_key(key, subkeys=subkeys)
                     else:
-                         self.stats._init_key(key)
+                        self.stats._init_key(key)
                 elif "_score" in key:
                     # Player-specific subkeys for vs_agent tests
                     num_players = self.config.game.num_players
@@ -338,7 +314,9 @@ class MuZeroTrainer(BaseTrainer):
                     self.stats._init_key(key, subkeys=subkeys)
                 elif key == "score":
                     if self.config.game.num_players > 1:
-                        subkeys = [f"p{i}" for i in range(self.config.game.num_players)] + ["avg"]
+                        subkeys = [
+                            f"p{i}" for i in range(self.config.game.num_players)
+                        ] + ["avg"]
                         self.stats._init_key(key, subkeys=subkeys)
                     else:
                         self.stats._init_key(key)
