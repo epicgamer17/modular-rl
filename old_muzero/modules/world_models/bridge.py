@@ -22,6 +22,7 @@ from typing import Any, Tuple, Optional, Dict
 
 from old_muzero.modules.world_models.inference_output import WorldModelOutput, PhysicsOutput
 from old_muzero.modules.world_models.world_model import WorldModelInterface
+from old_muzero.modules.utils import scale_gradient, _normalize_hidden_state
 
 
 class WorldModelBridge(WorldModelInterface, nn.Module):
@@ -50,9 +51,9 @@ class WorldModelBridge(WorldModelInterface, nn.Module):
             h, w = latent_shape[1], latent_shape[2]
             if num_actions == h * w:
                 from modules.embeddings.actions.spatial import SpatialActionEmbedding
-                emb = SpatialActionEmbedding(num_actions, h, w)
-                emb_dim = 1
-                print(f"  WorldModelBridge: SpatialActionEmbedding ({h}x{w} board)")
+                emb_dim = config.action_embedding_dim
+                emb = SpatialActionEmbedding(num_actions, h, w, embedding_dim=emb_dim)
+                print(f"  WorldModelBridge: SpatialActionEmbedding ({h}x{w} board, emb_dim={emb_dim})")
             else:
                 from modules.embeddings.actions.efficient_zero import EfficientZeroActionEmbedding
                 emb = EfficientZeroActionEmbedding(num_actions, config.action_embedding_dim)
@@ -65,8 +66,10 @@ class WorldModelBridge(WorldModelInterface, nn.Module):
             print(f"  WorldModelBridge: EfficientZeroActionEmbedding (vector, dim={emb_dim})")
 
         action_encoder = ActionEncoder(emb, emb_dim)
+        # Match OLD MuZero: BN is commented out in old Dynamics._fuse_and_process,
+        # so use_bn=False for parity.
         self.action_fusion = ActionFusion(
-            encoder=action_encoder, input_shape=latent_shape, use_bn=True
+            encoder=action_encoder, input_shape=latent_shape, use_bn=False
         )
 
         # 3. OLD Dynamics backbone
@@ -98,7 +101,6 @@ class WorldModelBridge(WorldModelInterface, nn.Module):
 
     def _forward_dynamics(self, latent: Tensor, action_onehot: Tensor) -> Tensor:
         """NEW ActionFusion -> OLD backbone -> normalize."""
-        from old_muzero.modules.utils import _normalize_hidden_state
         fused = self.action_fusion(latent, action_onehot)
         next_latent = self.dynamics_net(fused)
         return _normalize_hidden_state(next_latent)
@@ -139,8 +141,6 @@ class WorldModelBridge(WorldModelInterface, nn.Module):
         head_state: Any = None,
         target_observations: Optional[Tensor] = None,
     ) -> PhysicsOutput:
-        from old_muzero.modules.utils import scale_gradient
-
         latent_states = [initial_latent_state]
         rewards: list[Tensor] = []
         to_plays: list[Tensor] = []
