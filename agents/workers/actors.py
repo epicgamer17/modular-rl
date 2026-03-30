@@ -587,8 +587,12 @@ class EvaluatorActor(BaseActor):
                             if isinstance(all_rewards, (list, tuple, np.ndarray, torch.Tensor)):
                                 student_ep_reward += float(all_rewards[student_pos])
                             elif isinstance(all_rewards, dict):
-                                agent_id = self.adapter.agents[student_pos]
-                                student_ep_reward += float(all_rewards.get(agent_id, 0.0))
+                                # Try integer index first, then agent_id
+                                if student_pos in all_rewards:
+                                    student_ep_reward += float(all_rewards[student_pos])
+                                else:
+                                    agent_id = self.adapter.agents[student_pos]
+                                    student_ep_reward += float(all_rewards.get(agent_id, 0.0))
                         else:
                             # Gym Fallback: rewards is assumed to be student reward
                             student_ep_reward += float(rewards.item())
@@ -604,14 +608,16 @@ class EvaluatorActor(BaseActor):
         # AGGREGATION PHASE
         if not is_multiplayer:
             # 1P Mode: Min, Max, Mean
-            results["mean_score"] = float(np.mean(all_student_scores))
+            results["score"] = float(np.mean(all_student_scores))
             results["min_score"] = float(np.min(all_student_scores))
             results["max_score"] = float(np.max(all_student_scores))
         elif not is_vs_agents:
             # Self-Play Mode: Mean across episodes (Player 1 focus usually)
-            # Actually, calculate mean for p0 as student
             self_play_scores = pos_scores["self"][0]
-            results["mean_score"] = float(np.mean(self_play_scores))
+            results["score"] = {
+                "avg": float(np.mean(self_play_scores)),
+                **{f"p{p}": float(np.mean(s_list)) for p, s_list in pos_scores["self"].items()}
+            }
         else:
             # Vs Agents Mode: Per agent details + Global position scores
             total_per_pos = {p: [] for p in range(self.num_players)}
@@ -623,14 +629,15 @@ class EvaluatorActor(BaseActor):
                     total_per_pos[p].extend(s_list)
                 
                 results[f"vs_{opp_name}_score"] = {
-                    "mean": float(np.mean(opp_all)),
-                    **{f"p{p+1}": float(np.mean(s_list)) for p, s_list in scores_dict.items()}
+                    "avg": float(np.mean(opp_all)),
+                    **{f"p{p}": float(np.mean(s_list)) for p, s_list in scores_dict.items()}
                 }
             
             # Global per-position summaries
-            for p in range(self.num_players):
-                results[f"p{p+1}_score"] = float(np.mean(total_per_pos[p]))
-            results["mean_score"] = float(np.mean(all_student_scores))
+            results["score"] = {
+                "avg": float(np.mean(all_student_scores)),
+                **{f"p{p}": float(np.mean(total_per_pos[p])) for p in range(self.num_players)}
+            }
 
         results["avg_length"] = float(np.mean(all_episode_lengths))
         results["episodes_completed"] = len(all_episode_lengths)

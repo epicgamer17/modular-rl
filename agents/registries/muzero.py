@@ -33,12 +33,10 @@ def build_muzero_loss_pipeline(config, agent_network, device):
     # Extract representations from heads
     val_rep = agent_network.components["behavior_heads"]["state_value"].representation
     pol_rep = agent_network.components["behavior_heads"]["policy_logits"].representation
-    rew_rep = (
-        agent_network.components["world_model"].heads["reward_logits"].representation
-    )
-    tp_rep = (
-        agent_network.components["world_model"].heads["to_play_logits"].representation
-    )
+    
+    wm_heads = agent_network.components["world_model"].heads
+    rew_rep = wm_heads["reward_logits"].representation if "reward_logits" in wm_heads else None
+    tp_rep = wm_heads["to_play_logits"].representation if "to_play_logits" in wm_heads else None
 
     modules = [
         ValueLoss(
