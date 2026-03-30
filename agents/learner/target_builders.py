@@ -350,31 +350,13 @@ class SequenceMaskBuilder(BaseTargetBuilder):
             "is_same_game", torch.ones((B, T), device=device, dtype=torch.bool)
         )
         obs_mask = batch.get("has_valid_obs_mask")
-        action_mask = batch.get("has_valid_action_mask")
-        # raw_dones[t] is True if s_t is terminal
-        raw_dones = batch.get("dones", torch.zeros((B, T), device=device, dtype=torch.bool))
-        
-        # post_done_mask[t] is True if we already passed a terminal state (s_{t-1} or earlier were terminal)
-        cumulative_dones = torch.cumsum(raw_dones.float(), dim=1)
-        post_done_mask = (
-            torch.cat(
-                [torch.zeros((B, 1), device=device), cumulative_dones[:, :-1]],
-                dim=1,
-            )
-            > 0
-        )
+        current_targets["value_mask"] = base_mask.clone()
+        current_targets["masks"] = base_mask.clone()
 
-        # NOTE: Old MuZero parity testing only. Prefer the replay-processor
-        # observation mask when available so post-terminal states stay masked out.
-        value_mask = obs_mask.bool() if obs_mask is not None else base_mask.clone()
-        current_targets["value_mask"] = value_mask
-        current_targets["masks"] = value_mask.clone()
-
-        # Policy is masked on terminal states and after (no actions to take)
+        # NOTE: Old MuZero parity testing only. Legacy policy loss used the
+        # observation-valid mask, not the action-valid mask.
         current_targets["policy_mask"] = (
-            action_mask.bool()
-            if action_mask is not None
-            else (base_mask & (~post_done_mask) & (~raw_dones))
+            obs_mask.bool() if obs_mask is not None else base_mask.clone()
         )
 
         # Rewards are predicted everywhere except the root (t=0). 
@@ -383,10 +365,12 @@ class SequenceMaskBuilder(BaseTargetBuilder):
         reward_mask[:, 0] = False
         current_targets["reward_mask"] = reward_mask
 
-        # NOTE: Old MuZero parity testing only. Match the legacy replay contract
-        # where to_play targets were only valid on dynamics-consistent steps.
-        to_play_mask = base_mask & (~post_done_mask) & (~raw_dones)
+        # NOTE: Old MuZero parity testing only. Legacy to_play used the
+        # observation-valid mask and relied on the replay pipeline to zero out
+        # invalid targets after terminal states.
+        to_play_mask = obs_mask.bool() if obs_mask is not None else base_mask.clone()
         to_play_mask[:, 0] = False
+        to_play_mask &= reward_mask
         current_targets["to_play_mask"] = to_play_mask
         
         # Auxiliary masks (Consistency, Sigma, Commitment)

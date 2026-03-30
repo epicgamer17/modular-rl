@@ -273,7 +273,15 @@ class WorldModel(nn.Module):
 
         # 2. Heads Phase
         predictions = {}
-        head_state = {} if recurrent_state is None else recurrent_state
+        # NOTE: Old MuZero parity testing only. Legacy world-model heads only
+        # received their private recurrent memory, never the latent dynamics
+        # tensor itself. Strip it so stateless heads cannot echo old dynamics
+        # back into the next_state payload.
+        head_state = (
+            {}
+            if recurrent_state is None
+            else {k: v for k, v in recurrent_state.items() if k != "dynamics"}
+        )
         new_head_state = {}
 
         for name, head in self.heads.items():
@@ -348,7 +356,9 @@ class WorldModel(nn.Module):
 
         current_latent = initial_latent_state
         current_head_state: Dict[str, Any] = (
-            head_state if head_state is not None else {}
+            {}
+            if head_state is None
+            else {k: v for k, v in head_state.items() if k != "dynamics"}
         )
 
         # Initial head prediction for root

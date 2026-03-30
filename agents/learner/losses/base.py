@@ -115,8 +115,12 @@ class BaseLoss(ABC):
         if flat_target.shape[-1] > 1:
             # We use a broad check to catch mass loss in Bellman projections
             t_sum = flat_target.sum(dim=-1)
+            # NOTE: Old MuZero parity testing only. Legacy replay can emit
+            # zero-mass categorical targets on masked-valid rows (notably
+            # to_play after terminal), and the old learner simply ignored them.
+            massful_mask = flat_mask & (t_sum > 0)
             # Filter the sums to ONLY check valid states according to the mask
-            valid_t_sum = t_sum[flat_mask]
+            valid_t_sum = t_sum[massful_mask]
 
             # Only run the assertion if there are valid targets in the batch
             if valid_t_sum.numel() > 0:
@@ -125,7 +129,7 @@ class BaseLoss(ABC):
                     # 1. Identify failing indices
                     invalid_indices = (~is_correct).nonzero(as_tuple=True)[0]
                     # Map back to the original flattened index
-                    full_indices = flat_mask.nonzero(as_tuple=True)[0][invalid_indices]
+                    full_indices = massful_mask.nonzero(as_tuple=True)[0][invalid_indices]
                     
                     # 2. Extract offending data
                     offending_targets = flat_target[full_indices]

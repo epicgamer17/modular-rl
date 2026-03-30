@@ -175,6 +175,19 @@ class AgentNetwork(nn.Module):
                 if m is not self:
                     m.reset_noise()
 
+    def _merge_recurrent_state(
+        self, dest: Dict[str, Any], src: Optional[Dict[str, Any]]
+    ) -> None:
+        if not src:
+            return
+        # NOTE: Old MuZero parity testing only. Stateless heads often echo the
+        # input state, so prevent them from overwriting the freshly produced
+        # latent dynamics entry during search rollout.
+        for key, value in src.items():
+            if key == "dynamics":
+                continue
+            dest[key] = value
+
     def _apply_spatial_temporal(
         self, tensor: Tensor, B: int, T: int, state: Any = None
     ) -> Tuple[Tensor, Any]:
@@ -224,7 +237,7 @@ class AgentNetwork(nn.Module):
         for name, head in self.components["behavior_heads"].items():
             head_out = head(features, state=network_state, is_inference=True, **kwargs)
             outputs[name] = head_out.inference_tensor
-            network_state.update(head_out.state)
+            self._merge_recurrent_state(network_state, head_out.state)
 
             # Collect stateless telemetry (The "Right to Report")
             for m_name, val in head_out.metrics.items():
@@ -386,7 +399,7 @@ class AgentNetwork(nn.Module):
         for name, head in self.components["behavior_heads"].items():
             head_out = head(features, state=network_state, is_inference=True, **kwargs)
             outputs[name] = head_out.inference_tensor
-            next_recurrent_state.update(head_out.state)
+            self._merge_recurrent_state(next_recurrent_state, head_out.state)
 
         if next_h is not None:
             next_recurrent_state.update(next_h)
@@ -427,7 +440,7 @@ class AgentNetwork(nn.Module):
             is_inference=True,
         )
         expected_afterstate_value = head_out_as.inference_tensor
-        recurrent_state_after.update(head_out_as.state)
+        self._merge_recurrent_state(recurrent_state_after, head_out_as.state)
 
         chance_policy = wm_output.chance_dist
 

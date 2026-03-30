@@ -99,57 +99,101 @@ class SearchPolicySource(BasePolicySource):
         ), "info must contain 'player' in all entries, or pass to_play as a kwarg"
 
         start_time = time.time()
-        res = self.search.run_vectorized(obs, info, agent_network)
-        (
-            root_values,
-            exploratory_policies,
-            target_policies,
-            best_actions,
-            sm_list,
-        ) = res
+        is_batched = obs.dim() > len(agent_network.input_shape) and obs.shape[0] > 1
+
+        # NOTE: Old MuZero parity testing only. Legacy actors dispatched the
+        # singleton path through search.run(...) instead of the vectorized
+        # wrapper, so keep that contract for 1-env workers.
+        if is_batched:
+            res = self.search.run_vectorized(obs, info, agent_network)
+            (
+                root_values,
+                exploratory_policies,
+                target_policies,
+                best_actions,
+                sm_list,
+            ) = res
+
+            search_duration = time.time() - start_time
+
+            probs = torch.stack(
+                [
+                    torch.as_tensor(
+                        p, device=obs.device, dtype=torch.float32
+                    ).contiguous()
+                    for p in exploratory_policies
+                ]
+            )
+            values = torch.as_tensor(
+                root_values, device=obs.device, dtype=torch.float32
+            )
+
+            if values.dim() == 1:
+                values = values.unsqueeze(-1)
+
+            target_policies_tensor = torch.stack(
+                [
+                    torch.as_tensor(
+                        p, device=obs.device, dtype=torch.float32
+                    ).contiguous()
+                    for p in target_policies
+                ]
+            )
+            best_actions_tensor = torch.as_tensor(
+                best_actions, device=obs.device, dtype=torch.long
+            )
+
+            return InferenceResult(
+                probs=probs,
+                value=values,
+                action=best_actions_tensor,
+                extras={
+                    "target_policies": target_policies_tensor,
+                    "search_duration": search_duration,
+                    "search_metadata": sm_list,
+                    "best_actions": best_actions_tensor,
+                    "value": values.squeeze(-1),
+                    "root_value": values.squeeze(-1),
+                },
+            )
+
+        root_value, exploratory_policy, target_policy, best_action, search_metadata = (
+            self.search.run(obs, info, agent_network, exploration=exploration)
+        )
 
         search_duration = time.time() - start_time
+        probs = torch.as_tensor(
+            exploratory_policy, device=obs.device, dtype=torch.float32
+        ).contiguous()
+        value = torch.tensor([root_value], device=obs.device, dtype=torch.float32)
 
-        probs = torch.stack(
-            [
+        if obs.dim() > len(agent_network.input_shape):
+            probs = probs.unsqueeze(0)
+            target_policies_out = (
                 torch.as_tensor(
-                    p, device=obs.device, dtype=torch.float32
-                ).contiguous()
-                for p in exploratory_policies
-            ]
-        )
-        values = torch.as_tensor(
-            root_values, device=obs.device, dtype=torch.float32
-        )
-
-        # Standardize values to [B, 1] for potential Multi-Player Reward mapping
-        if values.dim() == 1:
-            values = values.unsqueeze(-1)
-
-        # Standardize search results to tensors for BaseActor squeezing and PufferActor indexing
-        target_policies_tensor = torch.stack(
-            [
-                torch.as_tensor(
-                    p, device=obs.device, dtype=torch.float32
-                ).contiguous()
-                for p in target_policies
-            ]
-        )
-        best_actions_tensor = torch.as_tensor(
-            best_actions, device=obs.device, dtype=torch.long
-        )
+                    target_policy, device=obs.device, dtype=torch.float32
+                )
+                .contiguous()
+                .unsqueeze(0)
+            )
+            best_actions_out = torch.tensor([best_action], device=obs.device)
+        else:
+            target_policies_out = torch.as_tensor(
+                target_policy, device=obs.device, dtype=torch.float32
+            ).contiguous()
+            best_actions_out = torch.tensor(best_action, device=obs.device)
 
         return InferenceResult(
             probs=probs,
-            value=values,
-            action=best_actions_tensor,
+            value=value,
+            action=best_actions_out,
             extras={
-                "target_policies": target_policies_tensor,
+                "target_policies": target_policies_out,
                 "search_duration": search_duration,
-                "search_metadata": sm_list,
-                "best_actions": best_actions_tensor,
-                "value": values.squeeze(-1),
-                "root_value": values.squeeze(-1),
+                "search_metadata": search_metadata,
+                "best_actions": best_actions_out,
+                "value": value.squeeze(0),
+                "root_value": value.squeeze(0),
             },
         )
 
