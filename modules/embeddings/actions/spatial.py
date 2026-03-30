@@ -13,6 +13,7 @@ class SpatialActionEmbedding(nn.Module):
     this sparse map to ``embedding_dim`` feature channels, giving the
     downstream fusion layer richer action information to work with.
     """
+
     def __init__(
         self,
         num_actions: int,
@@ -21,8 +22,9 @@ class SpatialActionEmbedding(nn.Module):
         embedding_dim: int = 1,
     ):
         super().__init__()
-        assert (
+        assert num_actions == h * w
         self.w = w
+        self.h = h
         self.embedding_dim = embedding_dim
 
         # Learnable projection from 1-channel spatial one-hot to embedding_dim channels.
