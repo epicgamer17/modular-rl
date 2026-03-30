@@ -27,6 +27,7 @@ class AgentNetwork(nn.Module):
         representation_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
         world_model_fn: Optional[Callable[..., nn.Module]] = None,
         memory_core_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
+        prediction_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
         head_fns: Dict[str, Callable[..., nn.Module]] = None,
         stochastic: bool = False,
         num_players: int = 1,
@@ -76,7 +77,15 @@ class AgentNetwork(nn.Module):
                 backbone, "output_shape", current_head_input_shape
             )
 
-        # 3. Behavior Phase: Behavioral Heads (Policy, Value, Q, etc.)
+        # 3.5 Behavior Phase: Prediction (The Tower)
+        if prediction_fn is not None:
+            pred_backbone = prediction_fn(input_shape=current_head_input_shape)
+            self.components["prediction"] = pred_backbone
+            current_head_input_shape = getattr(
+                pred_backbone, "output_shape", current_head_input_shape
+            )
+
+        # 4. Behavior Phase: Behavioral Heads (Policy, Value, Q, etc.)
         if head_fns:
             for head_name, head_fn in head_fns.items():
                 if head_fn is None:
@@ -175,7 +184,10 @@ class AgentNetwork(nn.Module):
         if "memory_core" in self.components:
             seq_x = flat_x.view(B, T, -1)
             seq_x, next_state = self.components["memory_core"](seq_x, state=state)
-            return seq_x.flatten(0, 1), next_state
+            flat_x = seq_x.flatten(0, 1)
+
+        if "prediction" in self.components:
+            flat_x = self.components["prediction"](flat_x)
 
         return flat_x, next_state
 

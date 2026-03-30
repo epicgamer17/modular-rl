@@ -80,9 +80,10 @@ def build_agent_network(
                 afterstate_dynamics_fn=afterstate_dynamics_fn,
                 sigma_head_fn=sigma_head_fn,
                 encoder_fn=chance_encoder_fn,
-                action_embedding_dim=getattr(wm_cfg, "action_embedding_dim", 32),
-                is_discrete=config.game.is_discrete,
-                # is_spatial is inferred by WorldModel/get_action_encoder from latent_dimensions
+                action_embedding_dim=getattr(wm_cfg, "action_embedding_dim", 16),
+                is_discrete=getattr(config.game, "is_discrete", True),
+                is_spatial=getattr(config.game, "is_image", False),
+                use_bn=getattr(wm_cfg, "use_bn", False),
             )
         world_model_fn = wm_builder
 
@@ -95,9 +96,16 @@ def build_agent_network(
             num_players=config.game.num_players,
             num_actions=num_actions,
         )
+
+    # MuZero Optimization: Ensure projector is included if specified separately
+    if hasattr(config, "projector") and config.projector:
+        head_fns["projector"] = make_head_fn(config.projector)
         
     # 4. Build Temporal Backbone (Memory Core like LSTM/Transformer for AgentNetwork levels)
     memory_core_fn = make_backbone_fn(getattr(config, "memory_core", None))
+    
+    # 4.5. Build Prediction Backbone
+    prediction_fn = make_backbone_fn(getattr(config, "prediction_backbone", None))
     
     # 5. Assemble AgentNetwork
     network = AgentNetwork(
@@ -107,6 +115,7 @@ def build_agent_network(
         representation_fn=representation_fn,
         world_model_fn=world_model_fn,
         memory_core_fn=memory_core_fn,
+        prediction_fn=prediction_fn,
         head_fns=head_fns,
         stochastic=getattr(config, "stochastic", False),
         num_chance_codes=getattr(config, "num_chance", 0),
