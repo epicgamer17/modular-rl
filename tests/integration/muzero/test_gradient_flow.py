@@ -38,7 +38,13 @@ def build_test_muzero_network(C, H, W, num_actions, latent_channels=8):
             num_actions=num_actions,
             num_players=num_players,
             dynamics_fn=dynamics_fn,
-            env_head_fns={}
+            env_head_fns={
+                "reward_logits": lambda input_shape, **kwargs: ValueHead(
+                    input_shape=input_shape,
+                    representation=DiscreteSupportRepresentation(vmin=-1, vmax=1, bins=3),
+                    name="reward_logits"
+                )
+            }
         )
 
     head_fns = {
