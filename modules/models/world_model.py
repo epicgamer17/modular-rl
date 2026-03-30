@@ -27,10 +27,14 @@ class DeterministicDynamics(nn.Module):
     def forward(
         self, current_latent: Tensor, action: Tensor, **kwargs
     ) -> Dict[str, Tensor]:
-        next_latent = self.dynamics_fusion(current_latent, action)
-        next_latent = self.dynamics(next_latent)
-        next_latent = _normalize_hidden_state(next_latent)
-        return {"next_latent": next_latent}
+        next_latent_unnorm = self.dynamics_fusion(current_latent, action)
+        next_latent_unnorm = self.dynamics(next_latent_unnorm)
+        
+        next_latent_norm = _normalize_hidden_state(next_latent_unnorm)
+        return {
+            "next_latent": next_latent_norm, 
+            "unnormalized_latent": next_latent_unnorm
+        }
 
 
 class StochasticDynamics(nn.Module):
@@ -110,10 +114,12 @@ class StochasticDynamics(nn.Module):
             )
             codes_k = (one_hot - probs).detach() + probs
 
-        next_latent = self.recurrent_step(afterstate, codes_k)["next_latent"]
+        next_latent_res = self.recurrent_step(afterstate, codes_k)
+        next_latent = next_latent_res["next_latent"]
 
         return {
             "next_latent": next_latent,
+            "unnormalized_latent": next_latent_res["unnormalized_latent"],
             "afterstate_features": afterstate,
             "chance_logits": afterstate_res["chance_logits"],
             "chance_dist": afterstate_res["chance_dist"],
@@ -133,8 +139,11 @@ class StochasticDynamics(nn.Module):
 
     def recurrent_step(self, state: Tensor, chance_code: Tensor) -> Dict[str, Tensor]:
         fused = self.dynamics_fusion(state, chance_code)
-        next_latent = self.dynamics(fused)
-        return {"next_latent": _normalize_hidden_state(next_latent)}
+        latent_unnorm = self.dynamics(fused)
+        return {
+            "next_latent": _normalize_hidden_state(latent_unnorm),
+            "unnormalized_latent": latent_unnorm
+        }
 
 
 class WorldModel(nn.Module):
@@ -229,8 +238,14 @@ class WorldModel(nn.Module):
         new_head_state = {}
 
         for name, head in self.heads.items():
+            # MuZero Optimization (EfficientZero/MuZero contract):
+            # The Reward head should receive the UNNORMALIZED state.
+            input_features = next_hidden_state
+            if "reward" in name:
+                input_features = step_results.get("unnormalized_latent", next_hidden_state)
+
             head_out = head(
-                next_hidden_state, state=head_state, is_inference=True, **kwargs
+                input_features, state=head_state, is_inference=True, **kwargs
             )
             predictions[name] = head_out.training_tensor
             predictions[f"{name}_extra"] = head_out.inference_tensor
@@ -282,6 +297,7 @@ class WorldModel(nn.Module):
         self,
         initial_latent_state: Tensor,
         actions: Tensor,
+        initial_unnormalized_state: Optional[Tensor] = None,
         encoder_inputs: Optional[Tensor] = None,
         true_chance_codes: Optional[Tensor] = None,
         head_state: Any = None,
@@ -298,8 +314,13 @@ class WorldModel(nn.Module):
 
         # Initial head prediction for root
         for name, head in self.heads.items():
+            # Reward head should receive unnormalized features
+            input_features = current_latent
+            if "reward" in name:
+                input_features = initial_unnormalized_state if initial_unnormalized_state is not None else current_latent
+
             head_out = head(
-                current_latent, state=current_head_state, is_inference=False, **kwargs
+                input_features, state=current_head_state, is_inference=False, **kwargs
             )
             head_sequences[name].append(head_out.training_tensor)
 
@@ -334,8 +355,12 @@ class WorldModel(nn.Module):
 
             # 3. Heads Phase
             for name, head in self.heads.items():
+                input_features = next_latent
+                if "reward" in name:
+                    input_features = step_results.get("unnormalized_latent", next_latent)
+
                 head_out = head(
-                    next_latent, state=current_head_state, is_inference=False, **kwargs
+                    input_features, state=current_head_state, is_inference=False, **kwargs
                 )
                 head_sequences[name].append(head_out.training_tensor)
 

@@ -6,6 +6,7 @@ from modules.models.inference_output import (
     InferenceOutput,
 )
 from modules.models.world_model import WorldModel
+from modules.utils import scale_gradient, _normalize_hidden_state
 from modules.backbones.recurrent import RecurrentBackbone
 from modules.backbones.transformer import TransformerBackbone
 
@@ -192,7 +193,8 @@ class AgentNetwork(nn.Module):
             obs.dim() >= 2
         ), f"[Fail-Fast] Expected batched obs [B, ...], got shape {obs.shape} (Adapter failed its contract)."
 
-        latent = self.components["representation"](obs)
+        unnormalized_latent = self.components["representation"](obs)
+        latent = _normalize_hidden_state(unnormalized_latent)
 
         wm_output = None
 
@@ -252,7 +254,8 @@ class AgentNetwork(nn.Module):
         )
 
         # 1. Root Latent (Backbones handle sequence dimensions automatically)
-        root_latent = self.components["representation"](obs)
+        unnormalized_root_latent = self.components["representation"](obs)
+        root_latent = _normalize_hidden_state(unnormalized_root_latent)
 
         # 2. Environment & Temporal Phase
         if "world_model" in self.components:
@@ -260,9 +263,11 @@ class AgentNetwork(nn.Module):
             # If obs was [B, ...], root_latent is [B, *D], and it's the root.
             is_seq = root_latent.dim() > (len(self.input_shape) + 1)
             initial_latent_state = root_latent[:, 0] if is_seq else root_latent
+            initial_unnormalized_state = unnormalized_root_latent[:, 0] if is_seq else unnormalized_root_latent
 
             env_results = self.components["world_model"].unroll_physics(
                 initial_latent_state=initial_latent_state,
+                initial_unnormalized_state=initial_unnormalized_state,
                 actions=batch["actions"],
                 encoder_inputs=batch.get("chance_encoder_inputs"),
                 true_chance_codes=batch.get("chance_codes"),

@@ -332,42 +332,33 @@ def unpack(x: int | Tuple):
             print(f"error converting {x} to int: ", e)
 
 
-def _normalize_hidden_state(S: torch.Tensor) -> torch.Tensor:
-    """Normalizes the hidden state tensor as described in the paper."""
-    # (B, *)
-    # Handles both (B, W) for dense and (B, C, H, W) for spatial
-
-    if S.dim() == 2:
-        # Case: (B, W) - Dense layer output
-        S_norm = S
-        dim = 1
-    elif S.dim() == 4:
-        # Case: (B, C, H, W) - Spatial output. Normalize over spatial dimensions (H*W) for each channel.
-        # Reshape to (B*C, H*W) or (B, C, H*W)
-        B, C, H, W = S.shape
-        S_norm = S.view(B, C, H * W)  # (B, C, H*W)
-        dim = 2  # Normalize across H*W dimension for each channel
-    else:
-        # Not a standard MuZero shape, return unnormalized to be safe
-        return S
-
-    min_hidden_state = S_norm.min(dim=dim, keepdim=True)[0]
-    max_hidden_state = S_norm.max(dim=dim, keepdim=True)[0]
-
+def _normalize_hidden_state(S: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
+    """
+    Normalizes the hidden state tensor as described in the MuZero paper (Appendix A.2).
+    Applies Min-Max scaling to [0, 1] globally across all feature dimensions per sample.
+    
+    Args:
+        S: Hidden state tensor of shape (B, *) or (B, C, H, W).
+        eps: Small epsilon to prevent division by zero.
+    """
+    # Flatten all dimensions except batch: [B, W] or [B, C, H, W] -> [B, -1]
+    batch_size = S.shape[0]
+    S_flat = S.view(batch_size, -1)
+    
+    # Calculate min/max across the flattened feature dimension
+    min_val = S_flat.min(dim=1, keepdim=True)[0]
+    max_val = S_flat.max(dim=1, keepdim=True)[0]
+    
+    # Expand back to original shape for broadcasting
+    # (min_val and max_val are [B, 1], broadcasting to (B, *) is automatic except for 4D)
     if S.dim() == 4:
-        # For spatial normalization, restore original dimensions after min/max
-        min_hidden_state = min_hidden_state.unsqueeze(-1)  # (B, C, 1, 1)
-        max_hidden_state = max_hidden_state.unsqueeze(-1)
-
-    scale_hidden_state = max_hidden_state - min_hidden_state
-
-    # Handle the case where min == max
-    scale_hidden_state[scale_hidden_state < 1e-5] = (
-        1.0  # Or use += 1e-5 if that's the original intent
-    )
-
-    hidden_state = (S - min_hidden_state) / scale_hidden_state
-    return hidden_state
+        min_val = min_val.view(batch_size, 1, 1, 1)
+        max_val = max_val.view(batch_size, 1, 1, 1)
+        
+    denominator = max_val - min_val
+    denominator = torch.where(denominator < eps, torch.ones_like(denominator), denominator)
+    
+    return (S - min_val) / denominator
 
 
 from dataclasses import dataclass
