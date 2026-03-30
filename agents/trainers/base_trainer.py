@@ -166,8 +166,14 @@ class BaseTrainer:
         """Logs results from EvaluatorActor."""
         for key, value in res.items():
             if key == "score":
-                self.stats.append("test_score", value, subkey="avg")
-                print(f"[test] score: {value:.3f} (step {step})")
+                if isinstance(value, dict):
+                    for subkey, subval in value.items():
+                        self.stats.append("test_score", subval, subkey=subkey)
+                    if "avg" in value:
+                        print(f"[test] score: {value['avg']:.3f} (step {step})")
+                else:
+                    self.stats.append("test_score", value, subkey="avg")
+                    print(f"[test] score: {value:.3f} (step {step})")
             elif key == "avg_length":
                 self.stats.append("episode_length", value, subkey="test")
                 print(f"[test] avg_length: {value:.1f}")
@@ -375,8 +381,8 @@ class BaseTrainer:
         ]
 
         if self.num_players > 1:
-            for p in range(self.num_players):
-                stat_keys.append(f"avg_score_p{p}")
+            # We already have 'score' with subkeys for each player, no need for avg_score_pX
+            pass
 
         # Add test_score vs other agents if applicable
         for agent in self.test_agents:
@@ -432,11 +438,12 @@ class BaseTrainer:
                 if isinstance(score, (list, np.ndarray)) and len(score) > 1:
                     data = {f"p{i}": float(s) for i, s in enumerate(score)}
                     data["avg"] = float(np.mean(score))
-                    self.stats.append("score", data)
+                    for subkey, subval in data.items():
+                        self.stats.append("score", subval, subkey=subkey)
                 else:
                     # Single player or scalar score
                     self.stats.append("score", float(score))
-            
+
             for length in res.get("batch_lengths", []):
                 self.stats.append("episode_length", float(length))
 
@@ -444,8 +451,8 @@ class BaseTrainer:
             for key, value in res.items():
                 if key in ["batch_scores", "batch_lengths"]:
                     continue
-                
-                # Log avg_score_pX or throughput metrics
-                if any(tag in key for tag in ["avg_score", "fps", "steps_per_second"]):
+
+                # Log throughput metrics
+                if any(tag in key for tag in ["fps", "steps_per_second"]):
                     if isinstance(value, (int, float, np.number)):
                         self.stats.append(key, float(value))

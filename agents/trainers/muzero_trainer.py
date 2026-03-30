@@ -241,7 +241,10 @@ class MuZeroTrainer(BaseTrainer):
     def train_step(self) -> Dict[str, Any]:
         """Perform one training step (batch of gradients)."""
         # 1. Update weights and trigger work
-        self.executor.update_parameters(weights=self.agent_network.state_dict())
+        self.executor.update_parameters(
+            weights=self.agent_network.state_dict(),
+            hyperparams={"training_step": self.training_step},
+        )
         
         # 2. Collect data via actor
         from agents.workers.actors import RolloutActor
@@ -320,14 +323,22 @@ class MuZeroTrainer(BaseTrainer):
         for key in stat_keys:
             if key not in self.stats.stats:
                 if key == "test_score":
-                    self.stats._init_key(
-                        key
-                    )  # Removed min/max subkeys as they are no longer logged
+                    if self.config.game.num_players > 1:
+                        subkeys = [f"p{i}" for i in range(self.config.game.num_players)] + ["avg"]
+                        self.stats._init_key(key, subkeys=subkeys)
+                    else:
+                         self.stats._init_key(key)
                 elif "_score" in key:
                     # Player-specific subkeys for vs_agent tests
                     num_players = self.config.game.num_players
                     subkeys = [f"p{i}" for i in range(num_players)] + ["avg"]
                     self.stats._init_key(key, subkeys=subkeys)
+                elif key == "score":
+                    if self.config.game.num_players > 1:
+                        subkeys = [f"p{i}" for i in range(self.config.game.num_players)] + ["avg"]
+                        self.stats._init_key(key, subkeys=subkeys)
+                    else:
+                        self.stats._init_key(key)
                 else:
                     self.stats._init_key(key)
 

@@ -115,6 +115,14 @@ class StatTracker:
                 value = value.detach().cpu()
             self.queue.put(("append", key, value, subkey))
         else:
+            # Handle dictionary values by recursively appending with subkeys
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    # If a subkey was already provided, we could nesting or just use the dict key
+                    # Given the current usage, if it's a dict, the keys are usually the intended subkeys
+                    self.append(key, v, subkey=k)
+                return
+
             # Host executes the command directly
             if key not in self.stats:
                 if subkey is not None:
@@ -152,6 +160,11 @@ class StatTracker:
                 value = value.detach().cpu()
             self.queue.put(("set", key, value, subkey))
         else:
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    self.set(key, v, subkey=k)
+                return
+
             if key not in self.stats:
                 if subkey is not None:
                     self._init_key(key, subkeys=[subkey])
@@ -492,7 +505,27 @@ class StatTracker:
             else:
                 tensor_data = torch.cat([d.view(-1) for d in data])
         else:
-            tensor_data = torch.tensor(data)
+            # Filter and convert to tensors, handling potential non-convertible data
+            try:
+                # If we have a list of items, some might be dicts (improperly logged)
+                # We attempt to convert what we can.
+                valid_data = []
+                for d in data:
+                    if isinstance(d, (int, float, np.number, torch.Tensor)):
+                        valid_data.append(d)
+                    elif isinstance(d, np.ndarray):
+                        valid_data.append(torch.from_numpy(d))
+                    else:
+                        # Skip or log error? Skipping for now to prevent crash
+                        continue
+                
+                if not valid_data:
+                    return np.array([])
+                
+                tensor_data = torch.as_tensor(valid_data)
+            except (ValueError, TypeError, RuntimeError) as e:
+                print(f"Warning: could not convert stat data to tensor: {e}")
+                return np.array([])
 
         # Ensure we are on CPU and convert to numpy
         np_data = tensor_data.detach().cpu().numpy()

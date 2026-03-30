@@ -272,10 +272,11 @@ class PettingZooAdapter(BaseAdapter):
             # Capture ALL rewards before possible auto-reset
             reward = float(self.env.rewards.get(acting_player, 0.0))
             all_rewards = self.env.rewards.copy() if hasattr(self.env, "rewards") else {acting_player: reward}
+            all_rewards_idx = {self.agents.index(a): r for a, r in all_rewards.items()}
             
             obs, _, term, trunc, env_info = self.env.last()
             info = env_info.copy()
-            info["all_rewards"] = all_rewards
+            info["all_rewards"] = all_rewards_idx
 
             # Auto-reset for AEC: if episode is over, reset and get fresh root state
             # In AEC, we usually reset when agent_selection is None or via flags

@@ -239,7 +239,21 @@ class RolloutActor(BaseActor):
                     p_ids_acting = self.info["player_id"]
                     p_id_acting = int(p_ids_acting[i].item() if torch.is_tensor(p_ids_acting) else p_ids_acting[i])
 
-                self.current_scores[i, p_id_acting] += rewards[i].item()
+                # 4. Process Rewards and Scores
+                all_rewards = infos.get("all_rewards")
+                if all_rewards is not None:
+                    # Support AEC-style index dicts or batched tensors
+                    if isinstance(all_rewards, dict):
+                        for p_idx, r_val in all_rewards.items():
+                            self.current_scores[i, p_idx] += float(r_val)
+                    elif isinstance(all_rewards, (list, np.ndarray, torch.Tensor)):
+                        # Handle batched rewards vector per-environment
+                        r_vec = all_rewards[i]
+                        if torch.is_tensor(r_vec):
+                            r_vec = r_vec.cpu().numpy()
+                        self.current_scores[i] += r_vec
+                else:
+                    self.current_scores[i, p_id_acting] += rewards[i].item()
                 self.current_lengths[i] += 1
 
                 # Determine next state's player ID
