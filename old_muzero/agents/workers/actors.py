@@ -352,6 +352,15 @@ class BaseActor(ABC):
                 all_player_rewards=all_player_rewards,
             )
 
+        # Append terminal state's to_play. player_id_history has N entries
+        # (one per step) but observation_history has N+1. The processor maps
+        # player_id_history[i] -> tps_t[i], so the terminal state (index N)
+        # would fall back to 0. Fix: capture the next-in-line player after the
+        # last step -- this is whose turn it would be at the terminal state.
+        terminal_player_id = self._get_player_id()
+        if terminal_player_id is not None:
+            sequence.player_id_history.append(terminal_player_id)
+
         sequence.duration_seconds = time.time() - start_time
         sequence.stats["mcts_simulations"] = mcts_sims_total
         sequence.stats["mcts_search_time"] = mcts_search_total
