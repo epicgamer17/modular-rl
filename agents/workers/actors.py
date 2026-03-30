@@ -223,7 +223,10 @@ class RolloutActor(BaseActor):
             # 2. Resilient Action Extraction (Null Object Pattern)
             # NO BRANCHING. Responsibility live strictly in the selector.
             actions, metadata = self.action_selector.select_action(
-                result, self.info, exploration=True
+                result,
+                self.info,
+                exploration=True,
+                episode_step=int(np.max(self.current_lengths)),
             )
 
             # 3. Step the Adapter (Hides messy environment library logic)
