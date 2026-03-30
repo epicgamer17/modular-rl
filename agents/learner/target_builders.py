@@ -349,22 +349,43 @@ class SequenceMaskBuilder(BaseTargetBuilder):
         base_mask = batch.get(
             "is_same_game", torch.ones((B, T), device=device, dtype=torch.bool)
         )
+        # raw_dones[t] is True if s_t is terminal
+        raw_dones = batch.get("dones", torch.zeros((B, T), device=device, dtype=torch.bool))
+        
+        # post_done_mask[t] is True if we already passed a terminal state (s_{t-1} or earlier were terminal)
+        cumulative_dones = torch.cumsum(raw_dones.float(), dim=1)
+        post_done_mask = (
+            torch.cat(
+                [torch.zeros((B, 1), device=device), cumulative_dones[:, :-1]],
+                dim=1,
+            )
+            > 0
+        )
 
+        # Values are valid everywhere within the same game (including terminal and post-terminal)
         current_targets["value_mask"] = base_mask.clone()
         current_targets["masks"] = base_mask.clone()
-        current_targets["policy_mask"] = batch.get(
-            "has_valid_action_mask", base_mask
-        ).clone()
+        
+        # Policy is masked on terminal states and after (no actions to take)
+        current_targets["policy_mask"] = base_mask & (~post_done_mask) & (~raw_dones)
 
-        # Rewards are transitions; root (t=0) does not get a reward prediction
+        # Rewards are predicted everywhere except the root (t=0). 
+        # This includes terminal transition (r_k) and and transitions after terminal (r > k).
         reward_mask = base_mask.clone()
         reward_mask[:, 0] = False
         current_targets["reward_mask"] = reward_mask
 
-        # To-Play is state-aligned; exclude root and terminal states (no player to predict after game ends)
-        to_play_mask = batch.get("has_valid_action_mask", base_mask).clone()
+        # To-Play is state-aligned; includes terminal state but masks root AND post-terminal
+        # Post-terminal states do not have a defined next player.
+        to_play_mask = base_mask & (~post_done_mask)
         to_play_mask[:, 0] = False
         current_targets["to_play_mask"] = to_play_mask
+        
+        # Auxiliary masks (Consistency, Sigma, Commitment)
+        # Standard: Consistency matches to_play_mask (valid unrolled dynamics checkpoints)
+        current_targets["consistency_mask"] = to_play_mask.clone()
+        current_targets["sigma_mask"] = to_play_mask.clone()
+        current_targets["commitment_mask"] = base_mask.clone() # Usually valid for all encoded states
 
 
 class SequenceInfrastructureBuilder(BaseTargetBuilder):
