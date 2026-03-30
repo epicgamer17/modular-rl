@@ -335,6 +335,10 @@ class AgentNetwork(nn.Module):
             "telemetry": telemetry_dict,
         }
 
+        # Mapping for LossPipeline compatibility
+        if "projector" in behavior_results:
+            final_output["consistency_logits"] = behavior_results["projector"]
+
         return final_output
 
     def hidden_state_inference(

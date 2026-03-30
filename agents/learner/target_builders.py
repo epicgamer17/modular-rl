@@ -453,7 +453,7 @@ class LatentConsistencyBuilder(BaseTargetBuilder):
         # NOT strict inference_mode tensors which crash loss functions.
         with torch.no_grad():
             initial_out = network.obs_inference(flat_obs)
-            real_latents = initial_out.network_state.dynamics
+            real_latents = initial_out.recurrent_state["dynamics"]
 
             # No more .clone() hacks!
             # real_latents is already safely detached.
@@ -465,7 +465,7 @@ class LatentConsistencyBuilder(BaseTargetBuilder):
         consistency_targets = normalized_targets.reshape(
             batch_size, unroll_len, -1
         ).detach()
-        current_targets["consistency_targets"] = consistency_targets
+        current_targets["targets_latent"] = consistency_targets
 
 
 class SequenceTargetPipeline(TargetBuilderPipeline):
