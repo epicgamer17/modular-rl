@@ -87,79 +87,68 @@ class SearchPolicySource(BasePolicySource):
                 for i, item in enumerate(info):
                     if isinstance(item, dict) and "player" not in item:
                         # If to_play is a list matching info, use corresponding element
-                        p = to_play[i] if (isinstance(to_play, (list, np.ndarray, torch.Tensor)) and len(to_play) == len(info)) else to_play
+                        p = (
+                            to_play[i]
+                            if (
+                                isinstance(to_play, (list, np.ndarray, torch.Tensor))
+                                and len(to_play) == len(info)
+                            )
+                            else to_play
+                        )
                         new_info.append({**item, "player": p})
                     else:
                         new_info.append(item)
                 info = new_info
 
-        assert (
-            (isinstance(info, dict) and "player" in info) or
-            (isinstance(info, list) and all(isinstance(i, dict) and "player" in i for i in info))
+        assert (isinstance(info, dict) and "player" in info) or (
+            isinstance(info, list)
+            and all(isinstance(i, dict) and "player" in i for i in info)
         ), "info must contain 'player' in all entries, or pass to_play as a kwarg"
 
         start_time = time.time()
-        is_batched = obs.dim() > len(agent_network.input_shape) and obs.shape[0] > 1
+        # 0. Check batch size
+        B = obs.shape[0] if torch.is_tensor(obs) else len(obs)
+        if B == 1:
+            # Squeeze observation for search.run (expects no batch dimension)
+            # The User says: "policy source modifies the shape correctly for the single .run"
+            single_obs = obs[0]
 
-        # NOTE: Old MuZero parity testing only. Legacy actors dispatched the
-        # singleton path through search.run(...) instead of the vectorized
-        # wrapper, so keep that contract for 1-env workers.
-        if is_batched:
-            res = self.search.run_vectorized(obs, info, agent_network)
-            (
-                root_values,
-                exploratory_policies,
-                target_policies,
-                best_actions,
-                sm_list,
-            ) = res
+            # Standardize info to a single dict for .run
+            # Search expects info["player"] to exist.
+            if isinstance(info, list):
+                single_info = info[0]
+            elif isinstance(info, dict) and "player" not in info:
+                # AO style dict-of-tensors: extract first element
+                single_info = {
+                    k: (v[0] if hasattr(v, "__getitem__") and len(v) == B else v)
+                    for k, v in info.items()
+                }
+            else:
+                single_info = info
 
-            search_duration = time.time() - start_time
-
-            probs = torch.stack(
-                [
-                    torch.as_tensor(
-                        p, device=obs.device, dtype=torch.float32
-                    ).contiguous()
-                    for p in exploratory_policies
-                ]
+            # .run returns a flatter result, wrap it into lists
+            root_v, expl_p, target_p, best_a, sm = self.search.run(
+                single_obs, single_info, agent_network, exploration=exploration
             )
-            values = torch.as_tensor(
-                root_values, device=obs.device, dtype=torch.float32
+            res = (
+                [root_v],
+                [expl_p],
+                [target_p],
+                [best_a],
+                [sm],
             )
-
-            if values.dim() == 1:
-                values = values.unsqueeze(-1)
-
-            target_policies_tensor = torch.stack(
-                [
-                    torch.as_tensor(
-                        p, device=obs.device, dtype=torch.float32
-                    ).contiguous()
-                    for p in target_policies
-                ]
-            )
-            best_actions_tensor = torch.as_tensor(
-                best_actions, device=obs.device, dtype=torch.long
+        else:
+            res = self.search.run_vectorized(
+                obs, info, agent_network, exploration=exploration
             )
 
-            return InferenceResult(
-                probs=probs,
-                value=values,
-                action=best_actions_tensor,
-                extras={
-                    "target_policies": target_policies_tensor,
-                    "search_duration": search_duration,
-                    "search_metadata": sm_list,
-                    "best_actions": best_actions_tensor,
-                    "value": values.squeeze(-1),
-                    "root_value": values.squeeze(-1),
-                },
-            )
-
-        root_value, exploratory_policy, target_policy, best_action, search_metadata = (
-            self.search.run(obs, info, agent_network, exploration=exploration)
-        )
+        (
+            root_values,
+            exploratory_policies,
+            target_policies,
+            best_actions,
+            sm_list,
+        ) = res
 
         search_duration = time.time() - start_time
         probs = torch.as_tensor(
@@ -170,9 +159,7 @@ class SearchPolicySource(BasePolicySource):
         if obs.dim() > len(agent_network.input_shape):
             probs = probs.unsqueeze(0)
             target_policies_out = (
-                torch.as_tensor(
-                    target_policy, device=obs.device, dtype=torch.float32
-                )
+                torch.as_tensor(target_policy, device=obs.device, dtype=torch.float32)
                 .contiguous()
                 .unsqueeze(0)
             )

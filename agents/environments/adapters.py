@@ -147,7 +147,7 @@ class VectorAdapter(BaseAdapter):
             info = {}
             
         obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-        if obs_tensor.dim() == len(self.vec_env.observation_space.shape):
+        if obs_tensor.dim() < len(self.vec_env.observation_space.shape):
             obs_tensor = obs_tensor.unsqueeze(0)
             
         return obs_tensor, self._process_info(info)
@@ -166,7 +166,7 @@ class VectorAdapter(BaseAdapter):
         truncs_tensor = torch.as_tensor(truncs, dtype=torch.bool, device=self.device)
 
         # Force batch dimension if squeezed by the environment
-        if obs_tensor.dim() == len(self.vec_env.observation_space.shape):
+        if obs_tensor.dim() < len(self.vec_env.observation_space.shape):
             obs_tensor = obs_tensor.unsqueeze(0)
             rewards_tensor = rewards_tensor.unsqueeze(0)
             terminals_tensor = terminals_tensor.unsqueeze(0)
@@ -255,12 +255,32 @@ class PettingZooAdapter(BaseAdapter):
         if self.is_aec:
             self.env.reset()
             obs, reward, term, trunc, info = self.env.last()
+            
+            # Handle dict observations (common in PettingZoo AEC)
+            if isinstance(obs, dict):
+                if "action_mask" in obs and "legal_moves" not in info:
+                    # Update info with legal moves from the mask
+                    info = info.copy()
+                    info["legal_moves"] = np.where(obs["action_mask"] == 1)[0]
+                obs = obs.get("observation", obs)
+                
             return torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0), self._process_info_aec(info)
         else:
             # Parallel API
             obs_dict, info_dict = self.env.reset()
-            obs_list = np.stack([obs_dict[a] for a in self.agents])
-            return torch.as_tensor(obs_list, dtype=torch.float32, device=self.device), self._process_info_parallel(info_dict)
+            
+            # Handle dict observations in parallel mode
+            obs_list = []
+            for a in self.agents:
+                o = obs_dict[a]
+                if isinstance(o, dict):
+                    if "action_mask" in o:
+                        if a not in info_dict: info_dict[a] = {}
+                        info_dict[a]["legal_moves"] = np.where(o["action_mask"] == 1)[0]
+                    o = o.get("observation", o)
+                obs_list.append(o)
+                
+            return torch.as_tensor(np.stack(obs_list), dtype=torch.float32, device=self.device), self._process_info_parallel(info_dict)
 
     def step(self, actions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
         if self.is_aec:
@@ -275,7 +295,14 @@ class PettingZooAdapter(BaseAdapter):
             all_rewards_idx = {self.agents.index(a): r for a, r in all_rewards.items()}
             
             obs, _, term, trunc, env_info = self.env.last()
-            info = env_info.copy()
+            info = (env_info or {}).copy()
+            
+            # Handle observation being a dict (with action_mask / observation)
+            if isinstance(obs, dict):
+                if "action_mask" in obs and "legal_moves" not in info:
+                    info["legal_moves"] = np.where(obs["action_mask"] == 1)[0]
+                obs = obs.get("observation", obs)
+            
             info["all_rewards"] = all_rewards_idx
 
             # Auto-reset for AEC: if episode is over, reset and get fresh root state
@@ -287,6 +314,14 @@ class PettingZooAdapter(BaseAdapter):
 
                 self.env.reset()
                 new_obs, _, _, _, reset_info = self.env.last()
+                
+                # Handle reset observation dict
+                if isinstance(new_obs, dict):
+                    if "action_mask" in new_obs and "legal_moves" not in (reset_info or {}):
+                        reset_info = (reset_info or {}).copy()
+                        reset_info["legal_moves"] = np.where(new_obs["action_mask"] == 1)[0]
+                    new_obs = new_obs.get("observation", new_obs)
+                
                 obs = new_obs
                 if reset_info:
                     info.update(reset_info)
@@ -319,13 +354,23 @@ class PettingZooAdapter(BaseAdapter):
                 if reset_info_dict:
                     info_dict.update(reset_info_dict)
 
-            obs_list = np.stack([obs_dict[a] for a in self.agents])
+            # Handle dict observations in parallel mode
+            obs_list = []
+            for a in self.agents:
+                o = obs_dict[a]
+                if isinstance(o, dict):
+                    if "action_mask" in o:
+                        if a not in info_dict: info_dict[a] = {}
+                        info_dict[a]["legal_moves"] = np.where(o["action_mask"] == 1)[0]
+                    o = o.get("observation", o)
+                obs_list.append(o)
+                
             reward_list = [reward_dict[a] for a in self.agents]
             term_list = [term_dict[a] for a in self.agents]
             trunc_list = [trunc_dict[a] for a in self.agents]
             
             return (
-                torch.as_tensor(obs_list, dtype=torch.float32, device=self.device),
+                torch.as_tensor(np.stack(obs_list), dtype=torch.float32, device=self.device),
                 torch.tensor(reward_list, dtype=torch.float32, device=self.device),
                 torch.tensor(term_list, dtype=torch.bool, device=self.device),
                 torch.tensor(trunc_list, dtype=torch.bool, device=self.device),

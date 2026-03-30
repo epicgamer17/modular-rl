@@ -190,7 +190,13 @@ class ModularSearch:
         # 1. Inference
         assert not root.expanded()
 
+        # Root inference expects a batch dimension [1, ...]
+        # We unsqueeze here since the Actor/Selector might have squeezed it for Tier-1 efficiency.
+        if torch.is_tensor(observation) and observation.dim() == len(agent_network.input_shape):
+            observation = observation.unsqueeze(0)
+            
         outputs: InferenceOutput = agent_network.obs_inference(observation)
+
 
         val_raw = outputs.value
         root_policy_dist = outputs.policy
