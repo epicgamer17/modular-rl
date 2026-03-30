@@ -72,7 +72,12 @@ def test_mcts_no_interior_masking():
         search_engine = sm.ModularSearch(config, num_actions=num_actions, device=torch.device("cpu"))
         
         class MockNetwork(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.input_shape = (1,)
+                
             def obs_inference(self, obs):
+
                 from modules.models.inference_output import InferenceOutput
                 return InferenceOutput(
                     recurrent_state={"dynamics": torch.zeros(1)},

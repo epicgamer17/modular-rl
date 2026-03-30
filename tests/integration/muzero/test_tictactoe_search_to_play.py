@@ -39,6 +39,8 @@ class DummySearchNetwork(torch.nn.Module):
         super().__init__()
         self.num_actions = num_actions
         self.recurrent_to_play = recurrent_to_play
+        self.input_shape = (2, 3, 3)
+
 
     def _policy(self, batch_size: int) -> Categorical:
         logits = torch.full((batch_size, self.num_actions), -5.0)
@@ -87,19 +89,22 @@ def test_muzero_trainer_search_policy_source_forwards_to_play_kwarg(
     assert "player" not in info
 
     seen = {}
-
-    def fake_run_vectorized(obs_arg, info_arg, agent_network_arg):
+    
+    def fake_run(obs_arg, info_arg, agent_network_arg, **kwargs):
+        # The test verifies that SearchPolicySource forwards the 'to_play' into the info dict as 'player'
         seen["player"] = info_arg["player"]
         uniform = torch.full(
             (tictactoe_game_config.num_actions,),
             1.0 / tictactoe_game_config.num_actions,
             dtype=torch.float32,
         )
-        return ([0.0], [uniform], [uniform], [0], [{}])
+        # Search.run returns single values (flatter than vectorized)
+        return (0.0, uniform, uniform, 0, {})
 
     monkeypatch.setattr(
-        trainer.search_policy_source.search, "run_vectorized", fake_run_vectorized
+        trainer.search_policy_source.search, "run", fake_run
     )
+
 
     trainer.search_policy_source.get_inference(
         obs,
