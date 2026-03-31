@@ -439,6 +439,8 @@ def kernel_initializer_wrapper(x):
         return x
     if isinstance(x, str):
         return prepare_kernel_initializers(x)
+    if isinstance(x, dict):
+        return x  # Return the dict so the network can handle it
     assert callable(x)
     return x
 

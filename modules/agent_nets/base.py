@@ -20,16 +20,41 @@ class BaseAgentNetwork(nn.Module, ABC):
         self.num_actions: Optional[int] = None
 
     def initialize(
-        self, initializer: Optional[Union[Callable[[Tensor], None], str]] = None
+        self, initializer: Optional[Union[Callable[[Tensor], None], str, Dict[str, float]]] = None
     ) -> None:
         """
         Unified initialization for all Agent Network components.
         Recursively applies the initializer function to all applicable layers (Conv, Linear).
+        If initializer is a dict, it maps component names to gains for orthogonal initialization.
         """
-        init_fn = kernel_initializer_wrapper(initializer)
-        if init_fn is None:
+        init_val = kernel_initializer_wrapper(initializer)
+        if init_val is None:
             return
 
+        # Handle Dict of gains (Special case for high-fidelity PPO/MuZero)
+        if isinstance(init_val, dict):
+            # We assume the network is composed of named components (e.g. self.components in ModularAgentNetwork)
+            # or just recursive application with a default if not found in dict.
+            default_gain = init_val.get("default", 1.0)
+            
+            # If the object has a 'components' attribute (like ModularAgentNetwork), we use it
+            components = getattr(self, "components", {"self": self})
+
+            for comp_name, module in components.items():
+                gain = init_val.get(comp_name, default_gain)
+                
+                def init_comp_weights(m):
+                    if isinstance(m, (nn.Conv2d, nn.Linear, nn.ConvTranspose2d)):
+                        if hasattr(m, "weight") and m.weight is not None:
+                            nn.init.orthogonal_(m.weight, gain=gain)
+                        if hasattr(m, "bias") and m.bias is not None:
+                            nn.init.constant_(m.bias, 0)
+                
+                module.apply(init_comp_weights)
+            return
+
+        # Handle Standard Init Function
+        init_fn = init_val
         def init_weights(m):
             if isinstance(m, (nn.Conv2d, nn.Linear, nn.ConvTranspose2d)):
                 if hasattr(m, "weight") and m.weight is not None:

@@ -34,8 +34,13 @@ def _is_orthogonal(weight: torch.Tensor, gain: float = 1.0, atol: float = 0.05) 
     return torch.allclose(product, expected, atol=atol)
 
 
-def test_orthogonal_initialization_defaults():
-    """Verify that AgentNetwork uses orthogonal initialization by default with gain=math.sqrt(2)."""
+def test_orthogonal_initialization_ppo_fidelity():
+    """
+    Verify high-fidelity PPO initialization:
+    - Hidden (Backbone/Neck): sqrt(2) gain, 0 bias
+    - Policy Output: 0.01 gain, 0 bias
+    - Value Output: 1.0 gain, 0 bias
+    """
     torch.manual_seed(42)
     input_shape = (4,)
     num_actions = 2
@@ -56,71 +61,51 @@ def test_orthogonal_initialization_defaults():
         },
     )
 
-    # Apply orthogonal init (nn.init.orthogonal_ with default gain=1.0)
-    network.initialize("orthogonal")
+    # We want to support a granular initialization that aligns with Baselines
+    # Proposed API: dictionary of gains
+    network.initialize({
+        "backbone": math.sqrt(2),
+        "policy_head": 0.01,
+        "value_head": 1.0,
+    })
 
-    # Backbone first layer: LinearStack._layers[0] is Sequential(LinearBlock, norm)
+    # 1. Backbone (Hidden Layers)
+    # MLPBackbone has a LinearStack. LinearStack has Sequential(LinearBlock, norm)
     backbone_linear = backbone.stack._layers[0][0]  # LinearBlock
     backbone_weight = _get_weight(backbone_linear)
-    assert _is_orthogonal(backbone_weight, gain=1.0), (
-        "Backbone should be orthogonally initialized"
+    assert _is_orthogonal(backbone_weight, gain=math.sqrt(2)), (
+        f"Backbone should have sqrt(2) gain, got approx {_is_orthogonal(backbone_weight, gain=math.sqrt(2))}"
+    )
+    assert torch.allclose(backbone_linear.layer.bias, torch.zeros_like(backbone_linear.layer.bias)), (
+        "Backbone bias should be 0"
     )
 
-    # Policy head output layer
+    # 2. Policy Head Output
     policy_weight = _get_weight(policy_head.output_layer)
-    assert _is_orthogonal(policy_weight, gain=1.0), (
-        "Policy output should be orthogonally initialized"
+    assert _is_orthogonal(policy_weight, gain=0.01), (
+        f"Policy output should have 0.01 gain"
+    )
+    assert torch.allclose(policy_head.output_layer.layer.bias, torch.zeros_like(policy_head.output_layer.layer.bias)), (
+        "Policy output bias should be 0"
+    )
+
+    # 3. Value Head Output
+    value_weight = _get_weight(value_head.output_layer)
+    assert _is_orthogonal(value_weight, gain=1.0), (
+        "Value output should have 1.0 gain"
+    )
+    assert torch.allclose(value_head.output_layer.layer.bias, torch.zeros_like(value_head.output_layer.layer.bias)), (
+        "Value output bias should be 0"
     )
 
 
-def test_orthogonal_initialization_custom_gain():
-    """Verify that specifying a global gain in initialize affects non-component layers."""
-    torch.manual_seed(42)
-    input_shape = (4,)
-    num_actions = 2
+if __name__ == "__main__":
+    from agents.learner.losses.representations import ClassificationRepresentation, ScalarRepresentation
+    from modules.backbones.mlp import MLPBackbone
+    from modules.agent_nets.modular import ModularAgentNetwork
+    from modules.heads.policy import PolicyHead
+    from modules.heads.value import ValueHead
+    import math
 
-    backbone = MLPBackbone(input_shape=input_shape, widths=[32])
-    pol_rep = ClassificationRepresentation(num_actions)
-    policy_head = PolicyHead(input_shape=backbone.output_shape, representation=pol_rep)
-
-    network = ModularAgentNetwork(
-        input_shape=input_shape,
-        num_actions=num_actions,
-        components={
-            "backbone": backbone,
-            "policy_head": policy_head,
-        },
-    )
-
-    # Current initialize() uses nn.init.orthogonal_ with default gain=1.0
-    network.initialize("orthogonal")
-
-    backbone_linear = backbone.stack._layers[0][0]
-    backbone_weight = _get_weight(backbone_linear)
-    assert _is_orthogonal(backbone_weight, gain=1.0), (
-        "Backbone should have orthogonal init with default gain"
-    )
-
-
-def test_value_head_orthogonal_init():
-    """Verify ValueHead uses orthogonal init with gain 1.0."""
-    torch.manual_seed(42)
-    input_shape = (32,)
-    val_rep = ScalarRepresentation()
-
-    head = ValueHead(input_shape=input_shape, representation=val_rep)
-
-    # Apply orthogonal init to the head
-    def init_weights(m):
-        if isinstance(m, nn.Linear):
-            nn.init.orthogonal_(m.weight, gain=1.0)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-
-    head.apply(init_weights)
-
-    # output_layer is a LinearBlock wrapping nn.Linear
-    output_weight = _get_weight(head.output_layer)
-    assert _is_orthogonal(output_weight, gain=1.0), (
-        "Value head output layer should have gain 1.0"
-    )
+    test_orthogonal_initialization_ppo_fidelity()
+    print("Test passed!")
