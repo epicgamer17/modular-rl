@@ -35,186 +35,25 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
     def __init__(
         self,
-        config: Any,
         input_shape: Tuple[int, ...],
         num_actions: int,
+        components: Dict[str, nn.Module],
+        stochastic: bool = False,
+        unroll_steps: int = 0,
+        minibatch_size: int = 1,
+        atom_size: int = 1,
+        support_range: Optional[int] = None,
         **kwargs,
     ):
         super().__init__()
-        self.config = config
         self.input_shape = input_shape
         self.num_actions = num_actions
-
-        # Modules injected at runtime
-        self.components = nn.ModuleDict()
-
-        config_type = getattr(config, "agent_type", None)
-
-        if isinstance(config, MuZeroConfig) or config_type == "muzero":
-            self._init_muzero(config, input_shape, num_actions, **kwargs)
-        elif isinstance(config, PPOConfig) or config_type == "ppo":
-            self._init_ppo(config, input_shape, num_actions, **kwargs)
-        elif isinstance(config, RainbowConfig) or config_type == "rainbow":
-            self._init_rainbow(config, input_shape, num_actions, **kwargs)
-        elif isinstance(config, SupervisedConfig) or config_type == "supervised":
-            self._init_sl(config, input_shape, num_actions, **kwargs)
-        else:
-            raise ValueError(
-                f"Unsupported config type for ModularAgentNetwork: {type(config)}"
-            )
-
-    def _init_muzero(
-        self,
-        config: MuZeroConfig,
-        input_shape: Tuple[int, ...],
-        num_actions: int,
-        **kwargs,
-    ):
-        # 1. The Physics Engine
-        world_model_cls = kwargs.get("world_model_cls", MuzeroWorldModel)
-        self.components["world_model"] = world_model_cls(
-            config, input_shape, num_actions
-        )
-
-        hidden_state_shape = self.components["world_model"].representation.output_shape
-
-        # 2. The Task-Specific Heads
-        self.components["prediction_backbone"] = BackboneFactory.create(
-            config.prediction_backbone, hidden_state_shape
-        )
-        prediction_feat_shape = self.components["prediction_backbone"].output_shape
-
-        # Value
-        val_rep = get_representation(config.value_head.output_strategy)
-        self.components["value_head"] = ValueHead(
-            arch_config=config.arch,
-            input_shape=prediction_feat_shape,
-            representation=val_rep,
-            neck_config=config.value_head.neck,
-        )
-
-        # Policy
-        pol_rep = get_representation(config.policy_head.output_strategy)
-        self.components["policy_head"] = PolicyHead(
-            arch_config=config.arch,
-            input_shape=prediction_feat_shape,
-            neck_config=config.policy_head.neck,
-            representation=pol_rep,
-        )
-
-        # Stochastic Chance Heads (if applicable)
-        if config.stochastic:
-            shared_backbone_output_shape = self.components[
-                "world_model"
-            ].shared_backbone.output_shape
-            self.components["afterstate_value_head"] = ValueHead(
-                arch_config=config.arch,
-                input_shape=shared_backbone_output_shape,
-                representation=val_rep,
-                neck_config=config.value_head.neck,
-            )
-
-        # 3. Efficient Zero Projector
-        self.flat_hidden_dim = torch.Size(hidden_state_shape).numel()
-        self.components["projector"] = Projector(self.flat_hidden_dim, config)
-
-    def _init_ppo(
-        self,
-        config: PPOConfig,
-        input_shape: Tuple[int, ...],
-        num_actions: int,
-        **kwargs,
-    ):
-        # Policy Head (Actor)
-        pol_rep = None
-        if hasattr(config.policy_head, "output_strategy"):
-            pol_rep = get_representation(config.policy_head.output_strategy)
-
-        self.components["policy_head"] = PolicyHead(
-            arch_config=config.arch,
-            input_shape=input_shape,
-            neck_config=config.policy_head.neck,
-            representation=pol_rep,
-        )
-
-        # Value Head (Critic)
-        val_rep = get_representation(config.value_head.output_strategy)
-        self.components["value_head"] = ValueHead(
-            arch_config=config.arch,
-            input_shape=input_shape,
-            representation=val_rep,
-            neck_config=config.value_head.neck,
-        )
-
-    def _init_rainbow(
-        self,
-        config: RainbowConfig,
-        input_shape: Tuple[int, ...],
-        num_actions: int,
-        **kwargs,
-    ):
-        # Feature Extraction
-        self.components["feature_block"] = BackboneFactory.create(
-            config.backbone, input_shape
-        )
-        current_shape = self.components["feature_block"].output_shape
-
-        representation = get_representation(config.head.output_strategy)
-
-        if config.dueling:
-            self.components["q_head"] = DuelingQHead(
-                arch_config=config.arch,
-                input_shape=current_shape,
-                representation=representation,
-                value_hidden_widths=config.head.value_hidden_widths,
-                advantage_hidden_widths=config.head.advantage_hidden_widths,
-                num_actions=num_actions,
-                neck_config=config.head.neck,
-            )
-        else:
-            self.components["q_head"] = QHead(
-                arch_config=config.arch,
-                input_shape=current_shape,
-                representation=representation,
-                hidden_widths=config.head.hidden_widths,
-                num_actions=num_actions,
-                neck_config=config.head.neck,
-            )
-
-    def _init_sl(
-        self,
-        config: SupervisedConfig,
-        input_shape: Tuple[int, ...],
-        num_actions: int,
-        **kwargs,
-    ):
-        """Initializes components for supervised learning/imitation."""
-        # Simple policy head based on backbone
-        self.components["feature_block"] = BackboneFactory.create(
-            config.backbone, input_shape
-        )
-        current_shape = self.components["feature_block"].output_shape
-
-        # We use a basic policy head. SupervisedConfig might not have a full PolicyHeadConfig,
-        # but we can construct one or just use a simple linear layer.
-        # For consistency with other modular nets, we'll try to use a PolicyHead if possible.
-        from configs.modules.heads.policy import PolicyHeadConfig
-        from configs.modules.backbones.factory import BackboneConfigFactory
-
-        # Create a default PolicyHeadConfig if not in SupervisedConfig
-        neck_config = BackboneConfigFactory.create({"type": "identity"})
-        pol_head_config = PolicyHeadConfig(
-            {"neck": {"type": "identity"}, "output_strategy": {"type": "categorical"}}
-        )
-
-        self.components["policy_head"] = PolicyHead(
-            arch_config=config.arch,
-            input_shape=current_shape,
-            neck_config=neck_config,
-            representation=get_representation(
-                {"type": "classification", "num_classes": num_actions}
-            ),
-        )
+        self.components = nn.ModuleDict(components)
+        self.stochastic = stochastic
+        self.unroll_steps = unroll_steps
+        self.minibatch_size = minibatch_size
+        self.atom_size = atom_size
+        self.support_range = support_range
 
     @property
     def device(self) -> torch.device:
@@ -247,7 +86,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
         if "world_model" in self.components:
             wm_output = self.components["world_model"].initial_inference(obs)
             hidden_state = wm_output.features
-
+ 
             pred_features = self.components["prediction_backbone"](hidden_state)
             raw_value, _, expected_value = self.components["value_head"](pred_features)
             raw_policy, _, policy_dist = self.components["policy_head"](pred_features)
@@ -269,8 +108,14 @@ class ModularAgentNetwork(BaseAgentNetwork):
         # PPO Logic
         # ----------------------------------------
         elif "policy_head" in self.components and "value_head" in self.components:
-            policy_logits, _, policy_dist = self.components["policy_head"](obs)
-            value_logits, _, expected_value = self.components["value_head"](obs)
+            x = obs
+            if "backbone" in self.components:
+                x = self.components["backbone"](obs)
+            elif "feature_block" in self.components:
+                x = self.components["feature_block"](obs)
+
+            policy_logits, _, policy_dist = self.components["policy_head"](x)
+            value_logits, _, expected_value = self.components["value_head"](x)
 
             return InferenceOutput(policy=policy_dist, value=expected_value)
 
@@ -332,7 +177,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
             encoder_inputs = None
             if (
-                getattr(self.config, "stochastic", False)
+                self.stochastic
                 and target_observations is not None
             ):
                 encoder_inputs = torch.cat(
@@ -379,7 +224,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
             padded_rewards = torch.cat([dummy_reward, physics_output.rewards], dim=1)
 
             if (
-                getattr(self.config, "stochastic", False)
+                self.stochastic
                 and physics_output.latents_afterstates is not None
             ):
                 latents_afterstates = physics_output.latents_afterstates
@@ -440,7 +285,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
             }
 
             if (
-                getattr(self.config, "stochastic", False)
+                self.stochastic
                 and latents_afterstates is not None
             ):
                 output["latents_afterstates"] = latents_afterstates
@@ -450,7 +295,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
             # --- SHAPE VALIDATION ---
             # MuZero unrolls k steps, so T = k + 1
-            expected_T = getattr(self.config, "unroll_steps", 0) + 1
+            expected_T = self.unroll_steps + 1
             assert (
                 output["values"].ndim >= 2 and output["values"].shape[1] == expected_T
             ), f"MuZero values shape mismatch: {output['values'].shape}"
@@ -461,11 +306,11 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
             # --- STRICT SYSTEM-WIDE VALIDATION ---
             ShapeValidator(
-                minibatch_size=self.config.minibatch_size,
-                unroll_steps=getattr(self.config, "unroll_steps", 0),
+                minibatch_size=self.minibatch_size,
+                unroll_steps=self.unroll_steps,
                 num_actions=self.num_actions,
-                atom_size=getattr(self.config, "atom_size", 1),
-                support_range=getattr(self.config, "support_range", None),
+                atom_size=self.atom_size,
+                support_range=self.support_range,
             ).validate_predictions(output)
 
             return output
@@ -474,8 +319,14 @@ class ModularAgentNetwork(BaseAgentNetwork):
         # PPO Logic
         # ----------------------------------------
         elif "policy_head" in self.components and "value_head" in self.components:
-            policy_logits, _, _ = self.components["policy_head"](initial_observation)
-            value_logits, _, _ = self.components["value_head"](initial_observation)
+            x = initial_observation
+            if "backbone" in self.components:
+                x = self.components["backbone"](x)
+            elif "feature_block" in self.components:
+                x = self.components["feature_block"](x)
+
+            policy_logits, _, _ = self.components["policy_head"](x)
+            value_logits, _, _ = self.components["value_head"](x)
 
             output = {
                 "values": value_logits.unsqueeze(1),
@@ -495,11 +346,11 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
             # --- STRICT SYSTEM-WIDE VALIDATION ---
             ShapeValidator(
-                minibatch_size=self.config.minibatch_size,
-                unroll_steps=getattr(self.config, "unroll_steps", 0),
+                minibatch_size=self.minibatch_size,
+                unroll_steps=self.unroll_steps,
                 num_actions=self.num_actions,
-                atom_size=getattr(self.config, "atom_size", 1),
-                support_range=getattr(self.config, "support_range", None),
+                atom_size=self.atom_size,
+                support_range=self.support_range,
             ).validate_predictions(output)
 
             return output
@@ -530,11 +381,11 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
             # --- STRICT SYSTEM-WIDE VALIDATION ---
             ShapeValidator(
-                minibatch_size=self.config.minibatch_size,
-                unroll_steps=getattr(self.config, "unroll_steps", 0),
+                minibatch_size=self.minibatch_size,
+                unroll_steps=self.unroll_steps,
                 num_actions=self.num_actions,
-                atom_size=getattr(self.config, "atom_size", 1),
-                support_range=getattr(self.config, "support_range", None),
+                atom_size=self.atom_size,
+                support_range=self.support_range,
             ).validate_predictions(output)
 
             return output
@@ -557,11 +408,11 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
             # --- STRICT SYSTEM-WIDE VALIDATION ---
             ShapeValidator(
-                minibatch_size=self.config.minibatch_size,
-                unroll_steps=getattr(self.config, "unroll_steps", 0),
+                minibatch_size=self.minibatch_size,
+                unroll_steps=self.unroll_steps,
                 num_actions=self.num_actions,
-                atom_size=getattr(self.config, "atom_size", 1),
-                support_range=getattr(self.config, "support_range", None),
+                atom_size=self.atom_size,
+                support_range=self.support_range,
             ).validate_predictions(output)
 
             return output
@@ -611,9 +462,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
     def afterstate_inference(
         self, network_state: Any, action: Tensor
     ) -> InferenceOutput:
-        if "world_model" not in self.components or not getattr(
-            self.config, "stochastic", False
-        ):
+        if "world_model" not in self.components or not self.stochastic:
             return super().afterstate_inference(network_state, action)
 
         wm_output = self.components["world_model"].afterstate_recurrent_inference(

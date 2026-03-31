@@ -14,26 +14,18 @@ class BaseDynamics(nn.Module):
 
     def __init__(
         self,
-        config: MuZeroConfig,
-        input_shape: Tuple[int],
-        num_actions: int,
+        backbone: nn.Module,
+        action_encoder: nn.Module,
+        input_shape: Tuple[int, ...],
         action_embedding_dim: int,
-        layer_prefix: str,
     ):
         super().__init__()
-        self.config = config
         self.action_embedding_dim = action_embedding_dim
-        is_continuous = not self.config.game.is_discrete
 
-        # 1. Action Encoder
-        self.action_encoder = ActionEncoder(
-            action_space_size=num_actions,
-            embedding_dim=self.action_embedding_dim,
-            is_continuous=is_continuous,
-            single_action_plane=(layer_prefix == "dynamics"),
-        )
+        # 1. Action Encoder (Pass in prepared encoder)
+        self.action_encoder = action_encoder
 
-        # 2. Fusion Layer (Move from ActionEncoder to Dynamics)
+        # 2. Fusion Layer
         if len(input_shape) == 3:
             # Image input (C, H, W)
             self.num_channels = input_shape[0]
@@ -52,12 +44,7 @@ class BaseDynamics(nn.Module):
             self.fusion_bn = nn.BatchNorm1d(out_features)
 
         # 3. Core Network Block
-        if layer_prefix == "dynamics":
-            bb_cfg = config.dynamics_backbone
-        elif layer_prefix == "afterstate_dynamics":
-            bb_cfg = config.afterstate_dynamics_backbone
-
-        self.net = BackboneFactory.create(bb_cfg, input_shape)
+        self.net = backbone
         self.output_shape = self.net.output_shape
 
     def _fuse_and_process(
@@ -87,16 +74,14 @@ class BaseDynamics(nn.Module):
 class Dynamics(BaseDynamics):
     def __init__(
         self,
-        config: MuZeroConfig,
-        input_shape: Tuple[int],
-        num_actions: int,
+        backbone: nn.Module,
+        action_encoder: nn.Module,
+        input_shape: Tuple[int, ...],
         action_embedding_dim: int,
     ):
-        # dynamics layers uses the "dynamics" prefix
         super().__init__(
-            config, input_shape, num_actions, action_embedding_dim, "dynamics"
+            backbone, action_encoder, input_shape, action_embedding_dim
         )
-        # NOTE: RewardHead and ToPlayHead are GONE from here!
 
     def forward(
         self,
@@ -113,17 +98,13 @@ class Dynamics(BaseDynamics):
 class AfterstateDynamics(BaseDynamics):
     def __init__(
         self,
-        config: MuZeroConfig,
-        input_shape: Tuple[int],
-        num_actions: int,
+        backbone: nn.Module,
+        action_encoder: nn.Module,
+        input_shape: Tuple[int, ...],
         action_embedding_dim: int,
     ):
         super().__init__(
-            config,
-            input_shape,
-            num_actions,
-            action_embedding_dim,
-            "afterstate_dynamics",
+            backbone, action_encoder, input_shape, action_embedding_dim
         )
 
     def forward(self, hidden_state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:

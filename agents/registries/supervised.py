@@ -1,5 +1,6 @@
 import torch
 from typing import Any, Dict, List, Tuple
+from torch import nn
 from agents.registries.base import register_agent
 from agents.learner.losses import LossPipeline, ImitationLoss
 from modules.utils import create_optimizer, get_lr_scheduler
@@ -80,4 +81,47 @@ def build_supervised(
         "optimizers": optimizers,
         "lr_schedulers": lr_schedulers,
         "observation_dtype": torch.float32,
+    }
+
+
+def build_supervised_network_components(
+    config: Any, input_shape: Tuple[int, ...], num_actions: int, **kwargs
+) -> Dict[str, Any]:
+    from modules.backbones.factory import BackboneFactory
+    from configs.modules.backbones.factory import BackboneConfigFactory
+    from modules.heads.policy import PolicyHead
+    from agents.learner.losses.representations import get_representation
+
+    # 1. Feature Extractor
+    # Check for 'prediction_backbone' then 'backbone' with config_dict fallback.
+    bb_cfg = getattr(config, "prediction_backbone", None)
+    if bb_cfg is None:
+        bb_cfg = getattr(config, "backbone", config.config_dict.get("backbone", None))
+    
+    if isinstance(bb_cfg, dict):
+        bb_cfg = BackboneConfigFactory.create(bb_cfg)
+    
+    if bb_cfg:
+        backbone = BackboneFactory.create(bb_cfg, input_shape)
+        feat_shape = backbone.output_shape
+    else:
+        backbone = nn.Identity()
+        feat_shape = input_shape
+
+    pol_rep = get_representation(config.policy_head.output_strategy)
+    policy_head = PolicyHead(
+        arch_config=config.arch,
+        input_shape=feat_shape,
+        representation=pol_rep,
+        neck_config=config.policy_head.neck,
+    )
+
+    return {
+        "components": {
+            "feature_block": backbone,
+            "policy_head": policy_head,
+        },
+        "metadata": {
+            "minibatch_size": getattr(config, "minibatch_size", 1),
+        },
     }

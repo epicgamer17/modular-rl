@@ -39,6 +39,7 @@ from agents.executors.torch_mp_executor import TorchMPExecutor
 from agents.trainers.base_trainer import BaseTrainer
 from agents.workers.actors import GymActor, PettingZooActor
 from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.factory import build_modular_agent_network
 from modules.utils import get_clean_state_dict
 from replay_buffers.sequence import Sequence
 from stats.stats import StatTracker, PlotType
@@ -249,12 +250,12 @@ class NFSPTrainer(BaseTrainer):
         sl_config = config.sl_configs[0]
 
         # Networks (Best Response + Target, and Average Strategy)
-        self.br_agent_network = ModularAgentNetwork(
+        self.br_agent_network = build_modular_agent_network(
             config=rl_config,
             input_shape=self.obs_dim,
             num_actions=self.num_actions,
         ).to(device)
-        self.br_target_agent_network = ModularAgentNetwork(
+        self.br_target_agent_network = build_modular_agent_network(
             config=rl_config,
             input_shape=self.obs_dim,
             num_actions=self.num_actions,
@@ -263,7 +264,7 @@ class NFSPTrainer(BaseTrainer):
             get_clean_state_dict(self.br_agent_network), strict=False
         )
 
-        self.avg_agent_network = ModularAgentNetwork(
+        self.avg_agent_network = build_modular_agent_network(
             config=sl_config,
             input_shape=self.obs_dim,
             num_actions=self.num_actions,

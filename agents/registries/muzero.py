@@ -1,5 +1,6 @@
 import torch
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
+from torch import nn
 from agents.registries.base import register_agent
 from agents.learner.losses import (
     LossPipeline,
@@ -17,6 +18,19 @@ from agents.learner.callbacks import (
     MetricEarlyStopCallback,
 )
 from modules.utils import get_lr_scheduler
+from configs.modules.backbones.factory import BackboneConfigFactory
+from modules.heads.value import ValueHead
+from modules.heads.policy import PolicyHead
+from modules.heads.to_play import ToPlayHead
+from modules.heads.factory import HeadFactory
+from modules.world_models.muzero_world_model import (
+    MuzeroWorldModel,
+    AfterstateDynamics,
+    Dynamics,
+    Representation,
+)
+from modules.projectors.sim_siam import Projector
+from agents.learner.losses.representations import get_representation
 from agents.learner.target_builders import (
     TargetBuilderPipeline,
     LatentConsistencyBuilder,
@@ -28,8 +42,16 @@ from agents.learner.target_builders import (
 )
 
 
-from agents.learner.losses.representations import IdentityRepresentation
+from agents.learner.losses.representations import IdentityRepresentation, get_representation
 from agents.learner.losses.priorities import ExpectedValueErrorPriorityComputer
+from modules.world_models.muzero_world_model import MuzeroWorldModel
+from modules.world_models.components.representation import Representation
+from modules.world_models.components.dynamics import Dynamics, AfterstateDynamics
+from modules.world_models.components.chance_encoder import ChanceEncoder
+from modules.backbones.factory import BackboneFactory
+from modules.heads.factory import HeadFactory
+from modules.heads.to_play import ToPlayHead
+from modules.projectors.sim_siam import Projector
 
 
 def build_muzero_loss_pipeline(
@@ -217,4 +239,196 @@ def build_muzero(
         "callbacks": callbacks,
         "target_builder": target_builder,
         "observation_dtype": torch.float32,
+    }
+
+
+def build_muzero_network_components(
+    config: Any, input_shape: Tuple[int, ...], num_actions: int, **kwargs
+) -> Dict[str, Any]:
+    # 1. Representation Network
+    rep_bb_cfg = getattr(config, "representation_backbone", config.config_dict.get("backbone", {"type": "mlp"}))
+    if isinstance(rep_bb_cfg, dict):
+        rep_bb_cfg = BackboneConfigFactory.create(rep_bb_cfg)
+    representation_backbone = BackboneFactory.create(
+        rep_bb_cfg, input_shape
+    )
+    representation = Representation(backbone=representation_backbone)
+
+    hidden_state_shape = representation.output_shape
+
+    # 2. Physics Engine (Dynamics & Heads)
+    stochastic = getattr(config, "stochastic", False)
+    num_chance = getattr(config, "num_chance", 0)
+    action_embedding_dim = getattr(config, "action_embedding_dim", 0)
+
+    # Action Encoder for Dynamics
+    from modules.embeddings.action_embedding import ActionEncoder
+
+    def create_action_encoder(n_actions, is_dyn=True):
+        return ActionEncoder(
+            action_space_size=n_actions,
+            embedding_dim=action_embedding_dim,
+            is_continuous=not config.game.is_discrete,
+            single_action_plane=is_dyn,
+        )
+
+    afterstate_dynamics = None
+    shared_backbone = None
+    sigma_head = None
+    encoder = None
+
+    if stochastic:
+        as_bb_cfg = getattr(config, "afterstate_dynamics_backbone", config.config_dict.get("backbone", {"type": "mlp"}))
+        if isinstance(as_bb_cfg, dict):
+            as_bb_cfg = BackboneConfigFactory.create(as_bb_cfg)
+        afterstate_dynamics_backbone = BackboneFactory.create(
+            as_bb_cfg, hidden_state_shape
+        )
+        as_encoder = create_action_encoder(num_actions, is_dyn=False)
+        afterstate_dynamics = AfterstateDynamics(
+            backbone=afterstate_dynamics_backbone,
+            action_encoder=as_encoder,
+            input_shape=hidden_state_shape,
+            action_embedding_dim=action_embedding_dim,
+        )
+
+        dyn_bb_cfg = getattr(config, "dynamics_backbone", config.config_dict.get("backbone", {"type": "mlp"}))
+        if isinstance(dyn_bb_cfg, dict):
+            dyn_bb_cfg = BackboneConfigFactory.create(dyn_bb_cfg)
+        dynamics_backbone = BackboneFactory.create(
+            dyn_bb_cfg, hidden_state_shape
+        )
+        dyn_encoder = create_action_encoder(num_chance, is_dyn=True)
+        dynamics = Dynamics(
+            backbone=dynamics_backbone,
+            action_encoder=dyn_encoder,
+            input_shape=hidden_state_shape,
+            action_embedding_dim=action_embedding_dim,
+        )
+
+        pred_bb_cfg = getattr(config, "prediction_backbone", config.config_dict.get("backbone", {"type": "mlp"}))
+        if isinstance(pred_bb_cfg, dict):
+            pred_bb_cfg = BackboneConfigFactory.create(pred_bb_cfg)
+        shared_backbone = BackboneFactory.create(
+            pred_bb_cfg, hidden_state_shape
+        )
+        sigma_head = HeadFactory.create(
+            config.chance_probability_head,
+            config.arch,
+            input_shape=shared_backbone.output_shape,
+            num_chance_codes=num_chance,
+        )
+
+        encoder_input_shape = list(input_shape)
+        encoder_input_shape[0] *= 2
+        encoder = ChanceEncoder(
+            config, tuple(encoder_input_shape), num_codes=num_chance
+        )
+    else:
+        dyn_bb_cfg = getattr(config, "dynamics_backbone", config.config_dict.get("backbone", {"type": "mlp"}))
+        if isinstance(dyn_bb_cfg, dict):
+            dyn_bb_cfg = BackboneConfigFactory.create(dyn_bb_cfg)
+        dynamics_backbone = BackboneFactory.create(
+            dyn_bb_cfg, hidden_state_shape
+        )
+        dyn_encoder = create_action_encoder(num_actions, is_dyn=True)
+        dynamics = Dynamics(
+            backbone=dynamics_backbone,
+            action_encoder=dyn_encoder,
+            input_shape=hidden_state_shape,
+            action_embedding_dim=action_embedding_dim,
+        )
+
+    # Physics Heads
+    r_rep = get_representation(config.reward_head.output_strategy)
+    reward_head = HeadFactory.create(
+        config.reward_head,
+        config.arch,
+        input_shape=dynamics.output_shape,
+        representation=r_rep,
+    )
+
+    tp_rep = get_representation(config.to_play_head.output_strategy)
+    to_play_head = ToPlayHead(
+        arch_config=config.arch,
+        input_shape=dynamics.output_shape,
+        num_players=config.game.num_players,
+        neck_config=config.to_play_head.neck,
+        representation=tp_rep,
+    )
+
+    world_model_cls = kwargs.get("world_model_cls", MuzeroWorldModel)
+    world_model = world_model_cls(
+        representation=representation,
+        dynamics=dynamics,
+        reward_head=reward_head,
+        to_play_head=to_play_head,
+        num_actions=num_actions,
+        stochastic=stochastic,
+        afterstate_dynamics=afterstate_dynamics,
+        sigma_head=sigma_head,
+        encoder=encoder,
+        shared_backbone=shared_backbone,
+        num_chance=num_chance,
+        use_true_chance_codes=getattr(config, "use_true_chance_codes", False),
+        consistency_loss_factor=getattr(config, "consistency_loss_factor", 0.0),
+    )
+
+    # 3. Prediction Backbone and Heads
+    pred_bb_cfg = getattr(config, "prediction_backbone", config.config_dict.get("backbone", {"type": "mlp"}))
+    if isinstance(pred_bb_cfg, dict):
+        pred_bb_cfg = BackboneConfigFactory.create(pred_bb_cfg)
+    prediction_backbone = BackboneFactory.create(
+        pred_bb_cfg, hidden_state_shape
+    )
+    prediction_feat_shape = prediction_backbone.output_shape
+
+    val_rep = get_representation(config.value_head.output_strategy)
+    value_head = ValueHead(
+        arch_config=config.arch,
+        input_shape=prediction_feat_shape,
+        representation=val_rep,
+        neck_config=config.value_head.neck,
+    )
+
+    pol_rep = get_representation(config.policy_head.output_strategy)
+    policy_head = PolicyHead(
+        arch_config=config.arch,
+        input_shape=prediction_feat_shape,
+        representation=pol_rep,
+        neck_config=config.policy_head.neck,
+    )
+
+    components = {
+        "world_model": world_model,
+        "prediction_backbone": prediction_backbone,
+        "value_head": value_head,
+        "policy_head": policy_head,
+    }
+
+    if stochastic:
+        as_val_rep = get_representation(config.afterstate_value_head.output_strategy)
+        components["afterstate_value_head"] = ValueHead(
+            arch_config=config.arch,
+            input_shape=shared_backbone.output_shape,
+            representation=as_val_rep,
+            neck_config=config.afterstate_value_head.neck,
+        )
+
+    # 4. Auxiliary Component: SIM-SIAM Projector (EfficientZero)
+    if getattr(config, "consistency_loss_factor", 0) > 0:
+        flat_hidden_dim = 1
+        for d in hidden_state_shape:
+            flat_hidden_dim *= d
+        components["projector"] = Projector(flat_hidden_dim, config)
+
+    return {
+        "components": components,
+        "metadata": {
+            "stochastic": stochastic,
+            "unroll_steps": getattr(config, "unroll_steps", 0),
+            "minibatch_size": getattr(config, "minibatch_size", 1),
+            "atom_size": getattr(config, "atom_size", 1),
+            "support_range": getattr(config, "support_range", None),
+        },
     }

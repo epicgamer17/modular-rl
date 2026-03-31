@@ -29,85 +29,34 @@ from modules.world_models.world_model import WorldModelOutput
 class MuzeroWorldModel(WorldModelInterface, nn.Module):
     def __init__(
         self,
-        config: MuZeroConfig,
-        observation_dimensions: Tuple[int, ...],
+        representation: Representation,
+        dynamics: Dynamics,
+        reward_head: nn.Module,
+        to_play_head: nn.Module,
         num_actions: int,
+        stochastic: bool = False,
+        afterstate_dynamics: Optional[AfterstateDynamics] = None,
+        sigma_head: Optional[nn.Module] = None,
+        encoder: Optional[ChanceEncoder] = None,
+        shared_backbone: Optional[nn.Module] = None,
+        num_chance: int = 0,
+        use_true_chance_codes: bool = False,
+        consistency_loss_factor: float = 0.0,
     ):
         super().__init__()
-        self.config = config
+        self.representation = representation
+        self.dynamics = dynamics
+        self.reward_head = reward_head
+        self.to_play_head = to_play_head
         self.num_actions = num_actions
-        # 1. Representation Network
-        self.representation = Representation(config, observation_dimensions)
-        self.num_chance = config.num_chance
-
-        hidden_state_shape = self.representation.output_shape
-
-        # --- 3. Dynamics and Prediction Networks ---
-        if self.config.stochastic:
-            self.afterstate_dynamics = AfterstateDynamics(
-                self.config,
-                self.representation.output_shape,
-                num_actions=self.num_actions,
-                action_embedding_dim=self.config.action_embedding_dim,
-            )
-
-            # Stochastic Dynamics(Afterstate, Code) -> Next State
-            self.dynamics = Dynamics(
-                self.config,
-                self.representation.output_shape,
-                num_actions=self.num_chance,
-                action_embedding_dim=self.config.action_embedding_dim,
-            )
-
-            # Shared Backbone for Afterstate Features (Sigma and Value Heads)
-            self.shared_backbone = BackboneFactory.create(
-                self.config.prediction_backbone, self.representation.output_shape
-            )
-
-            # Sigma Head (Owned by WorldModel - fundamental environment rules)
-            self.sigma_head = HeadFactory.create(
-                self.config.chance_probability_head,
-                self.config.arch,
-                input_shape=self.shared_backbone.output_shape,
-                num_chance_codes=self.num_chance,
-            )
-
-            # Encoder (Moves from AgentNetwork to WorldModel)
-            encoder_input_shape = list(observation_dimensions)
-            encoder_input_shape[0] *= 2  # Double channels for stacked obs
-            self.encoder = ChanceEncoder(
-                config,
-                tuple(encoder_input_shape),
-                num_codes=self.num_chance,
-            )
-
-        else:
-            self.dynamics = Dynamics(
-                self.config,
-                self.representation.output_shape,
-                num_actions=self.num_actions,
-                action_embedding_dim=self.config.action_embedding_dim,
-            )
-
-        # 3. Physics Heads (Owned by WorldModel now)
-        # Reward Head
-        r_rep = get_representation(config.reward_head.output_strategy)
-        self.reward_head = HeadFactory.create(
-            config.reward_head,
-            config.arch,
-            input_shape=self.dynamics.output_shape,
-            representation=r_rep,
-        )
-
-        # To-Play Head
-        tp_rep = get_representation(config.to_play_head.output_strategy)
-        self.to_play_head = ToPlayHead(
-            arch_config=config.arch,
-            input_shape=self.dynamics.output_shape,
-            num_players=config.game.num_players,
-            neck_config=config.to_play_head.neck,
-            representation=tp_rep,
-        )
+        self.stochastic = stochastic
+        self.afterstate_dynamics = afterstate_dynamics
+        self.sigma_head = sigma_head
+        self.encoder = encoder
+        self.shared_backbone = shared_backbone
+        self.num_chance = num_chance
+        self.use_true_chance_codes = use_true_chance_codes
+        self.consistency_loss_factor = consistency_loss_factor
 
         # Dynamics output must match Representation output shape
         assert (
@@ -150,7 +99,8 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             )
 
         # Ensure observation has batch dim
-        if observation.dim() == len(self.representation.input_shape):
+        input_shape = getattr(self.representation, "input_shape", None)
+        if input_shape is not None and observation.dim() == len(input_shape):
             observation = observation.unsqueeze(0)
 
         hidden_state = self.representation(observation.float())
@@ -162,7 +112,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         action: Tensor,
         recurrent_state: Any = None,
     ) -> WorldModelOutput:
-        if not self.config.stochastic:
+        if not self.stochastic:
             action = action.view(-1).to(hidden_state.device)
             # one-hot the action -> (B, num_actions)
             action = (
@@ -292,7 +242,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         to_plays.append(initial_to_play_logits)
 
         # Stochastic MuZero specific storage
-        if self.config.stochastic:
+        if self.stochastic:
             latent_afterstates = []
             latent_code_probabilities = []
             chance_encoder_embeddings = []
@@ -313,7 +263,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         for k in range(unroll_steps):
             actions_k = actions[:, k]
 
-            if self.config.stochastic:
+            if self.stochastic:
                 # 1. Afterstate Inference — wrap latent in MuZeroNetworkState so the
                 # method's strict type check passes (it must be a structured object,
                 # never a raw Tensor).
@@ -329,10 +279,10 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                     encoder_inputs[:, k]
                 )
 
-                if self.config.use_true_chance_codes:
+                if self.use_true_chance_codes:
                     codes_k = F.one_hot(
                         true_chance_codes[:, k + 1].squeeze(-1).long(),
-                        self.config.num_chance,
+                        self.num_chance,
                     )
                     chance_encoder_onehot_k = codes_k.float()
 
@@ -405,7 +355,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         stacked_chance_encoder_embeddings = None
         stacked_chance_encoder_onehots = None
 
-        if self.config.stochastic:
+        if self.stochastic:
             stacked_afterstates = torch.stack(latent_afterstates, dim=1)
             stacked_chance_logits = torch.stack(latent_code_probabilities, dim=1)
             stacked_backbone = torch.stack(afterstate_backbone_features, dim=1)
@@ -416,7 +366,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
 
         # 7. Compute target latents for consistency loss if requested
         stacked_target_latents = None
-        if target_observations is not None and self.config.consistency_loss_factor > 0:
+        if target_observations is not None and self.consistency_loss_factor > 0:
             B_target, T_plus_1_target = target_observations.shape[:2]
             flat_target_obs = target_observations.reshape(
                 B_target * T_plus_1_target, *target_observations.shape[2:]

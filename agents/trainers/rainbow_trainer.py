@@ -7,7 +7,7 @@ from agents.learner.base import UniversalLearner
 
 from agents.action_selectors.factory import SelectorFactory
 from agents.workers.actors import get_actor_class
-from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.factory import build_modular_agent_network
 from replay_buffers.transition import TransitionBatch, Transition
 from stats.stats import StatTracker, PlotType
 from utils.schedule import create_schedule
@@ -39,12 +39,12 @@ class RainbowTrainer(BaseTrainer):
         super().__init__(config, env, device, name, stats, test_agents)
 
         # 1. Initialize Networks
-        self.agent_network = ModularAgentNetwork(
+        self.agent_network = build_modular_agent_network(
             config=config,
             num_actions=self.num_actions,
             input_shape=self.obs_dim,
         )
-        self.target_agent_network = ModularAgentNetwork(
+        self.target_agent_network = build_modular_agent_network(
             config=config,
             num_actions=self.num_actions,
             input_shape=self.obs_dim,

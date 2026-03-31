@@ -8,7 +8,7 @@ from replay_buffers.buffer_factories import create_muzero_buffer
 from agents.action_selectors.selectors import CategoricalSelector
 from agents.action_selectors.decorators import TemperatureSelector
 from agents.workers.actors import get_actor_class
-from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.factory import build_modular_agent_network
 from stats.stats import StatTracker, PlotType
 
 
@@ -45,7 +45,7 @@ class MuZeroTrainer(BaseTrainer):
         if world_model_cls is not None:
             extra_kwargs["world_model_cls"] = world_model_cls
 
-        self.agent_network = ModularAgentNetwork(
+        self.agent_network = build_modular_agent_network(
             config=config,
             input_shape=self.obs_dim,
             num_actions=self.num_actions,

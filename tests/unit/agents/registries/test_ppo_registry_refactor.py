@@ -2,7 +2,7 @@ import pytest
 import torch
 from typing import Any
 from agents.registries.ppo import build_ppo, build_ppo_loss_pipeline
-from modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.factory import build_modular_agent_network
 
 pytestmark = pytest.mark.unit
 
@@ -11,7 +11,7 @@ def test_build_ppo_loss_pipeline_no_config(ppo_config):
     # 1. Setup mock/dummy agent network
     input_shape = (4,)
     num_actions = 2
-    agent_network = ModularAgentNetwork(
+    agent_network = build_modular_agent_network(
         config=ppo_config,
         input_shape=input_shape,
         num_actions=num_actions,
@@ -40,7 +40,7 @@ def test_build_ppo_registry(ppo_config):
     """Verifies that build_ppo still works and produces a valid loss pipeline."""
     input_shape = (4,)
     num_actions = 2
-    agent_network = ModularAgentNetwork(
+    agent_network = build_modular_agent_network(
         config=ppo_config,
         input_shape=input_shape,
         num_actions=num_actions,

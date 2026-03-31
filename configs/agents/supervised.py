@@ -63,6 +63,11 @@ class SupervisedConfig(ConfigBase, OptimizationConfig, ReplayConfig):
         # Backbone Configuration
         self.backbone: BackboneConfig = self.parse_backbone_config("sl_backbone")
 
+        # Policy Head
+        from configs.modules.heads.policy import PolicyHeadConfig
+        policy_dict = self.parse_field("policy_head", default={}, required=False) or {}
+        self.policy_head: PolicyHeadConfig = PolicyHeadConfig(policy_dict)
+
         # Fallback/Default logic
         if self.backbone is None:
             # Default to a simple dense backbone if nothing provided

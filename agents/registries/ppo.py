@@ -1,5 +1,6 @@
 import torch
 from typing import Any, Dict, List, Tuple
+from torch import nn
 from agents.registries.base import register_agent
 from agents.learner.losses import LossPipeline, ClippedSurrogateLoss, ValueLoss
 import torch.nn.functional as F
@@ -7,6 +8,11 @@ from modules.utils import get_lr_scheduler
 from agents.learner.callbacks import MetricEarlyStopCallback
 from torch.optim.adam import Adam
 from torch.optim.sgd import SGD
+from modules.backbones.factory import BackboneFactory
+from modules.heads.value import ValueHead
+from modules.heads.policy import PolicyHead
+from agents.learner.losses.representations import get_representation
+from configs.modules.backbones.factory import BackboneConfigFactory
 
 
 def build_ppo_loss_pipeline(
@@ -83,12 +89,23 @@ def build_ppo(config: Any, agent_network: Any, device: torch.device) -> Dict[str
         else:
             return opt_cls(params, lr=config.learning_rate)
 
+    policy_params = list(agent_network.components["policy_head"].parameters())
+    value_params = list(agent_network.components["value_head"].parameters())
+
+    # If there is a shared backbone, add its parameters to the policy optimizer.
+    # Note: In PPO with separate optimizers, representation learning typically happens
+    # through the actor's update sequence. 
+    if "backbone" in agent_network.components and not isinstance(
+        agent_network.components["backbone"], nn.Identity
+    ):
+        policy_params += list(agent_network.components["backbone"].parameters())
+
     optimizers["policy"] = create_opt(
-        agent_network.components["policy_head"].parameters(),
+        policy_params,
         getattr(config, "actor", config),
     )
     optimizers["value"] = create_opt(
-        agent_network.components["value_head"].parameters(),
+        value_params,
         getattr(config, "critic", config),
     )
 
@@ -122,4 +139,53 @@ def build_ppo(config: Any, agent_network: Any, device: torch.device) -> Dict[str
         "lr_schedulers": lr_schedulers,
         "callbacks": callbacks,
         "target_builder": target_builder,
+    }
+
+
+def build_ppo_network_components(
+    config: Any, input_shape: Tuple[int, ...], num_actions: int, **kwargs
+) -> Dict[str, Any]:
+    # 1. Prediction Backbone
+    # PPO typically uses a single backbone.
+    # If neither 'prediction_backbone' nor 'backbone' is specified, we default to Identity (direct input to heads).
+    bb_cfg = getattr(config, "prediction_backbone", None)
+    if bb_cfg is None:
+        bb_cfg = config.config_dict.get("backbone", None)
+
+    if isinstance(bb_cfg, dict):
+        bb_cfg = BackboneConfigFactory.create(bb_cfg)
+
+    if bb_cfg:
+        backbone = BackboneFactory.create(bb_cfg, input_shape)
+        feat_shape = backbone.output_shape
+    else:
+        # Respect user's architectural intent: pass obs directly to head necks.
+        backbone = nn.Identity()
+        feat_shape = input_shape
+
+    # 2. Prediction Heads
+    val_rep = get_representation(config.value_head.output_strategy)
+    value_head = ValueHead(
+        arch_config=config.arch,
+        input_shape=feat_shape,
+        representation=val_rep,
+        neck_config=config.value_head.neck,
+    )
+    pol_rep = get_representation(config.policy_head.output_strategy)
+    policy_head = PolicyHead(
+        arch_config=config.arch,
+        input_shape=feat_shape,
+        representation=pol_rep,
+        neck_config=config.policy_head.neck,
+    )
+
+    return {
+        "components": {
+            "backbone": backbone,
+            "value_head": value_head,
+            "policy_head": policy_head,
+        },
+        "metadata": {
+            "minibatch_size": getattr(config, "minibatch_size", 1),
+        },
     }

@@ -145,3 +145,57 @@ def build_rainbow(
         "callbacks": callbacks,
         "observation_dtype": torch.uint8,
     }
+
+
+def build_rainbow_network_components(
+    config: Any, input_shape: Tuple[int, ...], num_actions: int, **kwargs
+) -> Dict[str, Any]:
+    from modules.backbones.factory import BackboneFactory
+    from configs.modules.backbones.factory import BackboneConfigFactory
+    from modules.heads.q import QHead, DuelingQHead
+    from agents.learner.losses.representations import get_representation
+
+    # 1. Feature Extractor
+    # Check for 'backbone' with config_dict fallback.
+    bb_cfg = getattr(config, "backbone", config.config_dict.get("backbone", {"type": "mlp"}))
+    
+    if isinstance(bb_cfg, dict):
+        bb_cfg = BackboneConfigFactory.create(bb_cfg)
+        
+    backbone = BackboneFactory.create(bb_cfg, input_shape)
+    feat_shape = backbone.output_shape
+
+    # 2. Q Head
+    representation = get_representation(config.head.output_strategy)
+
+    if getattr(config, "dueling", False):
+        q_head = DuelingQHead(
+            arch_config=config.arch,
+            input_shape=feat_shape,
+            num_actions=num_actions,
+            representation=representation,
+            value_hidden_widths=config.head.value_hidden_widths,
+            advantage_hidden_widths=config.head.advantage_hidden_widths,
+            neck_config=config.head.neck,
+        )
+    else:
+        q_head = QHead(
+            arch_config=config.arch,
+            input_shape=feat_shape,
+            num_actions=num_actions,
+            representation=representation,
+            hidden_widths=config.head.hidden_widths,
+            neck_config=config.head.neck,
+        )
+
+    return {
+        "components": {
+            "feature_block": backbone,
+            "q_head": q_head,
+        },
+        "metadata": {
+            "minibatch_size": getattr(config, "minibatch_size", 1),
+            "atom_size": getattr(config, "atom_size", 1),
+            "support_range": getattr(config, "support_range", None),
+        },
+    }
