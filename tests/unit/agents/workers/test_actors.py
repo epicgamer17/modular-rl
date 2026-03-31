@@ -42,6 +42,8 @@ def test_actor_trajectory_payload_contract():
         obs_step_0,
         {"player_id": torch.zeros(num_envs, dtype=torch.long)},
     )
+    mock_adapter.current_lengths = np.zeros(num_envs)
+    mock_adapter.get_metrics.return_value = ([], [])
 
     # step() -> next_obs, reward, terminal, truncated, info
     mock_adapter.step.side_effect = [
@@ -184,5 +186,60 @@ def test_actor_trajectory_payload_contract():
 
     assert muzero_contract["root_values"][0] == 0.5
     assert muzero_contract["to_play"].dtype == torch.int16
+
+
+def test_rollout_actor_collect_metrics_scalar():
+    """
+    REGRESSION: RolloutActor should return scalar floats in 'batch_scores' for 
+    single-player games, not arrays of shape (1,).
+    """
+    # 1. Mock setup
+    num_envs = 1
+    num_actions = 2
+    mock_adapter = MagicMock()
+    mock_adapter.num_envs = num_envs
+    mock_adapter.reset.return_value = (torch.zeros((1, 1)), {"player_id": torch.zeros(1)})
+    # Return terminal on first step to trigger score capture
+    mock_adapter.step.return_value = (
+        torch.zeros((1, 1)), 
+        torch.tensor([10.0]), 
+        torch.tensor([True]), 
+        torch.tensor([False]), 
+        {"player_id": torch.zeros(1)}
+    )
+    mock_adapter.get_metrics.return_value = ([10.0], [1])
+    mock_adapter.current_lengths = np.zeros(1)
+    
+    mock_selector = MagicMock()
+    mock_selector.select_action.return_value = (torch.tensor([0]), {})
+    
+    mock_policy_source = MagicMock()
+    mock_policy_source.get_inference.return_value = InferenceResult(
+        value=torch.tensor([0.0]),
+        probs=torch.tensor([[0.5, 0.5]]),
+        extras={}
+    )
+
+    actor = RolloutActor(
+        adapter_cls=MagicMock(return_value=mock_adapter),
+        adapter_args=(),
+        network=MagicMock(),
+        policy_source=mock_policy_source,
+        buffer=MagicMock(),
+        action_selector=mock_selector,
+        num_players=1,
+    )
+
+    # 2. Collect (finishes 1 episode)
+    metrics = actor.collect(num_steps=1)
+
+    # 3. VERIFY: batch_scores should contain a float, not a numpy array
+    assert "batch_scores" in metrics
+    assert len(metrics["batch_scores"]) == 1
+    score = metrics["batch_scores"][0]
+    
+    # This was the bug: score was an np.ndarray of shape (1,)
+    assert isinstance(score, (float, int, np.float64, np.float32)), \
+        f"Expected scalar score for single-player game, got {type(score)} shape {getattr(score, 'shape', 'N/A')}"
     # Actually let's check what SequenceTensorProcessor returns.
     # Line 588 of processors.py: torch.tensor(sequence.player_id_history, ...)

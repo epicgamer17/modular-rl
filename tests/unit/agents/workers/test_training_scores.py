@@ -7,6 +7,7 @@ from agents.action_selectors.selectors import ArgmaxSelector
 from agents.action_selectors.policy_sources import NetworkPolicySource
 from stats.stats import StatTracker
 from agents.trainers.base_trainer import BaseTrainer
+from agents.environments.adapters import BaseAdapter
 
 pytestmark = pytest.mark.unit
 
@@ -45,27 +46,31 @@ class MockBuffer:
         pass
 
 
-class MockMultiplayerAdapter:
+class MockMultiplayerAdapter(BaseAdapter):
     def __init__(self, device=torch.device("cpu")):
-        self.num_players = 2
+        super().__init__(device, num_players=2)
         self.num_envs = 1
-        self.device = device
         self.current_player = 0
         self.steps = 0
 
     def reset(self, **kwargs):
         self.current_player = 0
         self.steps = 0
-        return torch.zeros((1, 4)), {"player_id": [0]}
+        self._batch_scores = []
+        self._batch_lengths = []
+        self._current_scores = np.zeros((1, 2))
+        self._current_lengths = np.zeros(1)
+        self._current_player_ids = torch.tensor([0], device=self.device)
+        return torch.zeros((1, 4)), {"player_id": self._current_player_ids}
 
     def step(self, actions):
         self.steps += 1
-        # P1 acts on step 1, P2 acts on step 2.
-        # Turn 0: P1 acts, reward 0.
-        # Turn 1: P2 acts, reward -10. But P1 gets 10 via all_rewards.
+        # Turn 0: P0 acts (0), Turn 1: P1 acts (1)
+        # Note: self.current_player is what we will return as NEXT player
+        
         reward = torch.tensor([0.0], device=self.device)
-
         all_rewards = {0: 0.0, 1: 0.0}
+        
         if self.steps == 2:
             all_rewards = {0: 10.0, 1: -10.0}
             reward = torch.tensor([-10.0], device=self.device)
@@ -73,8 +78,19 @@ class MockMultiplayerAdapter:
         terminated = torch.tensor([self.steps >= 2], device=self.device)
         truncated = torch.tensor([False], device=self.device)
 
+        # Acting player was current_player, but it's easier to just use AEC all_rewards
+        # info has everything Actor needs for both storing in seq and for adapter metrics
+        info = {"player_id": torch.tensor([(self.current_player + 1) % 2], device=self.device), "all_rewards": all_rewards}
+        
+        # ACTING player id (was set in last reset or step)
+        # self._current_player_ids already correctly contains the acting player
+        
+        self._update_metrics(reward, terminated, truncated, info)
+
+        # Update for next turn
         self.current_player = (self.current_player + 1) % 2
-        info = {"player_id": [self.current_player], "all_rewards": all_rewards}
+        self._current_player_ids = info["player_id"]
+
         return (
             torch.zeros((1, 4), device=self.device),
             reward,

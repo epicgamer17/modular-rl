@@ -9,13 +9,16 @@ from agents.action_selectors.policy_sources import NetworkPolicySource
 from utils.schedule import ScheduleConfig
 from agents.action_selectors.types import InferenceResult
 
+from agents.environments.adapters import BaseAdapter, GymAdapter
+from agents.action_selectors.types import InferenceResult
+
 pytestmark = pytest.mark.integration
 
 
-class MockAdapter:
+class MockAdapter(BaseAdapter):
     def __init__(self, *args, num_players=1, **kwargs):
+        super().__init__(torch.device("cpu"), num_players=num_players)
         self.num_envs = 1
-        self.num_players = num_players
         self.observation_shape = (4,)
         self.num_actions = 2
         self.current_step = 0
@@ -34,8 +37,25 @@ class MockAdapter:
         reward = torch.zeros(1)
         terminated = torch.tensor([False])
         truncated = torch.tensor([False])
-        info = {"player_id": [0]}
-        return obs, reward, terminated, truncated, info
+        info = {"player_id": torch.tensor([0])}
+        
+        obs_tensor = obs
+        rewards = reward
+        terminals = terminated
+        truncations = truncated
+        processed_info = info
+        
+        self._current_player_ids = processed_info["player_id"]
+        self._update_metrics(rewards, terminals, truncations, processed_info)
+        
+        return obs_tensor, rewards, terminals, truncations, processed_info
+
+    @property
+    def current_lengths(self):
+        return np.array([self.current_step])
+
+    def get_metrics(self):
+        return ([], [])
 
 
 class MockBuffer:

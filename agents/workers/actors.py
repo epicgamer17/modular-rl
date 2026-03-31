@@ -90,11 +90,11 @@ class RolloutActor(BaseActor):
         """
         self.worker_id = worker_id
         # 1. Build the adapter for this worker
-        # Most adapters take (env_factory, device, num_actions)
+        # Most adapters take (env_factory, device, num_actions, num_players)
         device = torch.device(actor_device)
 
         self.adapter = adapter_cls(
-            *adapter_args, device=device, num_actions=num_actions
+            *adapter_args, device=device, num_actions=num_actions, num_players=num_players
         )
         self.agent_network = network
         self.policy_source = policy_source
@@ -106,6 +106,7 @@ class RolloutActor(BaseActor):
         self.flush_incomplete = flush_incomplete
 
         self.num_envs = self.adapter.num_envs
+        self.num_players = num_players
         self.seq_manager = SequenceManager(num_players, self.num_envs)
 
         # Internal state for the collection loop
@@ -137,11 +138,7 @@ class RolloutActor(BaseActor):
         self.episodes_completed = 0
         self.completed_scores = []
         self.completed_lengths = []
-
-        # Track current episode progress across envs
-        self.num_players = num_players
-        self.current_lengths = np.zeros(self.num_envs)
-        self.current_scores = np.zeros((self.num_envs, num_players))
+        self.max_rolling_stats = 100
 
     def setup(self) -> None:
         """Prepares the network for rollout (eval mode)."""
@@ -174,12 +171,15 @@ class RolloutActor(BaseActor):
     def get_state(self) -> Dict[str, Any]:
         """Returns rolling statistics for logging."""
         scores = np.array(self.completed_scores) if self.completed_scores else np.zeros((0, self.num_players))
-        avg_score_vec = np.mean(scores, axis=0) if scores.size > 0 else np.zeros(self.num_players)
         
         # Format scores based on player count
         if self.num_players == 1:
-            score_metrics = {"avg_score": float(avg_score_vec[0])}
+            # scores is 1D array of scalars
+            avg_score = np.mean(scores) if scores.size > 0 else 0.0
+            score_metrics = {"avg_score": float(avg_score)}
         else:
+            # scores is 2D array [batch, num_players]
+            avg_score_vec = np.mean(scores, axis=0) if scores.size > 0 else np.zeros(self.num_players)
             score_metrics = {f"avg_score_p{p}": float(avg_score_vec[p]) for p in range(self.num_players)}
             score_metrics["avg_score"] = float(np.mean(avg_score_vec))
             
@@ -226,7 +226,7 @@ class RolloutActor(BaseActor):
                 result,
                 self.info,
                 exploration=True,
-                episode_step=int(np.max(self.current_lengths)),
+                episode_step=int(np.max(self.adapter.current_lengths)),
             )
 
             # 3. Step the Adapter (Hides messy environment library logic)
@@ -234,31 +234,23 @@ class RolloutActor(BaseActor):
                 actions
             )
 
-            # 4. Process Transitions and Boundary Logic
+            # 4. Fetch metrics and completed episodes
+            ep_results = self.adapter.get_metrics()
+            if ep_results[0]:  # if scores are present
+                scores, lengths = ep_results
+                self.completed_scores.extend(scores)
+                self.completed_lengths.extend(lengths)
+                self.episodes_completed += len(scores)
+                batch_scores.extend(scores)
+                batch_lengths.extend(lengths)
+
+                # Keep rolling stats bounded
+                if len(self.completed_scores) > self.max_rolling_stats:
+                    self.completed_scores = self.completed_scores[-self.max_rolling_stats:]
+                    self.completed_lengths = self.completed_lengths[-self.max_rolling_stats:]
+
+            # 5. Process Transitions and Boundary Logic
             for i in range(self.num_envs):
-                # Capture player info for scores before possibly using next state's info
-                p_id_acting = 0
-                if "player_id" in self.info:
-                    p_ids_acting = self.info["player_id"]
-                    p_id_acting = int(p_ids_acting[i].item() if torch.is_tensor(p_ids_acting) else p_ids_acting[i])
-
-                # 4. Process Rewards and Scores
-                all_rewards = infos.get("all_rewards")
-                if all_rewards is not None:
-                    # Support AEC-style index dicts or batched tensors
-                    if isinstance(all_rewards, dict):
-                        for p_idx, r_val in all_rewards.items():
-                            self.current_scores[i, p_idx] += float(r_val)
-                    elif isinstance(all_rewards, (list, np.ndarray, torch.Tensor)):
-                        # Handle batched rewards vector per-environment
-                        r_vec = all_rewards[i]
-                        if torch.is_tensor(r_vec):
-                            r_vec = r_vec.cpu().numpy()
-                        self.current_scores[i] += r_vec
-                else:
-                    self.current_scores[i, p_id_acting] += rewards[i].item()
-                self.current_lengths[i] += 1
-
                 # Determine next state's player ID
                 p_id_next = 0
                 if "player_id" in infos:
@@ -270,13 +262,14 @@ class RolloutActor(BaseActor):
                 player_id_val = p_id_next
                 
                 is_done = bool(terminals[i].item() or truncations[i].item())
-                if is_done and "terminal_observation" in infos:
-                    # Use preserved terminal observation instead of reset observation
-                    obs_history_val = infos["terminal_observation"]
-                    if isinstance(obs_history_val, torch.Tensor):
-                        obs_history_val = obs_history_val[i].cpu().numpy()
-                    elif isinstance(obs_history_val, list):
-                        obs_history_val = obs_history_val[i]
+                if is_done:
+                    if "terminal_observation" in infos:
+                        # Use preserved terminal observation instead of reset observation
+                        obs_history_val = infos["terminal_observation"]
+                        if isinstance(obs_history_val, torch.Tensor):
+                            obs_history_val = obs_history_val[i].cpu().numpy()
+                        elif isinstance(obs_history_val, list):
+                            obs_history_val = obs_history_val[i]
                     
                     # Use preserved terminal info for player_id
                     if "terminal_info" in infos:
@@ -323,23 +316,9 @@ class RolloutActor(BaseActor):
                     completed_seq = self.seq_manager.flush(i)
                     self.buffer.store_aggregate(completed_seq)
 
-                    self.episodes_completed += 1
-                    ep_score = self.current_scores[i].copy()
-                    ep_len = int(self.current_lengths[i])
-                    
-                    self.completed_scores.append(ep_score)
-                    self.completed_lengths.append(ep_len)
-                    batch_scores.append(ep_score)
-                    batch_lengths.append(ep_len)
-                    
-                    self.current_scores[i].fill(0.0)
-                    self.current_lengths[i] = 0
-
-                    if len(self.completed_scores) > 100:
-                        self.completed_scores.pop(0)
-                        self.completed_lengths.pop(0)
-
                     # Seed the NEW episode with the reset observation (already in next_obs)
+                    # Note: next_obs at boundary is the reset observation from adapter auto-reset
+                    # But we need its player_id
                     self.seq_manager.append(
                         i,
                         {

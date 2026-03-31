@@ -434,15 +434,32 @@ class BaseTrainer:
         """Standardized recording of collection metrics (score, lengths) from workers."""
         for res in results:
             for score in res.get("batch_scores", []):
-                # If plural players, record as subkeys
-                if isinstance(score, (list, np.ndarray)) and len(score) > 1:
-                    data = {f"p{i}": float(s) for i, s in enumerate(score)}
-                    data["avg"] = float(np.mean(score))
+                # Handle sequence types (np.ndarray, torch.Tensor, list, etc.)
+                try:
+                    is_coll = hasattr(score, "__len__")
+                    size = len(score) if is_coll else 1
+                except (TypeError, ValueError):
+                    is_coll = False
+                    size = 1
+
+                if is_coll and size > 1:
+                    # If it's a tensor, convert to numpy for iteration/mean
+                    s_arr = (
+                        score.detach().cpu().numpy()
+                        if hasattr(score, "detach")
+                        else np.array(score)
+                    )
+                    data = {f"p{i}": float(s) for i, s in enumerate(s_arr.flatten())}
+                    data["avg"] = float(np.mean(s_arr))
                     for subkey, subval in data.items():
                         self.stats.append("score", subval, subkey=subkey)
                 else:
-                    # Single player or scalar score
-                    self.stats.append("score", float(score))
+                    # Single player or scalar score (size 1)
+                    # Use .item() to extract scalar from 1nd arrays/tensors if possible
+                    val = score.item() if hasattr(score, "item") else score
+                    if isinstance(val, (list, tuple)) and len(val) == 1:
+                        val = val[0]
+                    self.stats.append("score", float(val))
 
             for length in res.get("batch_lengths", []):
                 self.stats.append("episode_length", float(length))
