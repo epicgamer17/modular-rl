@@ -96,7 +96,6 @@ class PPOConfig(AgentConfig, DistributionalConfig, NoisyConfig):
         self.critic_coefficient = self.parse_field("critic_coefficient", 0.5)
 
         self.clip_low_prob = self.parse_field("clip_low_prob", 0.00)
-        self.clip_value_loss = self.parse_field("clip_value_loss", True)
 
     def _verify_game(self):
         pass
