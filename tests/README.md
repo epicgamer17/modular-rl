@@ -32,12 +32,16 @@ tests/
 │   ├── ppo/                                #   ↳ Verifies PPO's 37 implementation details
 │   └── muzero/                             #   ↳ Verifies MuZero can solve tic-tac-toe
 │
-└── performance/                            # Tier 5: Throughput and Efficiency
-    ├── micro/                              # Isolated component speed (e.g., Replay Buffer inserts)
-    ├── sub_systems/                        # Interaction speed (e.g., MCTS + Neural Net)
-    └── scaling/                            # Concurrency (e.g., Ray workers, multi-threading)
+├── performance/                            # Tier 5: Throughput and Efficiency
+│   ├── micro/                              # Isolated component speed (e.g., Replay Buffer inserts)
+│   ├── sub_systems/                        # Interaction speed (e.g., MCTS + Neural Net)
+│   └── scaling/                            # Concurrency (e.g., Ray workers, multi-threading)
+│
+└── parity/                                 # Tier 6: Output Equivalence
+    ├── backends/                           # e.g., C++ MCTS vs Python MCTS
+    └── external_libs/                      # e.g., Custom PPO loss vs StableBaselines3
 
-🚥 The 5-Tier Testing Pipeline
+🚥 The 6-Tier Testing Pipeline
 To maintain high developer velocity while ensuring mathematical rigor, tests are divided into five tiers based on execution time and determinism:
 
 Tier 1: Unit (Core Math & Logic)
@@ -95,6 +99,13 @@ Goal: Does adding Ray workers actually increase Frames Per Second (FPS), or does
 
 Implementation: Spin up a dummy environment. Measure the FPS with 1 worker. Spin up 4 workers. Assert that the 4-worker FPS is at least > 2.5x the 1-worker FPS (accounting for overhead).
 
+1. The 3 Types of Parity Tests (And How to Handle Them)
+Internal Backend Parity (Must Have): This verifies that two different implementations of the exact same logic yield the exact same tensors. For your repo, this means asserting that search_py.search() outputs the exact same policy logits and values as search_cpp.search() given the identical starting state and seed.
+
+External Library Parity (Highly Recommended): This verifies your custom code against an established open-source truth. If you write a custom SegmentTree for your prioritized replay buffer, you write a test that runs identical operations on yours and OpenAI/Ray's SegmentTree and asserts the outputs match.
+
+Legacy Parity (Temporary - Exclude from Main): Testing your new refactored code against your old unrefactored code is a great way to ensure you didn't break anything during the transition. However, do not keep these in your permanent test suite. Once the refactor merges, the old code is deleted. If you keep the tests, you have to maintain the old code just to run the tests, defeating the purpose of the refactor. Use them as temporary scripts, then throw them away.
+
 ### The 4 Core RL Contracts
 
 When adding or modifying components, ensure the following contracts are explicitly tested:
@@ -139,6 +150,15 @@ Strict Isolation for Compute: When testing MCTS tree-search speed, completely mo
 
 Track, Don't Fail: Use tools like pytest-benchmark. Configure the pipeline to generate a JSON report of the speeds rather than failing the build. Track these over time to easily spot commits that introduce silent regressions in throughput.
 
+🪞 The 3 Rules of Parity Testing
+Parity tests live in tests/parity/ and ensure that optimized or custom implementations are mathematically identical to reference implementations.
+
+Strict Seed Synchronization: Parity tests will fail instantly if environments or network initializations differ. You must explicitly seed the torch, numpy, and random generators at the exact moment before calling each implementation.
+
+Assert Close, Not Equal: Due to floating-point drift between Python/C++ or CPU/GPU, never use assert a == b. Always use torch.testing.assert_close(a, b, rtol=1e-4, atol=1e-4).
+
+No Legacy Code: Parity tests are for comparing active backends (e.g., Python vs C++) or active code against external libraries (e.g., StableBaselines3). Do not commit parity tests that compare new refactored code against old deprecated code; those are temporary development scripts only.
+
 🚀 Getting Started
 Run the fast unit tests locally before pushing:
 
@@ -148,3 +168,6 @@ Run tests with print statements for debugging:
 
 Bash
 pytest tests/unit/ -s
+
+Bash
+pytest tests/performance/ --benchmark-json=new_benchmarks.json
