@@ -8,18 +8,12 @@ from modules.world_models.inference_output import (
     MuZeroNetworkState,
 )
 from modules.world_models.muzero_world_model import MuzeroWorldModel
-from modules.backbones.factory import BackboneFactory
 from modules.heads.policy import PolicyHead
 from modules.heads.value import ValueHead
 from modules.heads.q import QHead, DuelingQHead
 from agents.learner.losses.representations import get_representation
 from modules.projectors.sim_siam import Projector
 from agents.learner.losses.shape_validator import ShapeValidator
-
-from configs.agents.muzero import MuZeroConfig
-from configs.agents.ppo import PPOConfig
-from configs.agents.rainbow_dqn import RainbowConfig
-from configs.agents.supervised import SupervisedConfig
 
 
 class ModularAgentNetwork(BaseAgentNetwork):
@@ -86,7 +80,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
         if "world_model" in self.components:
             wm_output = self.components["world_model"].initial_inference(obs)
             hidden_state = wm_output.features
- 
+
             pred_features = self.components["prediction_backbone"](hidden_state)
             raw_value, _, expected_value = self.components["value_head"](pred_features)
             raw_policy, _, policy_dist = self.components["policy_head"](pred_features)
@@ -176,10 +170,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
             head_state = wm_output.head_state
 
             encoder_inputs = None
-            if (
-                self.stochastic
-                and target_observations is not None
-            ):
+            if self.stochastic and target_observations is not None:
                 encoder_inputs = torch.cat(
                     [target_observations[:, :-1], target_observations[:, 1:]], dim=2
                 )
@@ -223,10 +214,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
             )
             padded_rewards = torch.cat([dummy_reward, physics_output.rewards], dim=1)
 
-            if (
-                self.stochastic
-                and physics_output.latents_afterstates is not None
-            ):
+            if self.stochastic and physics_output.latents_afterstates is not None:
                 latents_afterstates = physics_output.latents_afterstates
                 stacked_backbone_features = physics_output.afterstate_backbone_features
                 B_as, T_as = stacked_backbone_features.shape[:2]  # T_as is K
@@ -284,10 +272,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 "latents": stacked_latents,
             }
 
-            if (
-                self.stochastic
-                and latents_afterstates is not None
-            ):
+            if self.stochastic and latents_afterstates is not None:
                 output["latents_afterstates"] = latents_afterstates
                 output["chance_logits"] = stochastic_chance_logits
                 output["chance_values"] = stochastic_chance_values

@@ -117,6 +117,17 @@ class MuZeroConfig(
             value_dict["output_strategy"] = val_strat
 
         self.value_head: ValueHeadConfig = ValueHeadConfig(value_dict)
+
+        # Afterstate Value Head (for Stochastic MuZero)
+        as_value_dict = self.parse_field("afterstate_value_head", default={}, required=False) or {}
+        if self.atom_size > 1:
+            as_val_strat = as_value_dict.get("output_strategy", None)
+            if as_val_strat is None:
+                as_val_strat = {"type": "muzero", "support_range": self.support_range}
+            as_val_strat["num_classes"] = self.atom_size
+            as_val_strat["support_range"] = self.support_range
+            as_value_dict["output_strategy"] = as_val_strat
+        self.afterstate_value_head: ValueHeadConfig = ValueHeadConfig(as_value_dict)
         # To Play Head - Custom parsing to inject num_players from game config
         tp_dict = self.parse_field("to_play_head", default={}, required=False) or {}
         if "num_players" not in tp_dict:

@@ -1,7 +1,6 @@
 from typing import Tuple, Optional, Callable, Dict, Any
 import torch
 from torch import nn, Tensor
-from modules.backbones.factory import BackboneFactory
 from agents.learner.losses.representations import BaseRepresentation
 from modules.blocks.dense import build_dense
 
@@ -25,13 +24,13 @@ class BaseHead(nn.Module):
 
         # 1. Neck (optional modular backbone associated with the head)
         self.neck = neck if neck is not None else nn.Identity()
-        
+
         # If neck has output_shape attribute, use it; otherwise infer it
         if hasattr(self.neck, "output_shape"):
             self.output_shape = self.neck.output_shape
         else:
             self.output_shape = input_shape
-            
+
         self.flat_dim = self._get_flat_dim(self.output_shape)
 
         # 2. Final Output Layer

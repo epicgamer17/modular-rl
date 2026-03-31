@@ -5,9 +5,6 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from configs.agents.muzero import MuZeroConfig
-from modules.backbones.factory import BackboneFactory
-from modules.heads.factory import HeadFactory
 from modules.heads.to_play import ToPlayHead
 from modules.heads.reward import RewardHead
 from agents.learner.losses.representations import get_representation

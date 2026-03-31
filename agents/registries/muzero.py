@@ -321,8 +321,17 @@ def build_muzero_network_components(
 
         encoder_input_shape = list(input_shape)
         encoder_input_shape[0] *= 2
+
+        ce_bb_cfg = getattr(config, "chance_encoder_backbone", config.config_dict.get("backbone", {"type": "mlp"}))
+        if isinstance(ce_bb_cfg, dict):
+            ce_bb_cfg = BackboneConfigFactory.create(ce_bb_cfg)
+        chance_encoder_backbone = BackboneFactory.create(
+            ce_bb_cfg, tuple(encoder_input_shape)
+        )
+
         encoder = ChanceEncoder(
-            config, tuple(encoder_input_shape), num_codes=num_chance
+            backbone=chance_encoder_backbone,
+            num_codes=num_chance,
         )
     else:
         dyn_bb_cfg = getattr(config, "dynamics_backbone", config.config_dict.get("backbone", {"type": "mlp"}))

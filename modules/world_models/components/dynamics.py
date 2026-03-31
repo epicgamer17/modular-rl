@@ -3,9 +3,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from configs.agents.muzero import MuZeroConfig
 from modules.embeddings.action_embedding import ActionEncoder
-from modules.backbones.factory import BackboneFactory
 from modules.utils import _normalize_hidden_state
 
 
@@ -79,9 +77,7 @@ class Dynamics(BaseDynamics):
         input_shape: Tuple[int, ...],
         action_embedding_dim: int,
     ):
-        super().__init__(
-            backbone, action_encoder, input_shape, action_embedding_dim
-        )
+        super().__init__(backbone, action_encoder, input_shape, action_embedding_dim)
 
     def forward(
         self,
@@ -103,9 +99,7 @@ class AfterstateDynamics(BaseDynamics):
         input_shape: Tuple[int, ...],
         action_embedding_dim: int,
     ):
-        super().__init__(
-            backbone, action_encoder, input_shape, action_embedding_dim
-        )
+        super().__init__(backbone, action_encoder, input_shape, action_embedding_dim)
 
     def forward(self, hidden_state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         # The base class handles fusion and processing, returning the normalized hidden state (afterstate)

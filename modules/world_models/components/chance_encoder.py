@@ -1,30 +1,24 @@
 from typing import Tuple, Callable
 import torch
 from torch import nn
-from configs.agents.muzero import MuZeroConfig
-from modules.backbones.factory import BackboneFactory
-from modules.utils import zero_weights_initializer
 
 
 class ChanceEncoder(nn.Module):
     def __init__(
         self,
-        config: MuZeroConfig,
-        input_shape: Tuple[int, ...],
+        backbone: nn.Module,
         num_codes: int = 32,
     ):
         """
         Args:
-            config: MuZeroConfig containing chance_encoder_backbone.
-            input_shape: tuple, e.g. (C, H, W) or (B, C, H, W).
+            backbone: nn.Module for the encoder network. Should have an 'output_shape' attribute.
             num_codes: embedding size output by encoder.
         """
         super().__init__()
-        self.config = config
         self.num_codes = num_codes
 
         # Use modular backbone for Encoder
-        self.net = BackboneFactory.create(config.chance_encoder_backbone, input_shape)
+        self.net = backbone
 
         # Output head: maps backbone output to num_codes
         backbone_output_shape = self.net.output_shape

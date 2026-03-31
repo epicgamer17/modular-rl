@@ -1,8 +1,6 @@
 from torch import nn
 from torch import Tensor
 
-from configs.base import Config
-
 
 class Projector(nn.Module):
     def __init__(
