@@ -2,7 +2,6 @@ import torch
 from typing import Any, Dict, Tuple, Optional
 from modules.agent_nets.modular import ModularAgentNetwork
 from agents.registries.muzero import build_muzero_network_components
-from agents.registries.ppo import build_ppo_network_components
 from agents.registries.rainbow import build_rainbow_network_components
 from agents.registries.supervised import build_supervised_network_components
 
@@ -21,8 +20,6 @@ def build_modular_agent_network(
 
     if agent_type == "muzero":
         build_fn = build_muzero_network_components
-    elif agent_type == "ppo":
-        build_fn = build_ppo_network_components
     elif agent_type == "rainbow":
         build_fn = build_rainbow_network_components
     elif agent_type == "supervised":
@@ -30,14 +27,11 @@ def build_modular_agent_network(
     else:
         # Fallback to checking config class type if agent_type is missing
         from configs.agents.muzero import MuZeroConfig
-        from configs.agents.ppo import PPOConfig
         from configs.agents.rainbow_dqn import RainbowConfig
         from configs.agents.supervised import SupervisedConfig
 
         if isinstance(config, MuZeroConfig):
             build_fn = build_muzero_network_components
-        elif isinstance(config, PPOConfig):
-            build_fn = build_ppo_network_components
         elif isinstance(config, RainbowConfig):
             build_fn = build_rainbow_network_components
         elif isinstance(config, SupervisedConfig):

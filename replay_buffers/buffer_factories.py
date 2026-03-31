@@ -23,7 +23,6 @@ from replay_buffers.writers import (
     CircularWriter,
     SharedCircularWriter,
     ReservoirWriter,
-    PPOWriter,
 )
 from replay_buffers.samplers import (
     PrioritizedSampler,
@@ -543,48 +542,5 @@ def create_rssm_buffer(
         # input_processor=input_stack,
         writer=CircularWriter(max_size),
         sampler=UniformSampler(),
-        backend=backend if backend is not None else LocalBackend(),
-    )
-
-
-def create_ppo_buffer(
-    observation_dimensions,
-    max_size,
-    gamma,
-    gae_lambda,
-    num_actions,
-    observation_dtype=torch.float32,
-    backend: Optional[ConcurrencyBackend] = None,
-):
-    configs = [
-        BufferConfig(
-            "observations", shape=observation_dimensions, dtype=observation_dtype
-        ),
-        BufferConfig("actions", shape=(), dtype=torch.int64),
-        BufferConfig("rewards", shape=(), dtype=torch.float32),
-        BufferConfig("values", shape=(), dtype=torch.float32),
-        BufferConfig("old_log_probs", shape=(), dtype=torch.float32),
-        BufferConfig("legal_moves_masks", shape=(num_actions,), dtype=torch.bool),
-        BufferConfig("advantages", shape=(), dtype=torch.float32),
-        BufferConfig("returns", shape=(), dtype=torch.float32),
-    ]
-
-    input_stack = StackedInputProcessor(
-        [
-            GAEProcessor(gamma, gae_lambda),
-            LegalMovesMaskProcessor(
-                num_actions, input_key="legal_moves", output_key="legal_moves_masks"
-            ),
-        ]
-    )
-
-    return ModularReplayBuffer(
-        max_size=max_size,
-        batch_size=max_size,
-        buffer_configs=configs,
-        input_processor=input_stack,
-        output_processor=AdvantageNormalizer(),
-        writer=PPOWriter(max_size),
-        sampler=WholeBufferSampler(),
         backend=backend if backend is not None else LocalBackend(),
     )

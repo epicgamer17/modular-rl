@@ -73,18 +73,6 @@ def build_loss_pipeline(
             sigma_loss_factor=getattr(config, "sigma_loss_factor", 0.0),
         )
 
-    elif agent_type == "ppo":
-        from agents.registries.ppo import build_ppo_loss_pipeline
-
-        return build_ppo_loss_pipeline(
-            agent_network=agent_network,
-            device=device,
-            clip_param=config.clip_param,
-            entropy_coefficient=config.entropy_coefficient,
-            critic_coefficient=config.critic_coefficient,
-            minibatch_size=config.minibatch_size,
-            num_actions=agent_network.num_actions,
-        )
 
     elif agent_type == "rainbow":
         from agents.registries.rainbow import build_rainbow_loss_pipeline
@@ -181,14 +169,6 @@ def build_universal_learner(
         callbacks.extend(muzero_components["callbacks"])
         target_builder = muzero_components["target_builder"]
         observation_dtype = muzero_components.get("observation_dtype", torch.float32)
-    elif agent_type == "ppo":
-        from agents.registries.ppo import build_ppo
-
-        ppo_components = build_ppo(config, agent_network, device)
-        optimizers = ppo_components["optimizers"]
-        lr_schedulers = ppo_components["lr_schedulers"]
-        callbacks.extend(ppo_components["callbacks"])
-        target_builder = ppo_components.get("target_builder")
     elif agent_type == "rainbow":
         from agents.registries.rainbow import build_rainbow
 
