@@ -39,7 +39,9 @@ class MuZeroTrainer(BaseTrainer):
         # 1. Initialize Network
         # Allow injecting a custom world_model_cls via config_dict (used by A/B notebook)
         extra_kwargs = {}
-        world_model_cls = getattr(config, "config_dict", {}).get("world_model_cls", None)
+        world_model_cls = getattr(config, "config_dict", {}).get(
+            "world_model_cls", None
+        )
         if world_model_cls is not None:
             extra_kwargs["world_model_cls"] = world_model_cls
 
@@ -107,7 +109,7 @@ class MuZeroTrainer(BaseTrainer):
         # Launch workers
         num_workers = config.num_workers
         worker_args = (
-            config.game.make_env,
+            config.game.env_factory,
             self.agent_network,
             self.action_selector,
             self.buffer,

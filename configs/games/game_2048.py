@@ -3,13 +3,13 @@ import gymnasium as gym
 import custom_gym_envs
 
 
-def make_env(render_mode=None):
+def env_factory(render_mode=None):
     env = gym.make("custom_gym_envs/Game2048-v0")
     return env
 
 
 class Game2048Config(GameConfig):
-    def __init__(self, make_env=make_env):
+    def __init__(self, env_factory=env_factory):
         super(Game2048Config, self).__init__(
             num_actions=4,
             max_score=2**16,
@@ -22,5 +22,5 @@ class Game2048Config(GameConfig):
             multi_agent=False,
             num_players=1,
             # has_intermediate_rewards=True,
-            make_env=make_env,
+            env_factory=env_factory,
         )

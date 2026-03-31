@@ -16,8 +16,15 @@ from old_muzero.agents.learner.target_builders import (
     TemporalDifferenceBuilder,
     PassThroughTargetBuilder,
 )
-from old_muzero.agents.learner.losses import ImitationLoss, LossPipeline, QBootstrappingLoss
-from old_muzero.replay_buffers.buffer_factories import create_dqn_buffer, create_nfsp_buffer
+from old_muzero.agents.learner.losses import (
+    ImitationLoss,
+    LossPipeline,
+    QBootstrappingLoss,
+)
+from old_muzero.replay_buffers.buffer_factories import (
+    create_dqn_buffer,
+    create_nfsp_buffer,
+)
 from old_muzero.agents.action_selectors.policy_sources import NFSPNetworkPolicySource
 from old_muzero.agents.action_selectors.selectors import (
     CategoricalSelector,
@@ -300,9 +307,16 @@ class NFSPTrainer(BaseTrainer):
 
         rl_optimizer = create_opt(self.br_agent_network.parameters(), rl_config)
         rl_scheduler = get_lr_scheduler(rl_optimizer, rl_config)
-        from old_muzero.agents.learner.target_builders import DistributionalTargetBuilder
+        from old_muzero.agents.learner.target_builders import (
+            DistributionalTargetBuilder,
+        )
+
         is_distributional = getattr(rl_config, "atom_size", 1) > 1
-        builder_cls = DistributionalTargetBuilder if is_distributional else TemporalDifferenceBuilder
+        builder_cls = (
+            DistributionalTargetBuilder
+            if is_distributional
+            else TemporalDifferenceBuilder
+        )
 
         rl_target_builder = builder_cls(
             target_network=self.br_target_agent_network,
@@ -371,8 +385,8 @@ class NFSPTrainer(BaseTrainer):
                 )
             ],
         )
-        
-        # SL uses PassThroughTargetBuilder for target_policies -> policies mapping if needed, 
+
+        # SL uses PassThroughTargetBuilder for target_policies -> policies mapping if needed,
         # or just keeping target_policies
         sl_target_builder = PassThroughTargetBuilder(["target_policies"])
 
@@ -404,7 +418,7 @@ class NFSPTrainer(BaseTrainer):
         )
         self.actor_cls = _pick_nfsp_actor(env)
         worker_args = (
-            self.config.game.make_env,
+            self.config.game.env_factory,
             self.br_agent_network,
             self.avg_agent_network,
             None,  # replay buffer (trainer stores transitions)

@@ -4,12 +4,12 @@ from .game import GameConfig
 import gymnasium as gym
 
 
-def make_env(render_mode=None):
+def env_factory(render_mode=None):
     return gym.make("Blackjack-v1", render_mode=render_mode)
 
 
 class BlackjackConfig(GameConfig):
-    def __init__(self, make_env=make_env):
+    def __init__(self, env_factory=env_factory):
         super(BlackjackConfig, self).__init__(
             num_actions=2,
             max_score=1,
@@ -22,5 +22,5 @@ class BlackjackConfig(GameConfig):
             multi_agent=False,
             num_players=2,
             # has_intermediate_rewards=False,
-            make_env=make_env,
+            env_factory=env_factory,
         )

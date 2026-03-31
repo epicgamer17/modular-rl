@@ -68,7 +68,7 @@ class SupervisedConfig(ConfigBase, OptimizationConfig, ReplayConfig):
             # Default to a simple dense backbone if nothing provided
             self.backbone = BackboneConfigFactory.create(
                 {
-                    "type": "dense",
+                    "type": "mlp",
                     "widths": self.parse_field("sl_dense_layer_widths", [128]),
                 }
             )

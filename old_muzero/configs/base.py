@@ -370,8 +370,8 @@ class Config(
             self.game is not None
         ), "Config requires a game config to be provided in 'game' field"
         assert (
-            self.game.make_env is not None
-        ), "Game config must provide a valid environment factory (make_env)"
+            self.game.env_factory is not None
+        ), "Game config must provide a valid environment factory (env_factory)"
 
     @classmethod
     def load(cls, filepath: str):

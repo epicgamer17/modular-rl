@@ -4,12 +4,12 @@ from .game import GameConfig
 from pettingzoo.classic import leduc_holdem_v4
 
 
-def make_env(render_mode=None):
+def env_factory(render_mode=None):
     return leduc_holdem_v4.env(render_mode=render_mode)
 
 
 class LeducHoldemConfig(GameConfig):
-    def __init__(self, make_env=make_env):
+    def __init__(self, env_factory=env_factory):
         super(LeducHoldemConfig, self).__init__(
             num_actions=3,
             max_score=10,
@@ -22,5 +22,5 @@ class LeducHoldemConfig(GameConfig):
             multi_agent=True,
             num_players=2,
             # has_intermediate_rewards=False,
-            make_env=make_env,
+            env_factory=env_factory,
         )
