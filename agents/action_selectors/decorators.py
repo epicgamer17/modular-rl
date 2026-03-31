@@ -67,10 +67,10 @@ class TemperatureSelector(BaseActionSelector):
     Exploration=False forces temperature to 0.0 regardless of schedule.
     """
 
-    def __init__(self, inner_selector: BaseActionSelector, config: Any):
-        super().__init__(config)
+    def __init__(self, inner_selector: BaseActionSelector, schedule_config: ScheduleConfig):
+        super().__init__()
         self.inner_selector = inner_selector
-        self.schedule_config: ScheduleConfig = config.temperature_schedule
+        self.schedule_config = schedule_config
         self.schedule: Schedule = create_schedule(self.schedule_config)
         self.use_training_steps: bool = self.schedule_config.with_training_steps
         self._last_step: int = -1

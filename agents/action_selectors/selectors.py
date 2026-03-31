@@ -10,8 +10,8 @@ DEFAULT_EPSILON = 0.05
 
 
 class BaseActionSelector(ABC):
-    def __init__(self, config: Optional[Any] = None):
-        self.config = config
+    def __init__(self):
+        pass
 
     @abstractmethod
     def select_action(
@@ -43,11 +43,7 @@ class BaseActionSelector(ABC):
             The masked tensor.
         """
         if mask_value is None:
-            mask_value = (
-                getattr(self.config, "default_mask_value", -float("inf"))
-                if self.config is not None
-                else -float("inf")
-            )
+            mask_value = -float("inf")
 
         if device is None:
             device = values.device
@@ -97,10 +93,8 @@ class BaseActionSelector(ABC):
 
 
 class CategoricalSelector(BaseActionSelector):
-    def __init__(self, config: Optional[Any] = None, exploration: bool = True):
-        super().__init__(config)
-        # We keep this for backward compatibility with SelectorFactory/Configs that might pass it,
-        # but select_action argument takes precedence.
+    def __init__(self, exploration: bool = True):
+        super().__init__()
         self.default_exploration = exploration
 
     def select_action(
@@ -153,8 +147,8 @@ class CategoricalSelector(BaseActionSelector):
 
 
 class EpsilonGreedySelector(BaseActionSelector):
-    def __init__(self, config: Optional[Any] = None, epsilon: float = 0.05):
-        super().__init__(config)
+    def __init__(self, epsilon: float = 0.05):
+        super().__init__()
         self.epsilon = epsilon
 
     def select_action(
@@ -189,12 +183,30 @@ class EpsilonGreedySelector(BaseActionSelector):
             # Generate random actions
             if mask is not None:
                 # Sample from legal actions using multinomial if mask is provided
-                # Convert mask to float for multinomial (0 for illegal, 1 for legal)
+                if not torch.is_tensor(mask):
+                    # If it's a list of indices, create a binary mask
+                    new_mask = torch.zeros(
+                        (batch_size, q_values.shape[-1]), device=q_values.device
+                    )
+                    
+                    if q_values.dim() == 1:
+                        new_mask[mask] = 1.0
+                    else:
+                        # Batch size > 1 or Batch size 1 with possible nesting
+                        if batch_size == 1 and len(mask) > 0:
+                            is_nested = isinstance(mask[0], (list, np.ndarray, torch.Tensor))
+                            if not is_nested:
+                                new_mask[0, mask] = 1.0
+                            else:
+                                new_mask[0, mask[0]] = 1.0
+                        else:
+                            for i, m in enumerate(mask):
+                                if m is not None:
+                                    new_mask[i, m] = 1.0
+                    mask = new_mask
+
                 probs = mask.float()
                 # Ensure there's at least one legal move to sample from
-                # If a row in probs is all zeros, multinomial will fail.
-                # We can add a small epsilon to all probs to avoid this, or handle it.
-                # For now, assume valid masks where at least one action is legal.
                 random_actions = torch.multinomial(probs, 1).squeeze(-1)
             else:
                 # If no mask, sample uniformly from all actions
