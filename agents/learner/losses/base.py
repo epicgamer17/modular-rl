@@ -2,33 +2,24 @@ import torch
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Protocol, runtime_checkable, Tuple
 
-
 @runtime_checkable
 class LossRepresentation(Protocol):
     """
     Contract for mathematical representations of values (scalars, distributions, etc.).
     """
-
     @property
     def num_features(self) -> int: ...
     def to_inference(self, logits: torch.Tensor) -> Any: ...
     def to_expected_value(self, logits: torch.Tensor) -> torch.Tensor: ...
     def to_representation(self, scalar_targets: torch.Tensor) -> torch.Tensor: ...
-    def format_target(
-        self, targets: Dict[str, torch.Tensor], target_key: str = "values"
-    ) -> torch.Tensor: ...
-
+    def format_target(self, targets: Dict[str, torch.Tensor], target_key: str = "values") -> torch.Tensor: ...
 
 @runtime_checkable
 class DistributionalRepresentation(LossRepresentation, Protocol):
     """
     Contract for representations that support Bellman projections onto a fixed grid.
     """
-
-    def project_onto_grid(
-        self, shifted_support: torch.Tensor, probabilities: torch.Tensor
-    ) -> torch.Tensor: ...
-
+    def project_onto_grid(self, shifted_support: torch.Tensor, probabilities: torch.Tensor) -> torch.Tensor: ...
 
 class BaseLoss(ABC):
     """
@@ -90,10 +81,15 @@ class BaseLoss(ABC):
         pred = predictions[self.pred_key]
 
         # 2. Format targets through the Representation bridge
-        # Target ingredients are pulled directly from the targets dict!
-        formatted_target = self.representation.format_target(
-            targets, target_key=self.target_key
-        )
+        if hasattr(self.representation, "format_target") and callable(
+            self.representation.format_target
+        ):
+            # Target ingredients are pulled directly from the targets dict!
+            formatted_target = self.representation.format_target(
+                targets, target_key=self.target_key
+            )
+        else:
+            formatted_target = targets[self.target_key]
 
         # 3. Apply raw PyTorch loss function
         assert pred.shape == formatted_target.shape, (
@@ -109,48 +105,6 @@ class BaseLoss(ABC):
         flat_pred = pred.reshape(B * T, *orig_shape[2:])
         flat_target = formatted_target.reshape(B * T, *orig_shape[2:])
 
-        flat_mask = self.get_mask(targets).reshape(B * T).bool()
-        # Performance optimization: ensure targets are probability distributions before computing loss
-        # Only applicable if we have multiple features (e.g. atoms/bins) and not just a single scalar
-        if flat_target.shape[-1] > 1:
-            # We use a broad check to catch mass loss in Bellman projections
-            t_sum = flat_target.sum(dim=-1)
-            # NOTE: Old MuZero parity testing only. Legacy replay can emit
-            # zero-mass categorical targets on masked-valid rows (notably
-            # to_play after terminal), and the old learner simply ignored them.
-            massful_mask = flat_mask & (t_sum > 0)
-            # Filter the sums to ONLY check valid states according to the mask
-            valid_t_sum = t_sum[massful_mask]
-
-            # Only run the assertion if there are valid targets in the batch
-            if valid_t_sum.numel() > 0:
-                is_correct = torch.isclose(valid_t_sum, torch.ones_like(valid_t_sum), atol=1e-3)
-                if not torch.all(is_correct):
-                    # 1. Identify failing indices
-                    invalid_indices = (~is_correct).nonzero(as_tuple=True)[0]
-                    # Map back to the original flattened index
-                    full_indices = massful_mask.nonzero(as_tuple=True)[0][invalid_indices]
-                    
-                    # 2. Extract offending data
-                    offending_targets = flat_target[full_indices]
-                    offending_sums = valid_t_sum[invalid_indices]
-                    
-                    # 3. Format detailed error report
-                    msg = (
-                        f"\n[CRITICAL] {self.__class__.__name__}: Categorical targets MUST sum to 1.0 (Probability Mass Loss detected).\n"
-                        f"Found {len(invalid_indices)} invalid rows out of {len(valid_t_sum)} valid training samples.\n"
-                        f"Mean Sum: {valid_t_sum.mean().item():.4f}\n"
-                        f"Example Violations (showing up to 5):\n"
-                    )
-                    
-                    for i in range(min(5, len(invalid_indices))):
-                        idx = full_indices[i].item()
-                        b_idx, t_idx = idx // T, idx % T
-                        s = offending_sums[i].item()
-                        t_vals = offending_targets[i].detach().cpu().tolist()
-                        msg += f"  -> [Batch {b_idx}, Step {t_idx}] Sum: {s:.6f} | Target: {t_vals}\n"
-                    
-                    raise AssertionError(msg)
         raw_loss = self.loss_fn(flat_pred, flat_target, reduction="none")
 
         # 4. Collapse and Reshape to [B, T] result

@@ -1,8 +1,7 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Dict, Optional, Tuple
-from agents.learner.losses.base import BaseLoss, LossRepresentation
-
+from old_muzero.agents.learner.losses.base import BaseLoss, LossRepresentation
 
 class ConsistencyLoss(BaseLoss):
     """Latent consistency loss (stochastic/standard MuZero)."""
@@ -23,12 +22,11 @@ class ConsistencyLoss(BaseLoss):
             target_key="targets_latent",
             mask_key=mask_key,
             representation=representation,
-            loss_fn=F.mse_loss,  # TODO: This should be cosine similarity
+            loss_fn=F.cross_entropy,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
             name=name,
         )
-
 
 class SigmaLoss(BaseLoss):
     """Loss for sigma prediction (stochastic MuZero)."""
@@ -54,7 +52,6 @@ class SigmaLoss(BaseLoss):
             name=name,
         )
 
-
 class CommitmentLoss(BaseLoss):
     """VQ-VAE commitment cost for encoder (stochastic MuZero)."""
 
@@ -62,7 +59,6 @@ class CommitmentLoss(BaseLoss):
         self,
         device: torch.device,
         representation: LossRepresentation,
-        loss_factor: float = 1.0,  # Ensure loss_factor is explicitly accepted
         optimizer_name: str = "default",
         mask_key: str = "commitment_mask",
         name: Optional[str] = None,
@@ -70,33 +66,15 @@ class CommitmentLoss(BaseLoss):
         super().__init__(
             device=device,
             pred_key="commitment_loss",
-            target_key="dummy",  # Safely overridden below
+            target_key="commitment_loss",
             mask_key=mask_key,
             representation=representation,
             optimizer_name=optimizer_name,
-            loss_factor=loss_factor,
             name=name,
         )
-
-    @property
-    def required_targets(self) -> set[str]:
-        # Commitment loss is internal to the network latents; it requires no external targets.
-        return {self.mask_key}
 
     def compute_loss(
         self, predictions: Dict[str, torch.Tensor], targets: Dict[str, torch.Tensor]
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-
-        raw_loss = predictions[self.pred_key]
-        mask = self.get_mask(targets)
-
-        # 1. Guarantee the Universal [B, T] contract regardless of network output
-        if raw_loss.ndim == 0:
-            # Network returned a global scalar
-            raw_loss = raw_loss.expand(mask.shape)
-        elif raw_loss.ndim == 1:
-            # Network returned [B]
-            raw_loss = raw_loss.unsqueeze(-1).expand(mask.shape)
-
-        # 2. Apply the scaling factor and return
-        return self.loss_factor * raw_loss, {}
+        """Scalar-to-vectorized: returns [B, T] of loss values"""
+        return predictions["commitment_loss"], {}

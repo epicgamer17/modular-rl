@@ -1,12 +1,10 @@
-from typing import Tuple, Optional, Dict, Any, Callable
-import torch
+from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
-import torch.nn as nn
-from .base import BaseHead, HeadOutput
-from agents.learner.losses.representations import BaseRepresentation, ScalarRepresentation
-from configs.modules.architecture_config import ArchitectureConfig
-from configs.modules.backbones.base import BackboneConfig
-from modules.backbones.mlp import build_dense, NoisyLinear
+import torch
+from .base import BaseHead
+from old_muzero.agents.learner.losses.representations import BaseRepresentation, ScalarRepresentation
+from old_muzero.configs.modules.architecture_config import ArchitectureConfig
+from old_muzero.configs.modules.backbones.base import BackboneConfig
 
 
 class ObservationHead(BaseHead):
@@ -14,88 +12,50 @@ class ObservationHead(BaseHead):
     Predicts/reconstructs the observation.
     Can be used for Dreamer decoders or general autoencoding/prediction tasks.
     Flexible enough to handle image reconstruction (via neck=DeconvBackbone)
-    or vector reconstruction (via neck=MLPBackbone).
+    or vector reconstruction (via neck=DenseBackbone).
     """
 
     def __init__(
         self,
+        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: Optional[BaseRepresentation] = None,
-        neck_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
+        neck_config: Optional[BackboneConfig] = None,
         use_output_layer: bool = True,
-        noisy_sigma: float = 0.0,
-        name: Optional[str] = None,
-        input_source: str = "default",
-        **kwargs,
     ):
+        # Pass representation=None to avoid creating the default output layer in BaseHead if not wanted
         super().__init__(
+            arch_config,
             input_shape,
-            representation,
-            neck_fn=neck_fn,
-            noisy_sigma=noisy_sigma,
-            name=name,
-            input_source=input_source,
+            representation if use_output_layer else None,
+            neck_config,
         )
-
-        # 1. Image or Vector neck (e.g. Deconv or MLP)
-        if self.neck_fn is not None:
-            self.neck = self.neck_fn(input_shape=input_shape)
-        else:
-            self.neck = nn.Identity()
-            self.neck.output_shape = input_shape
-
-        self.output_shape = self.neck.output_shape
-        self.flat_dim = self._get_flat_dim(self.neck, input_shape)
-
         self.use_output_layer = use_output_layer
-        self.output_layer = None
 
-        # 2. Representation setup
+        # Ensure we have a representation for logic downstream
         if self.representation is None:
             self.representation = representation or ScalarRepresentation()
-
-        # 3. Optional Final Dense Output Layer
-        if self.use_output_layer:
-            self.output_layer = build_dense(
-                in_features=self.flat_dim,
-                out_features=self.representation.num_features,
-                sigma=self.noisy_sigma,
-            )
-
-    def reset_noise(self) -> None:
-        """Propagate noise reset through the neck and optional output layer."""
-        if hasattr(self.neck, "reset_noise"):
-            self.neck.reset_noise()
-        if isinstance(self.output_layer, NoisyLinear):
-            self.output_layer.reset_noise()
 
     def forward(
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-        is_inference: bool = False,
-        **kwargs,
-    ) -> HeadOutput:
-        """Returns HeadOutput with (logits/features, observation_pred, state)"""
-        # 1. Process neck (Deconv for images, MLP for vectors)
+    ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
+        """Returns: (logits, state, observation_pred)"""
+        state = state if state is not None else {}
+
+        # Process neck
         x = self.neck(x)
 
-        # 2. Optional Flat Dense Projection
+        # If we have a final output layer (dense), we project.
         if self.output_layer is not None:
             if x.dim() > 2:
                 x = x.flatten(1, -1)
             logits = self.output_layer(x)
         else:
-            # If no output layer, the neck output serves as the prediction/features
             logits = x
 
-        # 3. Mathematical Transform (Conditionally)
-        observation_pred = None
-        if is_inference:
-            observation_pred = self.representation.to_expected_value(logits)
+        # expected_observation is representation conversion
+        observation_pred = self.representation.to_expected_value(logits)
 
-        return HeadOutput(
-            training_tensor=logits,
-            inference_tensor=observation_pred,
-            state=state if state is not None else {},
-        )
+        return logits, state, observation_pred

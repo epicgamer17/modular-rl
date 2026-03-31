@@ -1,102 +1,49 @@
-from typing import Tuple, Optional, Dict, Any, Callable
-import torch
-from torch import nn, Tensor
-from .base import BaseHead, HeadOutput
-from configs.modules.heads.latent_consistency import SimSiamProjectorConfig
-from agents.learner.losses.representations import (
-    BaseRepresentation,
-    IdentityRepresentation,
-)
-from configs.modules.architecture_config import ArchitectureConfig
-from configs.modules.backbones.base import BackboneConfig
-from modules.backbones.mlp import build_dense, NoisyLinear
+from typing import Tuple, Optional, Dict, Any
+from torch import Tensor
+from .base import BaseHead
+from old_muzero.agents.learner.losses.representations import BaseRepresentation, IdentityRepresentation
+from old_muzero.configs.modules.architecture_config import ArchitectureConfig
+from old_muzero.configs.modules.backbones.base import BackboneConfig
+from old_muzero.modules.blocks.dense import build_dense
 
 
-
-
-class SimSiamProjectorHead(BaseHead):
+class LatentConsistencyHead(BaseHead):
     """
-    Consolidated SimSiam/BYOL Projection head.
-    Matches the architecture from modules/projectors/sim_siam.py.
+    Projects latent states into a embedding space for consistency loss.
+    Commonly used in MuZero (projection head) or Dreamer.
+    Typically a small MLP.
     """
 
     def __init__(
         self,
+        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
-        proj_hidden_dim: int,
-        proj_output_dim: int,
-        pred_hidden_dim: int,
-        pred_output_dim: int,
         representation: Optional[BaseRepresentation] = None,
-        neck_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
-        noisy_sigma: float = 0.0,
-        name: Optional[str] = None,
-        input_source: str = "default",
-        **kwargs,
+        neck_config: Optional[BackboneConfig] = None,
+        projection_dim: int = 256,
     ):
+        # If representation is None, default to IdentityRepresentation with projection_dim
         if representation is None:
-            representation = IdentityRepresentation(num_features=pred_output_dim)
+            representation = IdentityRepresentation(num_features=projection_dim)
 
-        super().__init__(
-            input_shape,
-            representation,
-            neck_fn=neck_fn,
-            noisy_sigma=noisy_sigma,
-            name=name,
-            input_source=input_source,
-        )
-
-        # 1. Heads now build their own feature architecture (neck)
-        if self.neck_fn is not None:
-            self.neck = self.neck_fn(input_shape=input_shape)
-        else:
-            self.neck = nn.Identity()
-            self.neck.output_shape = input_shape
-
-        self.output_shape = self.neck.output_shape
-        self.flat_dim = self._get_flat_dim(self.neck, input_shape)
-
-        # 2. Projection layers (SimSiam/EfficientZero style)
-        self.projection = nn.Sequential(
-            nn.Linear(self.flat_dim, proj_hidden_dim),
-            nn.BatchNorm1d(proj_hidden_dim),
-            nn.ReLU(),
-            nn.Linear(proj_hidden_dim, proj_hidden_dim),
-            nn.BatchNorm1d(proj_hidden_dim),
-            nn.ReLU(),
-            nn.Linear(proj_hidden_dim, proj_output_dim),
-            nn.BatchNorm1d(proj_output_dim),
-        )
-
-        # 3. Predictor layers (The 'projection_head' in original code)
-        self.predictor = nn.Sequential(
-            nn.Linear(proj_output_dim, pred_hidden_dim),
-            nn.BatchNorm1d(pred_hidden_dim),
-            nn.ReLU(),
-            nn.Linear(pred_hidden_dim, pred_output_dim),
-        )
+        super().__init__(arch_config, input_shape, representation, neck_config)
+        self.projection_dim = projection_dim
 
     def forward(
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-        is_inference: bool = False,
-        **kwargs,
-    ) -> HeadOutput:
-        """Returns HeadOutput with (prediction, projection, state)"""
-        # 1. Neck + Flatten
-        x = self.neck(x)
-        if x.dim() > 2:
-            x = x.flatten(1, -1)
+    ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
+        state = state if state is not None else {}
 
-        # 2. SimSiam Forward pass
-        # Note: BatchNorm1d requires batch_size > 1.
-        # This is strictly a training-only head in most MuZero variants.
-        projected = self.projection(x)
-        predicted = self.predictor(projected)
+        # Apply neck if it exists
+        if self.neck is not None:
+            x = self.neck(x)
 
-        return HeadOutput(
-            training_tensor=predicted,
-            inference_tensor=projected,  # We store projection in inference_tensor
-            state=state if state is not None else {},
-        )
+        # Apply the output layer to get logits
+        logits = self.output_layer(x)
+
+        # The projected latent
+        projected_embedding = self.representation.to_expected_value(logits)
+
+        return logits, state, projected_embedding

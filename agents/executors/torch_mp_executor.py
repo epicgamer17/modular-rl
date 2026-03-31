@@ -4,8 +4,6 @@ import traceback
 import time
 from typing import Any, Dict, List, Optional, Tuple, Type
 from .base import BaseExecutor
-from agents.workers.payloads import WorkerPayload, TaskRequest, TaskType
-import torch
 
 
 class TorchMPExecutor(BaseExecutor):
@@ -24,26 +22,21 @@ class TorchMPExecutor(BaseExecutor):
         self.stop_flag = mp.Value("i", 0)
         self.result_queue = mp.Queue()
         self.error_queue = mp.Queue()
-        # self.param_queue = mp.Queue() # BROKEN SHARED CONDUIT
-        # self.command_queue = mp.Queue() # BROKEN SHARED CONDUIT
-        # self.worker_events = {}  # BROKEN SHARED CONDUIT
-        self.workers = []  # List of WorkerHandle (dict or dataclass)
-        self.shared_networks = set()
+        self.param_queue = mp.Queue()
+        self.worker_events = {}  # {worker_type_name: mp.Event}
 
     def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int):
         self.stop_flag.value = 0
+        self.workers = []
 
-        # Track network if it is likely shared (index 2 of standard worker args)
-        if len(args) > 2 and isinstance(args[2], torch.nn.Module):
-            self.shared_networks.add(args[2])
+        # Create a trigger event for this worker type if it doesn't exist
+        type_name = worker_cls.__name__
+        if type_name not in self.worker_events:
+            self.worker_events[type_name] = mp.Event()
+
+        trigger_event = self.worker_events[type_name]
 
         for i in range(num_workers):
-            # Create DEDICATED conduits for this specific worker instance
-            # to avoid race conditions and ghost events
-            local_param_queue = mp.Queue()
-            local_command_queue = mp.Queue()
-            local_trigger_event = mp.Event()
-
             p = mp.Process(
                 target=self._worker_loop,
                 args=(
@@ -53,19 +46,12 @@ class TorchMPExecutor(BaseExecutor):
                     self.stop_flag,
                     self.result_queue,
                     self.error_queue,
-                    local_param_queue,
-                    local_command_queue,
-                    local_trigger_event,
+                    self.param_queue,
+                    trigger_event,
                 ),
             )
             p.start()
-            self.workers.append({
-                "worker_cls": worker_cls,
-                "process": p,
-                "param_queue": local_param_queue,
-                "command_queue": local_command_queue,
-                "trigger_event": local_trigger_event,
-            })
+            self.workers.append(p)
 
     @staticmethod
     def _worker_loop(
@@ -76,7 +62,6 @@ class TorchMPExecutor(BaseExecutor):
         result_queue,
         error_queue,
         param_queue,
-        command_queue,
         trigger_event=None,
     ):
         # Configure thread affinity to avoid OpenMP contention
@@ -88,16 +73,8 @@ class TorchMPExecutor(BaseExecutor):
         torch.set_num_threads(1)
 
         # Stagger start times to avoid overwhelming the compiler (and avoid race conditions in Triton cache)
-        # We try to find the config object in args (usually at index 3, 4 or 5)
-        config = None
-        for idx in [3, 4, 5]:
-            if len(args) > idx:
-                potential_config = args[idx]
-                if hasattr(potential_config, "compilation"):
-                    config = potential_config
-                    break
-
-        if config and config.compilation.enabled:
+        config = args[5]
+        if config.compilation.enabled:
             time.sleep(worker_id * 1.0)
         elif worker_id > 0:
             time.sleep(worker_id * 0.1)
@@ -106,26 +83,29 @@ class TorchMPExecutor(BaseExecutor):
             worker = worker_cls(*args, worker_id=worker_id)
             worker.setup()
 
-            # Signaling: Only wait if worker has synchronous methods (collect/evaluate/reanalyze)
-            # Most modern actors are now synchronous by default in the training loop.
-            use_signaling = True
+            # Determine if we should use signaling based on the worker type
+            # We explicitly want signaling for Tester
+            use_signaling = worker_cls.__name__ == "Tester"
 
             while not stop_flag.value:
-                # 1. Parameter Updates
+                # Check for parameter updates
                 while not param_queue.empty():
                     try:
-                        update_dict = param_queue.get_nowait()
-                        if update_dict:
-                            worker.update_parameters(
-                                weights=update_dict.get("weights"),
-                                hyperparams=update_dict.get("hyperparams"),
-                            )
+                        params = param_queue.get_nowait()
+                        if params is not None:
+                            worker.update_parameters(params)
+                            if params.get("reset_noise") and hasattr(
+                                worker.agent_network, "reset_noise"
+                            ):
+                                worker.agent_network.reset_noise()
+                            if hasattr(worker, "action_selector"):
+                                worker.action_selector.update_parameters(params)
                     except queue.Empty:
                         break
 
-                # 2. Wait for work request
-                cmd_args = {}
                 if use_signaling and trigger_event is not None:
+                    # Wait for a signal to perform work
+                    # Check stop_flag periodically while waiting
                     while not stop_flag.value:
                         if trigger_event.wait(timeout=0.1):
                             trigger_event.clear()
@@ -134,21 +114,8 @@ class TorchMPExecutor(BaseExecutor):
                     if stop_flag.value:
                         break
 
-                # 3. Fetch task request if any
-                task_request = None
-                while not command_queue.empty():
-                    try:
-                        req = command_queue.get_nowait()
-                        if isinstance(req, TaskRequest):
-                            task_request = req
-                            break
-                    except queue.Empty:
-                        break
-
-                # 4. Dispatch Task via Command Pattern
-                if task_request:
-                    payload = worker.execute(task_request)
-                    result_queue.put(payload)
+                data = worker.play_sequence()
+                result_queue.put((worker_cls.__name__, data))
         except Exception as e:
             # We stringify the exception to prevent obscure pickling errors (like 'cell' objects)
             # from masking the real underlying crash when this goes through the mp.Queue.
@@ -195,8 +162,7 @@ class TorchMPExecutor(BaseExecutor):
             raise err
 
         # 2. Check if all workers are still alive
-        for i, handle in enumerate(self.workers):
-            w = handle["process"]
+        for i, w in enumerate(self.workers):
             if not w.is_alive():
                 # Check if it exited with code 0 (clean stop) or not
                 if (
@@ -209,54 +175,29 @@ class TorchMPExecutor(BaseExecutor):
                         f"Worker process {i} died unexpectedly with exit code {w.exitcode}"
                     )
 
-    def update_parameters(
-        self,
-        weights: Optional[Dict[str, torch.Tensor]] = None,
-        hyperparams: Optional[Dict[str, Any]] = None,
+    def update_weights(
+        self, state_dict: Dict[str, Any], params: Optional[Dict[str, Any]] = None
     ):
-        # 1. Update shared memory once in main process
-        if weights and self.shared_networks:
-            # Handle potentially compiled model state dicts
-            clean_params = {k.replace("_orig_mod.", ""): v for k, v in weights.items()}
-            for net in self.shared_networks:
-                # This update is global; all workers automatically see it via shared RAM
-                net.load_state_dict(clean_params, strict=False)
+        # In TorchMP with shared memory, weights are updated in-place on the shared model.
+        # But wait, we must update the uncompiled underlying model if it's compiled, relying on Pytorch references.
+        # Actually, if they share memory, we don't need to load_state_dict here!
+        # The main thread does step() on its model, which IS the shared model, since both are uncompiled originally.
+        # However, to be safe, we just signal parameter updates.
+        if params is None:
+            params = {}
 
-        # 2. Broadcast hyperparams to dedicated worker queues
-        update_dict = {"weights": None, "hyperparams": hyperparams or {}}
+        # Signal noise reset if this is a learning update
+        params["reset_noise"] = True
 
-        # Broadcast to all workers via their LOCAL conduits to avoid theft
-        for handle in self.workers:
-            handle["param_queue"].put(update_dict)
+        # Send to all workers via the queue
+        for _ in range(len(self.workers)):
+            self.param_queue.put(params)
 
-    def request_work(self, worker_type: Type, **kwargs):
-        """Signals the trigger events and sends TaskRequests to specific workers."""
-        # Map legacy kwargs to TaskType
-        # This allows trainers to call collect_data(num_steps=...) as before
-        task_type = None
-        batch_size = 0
-        
-        if "num_steps" in kwargs:
-            task_type = TaskType.COLLECT
-            batch_size = kwargs.pop("num_steps")
-        elif "num_episodes" in kwargs:
-            task_type = TaskType.EVALUATE
-            batch_size = kwargs.pop("num_episodes")
-        elif "batch_size" in kwargs:
-            task_type = TaskType.REANALYZE
-            batch_size = kwargs.pop("batch_size")
-        else:
-            # Default to collect if nothing specified
-            task_type = TaskType.COLLECT
-            batch_size = 1000
-            
-        request = TaskRequest(task_type=task_type, batch_size=batch_size, kwargs=kwargs)
-
-        # Broadcast command to all workers of this type
-        for handle in self.workers:
-            if handle["worker_cls"] == worker_type:
-                handle["command_queue"].put(request)
-                handle["trigger_event"].set()
+    def request_work(self, worker_type: Type):
+        """Signals the trigger event for the specified worker type."""
+        type_name = worker_type.__name__
+        if type_name in self.worker_events:
+            self.worker_events[type_name].set()
 
     def stop(self):
         self.stop_flag.value = 1
@@ -264,8 +205,7 @@ class TorchMPExecutor(BaseExecutor):
         # Give workers a moment to see the stop flag
         time.sleep(0.1)
 
-        for handle in self.workers:
-            w = handle["process"]
+        for w in self.workers:
             if w.is_alive():
                 # For some environments, join() might hang if the queue is full
                 # terminate() is safer but join() is still needed to clean up
@@ -280,13 +220,10 @@ class TorchMPExecutor(BaseExecutor):
                         os.kill(w.pid, signal.SIGKILL)
                     except:
                         pass
-        # Close and clear queues to release file descriptors/threads
-        all_queues = [self.result_queue, self.error_queue]
-        for handle in self.workers:
-            all_queues.append(handle["param_queue"])
-            all_queues.append(handle["command_queue"])
+        self.workers = []
 
-        for q in all_queues:
+        # Close and clear queues to release file descriptors/threads
+        for q in [self.result_queue, self.error_queue]:
             while not q.empty():
                 try:
                     q.get_nowait()
@@ -294,5 +231,3 @@ class TorchMPExecutor(BaseExecutor):
                     break
             q.close()
             q.join_thread()
-            
-        self.workers = []

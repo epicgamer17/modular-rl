@@ -1,18 +1,17 @@
+from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Tuple, Union
 import torch
 import numpy as np
-import dataclasses
-from modules.models.inference_output import InferenceOutput
-from agents.action_selectors.types import InferenceResult
-from abc import ABC, abstractmethod
+from old_muzero.modules.world_models.inference_output import InferenceOutput
+from old_muzero.agents.action_selectors.types import InferenceResult
 
 # Constant for default epsilon
 DEFAULT_EPSILON = 0.05
 
 
 class BaseActionSelector(ABC):
-    def __init__(self, **kwargs):
-        pass
+    def __init__(self, config: Optional[Any] = None):
+        self.config = config
 
     @abstractmethod
     def select_action(
@@ -24,73 +23,87 @@ class BaseActionSelector(ABC):
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
         raise NotImplementedError  # pragma: no cover
 
+    def mask_actions(
+        self,
+        values: torch.Tensor,
+        legal_moves: Any,
+        mask_value: Optional[float] = None,
+        device: Optional[torch.device] = None,
+    ) -> torch.Tensor:
+        """
+        Masks illegal actions in the given values (logits, probs, or Q-values).
+
+        Args:
+            values: The tensor to mask [B, A] or [A].
+            legal_moves: List of legal move indices or list of lists for batched input.
+            mask_value: The value to use for masking (defaults to self.config.default_mask_value).
+            device: Optional device.
+
+        Returns:
+            The masked tensor.
+        """
+        if mask_value is None:
+            mask_value = (
+                getattr(self.config, "default_mask_value", -float("inf"))
+                if self.config is not None
+                else -float("inf")
+            )
+
+        if device is None:
+            device = values.device
+
+        # Core masking logic (adapted from old_muzero.utils.action_mask)
+        mask = torch.zeros_like(values, dtype=torch.bool).to(device)
+
+        if values.dim() == 1:
+            if isinstance(legal_moves, (list, np.ndarray, torch.Tensor)):
+                mask[legal_moves] = True
+            else:
+                raise ValueError(
+                    f"For 1D actions, legal_moves must be an iterable of indices, got {type(legal_moves)}"
+                )
+        elif values.dim() == 2:
+            # Batch of legal moves: [[...], [...]]
+            # Special case: if batch size is 1 and legal_moves is a single list of moves OR a 1D tensor mask
+            if (
+                values.shape[0] == 1
+                and len(legal_moves) > 0
+            ):
+                # If it's a list, check if the first element is a list to determine nesting
+                is_nested = isinstance(legal_moves[0], (list, np.ndarray)) or (
+                    torch.is_tensor(legal_moves) and legal_moves.dim() > 1
+                )
+                
+                if not is_nested:
+                    mask[0, legal_moves] = True
+                else:
+                    mask[0, legal_moves[0]] = True
+            else:
+                for i, legal in enumerate(legal_moves):
+                    if legal is not None:
+                        mask[i, legal] = True
+        else:
+            raise ValueError(
+                f"mask_actions expects 1D or 2D tensor, got {values.dim()}D"
+            )
+
+        return torch.where(mask, values, torch.tensor(mask_value, device=device))
+
     def update_parameters(self, params_dict: Dict[str, Any]) -> None:
         """
         Updates the internal parameters of the selector.
+
+        Args:
+            params_dict: Dictionary containing parameter updates.
         """
         pass  # pragma: no cover
 
 
-class LegalMovesMaskDecorator(BaseActionSelector):
-    """
-    Applies a legal_moves_mask to inference results before passing them
-    to an inner selector. Decouples game rules from policy math.
-    """
-
-    def __init__(self, inner_selector: BaseActionSelector):
-        self.inner = inner_selector
-
-    def select_action(
-        self,
-        result: InferenceResult,
-        info: Dict[str, Any],
-        exploration: Optional[bool] = None,
-        **kwargs,
-    ):
-        mask = info.get("legal_moves_mask")
-        if mask is not None:
-            # Masking value for log-space (-inf)
-            MASK_VALUE = -1e9
-
-            updates = {}
-            if result.logits is not None:
-                updates["logits"] = torch.where(
-                    mask,
-                    result.logits,
-                    torch.tensor(
-                        MASK_VALUE,
-                        device=result.logits.device,
-                        dtype=result.logits.dtype,
-                    ),
-                )
-            if result.q_values is not None:
-                updates["q_values"] = torch.where(
-                    mask,
-                    result.q_values,
-                    torch.tensor(
-                        MASK_VALUE,
-                        device=result.q_values.device,
-                        dtype=result.q_values.dtype,
-                    ),
-                )
-            if result.probs is not None:
-                # Mask and re-normalize probabilities
-                p = result.probs * mask.float()
-                # Use a small epsilon for stability if all actions are masked (should not happen)
-                updates["probs"] = p / p.sum(dim=-1, keepdim=True).clamp(min=1e-12)
-
-            if updates:
-                result = dataclasses.replace(result, **updates)
-
-        return self.inner.select_action(result, info, exploration=exploration, **kwargs)
-
-    def update_parameters(self, params: Dict[str, Any]) -> None:
-        self.inner.update_parameters(params)
-
-
 class CategoricalSelector(BaseActionSelector):
-    def __init__(self, exploration: bool = True, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, config: Optional[Any] = None, exploration: bool = True):
+        super().__init__(config)
+        # We keep this for backward compatibility with SelectorFactory/Configs that might pass it,
+        # but select_action argument takes precedence.
         self.default_exploration = exploration
 
     def select_action(
@@ -99,43 +112,52 @@ class CategoricalSelector(BaseActionSelector):
         info: Dict[str, Any],
         exploration: Optional[bool] = None,
         **kwargs,
-    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        """
-        Samples from Categorical(probs) or Categorical(logits).
-        """
-        # Resolve exploration vs exploitation flags
+    ):
+        # Resolve exploration flag
         should_explore = (
             exploration if exploration is not None else self.default_exploration
         )
 
+        metadata = {}
+
+        mask = info.get("legal_moves_mask", info.get("legal_moves"))
+
         from torch.distributions import Categorical
 
-        # 1. Resolve Distribution
         if result.logits is not None:
-            dist = Categorical(logits=result.logits)
-        elif result.probs is not None:
-            dist = Categorical(probs=result.probs)
+            logits = result.logits
+            if mask is not None:
+                logits = self.mask_actions(
+                    logits, mask, mask_value=-float("inf"), device=logits.device
+                )
+            policy = Categorical(logits=logits)
         else:
-            raise ValueError(
-                "CategoricalSelector requires result.logits or result.probs"
-            )
+            assert (
+                result.probs is not None
+            ), "CategoricalSelector requires result.logits or result.probs"
+            probs = result.probs
+            if mask is not None:
+                probs = probs * mask.float()
+                probs = probs / probs.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+            policy = Categorical(probs=probs)
 
-        # 2. Selection logic
+        # Use 'policy_dist' for decorators (like PPODecorator)
+        # Use 'policy' for the replay buffer (must be a tensor/numpy)
+        metadata["policy_dist"] = policy
+        metadata["policy"] = policy.probs.detach()
+
         if should_explore:
-            action = dist.sample()
+            action = policy.sample()
         else:
-            # Deterministic Selection (Argmax) on logits
-            action = torch.argmax(dist.logits, dim=-1)
-
-        # 3. Metadata Injection
-        metadata = {"policy_dist": dist}
+            # policy.logits is the canonical form for argmax (log-scale preserves ordering)
+            action = torch.argmax(policy.logits, dim=-1)
 
         return action, metadata
 
 
 class EpsilonGreedySelector(BaseActionSelector):
-    def __init__(self, epsilon: float = 0.05, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, config: Optional[Any] = None, epsilon: float = 0.05):
+        super().__init__(config)
         self.epsilon = epsilon
 
     def select_action(
@@ -149,7 +171,14 @@ class EpsilonGreedySelector(BaseActionSelector):
             result.q_values is not None
         ), "EpsilonGreedySelector requires result.q_values"
         q_values = result.q_values
-        batch_size = q_values.shape[0]
+        batch_size = q_values.shape[0] if q_values.dim() == 2 else 1
+
+        # Check if legal moves are provided
+        mask = info.get("legal_moves_mask", info.get("legal_moves"))
+        if mask is not None:
+            q_values = self.mask_actions(
+                q_values, mask, mask_value=-float("inf"), device=q_values.device
+            )
 
         # Exploration/Exploitation logic
         # Determine if exploration should happen based on 'exploration' arg or default epsilon
@@ -161,15 +190,17 @@ class EpsilonGreedySelector(BaseActionSelector):
         if effective_epsilon > 0:
             # Batched epsilon greedy
             # Generate random actions
-            # Generate random actions
-            # Determine mask from zeros in q_values if mask not in info (EpsilonGreedy should be used with Decorator)
-            mask = info.get("legal_moves_mask")
             if mask is not None:
                 # Sample from legal actions using multinomial if mask is provided
+                # Convert mask to float for multinomial (0 for illegal, 1 for legal)
                 probs = mask.float()
+                # Ensure there's at least one legal move to sample from
+                # If a row in probs is all zeros, multinomial will fail.
+                # We can add a small epsilon to all probs to avoid this, or handle it.
+                # For now, assume valid masks where at least one action is legal.
                 random_actions = torch.multinomial(probs, 1).squeeze(-1)
             else:
-                # Fallback to unrestricted random actions
+                # If no mask, sample uniformly from all actions
                 random_actions = torch.randint(
                     0, q_values.shape[-1], (batch_size,), device=q_values.device
                 )
@@ -206,13 +237,18 @@ class ArgmaxSelector(BaseActionSelector):
         **kwargs,
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
 
-        # Prefer q_values, fall back to logits or probs (already masked by Decorator)
+        mask = info.get("legal_moves_mask", info.get("legal_moves"))
+
+        # Prefer q_values, fall back to logits or probs
         values = result.q_values
         if values is None:
             values = result.logits if result.logits is not None else result.probs
         assert (
             values is not None
         ), "ArgmaxSelector requires result.q_values, result.logits, or result.probs"
+
+        if mask is not None:
+            values = self.mask_actions(values, mask)
 
         action = torch.argmax(values, dim=-1)
         return action, {}

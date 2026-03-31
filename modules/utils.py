@@ -6,22 +6,74 @@ import torch.nn.init as init
 from torch import nn, Tensor, optim
 from typing import TYPE_CHECKING, Iterable, Optional, Tuple, Any, Callable
 
-
-@torch.inference_mode()
-def get_flat_dim(module: nn.Module, input_shape: Tuple[int, ...]) -> int:
-    """Foolproof calculation of flattened output dimension using a dummy pass."""
-    was_training = module.training
-    dummy_input = torch.zeros(1, *input_shape)
-    module.eval()
-    dummy_output = module(dummy_input)
-    module.train(was_training)
-    return dummy_output.flatten(1, -1).shape[1]
-
-
 if TYPE_CHECKING:
-    from configs.base import Config
+    from old_muzero.configs.base import Config
 
-from utils.schedule import ScheduleConfig, create_schedule, Schedule
+from old_muzero.utils.schedule import ScheduleConfig, Schedule, create_schedule
+
+
+class LinearLR:
+    def __init__(self, training_steps: int):
+        self.training_steps = training_steps
+
+    def __call__(self, current_step: int):
+        return max(
+            0.0,
+            float(self.training_steps - current_step)
+            / float(max(1, self.training_steps)),
+        )
+
+
+class StepWiseLR:
+    def __init__(self, steps: list, values: list, initial_lr: float):
+        self.steps = steps
+        self.values = values
+        self.initial_lr = initial_lr
+
+    def __call__(self, current_step: int):
+        idx = bisect.bisect_right(self.steps, current_step)
+        if idx == 0:
+            return 1.0
+        else:
+            return self.values[idx - 1] / self.initial_lr
+
+
+class ConstantLR:
+    def __call__(self, _):
+        return 1.0
+
+
+class ScheduleLRScheduler(optim.lr_scheduler.LRScheduler):
+    """
+    Wraps a Schedule to work with PyTorch's LR scheduler interface.
+    """
+
+    def __init__(self, optimizer: optim.Optimizer, schedule: Schedule):
+        self.schedule = schedule
+        self._initial_lr = schedule.config.initial
+        super().__init__(optimizer)
+
+    def get_lr(self):
+        if self._initial_lr is None or self._initial_lr == 0:
+            return self.base_lrs
+        factor = self.schedule.get_value() / self._initial_lr
+        return [lr * factor for lr in self.base_lrs]
+
+    def step(self, *args, **kwargs):
+        self.schedule.step()
+        super().step(*args, **kwargs)
+
+
+def get_lr_scheduler(optimizer: optim.Optimizer, config: "Config"):
+    schedule_config = config.lr_schedule
+    if schedule_config is None:
+        return optim.lr_scheduler.LambdaLR(optimizer, ConstantLR())
+
+    schedule = create_schedule(schedule_config)
+    return ScheduleLRScheduler(optimizer, schedule)
+
+
+from torch.optim import Adam, SGD
 
 
 def create_optimizer(params, config, sub_config_parent=None):
@@ -151,6 +203,111 @@ def scalar_to_support(x: torch.Tensor | float, support_size: int, eps: float = 0
     return out.view(*original_shape, L)
 
 
+# def support_to_scalar(probabilities, support_size):
+#     """
+#     Transform a categorical representation (1D probs vector)
+#     into a scalar.
+#     """
+#     assert probabilities.dim() == 1, "probabilities must be 1D"
+#     assert probabilities.shape[0] == 2 * support_size + 1, "shape mismatch"
+
+#     # support values from -support_size to +support_size
+#     support = torch.arange(
+#         -support_size,
+#         support_size + 1,
+#         device=probabilities.device,
+#         dtype=torch.float32,
+#     )
+#     x = torch.sum(support * probabilities)
+
+#     # Invert the scaling (from paper appendix)
+#     x = torch.sign(x) * (
+#         ((torch.sqrt(1 + 4 * 0.001 * (torch.abs(x) + 1 + 0.001)) - 1) / (2 * 0.001))
+#         ** 2
+#         - 1
+#     )
+#     return x
+
+
+# def scalar_to_support(x, support_size):
+#     # raise NotImplementedError  # "this is bugged and outputs a uniform instead of a 2-hot"
+#     """
+#     Transform a scalar (float or 0D tensor)
+#     into categorical probs (1D tensor of length 2*support_size+1).
+#     """
+#     if not torch.is_tensor(x):
+#         x = torch.tensor(x, dtype=torch.float32)
+
+#     # Reduce the scale
+#     x = torch.sign(x) * (torch.sqrt(torch.abs(x) + 1) - 1) + 0.001 * x
+
+#     # Clamp into support range
+#     x = torch.clamp(x, -support_size, support_size)
+
+#     floor = torch.floor(x)
+#     prob = x - floor
+
+#     probabilities = torch.zeros(2 * support_size + 1, device=x.device)
+
+#     # distribute mass between floor and floor+1
+#     probabilities[int(floor + support_size)] = 1 - prob
+#     if floor + 1 <= support_size:
+#         probabilities[int(floor + support_size + 1)] = prob
+
+#     # probabilities = torch.softmax(logits, dim=0)
+#     return probabilities
+
+
+# FOR BATCHED INPUTS
+# def support_to_scalar(probabilities, support_size):
+#     """
+#     Transform a categorical representation to a scalar
+#     See paper appendix Network Architecture
+#     """
+#     # Decode to a scalar
+#     # print(probabilities.shape)
+#     support = (
+#         torch.tensor([x for x in range(-support_size, support_size + 1)])
+#         .expand(probabilities.shape)
+#         .float()
+#         .to(device=probabilities.device)
+#     )
+#     x = torch.sum(support * probabilities, dim=1, keepdim=True)
+
+#     # Invert the scaling (defined in https://arxiv.org/abs/1805.11593)
+#     x = torch.sign(x) * (
+#         ((torch.sqrt(1 + 4 * 0.001 * (torch.abs(x) + 1 + 0.001)) - 1) / (2 * 0.001))
+#         ** 2
+#         - 1
+#     )
+#     return x
+
+
+# def scalar_to_support(x, support_size):
+#     """
+#     Transform a scalar to a categorical representation with (2 * support_size + 1) categories
+#     See paper appendix Network Architecture
+#     """
+#     # Reduce the scale (defined in https://arxiv.org/abs/1805.11593)
+#     x = torch.sign(x) * (torch.sqrt(torch.abs(x) + 1) - 1) + 0.001 * x
+
+#     # Encode on a vector
+#     x = torch.clamp(x, -support_size, support_size)
+#     floor = x.floor()
+#     prob = x - floor
+#     logits = torch.zeros(x.shape[0], x.shape[1], 2 * support_size + 1).to(x.device)
+#     logits.scatter_(
+#         2, (floor + support_size).long().unsqueeze(-1), (1 - prob).unsqueeze(-1)
+#     )
+#     indexes = floor + support_size + 1
+#     prob = prob.masked_fill_(2 * support_size < indexes, 0.0)
+#     indexes = indexes.masked_fill_(2 * support_size < indexes, 0.0)
+#     logits.scatter_(2, indexes.long().unsqueeze(-1), prob.unsqueeze(-1))
+#     probabilities = logits.softmax(dim=2)
+#     # print(probabilities.shape)
+#     return probabilities
+
+
 def scale_gradient(tensor, scale):
     """
     Scales the gradient for the backward pass without changing the forward pass.
@@ -159,6 +316,22 @@ def scale_gradient(tensor, scale):
         scale (float): The scaling factor for the gradient.
     """
     return tensor * scale + tensor.detach() * (1 - scale)
+
+
+def zero_weights_initializer(m: nn.Module) -> None:
+    """Initializes the weights and biases of a layer to zero."""
+    if hasattr(m, "weight") and m.weight is not None:
+        init.constant_(m.weight, 0.0)
+    if hasattr(m, "bias") and m.bias is not None:
+        init.constant_(m.bias, 0.0)
+
+
+def one_hundredth_initializer(m: nn.Module) -> None:
+    """Initializes the weights to uniform(-0.01, 0.01)."""
+    if hasattr(m, "weight") and m.weight is not None:
+        init.uniform_(m.weight, -0.01, 0.01)
+    if hasattr(m, "bias") and m.bias is not None:
+        init.constant_(m.bias, 0.0)
 
 
 _epsilon = 1e-7
@@ -219,6 +392,55 @@ def generate_layer_widths(widths: list[int], max_num_layers: int) -> list[Tuple[
         width_combinations.extend(itertools.combinations_with_replacement(widths, i))
 
     return width_combinations
+
+
+def prepare_kernel_initializers(kernel_initializer: str, output_layer: bool = False):
+    if kernel_initializer == "pytorch_default":
+        return None
+    if kernel_initializer == "glorot_uniform":
+        return nn.init.xavier_uniform_
+    elif kernel_initializer == "glorot_normal":
+        return nn.init.xavier_normal_
+    elif kernel_initializer == "he_uniform":
+        # return lambda tensor: nn.init.kaiming_uniform_(tensor, nonlinearity="relu")
+        return nn.init.kaiming_uniform_
+    elif kernel_initializer == "he_normal":
+        # return lambda tensor: nn.init.kaiming_normal_(tensor, nonlinearity="relu")
+        return nn.init.kaiming_normal_
+    elif kernel_initializer == "variance_baseline":
+        return VarianceScaling()
+    elif kernel_initializer == "variance_0.1":
+        return VarianceScaling(scale=0.1)
+    elif kernel_initializer == "variance_0.3":
+        return VarianceScaling(scale=0.3)
+    elif kernel_initializer == "variance_0.8":
+        return VarianceScaling(scale=0.8)
+    elif kernel_initializer == "variance_3":
+        return VarianceScaling(scale=3)
+    elif kernel_initializer == "variance_5":
+        return VarianceScaling(scale=5)
+    elif kernel_initializer == "variance_10":
+        return VarianceScaling(scale=10)
+    # TODO
+    # elif kernel_initializer == "lecun_uniform":
+    #     return LecunUniform(seed=np.random.seed())
+    # elif kernel_initializer == "lecun_normal":
+    #     return LecunNormal(seed=np.random.seed())
+    elif kernel_initializer == "orthogonal":
+        return nn.init.orthogonal_
+    elif kernel_initializer == "one_hundredth":
+        return one_hundredth_initializer
+
+    raise ValueError(f"Invalid kernel initializer: {kernel_initializer}")
+
+
+def kernel_initializer_wrapper(x):
+    if x is None:
+        return x
+    if isinstance(x, str):
+        return prepare_kernel_initializers(x)
+    assert callable(x)
+    return x
 
 
 def prepare_activations(activation: str | nn.Module | Callable):
@@ -287,6 +509,31 @@ def calc_units(shape):
         return (c * in_units, c * out_units)
 
 
+class VarianceScaling:
+    def __init__(self, scale=0.1, mode="fan_in", distribution="uniform"):
+        self.scale = scale
+        self.mode = mode
+        self.distribution = distribution
+
+        assert mode == "fan_in" or mode == "fan_out" or mode == "fan_avg"
+        assert distribution == "uniform", "only uniform distribution is supported"
+
+    def __call__(self, tensor: Tensor) -> None:
+        with torch.no_grad():
+            scale = self.scale
+            shape = tensor.shape
+            in_units, out_units = calc_units(shape)
+            if self.mode == "fan_in":
+                scale /= in_units
+            elif self.mode == "fan_out":
+                scale /= out_units
+            else:
+                scale /= (in_units + out_units) / 2
+
+            limit = math.sqrt(3.0 * scale)
+            return tensor.uniform_(-limit, limit)
+
+
 # modules/network_utils.py (New File)
 from torch import nn
 from typing import Literal
@@ -335,33 +582,42 @@ def unpack(x: int | Tuple):
             print(f"error converting {x} to int: ", e)
 
 
-def _normalize_hidden_state(S: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
-    """
-    Normalizes the hidden state tensor as described in the MuZero paper (Appendix A.2).
-    Applies Min-Max scaling to [0, 1] globally across all feature dimensions per sample.
-    
-    Args:
-        S: Hidden state tensor of shape (B, *) or (B, C, H, W).
-        eps: Small epsilon to prevent division by zero.
-    """
-    # Flatten all dimensions except batch: [B, W] or [B, C, H, W] -> [B, -1]
-    batch_size = S.shape[0]
-    S_flat = S.view(batch_size, -1)
-    
-    # Calculate min/max across the flattened feature dimension
-    min_val = S_flat.min(dim=1, keepdim=True)[0]
-    max_val = S_flat.max(dim=1, keepdim=True)[0]
-    
-    # Expand back to original shape for broadcasting
-    # (min_val and max_val are [B, 1], broadcasting to (B, *) is automatic except for 4D)
+def _normalize_hidden_state(S: torch.Tensor) -> torch.Tensor:
+    """Normalizes the hidden state tensor as described in the paper."""
+    # (B, *)
+    # Handles both (B, W) for dense and (B, C, H, W) for spatial
+
+    if S.dim() == 2:
+        # Case: (B, W) - Dense layer output
+        S_norm = S
+        dim = 1
+    elif S.dim() == 4:
+        # Case: (B, C, H, W) - Spatial output. Normalize over spatial dimensions (H*W) for each channel.
+        # Reshape to (B*C, H*W) or (B, C, H*W)
+        B, C, H, W = S.shape
+        S_norm = S.view(B, C, H * W)  # (B, C, H*W)
+        dim = 2  # Normalize across H*W dimension for each channel
+    else:
+        # Not a standard MuZero shape, return unnormalized to be safe
+        return S
+
+    min_hidden_state = S_norm.min(dim=dim, keepdim=True)[0]
+    max_hidden_state = S_norm.max(dim=dim, keepdim=True)[0]
+
     if S.dim() == 4:
-        min_val = min_val.view(batch_size, 1, 1, 1)
-        max_val = max_val.view(batch_size, 1, 1, 1)
-        
-    denominator = max_val - min_val
-    denominator = torch.where(denominator < eps, torch.ones_like(denominator), denominator)
-    
-    return (S - min_val) / denominator
+        # For spatial normalization, restore original dimensions after min/max
+        min_hidden_state = min_hidden_state.unsqueeze(-1)  # (B, C, 1, 1)
+        max_hidden_state = max_hidden_state.unsqueeze(-1)
+
+    scale_hidden_state = max_hidden_state - min_hidden_state
+
+    # Handle the case where min == max
+    scale_hidden_state[scale_hidden_state < 1e-5] = (
+        1.0  # Or use += 1e-5 if that's the original intent
+    )
+
+    hidden_state = (S - min_hidden_state) / scale_hidden_state
+    return hidden_state
 
 
 from dataclasses import dataclass
@@ -383,41 +639,6 @@ def get_clean_state_dict(model: torch.nn.Module) -> dict:
     """Strips the '_orig_mod.' prefix added by torch.compile."""
     state_dict = model.state_dict()
     return {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
-
-
-@torch.inference_mode()
-def update_target_network(
-    online: torch.nn.Module | dict[str, torch.Tensor],
-    target_net: torch.nn.Module,
-    tau: float = 1.0,
-) -> None:
-    """
-    Standardized, high-performance target network synchronization.
-    Uses in-place .data.copy_() to avoid memory fragmentation and re-allocation.
-    
-    Args:
-        online: Source module OR state_dict.
-        target_net: Destination network.
-        tau: Sync coefficient. 1.0 = Hard Sync, <1.0 = Soft Sync (EMA).
-    """
-    if isinstance(online, torch.nn.Module):
-        online_state = get_clean_state_dict(online)
-    else:
-        online_state = online
-
-    target_state = target_net.state_dict()
-
-    for k, online_val in online_state.items():
-        if k in target_state:
-            target_val = target_state[k]
-            if tau == 1.0 or not target_val.is_floating_point():
-                # Hard Sync or non-float buffer (e.g. step count)
-                target_val.data.copy_(online_val.data)
-            else:
-                # Soft Sync (EMA): target = tau * online + (1-tau) * target
-                target_val.data.copy_(
-                    tau * online_val.data + (1.0 - tau) * target_val.data
-                )
 
 
 def get_uncompiled_model(model: torch.nn.Module) -> torch.nn.Module:
@@ -456,6 +677,7 @@ def get_uncompiled_model(model: torch.nn.Module) -> torch.nn.Module:
             "hidden_state_inference",
             "afterstate_inference",
             "learner_inference",
+            "search_afterstate",
             "step",
         ]
         for attr in compiled_methods:
@@ -465,46 +687,3 @@ def get_uncompiled_model(model: torch.nn.Module) -> torch.nn.Module:
         return m_copy
 
     return model
-
-
-def get_lr_scheduler(
-    optimizer: torch.optim.Optimizer, config: Any
-) -> torch.optim.lr_scheduler.LRScheduler:
-    """
-    Returns a learning rate scheduler based on the configuration.
-    """
-    # Unify on 'lr_schedule' as requested by the user
-    schedule = getattr(config, "lr_schedule", None)
-
-    # Determine scheduler type (string or from ScheduleConfig object)
-    if schedule is not None and hasattr(schedule, "type"):
-        scheduler_type = schedule.type
-    else:
-        scheduler_type = schedule
-
-    if scheduler_type is None or scheduler_type == "constant":
-        return torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0, total_iters=0)
-
-    if scheduler_type == "linear":
-        # Total iterations usually comes from training_steps
-        total_iters = getattr(config, "training_steps", 1000)
-
-        # Support decay to a final factor (default to 0.1 for backward compatibility)
-        # If using ScheduleConfig, derive the factor from initial/final values
-        end_factor = 0.1
-        if schedule is not None and hasattr(schedule, "final") and hasattr(schedule, "initial"):
-            if schedule.initial is not None and schedule.initial != 0 and schedule.final is not None:
-                end_factor = schedule.final / schedule.initial
-        else:
-            # Fallback to direct config attribute if available
-            end_factor = getattr(config, "lr_final_factor", 0.1)
-
-        return torch.optim.lr_scheduler.LinearLR(
-            optimizer, start_factor=1.0, end_factor=end_factor, total_iters=total_iters
-        )
-    elif scheduler_type == "step":
-        return torch.optim.lr_scheduler.StepLR(
-            optimizer, step_size=getattr(config, "lr_step_size", 100), gamma=0.1
-        )
-
-    return torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0, total_iters=0)

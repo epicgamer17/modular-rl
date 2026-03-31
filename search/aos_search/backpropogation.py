@@ -29,7 +29,7 @@ from typing import Callable
 
 import torch
 
-from search.aos_search.tree import FlatTree
+from old_muzero.search.aos_search.tree import FlatTree
 
 
 # ---------------------------------------------------------------------------

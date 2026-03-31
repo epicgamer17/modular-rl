@@ -1,8 +1,7 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Dict, Optional, Tuple
-from agents.learner.losses.base import BaseLoss, LossRepresentation
-
+from old_muzero.agents.learner.losses.base import BaseLoss, LossRepresentation
 
 class QBootstrappingLoss(BaseLoss):
     """
@@ -21,9 +20,9 @@ class QBootstrappingLoss(BaseLoss):
         name: Optional[str] = None,
     ):
         # 1. Determine Pred/Target keys and default Loss function based on atom_size
-        pred_key = "q_logits"
+        pred_key = "q_logits" if is_categorical else "q_values"
         target_key = "q_logits" if is_categorical else "values"
-
+        
         if loss_fn is None:
             loss_fn = F.cross_entropy if is_categorical else F.mse_loss
 
@@ -72,26 +71,9 @@ class QBootstrappingLoss(BaseLoss):
 
         # 5. Apply Loss Function
         if selected_preds.shape[-1] > 1:
-            # Multi-atom categorical loss
-            # Performance optimization: ensure targets are probability distributions before computing loss
-            assert torch.allclose(
-                flat_targets.sum(dim=-1), torch.ones_like(flat_targets.sum(dim=-1))
-            ), f"Categorical targets must sum to 1.0, got {flat_targets.sum(dim=-1).mean().item()}"
-            
-            from agents.learner.functional.losses import compute_categorical_kl_div
-
-            # If the user passed KLDivLoss (like Rainbow), use it!
-            if isinstance(self.loss_fn, torch.nn.KLDivLoss):
-                # KLDivLoss expects input as Log-Probabilities, and Target as Probabilities.
-                # It requires batch reduction="none", so we temporarily wrap it
-                raw_loss = compute_categorical_kl_div(
-                    selected_preds, flat_targets, reduction="none"
-                )
-            else:
-                # Fallback to manual cross-entropy if not KL (categorical cross-entropy)
-                raw_loss = compute_categorical_kl_div(
-                    selected_preds, flat_targets, reduction="none"
-                )
+            # Multi-atom categorical cross-entropy
+            log_probs = F.log_softmax(selected_preds, dim=-1)
+            raw_loss = -(flat_targets * log_probs).sum(dim=-1)
         else:
             # Standard scalar regression (MSE)
             selected_preds = selected_preds.squeeze(-1)
@@ -99,7 +81,6 @@ class QBootstrappingLoss(BaseLoss):
             raw_loss = self.loss_fn(selected_preds, flat_targets, reduction="none")
 
         return raw_loss.reshape(B, T), {}
-
 
 class ChanceQLoss(BaseLoss):
     """Loss for stochastic muzero chance Q heads."""
@@ -148,12 +129,6 @@ class ChanceQLoss(BaseLoss):
 
         flat_pred = pred.reshape(B * T, -1)
         flat_target = formatted_target.reshape(B * T, -1)
-
-        # Performance optimization: ensure targets are probability distributions before computing loss
-        if flat_target.shape[-1] > 1:
-            assert torch.allclose(
-                flat_target.sum(dim=-1), torch.ones_like(flat_target.sum(dim=-1))
-            ), f"Categorical targets must sum to 1.0, got {flat_target.sum(dim=-1).mean().item()}"
 
         raw_loss = self.loss_fn(flat_pred, flat_target, reduction="none")
         if raw_loss.ndim > 1:

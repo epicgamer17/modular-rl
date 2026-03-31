@@ -2,8 +2,8 @@ from abc import ABC, abstractmethod
 from typing import Optional, Any
 import numpy as np
 import torch
-from search.nodes import ChanceNode, DecisionNode
-from search.scoring_methods import PriorScoring, ScoringMethod
+from old_muzero.search.nodes import ChanceNode, DecisionNode
+from old_muzero.search.scoring_methods import PriorScoring, ScoringMethod
 import torch.nn.functional as F
 
 

@@ -3,7 +3,7 @@ from .game import GameConfig
 import custom_gym_envs
 
 
-def env_factory(render_mode=None):
+def make_env(render_mode=None):
     env = gym.make("custom_gym_envs/SlipperyGrid-v0", render_mode=render_mode)
     return env
 
@@ -22,5 +22,5 @@ class SlipperyGridWorldConfig(GameConfig):
             multi_agent=False,
             num_players=1,
             # has_intermediate_rewards=True,
-            env_factory=env_factory,
+            make_env=make_env,
         )

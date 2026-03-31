@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any
-from configs.base import ConfigBase
+from old_muzero.configs.base import ConfigBase
 
 
 class BaseSelectorConfig(ConfigBase):

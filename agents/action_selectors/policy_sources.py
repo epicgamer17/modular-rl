@@ -3,11 +3,10 @@ from typing import Any, Dict, Optional, Union, List
 import torch
 import time
 import numpy as np
-from torch.distributions import Categorical
 
-from agents.action_selectors.types import InferenceResult
-from modules.models.agent_network import AgentNetwork
-from modules.models.inference_output import InferenceOutput
+from old_muzero.agents.action_selectors.types import InferenceResult
+from old_muzero.modules.agent_nets.base import BaseAgentNetwork
+from old_muzero.modules.world_models.inference_output import InferenceOutput
 
 
 class BasePolicySource(ABC):
@@ -31,7 +30,7 @@ class NetworkPolicySource(BasePolicySource):
     Policy source that performs a pure forward pass on a neural network.
     """
 
-    def __init__(self, agent_network: AgentNetwork):
+    def __init__(self, agent_network: BaseAgentNetwork):
         self.agent_network = agent_network
 
     def get_inference(
@@ -56,11 +55,12 @@ class SearchPolicySource(BasePolicySource):
     def __init__(
         self,
         search_engine: Any,
-        agent_network: Optional[AgentNetwork],
-        **kwargs,
+        agent_network: Optional[BaseAgentNetwork],
+        config: Any = None,
     ):
         self.search = search_engine
         self.agent_network = agent_network
+        self.config = config
 
     def get_inference(
         self, obs: torch.Tensor, info: Dict[str, Any], **kwargs
@@ -75,114 +75,110 @@ class SearchPolicySource(BasePolicySource):
         agent_network = kwargs.get("agent_network", self.agent_network)
 
         # Populate info["player"] from to_play kwarg if not already present
-        to_play = kwargs.get("to_play")
-        if to_play is not None:
-            if isinstance(info, dict):
-                if "player" not in info:
-                    info = {**info, "player": to_play}
-            elif isinstance(info, list):
-                # If it's a list, we might need to update each element
-                # or assume it's already correct. We'll be conservative.
-                new_info = []
-                for i, item in enumerate(info):
-                    if isinstance(item, dict) and "player" not in item:
-                        # If to_play is a list matching info, use corresponding element
-                        p = (
-                            to_play[i]
-                            if (
-                                isinstance(to_play, (list, np.ndarray, torch.Tensor))
-                                and len(to_play) == len(info)
-                            )
-                            else to_play
-                        )
-                        new_info.append({**item, "player": p})
-                    else:
-                        new_info.append(item)
-                info = new_info
+        if "player" not in info and "to_play" in kwargs:
+            info = dict(info)
+            info["player"] = kwargs["to_play"]
 
-        assert (isinstance(info, dict) and "player" in info) or (
-            isinstance(info, list)
-            and all(isinstance(i, dict) and "player" in i for i in info)
-        ), "info must contain 'player' in all entries, or pass to_play as a kwarg"
+        assert "player" in info, (
+            "info must contain 'player', or pass to_play as a kwarg"
+        )
+
+        # MCTSDecorator logic uses run_vectorized if B > 1
+        is_batched = (
+            obs.dim() > len(agent_network.input_shape) and obs.shape[0] > 1
+        )
 
         start_time = time.time()
-        # 0. Check batch size
-        B = obs.shape[0] if torch.is_tensor(obs) else len(obs)
-        if B == 1:
-            # Squeeze observation for search.run (expects no batch dimension)
-            # The User says: "policy source modifies the shape correctly for the single .run"
-            single_obs = obs[0]
 
-            # Standardize info to a single dict for .run
-            # Search expects info["player"] to exist.
-            if isinstance(info, list):
-                single_info = info[0]
-            elif isinstance(info, dict) and "player" not in info:
-                # AO style dict-of-tensors: extract first element
-                single_info = {
-                    k: (v[0] if hasattr(v, "__getitem__") and len(v) == B else v)
-                    for k, v in info.items()
-                }
-            else:
-                single_info = info
+        if is_batched:
+            res = self.search.run_vectorized(obs, info, agent_network)
+            (
+                root_values,
+                exploratory_policies,
+                target_policies,
+                best_actions,
+                sm_list,
+            ) = res
 
-            # .run returns a flatter result, wrap it into lists
-            root_v, expl_p, target_p, best_a, sm = self.search.run(
-                single_obs, single_info, agent_network, exploration=exploration
+            search_duration = time.time() - start_time
+
+            probs = torch.stack(
+                [
+                    torch.as_tensor(p, device=obs.device, dtype=torch.float32)
+                    for p in exploratory_policies
+                ]
             )
-            res = (
-                [root_v],
-                [expl_p],
-                [target_p],
-                [best_a],
-                [sm],
+            values = torch.as_tensor(
+                root_values, device=obs.device, dtype=torch.float32
+            )
+
+            # Ensure values is [B, 1] if input was batched
+            if not isinstance(values, torch.Tensor):
+                values = torch.tensor(values, device=obs.device, dtype=torch.float32)
+            if values.dim() == 1:
+                values = values.unsqueeze(-1)
+
+            # Standardize search results to tensors for BaseActor squeezing and PufferActor indexing
+            target_policies_tensor = torch.stack(
+                [
+                    torch.as_tensor(p, device=obs.device, dtype=torch.float32)
+                    for p in target_policies
+                ]
+            )
+            best_actions_tensor = torch.as_tensor(
+                best_actions, device=obs.device, dtype=torch.long
+            )
+
+            return InferenceResult(
+                probs=probs,
+                value=values,
+                extra_metadata={
+                    "target_policies": target_policies_tensor,
+                    "search_duration": search_duration,
+                    "search_metadata": sm_list,
+                    "best_actions": best_actions_tensor,
+                    "value": values.squeeze(-1),  # Tensor for consistency
+                    "root_value": values.squeeze(-1),
+                },
             )
         else:
-            res = self.search.run_vectorized(
+            res = self.search.run(
                 obs, info, agent_network, exploration=exploration
             )
+            (
+                root_value,
+                exploratory_policy,
+                target_policy,
+                best_action,
+                search_metadata,
+            ) = res
 
-        (
-            root_values,
-            exploratory_policies,
-            target_policies,
-            best_actions,
-            sm_list,
-        ) = res
+            search_duration = time.time() - start_time
+            probs = exploratory_policy.to(obs.device)
+            value = torch.tensor([root_value], device=obs.device, dtype=torch.float32)
 
-        search_duration = time.time() - start_time
-        probs = torch.as_tensor(
-            exploratory_policy, device=obs.device, dtype=torch.float32
-        ).contiguous()
-        value = torch.tensor([root_value], device=obs.device, dtype=torch.float32)
+            # If the input was unsqueezed [1, ...], the output should be [1, A]
+            if obs.dim() > len(agent_network.input_shape):
+                probs = probs.unsqueeze(0)
+                # value is already [1] which matches [B]
+                target_policies_out = target_policy.unsqueeze(0).to(obs.device)
+                best_actions_out = torch.tensor([best_action], device=obs.device)
+            else:
+                target_policies_out = target_policy.to(obs.device)
+                best_actions_out = torch.tensor(best_action, device=obs.device)
 
-        if obs.dim() > len(agent_network.input_shape):
-            probs = probs.unsqueeze(0)
-            target_policies_out = (
-                torch.as_tensor(target_policy, device=obs.device, dtype=torch.float32)
-                .contiguous()
-                .unsqueeze(0)
+            return InferenceResult(
+                probs=probs,
+                value=value,
+                extra_metadata={
+                    "target_policies": target_policies_out,
+                    "search_duration": search_duration,
+                    "search_metadata": search_metadata,
+                    "best_actions": best_actions_out,
+                    "value": value.squeeze(0),
+                    "root_value": value.squeeze(0),
+                },
             )
-            best_actions_out = torch.tensor([best_action], device=obs.device)
-        else:
-            target_policies_out = torch.as_tensor(
-                target_policy, device=obs.device, dtype=torch.float32
-            ).contiguous()
-            best_actions_out = torch.tensor(best_action, device=obs.device)
-
-        return InferenceResult(
-            probs=probs,
-            value=value,
-            action=best_actions_out,
-            extras={
-                "target_policies": target_policies_out,
-                "search_duration": search_duration,
-                "search_metadata": search_metadata,
-                "best_actions": best_actions_out,
-                "value": value.squeeze(0),
-                "root_value": value.squeeze(0),
-            },
-        )
 
 
 class NFSPNetworkPolicySource(BasePolicySource):
@@ -195,8 +191,8 @@ class NFSPNetworkPolicySource(BasePolicySource):
 
     def __init__(
         self,
-        best_response_network: AgentNetwork,
-        average_network: AgentNetwork,
+        best_response_network: BaseAgentNetwork,
+        average_network: BaseAgentNetwork,
     ):
         self.best_response_network = best_response_network
         self.average_network = average_network
@@ -215,8 +211,10 @@ class NFSPNetworkPolicySource(BasePolicySource):
             q_values=br_result.q_values,
             logits=avg_result.logits,
             probs=avg_result.probs,
-            extras={
-                **(br_result.extras or {}),
-                **(avg_result.extras or {}),
+            reward=br_result.reward if br_result.reward is not None else avg_result.reward,
+            to_play=br_result.to_play if br_result.to_play is not None else avg_result.to_play,
+            extra_metadata={
+                **(br_result.extra_metadata or {}),
+                **(avg_result.extra_metadata or {}),
             },
         )

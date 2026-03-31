@@ -10,10 +10,10 @@ def legal_moves_mask(num_actions: int, legal_moves, device="cpu"):
         # Case 1: Boolean mask [num_actions] or [B, num_actions]
         if legal_moves.dtype == torch.bool:
             if legal_moves.dim() == 1 and legal_moves.shape[0] == num_actions:
-                return legal_moves.to(device=device, dtype=torch.float32)
+                return legal_moves.to(device).float()
             if legal_moves.dim() == 2 and legal_moves.shape[1] == num_actions:
                 # Keep original batch dimension if present
-                return legal_moves.to(device=device, dtype=torch.float32)
+                return legal_moves.to(device).float()
 
         # Handle tensors of indices (int/long) by converting to list for existing logic
         if legal_moves.dtype in [torch.int64, torch.int32, torch.int16, torch.int8, torch.uint8]:
@@ -29,12 +29,12 @@ def legal_moves_mask(num_actions: int, legal_moves, device="cpu"):
 
     if len(legal_moves) > 0 and isinstance(legal_moves[0], list):
         batch_size = len(legal_moves)
-        mask = torch.zeros((batch_size, num_actions), dtype=torch.bool, device=device)
+        mask = torch.zeros((batch_size, num_actions), dtype=torch.bool).to(device)
         for i, moves in enumerate(legal_moves):
             if moves:
                 mask[i, moves] = True
     else:
-        mask = torch.zeros(num_actions, dtype=torch.bool, device=device)
+        mask = torch.zeros(num_actions, dtype=torch.bool).to(device)
         if legal_moves:
             mask[legal_moves] = True
 
@@ -46,8 +46,6 @@ def get_legal_moves(info: dict | list[dict]):
         if lm is None:
             return None
         if torch.is_tensor(lm):
-            if lm.dim() == 0:
-                return [lm.item()]
             if lm.dtype == torch.bool:
                 # Convert boolean mask to list of indices
                 if lm.dim() == 2 and lm.shape[0] == 1:
@@ -58,11 +56,7 @@ def get_legal_moves(info: dict | list[dict]):
             else:
                 return lm.cpu().tolist()
         if isinstance(lm, np.ndarray):
-            if lm.ndim == 0:
-                return [lm.item()]
             return lm.tolist()
-        if isinstance(lm, (int, np.integer)):
-            return [int(lm)]
         return lm
 
     if isinstance(info, list):

@@ -2,10 +2,9 @@ import torch
 import numpy as np
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
-from agents.learner.losses.base import BaseLoss
-from agents.learner.losses.priorities import BasePriorityComputer, NullPriorityComputer
-from agents.learner.losses.shape_validator import ShapeValidator
-
+from old_muzero.agents.learner.losses.base import BaseLoss
+from old_muzero.agents.learner.losses.priorities import BasePriorityComputer, NullPriorityComputer
+from old_muzero.agents.learner.losses.shape_validator import ShapeValidator
 
 class LossPipeline:
     """
@@ -22,13 +21,7 @@ class LossPipeline:
         self.config = config
         self.modules = modules
         self.priority_computer = priority_computer or NullPriorityComputer()
-        self.shape_validator = ShapeValidator(
-            minibatch_size=config.minibatch_size,
-            unroll_steps=getattr(config, "unroll_steps", 0),
-            num_actions=config.game.num_actions,
-            num_players=getattr(config.game, "num_players", 1),
-            atom_size=getattr(config, "atom_size", 1),
-        )
+        self.shape_validator = ShapeValidator(config)
 
     def validate_dependencies(
         self, network_output_keys: set[str], target_keys: set[str]
@@ -61,7 +54,7 @@ class LossPipeline:
         """
         Run the loss pipeline in a single vectorized pass across all sequence steps.
         """
-        from modules.utils import scale_gradient
+        from old_muzero.modules.utils import scale_gradient
 
         # 1. Shape Validation and Latency Setup
         start_time = time.perf_counter()
@@ -78,29 +71,24 @@ class LossPipeline:
         B = weights.shape[0]
         T = gradient_scales.shape[1]
 
-        # --- ADD THESE 3 LINES FOR TELEMETRY ---
-        loss_dict = {
-            "mean_is_weight": weights.mean().item(),
-            "max_is_weight": weights.max().item(),
-            "min_is_weight": weights.min().item(),
-        }
-
         total_loss_dict = {
             m.optimizer_name: torch.tensor(0.0, device=device) for m in self.modules
         }
+        loss_dict = {}
         all_elementwise_losses = {}
 
         # 4. Single-Pass Vectorized Execution
         for module in self.modules:
             # Blindly compute: decision logic now lives in the Factory/Registry
             # Compute ([B, T] elementwise loss, metrics_dict)
-            elementwise_loss, module_metrics = module.compute_loss(predictions, targets)
+            elementwise_loss, module_metrics = module.compute_loss(
+                predictions, targets
+            )
             all_elementwise_losses[module.name] = elementwise_loss
             mask = module.get_mask(targets)
 
             # Aggregate metrics from the module
-            for k, v in module_metrics.items():
-                loss_dict[k] = v.detach().cpu().item() if torch.is_tensor(v) else v
+            loss_dict.update(module_metrics)
 
             # Scale by Gradient Scales [1, T] and PER Weights [B, 1]
             scaled_loss = scale_gradient(elementwise_loss, gradient_scales)
@@ -110,23 +98,13 @@ class LossPipeline:
             masked_weighted_loss = (weighted_loss * mask.float()).sum()
             valid_transition_count = mask.float().sum().clamp(min=1.0)
 
-            # Calculate raw, unweighted loss for the dashboard
-            masked_unweighted_loss = (elementwise_loss * mask.float()).sum()
-            unweighted_scalar_loss = masked_unweighted_loss / valid_transition_count
-            loss_dict[f"{module.name}_unweighted"] = unweighted_scalar_loss.item()
-
             # Final Transition-Averaged Loss [Scalar]
             total_scalar_loss = masked_weighted_loss / valid_transition_count
 
             total_loss_dict[module.optimizer_name] += total_scalar_loss
             loss_dict[module.name] = total_scalar_loss.item()
 
-        # 5. Extract stateless telemetry from Heads (The "Right to Report")
-        telemetry = predictions.get("telemetry", {})
-        for k, v in telemetry.items():
-            loss_dict[k] = v.detach().cpu().item() if torch.is_tensor(v) else v
-
-        # 6. Extract Priorities via standalone computer [B]
+        # 5. Extract Priorities via standalone computer [B]
         priorities = self.priority_computer.compute(
             all_elementwise_losses, predictions, targets
         )

@@ -1,75 +1,83 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional
 import torch
-from torch import Tensor
-from torch.distributions import Distribution, Categorical
-from modules.models.inference_output import InferenceOutput
+from old_muzero.modules.world_models.inference_output import InferenceOutput
 
 
-@dataclass(frozen=True)
+@dataclass
 class InferenceResult:
     """
-    Standardized, immutable data contract for all policy-providing components.
+    Standardized data contract for all policy-providing components.
     Used as the strict input type for all ActionSelectors.
-    
-    Fields are explicit tensors. The ActionSelector is responsible for 
-    instantiating PyTorch Distributions if they are needed for sampling.
+
+    Fields mirror InferenceOutput semantics:
+    - logits: raw pre-softmax policy logits (from network policy head)
+    - probs: normalized probabilities (MCTS visit counts, or softmax of logits)
+    - q_values: Q-value estimates per action
+    - value: scalar state-value estimate
+    - reward: predicted reward
+    - to_play: current player index
     """
+
     value: Optional[torch.Tensor] = None
     q_values: Optional[torch.Tensor] = None
-    logits: Optional[torch.Tensor] = None  # Explicit pre-softmax logits
-    probs: Optional[torch.Tensor] = None   # Explicit probabilities
-    action: Optional[torch.Tensor] = None  # Specific pre-selected action (e.g. from MCTS)
-    
-    # Generic container for algorithm-specific data (recurrent_state, v, to_play, etc)
-    extras: Dict[str, Any] = field(default_factory=dict)
+    logits: Optional[torch.Tensor] = None
+    probs: Optional[torch.Tensor] = None
+    reward: Optional[torch.Tensor] = None
+    to_play: Optional[torch.Tensor] = None
+    extra_metadata: Dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
-        # Fail fast if the contract is violated upon creation
-        if (self.q_values is None and 
-            self.logits is None and 
-            self.probs is None and 
-            self.action is None):
-            raise ValueError(
-                "InferenceResult must contain at least one action-derivable tensor "
-                "(q_values, logits, probs, or action)."
-            )
+    @property
+    def action_dim(self) -> Optional[torch.Tensor]:
+        """Returns whichever action tensor is available (for shape queries)."""
+        if self.q_values is not None:
+            return self.q_values
+        if self.logits is not None:
+            return self.logits
+        if self.probs is not None:
+            return self.probs
+        return None
 
     @classmethod
     def from_inference_output(cls, output: InferenceOutput) -> "InferenceResult":
         """
         Converts a standard InferenceOutput (network results)
-        into a standardized, frozen InferenceResult for selectors.
+        into a standardized InferenceResult for selectors.
         """
         q_values = getattr(output, "q_values", None)
-        policy = getattr(output, "policy", None) # Often a Distribution
-        action = getattr(output, "action", None)
-        value = getattr(output, "value", None)
-        
-        # Extract explicit tensors from policy distribution if it exists
         logits = None
         probs = None
+
+        policy = getattr(output, "policy", None)
         if policy is not None:
-            if hasattr(policy, "logits"):
-                logits = policy.logits
-            if hasattr(policy, "probs"):
-                probs = policy.probs
-        
-        # Consolidate everything else into extras to keep the contract clean
-        extras = dict(getattr(output, "extras", None) or {})
-        
-        # Capture optional network outputs that aren't core behavior
-        for attr in ["recurrent_state", "reward", "to_play"]:
-            if hasattr(output, attr):
-                val = getattr(output, attr)
-                if val is not None:
-                    extras[attr] = val
+            logits = getattr(policy, "logits", None)
+            if logits is None:
+                probs = getattr(policy, "probs", None)
+
+        value = getattr(output, "value", None)
+        if value is not None and not isinstance(value, torch.Tensor):
+            value = torch.tensor([value])
+
+        reward = getattr(output, "reward", None)
+        if reward is not None and not isinstance(reward, torch.Tensor):
+            reward = torch.tensor([reward])
+
+        to_play = getattr(output, "to_play", None)
+        if to_play is not None and not isinstance(to_play, torch.Tensor):
+            to_play = torch.tensor([to_play])
+
+        extras = getattr(output, "extras", None) or {}
+
+        assert (
+            q_values is not None or logits is not None or probs is not None
+        ), "InferenceOutput must contain q_values or a policy with logits/probs"
 
         return cls(
             value=value,
             q_values=q_values,
             logits=logits,
             probs=probs,
-            action=action,
-            extras=extras,
+            reward=reward,
+            to_play=to_play,
+            extra_metadata=extras,
         )

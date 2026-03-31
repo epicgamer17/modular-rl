@@ -4,12 +4,12 @@ from .game import GameConfig
 import gymnasium as gym
 
 
-def env_factory(render_mode=None):
+def make_env(render_mode=None):
     return gym.make("CartPole-v1", render_mode=render_mode)
 
 
 class ClassicControlConfig(GameConfig):
-    def __init__(self, env_factory=env_factory):
+    def __init__(self, make_env=make_env):
         super(ClassicControlConfig, self).__init__(
             num_actions=2,
             max_score=500,
@@ -22,5 +22,5 @@ class ClassicControlConfig(GameConfig):
             multi_agent=False,
             num_players=1,
             # has_intermediate_rewards=True,
-            env_factory=env_factory,
+            make_env=make_env,
         )

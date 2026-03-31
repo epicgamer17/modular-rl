@@ -1,7 +1,7 @@
 from typing import Optional, Dict, Any, TypeVar, Type
 import torch
-from configs.modules.architecture_config import ArchitectureConfig
-from configs.base import (
+from old_muzero.configs.modules.architecture_config import ArchitectureConfig
+from old_muzero.configs.base import (
     ConfigBase,
     OptimizationConfig,
     ReplayConfig,
@@ -12,11 +12,13 @@ from configs.base import (
     CompilationConfig,
 )
 import torch.nn.functional as F
-from modules.utils import (
+from old_muzero.modules.utils import (
     prepare_activations,
+    prepare_kernel_initializers,
+    kernel_initializer_wrapper,
 )
-from configs.games.game import GameConfig
-from configs.selectors import SelectorConfig
+from old_muzero.configs.games.game import GameConfig
+from old_muzero.configs.selectors import SelectorConfig
 
 
 class AgentConfig(
@@ -28,38 +30,9 @@ class AgentConfig(
     Also manages the 'arch' attribute for modular network components.
     """
 
-    # --- STRICT COMPONENT CONTRACT ---
-    # These must be initialized (defaulting to None if unused) to avoid hasattr/getattr
-    world_model: Optional[Any] = None
-    feature_extractor: Optional[Any] = None
-    memory_core: Optional[Any] = None
-    prediction_backbone: Optional[Any] = None  # Legacy/Bridge name
-
-    heads: Dict[str, Any] = {}
-
-    # Behavioral Heads (Deprecated: Move to 'heads' dict)
-    policy_head: Optional[Any] = None
-    value_head: Optional[Any] = None
-    afterstate_value_head: Optional[Any] = None
-    head: Optional[Any] = None  # Rainbow style
-    projector: Optional[Any] = None
-
-    # Internal World Model Components
-    representation_backbone: Optional[Any] = None
-    dynamics_backbone: Optional[Any] = None
-    reward_head: Optional[Any] = None
-    continuation_head: Optional[Any] = None
-    to_play_head: Optional[Any] = None
-    chance_probability_head: Optional[Any] = None
-
-    # Flags
-    stochastic: bool = False
-    dueling: bool = False
-
     def __init__(self, config_dict: dict, game_config: GameConfig) -> None:
         super().__init__(config_dict)
         self.game = game_config
-        self.heads = {}
 
         self.agent_type: str = self.parse_field("agent_type", required=True)
         self.results_path: str = self.parse_field("results_path", "results")
@@ -94,11 +67,13 @@ class AgentConfig(
             "kernel_initializer",
             None,
             required=False,
+            wrapper=kernel_initializer_wrapper,
         )
         self.prob_layer_initializer = self.parse_field(
             "prob_layer_initializer",
             None,
             required=False,
+            wrapper=kernel_initializer_wrapper,
         )
 
         # Architecture Config (The 'arch' attribute)
@@ -117,5 +92,5 @@ class AgentConfig(
             self.game is not None
         ), "Config requires a game config to be provided in 'game' field"
         assert (
-            self.game.env_factory is not None
-        ), "Game config must provide a valid environment factory (env_factory)"
+            self.game.make_env is not None
+        ), "Game config must provide a valid environment factory (make_env)"

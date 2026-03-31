@@ -1,13 +1,13 @@
 import torch
 from typing import Any, Dict, List, Tuple
-from agents.registries.base import register_agent
-from agents.learner.losses import LossPipeline, ImitationLoss
-from modules.utils import create_optimizer, get_lr_scheduler
+from old_muzero.agents.registries.base import register_agent
+from old_muzero.agents.learner.losses import LossPipeline, ImitationLoss
+from old_muzero.modules.utils import create_optimizer, get_lr_scheduler
 
 
 def build_supervised_loss_pipeline(config, agent_network, device):
     # Extract representation from policy head
-    pol_rep = agent_network.components["behavior_heads"]["policy"].representation
+    pol_rep = agent_network.components["policy_head"].representation
 
     return LossPipeline(
         config,

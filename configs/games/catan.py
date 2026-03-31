@@ -1,10 +1,10 @@
-from utils.wrappers import (
+from old_muzero.utils.wrappers import (
     ActionMaskInInfoWrapper,
     AppendAgentSelectionWrapper,
     FrameStackWrapper,
     TwoPlayerPlayerPlaneWrapper,
 )
-from configs.games.game import GameConfig
+from old_muzero.configs.games.game import GameConfig
 from custom_gym_envs.envs.catan import (
     env as catan_env,
     CatanAECEnv,
@@ -19,7 +19,7 @@ from custom_gym_envs.envs.catan_placement import (
 )
 
 
-def catan_aec_env_factory(
+def catan_aec_make_env(
     num_players=2,
     map_type="BASE",
     vps_to_win=10,
@@ -57,7 +57,7 @@ def catan_aec_env_factory(
     return env
 
 
-def placement_catan_env_factory(
+def placement_catan_make_env(
     num_players=2,
     map_type="BASE",
     vps_to_win=10,
@@ -100,7 +100,7 @@ def placement_catan_env_factory(
 
 
 class CatanConfig(GameConfig):
-    def __init__(self, env_factory=catan_aec_env_factory):
+    def __init__(self, make_env=catan_aec_make_env):
         super(CatanConfig, self).__init__(
             num_actions=ACTION_SPACE_SIZE,
             max_score=1,
@@ -112,12 +112,12 @@ class CatanConfig(GameConfig):
             perfect_information=False,
             multi_agent=True,
             num_players=2,
-            env_factory=catan_aec_env_factory,
+            make_env=catan_aec_make_env,
         )
 
 
 class PlacementCatanConfig(GameConfig):
-    def __init__(self, env_factory=placement_catan_env_factory):
+    def __init__(self, make_env=placement_catan_make_env):
         super(PlacementCatanConfig, self).__init__(
             num_actions=len(CATAN_PLACEMENT_ACTION_SPACE_SIZE),
             max_score=1,
@@ -129,12 +129,12 @@ class PlacementCatanConfig(GameConfig):
             perfect_information=False,
             multi_agent=True,
             num_players=2,
-            env_factory=placement_catan_env_factory,
+            make_env=placement_catan_make_env,
         )
 
 
 class SinglePlayerCatanConfig(GameConfig):
-    def __init__(self, env_factory=None):
+    def __init__(self, make_env=None):
         super(SinglePlayerCatanConfig, self).__init__(
             num_actions=ACTION_SPACE_SIZE,
             max_score=1,
@@ -146,5 +146,5 @@ class SinglePlayerCatanConfig(GameConfig):
             perfect_information=False,
             multi_agent=False,
             num_players=1,
-            env_factory=env_factory,
+            make_env=make_env,
         )

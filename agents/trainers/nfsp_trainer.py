@@ -5,21 +5,21 @@ from typing import Any, Dict, List, Optional
 
 import torch
 
-from agents.learner.base import UniversalLearner
-from agents.learner.batch_iterators import RepeatSampleIterator
-from agents.learner.callbacks import (
+from old_muzero.agents.learner.base import UniversalLearner
+from old_muzero.agents.learner.batch_iterators import RepeatSampleIterator
+from old_muzero.agents.learner.callbacks import (
     PriorityUpdaterCallback,
     ResetNoiseCallback,
     TargetNetworkSyncCallback,
 )
-from agents.learner.target_builders import (
+from old_muzero.agents.learner.target_builders import (
     TemporalDifferenceBuilder,
     PassThroughTargetBuilder,
 )
-from agents.learner.losses import PolicyLoss, LossPipeline, QBootstrappingLoss
-from agents.factories.replay_buffer import create_dqn_buffer, create_nfsp_buffer
-from agents.action_selectors.policy_sources import NFSPNetworkPolicySource
-from agents.action_selectors.selectors import (
+from old_muzero.agents.learner.losses import ImitationLoss, LossPipeline, QBootstrappingLoss
+from old_muzero.replay_buffers.buffer_factories import create_dqn_buffer, create_nfsp_buffer
+from old_muzero.agents.action_selectors.policy_sources import NFSPNetworkPolicySource
+from old_muzero.agents.action_selectors.selectors import (
     CategoricalSelector,
     EpsilonGreedySelector,
     NFSPSelector,
@@ -27,15 +27,15 @@ from agents.action_selectors.selectors import (
 )
 from torch.optim.adam import Adam
 from torch.optim.sgd import SGD
-from agents.executors.local_executor import LocalExecutor
-from agents.executors.torch_mp_executor import TorchMPExecutor
-from agents.trainers.base_trainer import BaseTrainer
-from agents.workers.actors import RolloutActor
-from modules.models.agent_network import AgentNetwork
-from modules.utils import get_clean_state_dict
-from replay_buffers.sequence import Sequence
-from stats.stats import StatTracker, PlotType
-from utils.schedule import create_schedule
+from old_muzero.agents.executors.local_executor import LocalExecutor
+from old_muzero.agents.executors.torch_mp_executor import TorchMPExecutor
+from old_muzero.agents.trainers.base_trainer import BaseTrainer
+from old_muzero.agents.workers.actors import GymActor, PettingZooActor
+from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
+from old_muzero.modules.utils import get_clean_state_dict
+from old_muzero.replay_buffers.sequence import Sequence
+from old_muzero.stats.stats import StatTracker, PlotType
+from old_muzero.utils.schedule import create_schedule
 
 
 class _NFSPActorMixin:
@@ -46,24 +46,21 @@ class _NFSPActorMixin:
     `Sequence.policy_history` so the trainer can route SL storage.
     """
 
-    average_agent_network: AgentNetwork
+    average_agent_network: ModularAgentNetwork
 
-    def update_parameters(
-        self,
-        weights: Optional[Dict[str, torch.Tensor]] = None,
-        hyperparams: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        if hyperparams:
-            avg_state = hyperparams.get("avg_state_dict")
-            if avg_state is not None:
-                from modules.utils import update_target_network
-                update_target_network(avg_state, self.average_agent_network)
+    def update_parameters(self, params_dict: Dict[str, Any]) -> None:
+        if not params_dict:
+            return
 
-            if hyperparams.get("reset_noise"):
-                if hasattr(self.average_agent_network, "reset_noise"):
-                    self.average_agent_network.reset_noise()
+        avg_state = params_dict.get("avg_state_dict")
+        if avg_state is not None:
+            self.average_agent_network.load_state_dict(avg_state)
 
-        super().update_parameters(weights=weights, hyperparams=hyperparams)
+        if params_dict.get("reset_noise"):
+            if hasattr(self.average_agent_network, "reset_noise"):
+                self.average_agent_network.reset_noise()
+
+        super().update_parameters(params_dict)
 
     def _map_all_player_rewards(
         self, rewards: Optional[Dict[Any, float]]
@@ -133,21 +130,20 @@ class _NFSPActorMixin:
         return sequence
 
 
-class NFSPGymActor(_NFSPActorMixin, RolloutActor):
+class NFSPGymActor(_NFSPActorMixin, GymActor):
     def __init__(
         self,
-        adapter_cls,
-        adapter_args,
-        best_response_agent_network: AgentNetwork,
-        average_agent_network: AgentNetwork,
-        buffer,
-        action_selector=None,
-        actor_device: str = "cpu",
-        num_actions: Optional[int] = None,
-        num_players: int = 1,
-        worker_id: int = 0,
+        env_factory,
+        best_response_agent_network: ModularAgentNetwork,
+        average_agent_network: ModularAgentNetwork,
+        replay_buffer,
+        num_players: Optional[int] = None,
+        config: Optional[Any] = None,
+        device: Optional[torch.device] = None,
+        name: str = "agent",
         eta: float = 0.1,
-        **kwargs,
+        *,
+        worker_id: int = 0,
     ):
         self.average_agent_network = average_agent_network
 
@@ -161,35 +157,33 @@ class NFSPGymActor(_NFSPActorMixin, RolloutActor):
             average_network=average_agent_network,
         )
         super().__init__(
-            adapter_cls=adapter_cls,
-            adapter_args=adapter_args,
-            network=best_response_agent_network,
-            policy_source=policy_source,
-            buffer=buffer,
+            env_factory=env_factory,
+            agent_network=best_response_agent_network,
             action_selector=selector,
-            actor_device=actor_device,
-            num_actions=num_actions,
+            replay_buffer=replay_buffer,
             num_players=num_players,
+            config=config,
+            device=device,
+            name=name,
             worker_id=worker_id,
-            **kwargs,
+            policy_source=policy_source,
         )
 
 
-class NFSPPettingZooActor(_NFSPActorMixin, RolloutActor):
+class NFSPPettingZooActor(_NFSPActorMixin, PettingZooActor):
     def __init__(
         self,
-        adapter_cls,
-        adapter_args,
-        best_response_agent_network: AgentNetwork,
-        average_agent_network: AgentNetwork,
-        buffer,
-        action_selector=None,
-        actor_device: str = "cpu",
-        num_actions: Optional[int] = None,
-        num_players: int = 1,
-        worker_id: int = 0,
+        env_factory,
+        best_response_agent_network: ModularAgentNetwork,
+        average_agent_network: ModularAgentNetwork,
+        replay_buffer,
+        num_players: Optional[int] = None,
+        config: Optional[Any] = None,
+        device: Optional[torch.device] = None,
+        name: str = "agent",
         eta: float = 0.1,
-        **kwargs,
+        *,
+        worker_id: int = 0,
     ):
         self.average_agent_network = average_agent_network
 
@@ -203,21 +197,20 @@ class NFSPPettingZooActor(_NFSPActorMixin, RolloutActor):
             average_network=average_agent_network,
         )
         super().__init__(
-            adapter_cls=adapter_cls,
-            adapter_args=adapter_args,
-            network=best_response_agent_network,
-            policy_source=policy_source,
-            buffer=buffer,
+            env_factory=env_factory,
+            agent_network=best_response_agent_network,
             action_selector=selector,
-            actor_device=actor_device,
-            num_actions=num_actions,
+            replay_buffer=replay_buffer,
             num_players=num_players,
+            config=config,
+            device=device,
+            name=name,
             worker_id=worker_id,
-            **kwargs,
+            policy_source=policy_source,
         )
 
 
-def _pick_nfsp_actor(env: Any) -> type[RolloutActor]:
+def _pick_nfsp_actor(env: Any) -> type[GymActor] | type[PettingZooActor]:
     is_pz = hasattr(env, "possible_agents")
     if not is_pz and hasattr(env, "unwrapped"):
         is_pz = hasattr(env.unwrapped, "possible_agents")
@@ -249,39 +242,24 @@ class NFSPTrainer(BaseTrainer):
         sl_config = config.sl_configs[0]
 
         # Networks (Best Response + Target, and Average Strategy)
-        from agents.factories.builders import make_backbone_fn, make_head_fn
-
-        rl_rep_fn = make_backbone_fn(getattr(rl_config, "representation_backbone", None))
-        rl_head_fns = {
-            name: make_head_fn(h_cfg)
-            for name, h_cfg in rl_config.heads.items()
-        }
-
-        network_kwargs = {
-            "input_shape": self.obs_dim,
-            "num_actions": self.num_actions,
-            "representation_fn": rl_rep_fn,
-            "head_fns": rl_head_fns,
-            "num_players": self.num_players,
-        }
-        self.br_agent_network = AgentNetwork(**network_kwargs).to(device)
-        self.br_target_agent_network = AgentNetwork(**network_kwargs).to(device)
-        from modules.utils import update_target_network
-
-        update_target_network(self.br_agent_network, self.br_target_agent_network)
-
-        sl_rep_fn = make_backbone_fn(getattr(sl_config, "representation_backbone", None))
-        sl_head_fns = {
-            name: make_head_fn(h_cfg)
-            for name, h_cfg in sl_config.heads.items()
-        }
-
-        self.avg_agent_network = AgentNetwork(
+        self.br_agent_network = ModularAgentNetwork(
+            config=rl_config,
             input_shape=self.obs_dim,
             num_actions=self.num_actions,
-            representation_fn=sl_rep_fn,
-            head_fns=sl_head_fns,
-            num_players=self.num_players,
+        ).to(device)
+        self.br_target_agent_network = ModularAgentNetwork(
+            config=rl_config,
+            input_shape=self.obs_dim,
+            num_actions=self.num_actions,
+        ).to(device)
+        self.br_target_agent_network.load_state_dict(
+            get_clean_state_dict(self.br_agent_network), strict=False
+        )
+
+        self.avg_agent_network = ModularAgentNetwork(
+            config=sl_config,
+            input_shape=self.obs_dim,
+            num_actions=self.num_actions,
         ).to(device)
 
         if self.config.multi_process:
@@ -322,14 +300,9 @@ class NFSPTrainer(BaseTrainer):
 
         rl_optimizer = create_opt(self.br_agent_network.parameters(), rl_config)
         rl_scheduler = get_lr_scheduler(rl_optimizer, rl_config)
-        from agents.learner.target_builders import DistributionalTargetBuilder
-
+        from old_muzero.agents.learner.target_builders import DistributionalTargetBuilder
         is_distributional = getattr(rl_config, "atom_size", 1) > 1
-        builder_cls = (
-            DistributionalTargetBuilder
-            if is_distributional
-            else TemporalDifferenceBuilder
-        )
+        builder_cls = DistributionalTargetBuilder if is_distributional else TemporalDifferenceBuilder
 
         rl_target_builder = builder_cls(
             target_network=self.br_target_agent_network,
@@ -338,9 +311,7 @@ class NFSPTrainer(BaseTrainer):
             bootstrap_on_truncated=getattr(rl_config, "bootstrap_on_truncated", False),
         )
 
-        rl_rep = self.br_agent_network.components["behavior_heads"][
-            "q_logits"
-        ].representation
+        rl_rep = self.br_agent_network.components["q_head"].representation
         td_loss_module = QBootstrappingLoss(
             device=device,
             representation=rl_rep,
@@ -375,11 +346,6 @@ class NFSPTrainer(BaseTrainer):
                     per_beta_schedule=self.rl_per_beta_schedule,
                 ),
             ],
-            validator_params={
-                "minibatch_size": rl_config.minibatch_size,
-                "num_actions": self.num_actions,
-                "num_players": self.num_players,
-            },
         )
 
         # 2) SL buffer + learner (Average Strategy)
@@ -393,23 +359,20 @@ class NFSPTrainer(BaseTrainer):
 
         sl_optimizer = create_opt(self.avg_agent_network.parameters(), sl_config)
         sl_scheduler = get_lr_scheduler(sl_optimizer, sl_config)
-        sl_rep = self.avg_agent_network.components["behavior_heads"][
-            "policy_logits"
-        ].representation
+        sl_rep = self.avg_agent_network.components["policy_head"].representation
         sl_loss_pipeline = LossPipeline(
             sl_config,
             [
-                PolicyLoss(
+                ImitationLoss(
                     device=device,
                     representation=sl_rep,
                     loss_fn=sl_config.policy_loss_function,
                     loss_factor=getattr(sl_config, "policy_loss_factor", 1.0),
-                    target_key="target_policies",
                 )
             ],
         )
-
-        # SL uses PassThroughTargetBuilder for target_policies -> policies mapping if needed,
+        
+        # SL uses PassThroughTargetBuilder for target_policies -> policies mapping if needed, 
         # or just keeping target_policies
         sl_target_builder = PassThroughTargetBuilder(["target_policies"])
 
@@ -426,11 +389,6 @@ class NFSPTrainer(BaseTrainer):
             lr_scheduler=sl_scheduler,
             clipnorm=sl_config.clipnorm,
             callbacks=[ResetNoiseCallback()],
-            validator_params={
-                "minibatch_size": sl_config.minibatch_size,
-                "num_actions": self.num_actions,
-                "num_players": self.num_players,
-            },
         )
 
         # Schedules/params for actors (best response exploration)
@@ -445,21 +403,18 @@ class NFSPTrainer(BaseTrainer):
             TorchMPExecutor() if self.config.multi_process else LocalExecutor()
         )
         self.actor_cls = _pick_nfsp_actor(env)
-        adapter_cls = self._get_adapter_class()
         worker_args = (
-            adapter_cls,
-            (self.config.game.env_factory,),
+            self.config.game.make_env,
             self.br_agent_network,
             self.avg_agent_network,
-            None,  # replay buffer
-            None,  # action_selector (will be built in worker)
-            getattr(self.config, "actor_device", "cpu"),
-            getattr(self.config.game, "num_actions", None),
+            None,  # replay buffer (trainer stores transitions)
             self.num_players,
-            0,  # worker_id placeholder
+            rl_config,  # TorchMPExecutor assumes args[5] has compilation config
+            device,
+            self.name,
             getattr(self.config, "anticipatory_param", 0.1),
         )
-        self.executor.launch_workers(self.actor_cls, worker_args, self.config.num_workers)
+        self.executor.launch(self.actor_cls, worker_args, self.config.num_workers)
 
         # BaseTrainer expects a single agent_network/action_selector for tester wiring.
         self.agent_network = self.br_agent_network
@@ -524,10 +479,7 @@ class NFSPTrainer(BaseTrainer):
         if not self.config.multi_process:
             params["avg_state_dict"] = self.avg_agent_network.state_dict()
 
-        self.executor.update_parameters(
-            weights=self.br_agent_network.state_dict(), 
-            hyperparams=params
-        )
+        self.executor.update_weights(self.br_agent_network.state_dict(), params=params)
 
     def _store_sequence_transitions(self, sequence: Sequence):
         if not sequence.action_history:

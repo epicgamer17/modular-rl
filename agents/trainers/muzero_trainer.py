@@ -1,14 +1,15 @@
 import torch
 import time
 from typing import Optional, List, Dict, Any
-from agents.trainers.base_trainer import BaseTrainer
-from agents.factories.learner import build_universal_learner
-from agents.learner.batch_iterators import SingleBatchIterator
-from agents.factories.replay_buffer import create_muzero_buffer
-from agents.action_selectors.selectors import CategoricalSelector
-from agents.action_selectors.decorators import TemperatureSelector
-from modules.models.agent_network import AgentNetwork
-from stats.stats import StatTracker, PlotType
+from old_muzero.agents.trainers.base_trainer import BaseTrainer
+from old_muzero.agents.learner.factory import build_universal_learner
+from old_muzero.agents.learner.batch_iterators import SingleBatchIterator
+from old_muzero.replay_buffers.buffer_factories import create_muzero_buffer
+from old_muzero.agents.action_selectors.selectors import CategoricalSelector
+from old_muzero.agents.action_selectors.decorators import TemperatureSelector
+from old_muzero.agents.workers.actors import get_actor_class
+from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
+from old_muzero.stats.stats import StatTracker, PlotType
 
 
 class MuZeroTrainer(BaseTrainer):
@@ -26,8 +27,6 @@ class MuZeroTrainer(BaseTrainer):
         test_agents: List = None,
     ):
         super().__init__(config, env, device, name, stats, test_agents)
-        print(f"Trainer Config Unroll Steps: {config.unroll_steps}")
-        print(f"Trainer Config Batch Size: {config.minibatch_size}")
 
         # Create player_id_mapping for multi-player games
         if hasattr(env, "possible_agents"):
@@ -38,14 +37,18 @@ class MuZeroTrainer(BaseTrainer):
             self.player_id_mapping = {"player_0": 0}
 
         # 1. Initialize Network
-        from agents.factories.model import build_agent_network
+        # Allow injecting a custom world_model_cls via config_dict (used by A/B notebook)
+        extra_kwargs = {}
+        world_model_cls = getattr(config, "config_dict", {}).get("world_model_cls", None)
+        if world_model_cls is not None:
+            extra_kwargs["world_model_cls"] = world_model_cls
 
-        self.agent_network = build_agent_network(
+        self.agent_network = ModularAgentNetwork(
             config=config,
-            obs_dim=self.obs_dim,
+            input_shape=self.obs_dim,
             num_actions=self.num_actions,
-            device=device,
-        )
+            **extra_kwargs,
+        ).to(device)
 
         if config.kernel_initializer is not None:
             self.agent_network.initialize(config.kernel_initializer)
@@ -54,13 +57,10 @@ class MuZeroTrainer(BaseTrainer):
             self.agent_network.share_memory()
 
         # 2. Initialize Action Selector (MCTS)
-        from agents.action_selectors.selectors import LegalMovesMaskDecorator
-
-        # We wrap with LegalMovesMaskDecorator first, then Temperature
-        inner_selector = LegalMovesMaskDecorator(CategoricalSelector())
+        inner_selector = CategoricalSelector()
         self.action_selector = TemperatureSelector(
             inner_selector=inner_selector,
-            schedule_config=config.temperature_schedule,
+            config=config,
         )
 
         # 3. The Facts (Replay Buffer)
@@ -88,105 +88,42 @@ class MuZeroTrainer(BaseTrainer):
             observation_compression=config.observation_compression,
         )
         # 5. Initialize Executor
-        from agents.factories.executor import create_executor
+        from old_muzero.agents.executors.factory import create_executor
 
         self.executor = create_executor(config)
 
-        # 7. The Orchestrator (Universal Learner)
+        # 4. The Orchestrator (Universal Learner)
         self.learner = build_universal_learner(
             config=config,
             agent_network=self.agent_network,
             device=device,
             priority_update_fn=self.buffer.update_priorities,
-            weight_broadcast_fn=self.executor.update_parameters,
-            validator_params={
-                "minibatch_size": config.minibatch_size,
-                "unroll_steps": config.unroll_steps,
-                "num_actions": self.num_actions,
-                "num_players": getattr(config.game, "num_players", 1),
-                "atom_size": (
-                    (config.support_range * 2) + 1
-                    if hasattr(config, "support_range") and config.support_range
-                    else 1
-                ),
-            },
+            weight_broadcast_fn=self.executor.update_weights,
         )
 
         if config.multi_process:
             self.buffer.share_memory()
 
-        # 8. Initialize Workers
-        from agents.workers.actors import RolloutActor
-        from agents.workers.specialized_actors import ReanalyzeActor
-        from agents.environments.adapters import GymAdapter, VectorAdapter
-        from agents.action_selectors.policy_sources import (
-            NetworkPolicySource,
-            SearchPolicySource,
-        )
-
-        # Policy sources
-        self.policy_source = NetworkPolicySource(self.agent_network)
-        # MuZero uses MCTS for rollout
-        from agents.factories.search import SearchBackendFactory
-
-        search_engine = SearchBackendFactory.create(
-            config, device=self.device, num_actions=self.num_actions
-        )
-        self.search_policy_source = SearchPolicySource(
-            search_engine=search_engine,
-            agent_network=self.agent_network,
-        )
-
-        # Decide between single and vector adapter
-        adapter_cls = self._get_adapter_class()
-        env_factory = config.game.env_factory
-        adapter_args = (env_factory,)
-
-        # Rollout Worker Args
-        rollout_args = (
-            adapter_cls,
-            adapter_args,
+        # Launch workers
+        num_workers = config.num_workers
+        worker_args = (
+            config.game.make_env,
             self.agent_network,
-            self.search_policy_source,
-            self.buffer,
             self.action_selector,
-            getattr(config, "actor_device", "cpu"),
-            getattr(config.game, "num_actions", None),
-            getattr(config.game, "num_players", 1),
-            None,  # test_agents
-            False,  # flush_incomplete: MuZero stores only complete episodes
+            self.buffer,
+            config.game.num_players,
+            config,
+            device,
+            self.name,
         )
-
-        num_rollout_workers = (
-            config.num_workers if hasattr(config, "num_workers") else 1
-        )
-        self.executor.launch_workers(
-            RolloutActor, rollout_args, num_workers=num_rollout_workers
-        )
-
-        # Reanalyze Worker Args (if enabled)
-        if getattr(config, "use_reanalyze", False):
-            reanalyze_args = (
-                self.agent_network,
-                self.search_policy_source,
-                self.buffer,
-                config,
-            )
-            num_reanalyze_workers = getattr(config, "num_reanalyze_workers", 1)
-            self.executor.launch_workers(
-                ReanalyzeActor, reanalyze_args, num_workers=num_reanalyze_workers
-            )
+        self.actor_cls = get_actor_class(env, config)
+        self.executor.launch(self.actor_cls, worker_args, num_workers)
 
         # 6. Compile network for the learner (main process)
         if config.compilation.enabled:
-            if device.type == "mps":
-                print("Skipping torch.compile on Apple Silicon (MPS).")
-            else:
-                self.agent_network = torch.compile(
-                    self.agent_network,
-                    mode=config.compilation.mode,
-                    fullgraph=config.compilation.fullgraph,
-                )
+            self.agent_network.compile(
+                mode=config.compilation.mode, fullgraph=config.compilation.fullgraph
+            )
 
     def train(self):
         """Main training loop."""
@@ -215,31 +152,14 @@ class MuZeroTrainer(BaseTrainer):
 
     def train_step(self) -> Dict[str, Any]:
         """Perform one training step (batch of gradients)."""
-        # 1. Update weights and trigger work
-        self.executor.update_parameters(
-            weights=self.agent_network.state_dict(),
-            hyperparams={"training_step": self.training_step},
+        # 1. Wait for data to be collected
+        _, collect_stats = self.executor.collect_data(
+            min_samples=None, worker_type=self.actor_cls
         )
 
-        # 2. Collect data via actor
-        from agents.workers.actors import RolloutActor
-        from agents.workers.specialized_actors import ReanalyzeActor
-
-        # Request re-analysis if enabled (non-blocking if num_steps is None,
-        # but here we might want to trigger it)
-        if getattr(self.config, "use_reanalyze", False):
-            self.executor.request_work(
-                ReanalyzeActor, batch_size=self.config.minibatch_size
-            )
-
-        # Collect 'replay_interval' steps
-        results, collection_stats = self.executor.collect_data(
-            num_steps=getattr(self.config, "replay_interval", 1),
-            worker_type=RolloutActor,
-        )
-
-        # 3. Log collection stats
-        self._record_collection_metrics(results)
+        # 2. Log collection stats
+        for key, val in collect_stats.items():
+            self.stats.append(key, val)
 
         # 3. Learning step
         if self.buffer.size >= self.config.min_replay_buffer_size:
@@ -250,8 +170,9 @@ class MuZeroTrainer(BaseTrainer):
 
             self.training_step += 1
 
-            # 4. Periodic Weight Synchronization handled in train_step or via callback
-            # self.executor.update_weights handled at start of train_step now.
+            # 4. Update workers (if needed)
+            if self.training_step % self.config.transfer_interval == 0:
+                self.executor.update_weights(self.agent_network.state_dict())
 
             # 5. Periodic checkpointing
             if self.training_step % self.checkpoint_interval == 0:
@@ -269,7 +190,7 @@ class MuZeroTrainer(BaseTrainer):
 
     def _setup_stats(self):
         """Initializes the stat tracker with all required keys and plot types."""
-        from stats.stats import PlotType
+        from old_muzero.stats.stats import PlotType
 
         test_score_keys = (
             [f"vs_{agent.name}_score" for agent in self.test_agents]
@@ -300,26 +221,14 @@ class MuZeroTrainer(BaseTrainer):
         for key in stat_keys:
             if key not in self.stats.stats:
                 if key == "test_score":
-                    if self.config.game.num_players > 1:
-                        subkeys = [
-                            f"p{i}" for i in range(self.config.game.num_players)
-                        ] + ["avg"]
-                        self.stats._init_key(key, subkeys=subkeys)
-                    else:
-                        self.stats._init_key(key)
+                    self.stats._init_key(
+                        key
+                    )  # Removed min/max subkeys as they are no longer logged
                 elif "_score" in key:
                     # Player-specific subkeys for vs_agent tests
                     num_players = self.config.game.num_players
                     subkeys = [f"p{i}" for i in range(num_players)] + ["avg"]
                     self.stats._init_key(key, subkeys=subkeys)
-                elif key == "score":
-                    if self.config.game.num_players > 1:
-                        subkeys = [
-                            f"p{i}" for i in range(self.config.game.num_players)
-                        ] + ["avg"]
-                        self.stats._init_key(key, subkeys=subkeys)
-                    else:
-                        self.stats._init_key(key)
                 else:
                     self.stats._init_key(key)
 

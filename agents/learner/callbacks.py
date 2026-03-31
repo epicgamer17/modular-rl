@@ -3,15 +3,15 @@ from __future__ import annotations
 from typing import Callable, Dict, Any, Iterable, List, Optional, TYPE_CHECKING
 
 import torch
-from utils.telemetry import (
+from old_muzero.utils.telemetry import (
     add_latent_visualization_metric,
     append_metric,
     set_metric,
 )
 
 if TYPE_CHECKING:
-    from agents.learner.base import StepResult, UniversalLearner
-    from modules.models.agent_network import AgentNetwork
+    from old_muzero.agents.learner.base import StepResult, UniversalLearner
+    from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
 from abc import ABC, abstractmethod
 
 
@@ -133,7 +133,7 @@ class TargetNetworkSyncCallback(Callback):
 
     def __init__(
         self,
-        target_network: AgentNetwork,
+        target_network: ModularAgentNetwork,
         sync_interval: int,
         soft_update: bool = False,
         ema_beta: float = 0.99,
@@ -151,24 +151,34 @@ class TargetNetworkSyncCallback(Callback):
         if self.sync_interval > 0 and learner.training_step % self.sync_interval != 0:
             return
 
-        from modules.utils import update_target_network
+        from old_muzero.modules.utils import get_clean_state_dict
 
-        tau = (1.0 - self.ema_beta) if self.soft_update else 1.0
-        update_target_network(learner.agent_network, self.target_network, tau=tau)
+        with torch.no_grad():
+            clean_state = get_clean_state_dict(learner.agent_network)
+            if self.soft_update:
+                target_state = self.target_network.state_dict()
+                ema_beta = self.ema_beta
+                for k, v in clean_state.items():
+                    if k not in target_state:
+                        continue
+                    if target_state[k].is_floating_point():
+                        target_state[k].mul_(ema_beta).add_(
+                            v.detach(), alpha=1.0 - ema_beta
+                        )
+                    else:
+                        target_state[k].copy_(v.detach())
+            else:
+                self.target_network.load_state_dict(clean_state, strict=False)
 
 
 class ResetNoiseCallback(Callback):
     """Resets noisy network parameters after every optimizer step."""
-
-    def __init__(self, target_network: Optional[Any] = None):
-        self.target_network = target_network
 
     def on_optimizer_step_end(
         self,
         learner,
     ) -> None:
         learner.agent_network.reset_noise()
-        self.target_network.reset_noise()
 
 
 class MetricEarlyStopCallback(Callback):
@@ -255,7 +265,7 @@ class WeightBroadcastCallback(Callback):
 
 
 class EpsilonGreedySchedulerCallback(Callback):
-    """Steps the epsilon-greedy exploration schedule at the end of each training step."""
+    """Syncs target network weights at the end of each training step."""
 
     # TODO: should we have the init like this or should the learner store the target_agent_network too?
     def __init__(self, epsilon_schedule):

@@ -4,17 +4,18 @@ import time
 from typing import List, Optional
 
 import torch
-import torch.nn.functional as F
-from agents.factories.action_selector import SelectorFactory
-from agents.learner.base import UniversalLearner
-from agents.learner.batch_iterators import RepeatSampleIterator
-from agents.learner.callbacks import ResetNoiseCallback
-from agents.trainers.base_trainer import BaseTrainer
-from agents.learner.losses import PolicyLoss, LossPipeline
-from modules.models.agent_network import AgentNetwork
-from modules.utils import get_lr_scheduler
-from agents.factories.replay_buffer import create_nfsp_buffer
-from stats.stats import PlotType, StatTracker
+
+from old_muzero.agents.action_selectors.factory import SelectorFactory
+from old_muzero.agents.learner.base import UniversalLearner
+from old_muzero.agents.learner.batch_iterators import RepeatSampleIterator
+from old_muzero.agents.learner.callbacks import ResetNoiseCallback
+from old_muzero.agents.trainers.base_trainer import BaseTrainer
+from old_muzero.agents.workers.actors import get_actor_class
+from old_muzero.agents.learner.losses import ImitationLoss, LossPipeline
+from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
+from old_muzero.modules.utils import get_lr_scheduler
+from old_muzero.replay_buffers.buffer_factories import create_nfsp_buffer
+from old_muzero.stats.stats import PlotType, StatTracker
 
 
 class ImitationTrainer(BaseTrainer):
@@ -23,7 +24,7 @@ class ImitationTrainer(BaseTrainer):
     Notes:
     - This trainer expects a config that is compatible with BaseTrainer (i.e. has `game`,
       execution params, and an `action_selector` block) and whose network can be built by
-      `AgentNetwork` (e.g. a config with `agent_type='supervised'`).
+      `ModularAgentNetwork` (e.g. a config with `agent_type='supervised'`).
     """
 
     def __init__(
@@ -38,20 +39,10 @@ class ImitationTrainer(BaseTrainer):
         super().__init__(config, env, device, name, stats, test_agents)
 
         # Network
-        from agents.factories.builders import make_backbone_fn, make_head_fn
-
-        representation_fn = make_backbone_fn(getattr(config, "representation_backbone", None))
-        head_fns = {
-            name: make_head_fn(h_cfg)
-            for name, h_cfg in config.heads.items()
-        }
-
-        self.agent_network = AgentNetwork(
-            input_shape=self.obs_dim,
+        self.agent_network = ModularAgentNetwork(
+            config=config,
             num_actions=self.num_actions,
-            representation_fn=representation_fn,
-            head_fns=head_fns,
-            num_players=getattr(config.game, "num_players", 1),
+            input_shape=self.obs_dim,
         ).to(device)
         if getattr(config, "kernel_initializer", None) is not None:
             self.agent_network.initialize(config.kernel_initializer)
@@ -97,18 +88,9 @@ class ImitationTrainer(BaseTrainer):
         lr_scheduler = get_lr_scheduler(optimizer, config)
 
         # Loss
-        sl_rep = self.agent_network.components["behavior_heads"]["policy_logits"].representation
-        loss_pipeline = LossPipeline([
-            PolicyLoss(
-                device=device,
-                representation=sl_rep,
-                loss_fn=F.cross_entropy,
-                loss_factor=getattr(config, "policy_loss_factor", 1.0),
-                target_key="target_policies",
-            )
-        ])
+        loss_pipeline = LossPipeline([ImitationLoss(config, device, self.num_actions)])
         loss_pipeline.validate_dependencies(
-            network_output_keys={"policy_logits"},
+            network_output_keys={"policies"},
             target_keys={"target_policies"},
         )
 
@@ -125,60 +107,36 @@ class ImitationTrainer(BaseTrainer):
             lr_scheduler=lr_scheduler,
             clipnorm=config.clipnorm,
             callbacks=[ResetNoiseCallback()],
-            validator_params={
-                "minibatch_size": config.minibatch_size,
-                "num_actions": self.num_actions,
-                "num_players": getattr(config.game, "num_players", 1),
-            },
         )
         self.learner.replay_buffer = self.buffer
 
         # Executor + actors
-        from agents.factories.executor import create_executor
-        from agents.workers.actors import RolloutActor
-        from agents.environments.adapters import GymAdapter, VectorAdapter
-        from agents.action_selectors.policy_sources import NetworkPolicySource
+        from old_muzero.agents.executors.factory import create_executor
 
         self.executor = create_executor(config)
-        self.policy_source = NetworkPolicySource(self.agent_network)
-
-        # Decide between single and vector adapter
-        adapter_cls = self._get_adapter_class()
-        env_factory = config.game.env_factory
-        adapter_args = (env_factory,)
-
+        self.actor_cls = get_actor_class(env, config)
         worker_args = (
-            adapter_cls,
-            adapter_args,
+            config.game.make_env,
             self.agent_network,
-            self.policy_source,
-            self.buffer,
             self.action_selector,
-            getattr(config, "actor_device", "cpu"),
-            getattr(config.game, "num_actions", None),
-            getattr(config.game, "num_players", 1),
+            self.buffer,
+            config.game.num_players,
+            config,
+            device,
+            self.name,
         )
-        
-        num_workers = config.num_workers if hasattr(config, "num_workers") else 1
-        self.executor.launch_workers(RolloutActor, worker_args, num_workers=num_workers)
+        self.executor.launch(self.actor_cls, worker_args, config.num_workers)
 
     def train_step(self) -> None:
         # 1) Broadcast weights
-        self.executor.update_parameters(weights=self.agent_network.state_dict())
+        self.executor.update_weights(self.agent_network.state_dict())
 
-        # 2) Collect data via actor
-        from agents.workers.actors import RolloutActor
-        
-        results, collection_stats = self.executor.collect_data(
-            num_steps=getattr(self.config, "replay_interval", 1),
-            worker_type=RolloutActor
+        # 2) Collect data (actors push directly to the buffer)
+        _, collect_stats = self.executor.collect_data(
+            min_samples=None, worker_type=self.actor_cls
         )
-        
-        # 3) Log collection stats
-        for res in results:
-            if res.get("episodes_completed", 0) > 0:
-                self.stats.append("score", float(res["avg_score"]))
-                self.stats.append("episode_length", float(res["avg_length"]))
+        for key, val in collect_stats.items():
+            self.stats.append(key, val)
 
         # 3) Learner updates
         if self.buffer.size >= self.config.min_replay_buffer_size:
@@ -215,6 +173,7 @@ class ImitationTrainer(BaseTrainer):
                 self.trigger_test(self.agent_network.state_dict(), self.training_step)
 
         self.stop_test()
+        self.executor.stop()
         self._save_checkpoint()
         print("Training finished.")
 

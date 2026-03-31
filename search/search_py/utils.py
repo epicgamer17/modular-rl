@@ -2,7 +2,7 @@
 import torch
 
 
-def _safe_log_prob(probs: torch.Tensor) -> torch.Tensor:
+def _safe_log_probs(probs: torch.Tensor) -> torch.Tensor:
     """Converts probabilities to logits while keeping exact zeros as -inf."""
     return torch.where(probs > 0, probs.log(), torch.full_like(probs, -float("inf")))
 
@@ -26,9 +26,11 @@ def get_completed_q_improved_policy(config, node, min_max_stats):
     sigma = calculate_gumbel_sigma(
         config.gumbel_cvisit, config.gumbel_cscale, node, completedQ
     )
-    # NOTE: Old MuZero parity testing only. Restore the legacy improved-policy
-    # baseline that used the live search priors at the root.
-    base_priors = node.child_priors
+    # Use clean network logits as the base — fall back to child_priors only if
+    # network_policy is unavailable (e.g., for internal nodes).
+    base_priors = (
+        node.network_policy if node.network_policy is not None else node.child_priors
+    )
     logits = torch.where(
         base_priors > 0,
         torch.log(base_priors),

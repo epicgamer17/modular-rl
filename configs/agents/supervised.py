@@ -1,13 +1,15 @@
-from configs.base import (
+from old_muzero.configs.base import (
     ConfigBase,
     OptimizationConfig,
     ReplayConfig,
 )
-from configs.modules.backbones.base import BackboneConfig
-from agents.factories.backbone_config import BackboneConfigFactory
-from configs.modules.architecture_config import ArchitectureConfig
-from modules.utils import (
+from old_muzero.configs.modules.backbones.base import BackboneConfig
+from old_muzero.configs.modules.backbones.factory import BackboneConfigFactory
+from old_muzero.configs.modules.architecture_config import ArchitectureConfig
+from old_muzero.modules.utils import (
     prepare_activations,
+    prepare_kernel_initializers,
+    kernel_initializer_wrapper,
 )
 from torch.optim import Optimizer, Adam
 
@@ -47,6 +49,7 @@ class SupervisedConfig(ConfigBase, OptimizationConfig, ReplayConfig):
             "sl_kernel_initializer",
             None,
             required=False,
+            wrapper=kernel_initializer_wrapper,
         )
 
         self.clip_low_prob = self.parse_field("sl_clip_low_prob", 0.00)
@@ -65,7 +68,7 @@ class SupervisedConfig(ConfigBase, OptimizationConfig, ReplayConfig):
             # Default to a simple dense backbone if nothing provided
             self.backbone = BackboneConfigFactory.create(
                 {
-                    "type": "mlp",
+                    "type": "dense",
                     "widths": self.parse_field("sl_dense_layer_widths", [128]),
                 }
             )

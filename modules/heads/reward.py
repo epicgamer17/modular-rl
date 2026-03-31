@@ -1,13 +1,13 @@
-from typing import Tuple, Optional, Dict, Any, List, Callable
-import torch
+from typing import Tuple, Optional, Dict, Any, List
 from torch import Tensor
 from torch import nn
-from .base import BaseHead, HeadOutput
-from agents.learner.losses.representations import BaseRepresentation
-from configs.modules.architecture_config import ArchitectureConfig
-from configs.modules.backbones.base import BackboneConfig
-from configs.modules.heads.reward import ValuePrefixRewardHeadConfig
-from modules.backbones.mlp import build_dense, NoisyLinear
+import torch
+from .base import BaseHead
+from old_muzero.agents.learner.losses.representations import BaseRepresentation
+from old_muzero.configs.modules.architecture_config import ArchitectureConfig
+from old_muzero.configs.modules.backbones.base import BackboneConfig
+from old_muzero.configs.modules.heads.reward import ValuePrefixRewardHeadConfig
+from old_muzero.modules.blocks.dense import build_dense
 
 
 class RewardHead(BaseHead):
@@ -18,96 +18,25 @@ class RewardHead(BaseHead):
 
     def __init__(
         self,
+        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
-        neck_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
-        noisy_sigma: float = 0.0,
-        name: Optional[str] = None,
-        input_source: str = "default",
-        **kwargs,
+        neck_config: Optional[BackboneConfig] = None,
     ):
-        super().__init__(
-            input_shape,
-            representation,
-            neck_fn=neck_fn,
-            noisy_sigma=noisy_sigma,
-            name=name,
-            input_source=input_source,
-            **kwargs,
-        )
-
-        # 1. Heads now build their own feature architecture (neck)
-        if self.neck_fn is not None:
-            self.neck = self.neck_fn(input_shape=input_shape)
-        else:
-            self.neck = nn.Identity()
-            self.neck.output_shape = input_shape
-
-        self.output_shape = self.neck.output_shape
-        self.flat_dim = self._get_flat_dim(self.neck, input_shape)
-
-        # 2. Heads now define their own Final Output layer
-        self.output_layer = build_dense(
-            in_features=self.flat_dim,
-            out_features=self.representation.num_features,
-            sigma=self.noisy_sigma,
-        )
-
-    def reset_noise(self) -> None:
-        """Propagate noise reset through the head's submodules."""
-        if hasattr(self.neck, "reset_noise"):
-            self.neck.reset_noise()
-        if isinstance(self.output_layer, NoisyLinear):
-            self.output_layer.reset_noise()
+        super().__init__(arch_config, input_shape, representation, neck_config)
 
     def forward(
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-        is_inference: bool = False,
-        **kwargs,
-    ) -> HeadOutput:
-        """Returns HeadOutput containing logits and projected reward scalar."""
-        # 1. Processing neck -> flatten
-        x = self.neck(x)
-        if x.dim() > 2:
-            x = x.flatten(1, -1)
+    ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
+        """Returns: (logits, state, instant_reward)"""
+        state = state if state is not None else {}
+        logits, _ = super().forward(x, state)
 
-        # 2. Final Output Projection
-        logits = self.output_layer(x)
-
-        # 3. Mathematical Transform
-        instant_reward = None
-        metrics = {}
-        if is_inference:
-            instant_reward = self.representation.to_expected_value(logits)
-
-        return HeadOutput(
-            training_tensor=logits,
-            inference_tensor=instant_reward,
-            state=state if state is not None else {},
-            metrics=self.compute_metrics(logits, instant_reward),
-        )
-
-    def compute_metrics(
-        self,
-        training_tensor: torch.Tensor,
-        inference_tensor: Optional[Any] = None,
-    ) -> Dict[str, float]:
-        """Calculates reward-specific diagnostics (e.g., mean predicted reward)."""
-        metrics = {}
-        with torch.inference_mode():
-            diag_reward = inference_tensor if inference_tensor is not None else self.representation.to_expected_value(training_tensor)
-            metrics["mean"] = diag_reward.mean().item()
-        return metrics
-
-    def init_weights(self) -> None:
-        """Standard orthogonal initialization for Reward prediction."""
-        super().init_weights()
-        if hasattr(self.output_layer, "weight"):
-            nn.init.orthogonal_(self.output_layer.weight, gain=1.0)
-            if self.output_layer.bias is not None:
-                nn.init.constant_(self.output_layer.bias, 0.0)
+        # Default instant reward is representation conversion of logits
+        instant_reward = self.representation.to_expected_value(logits)
+        return logits, state, instant_reward
 
 
 class ValuePrefixRewardHead(RewardHead):
@@ -118,39 +47,19 @@ class ValuePrefixRewardHead(RewardHead):
 
     def __init__(
         self,
+        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
-        lstm_hidden_size: int = 64,
-        lstm_horizon_len: int = 5,
-        neck_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
-        noisy_sigma: float = 0.0,
-        name: Optional[str] = None,
-        input_source: str = "default",
-        **kwargs,
+        config: ValuePrefixRewardHeadConfig,
+        neck_config: Optional[BackboneConfig] = None,
     ):
-        # We call BaseHead init to avoid RewardHead's default output_layer logic
-        BaseHead.__init__(
-            self,
-            input_shape,
-            representation,
-            neck_fn=neck_fn,
-            noisy_sigma=noisy_sigma,
-            name=name,
-            input_source=input_source,
-            **kwargs,
+        # Pass representation=None to avoid creating the default output layer in BaseHead
+        super().__init__(
+            arch_config, input_shape, representation=None, neck_config=neck_config
         )
-
-        if self.neck_fn is not None:
-            self.neck = self.neck_fn(input_shape=input_shape)
-        else:
-            self.neck = nn.Identity()
-            self.neck.output_shape = input_shape
-
-        self.output_shape = self.neck.output_shape
-        self.flat_dim = self._get_flat_dim(self.neck, input_shape)
-
-        self.lstm_hidden_size = lstm_hidden_size
-        self.lstm_horizon_len = lstm_horizon_len
+        self.representation = representation
+        self.lstm_hidden_size = config.lstm_hidden_size
+        self.lstm_horizon_len = config.lstm_horizon_len
 
         # LSTM input size is the output of the neck (flat_dim)
         self.lstm = nn.LSTM(
@@ -163,53 +72,27 @@ class ValuePrefixRewardHead(RewardHead):
         self.output_layer = build_dense(
             in_features=self.lstm_hidden_size,
             out_features=self.representation.num_features,
-            sigma=self.noisy_sigma,
+            sigma=self.arch_config.noisy_sigma,
         )
-
-    def reset_noise(self) -> None:
-        if hasattr(self.neck, "reset_noise"):
-            self.neck.reset_noise()
-        if isinstance(self.output_layer, NoisyLinear):
-            self.output_layer.reset_noise()
-
-    def init_weights(self) -> None:
-        """Recurrent Reward initialization."""
-        super().init_weights()
-        # Initialize LSTM weights orthogonally
-        for name, param in self.lstm.named_parameters():
-            if "weight" in name:
-                nn.init.orthogonal_(param, gain=1.0)
-            elif "bias" in name:
-                nn.init.constant_(param, 0.0)
-        
-        if hasattr(self.output_layer, "weight"):
-            nn.init.orthogonal_(self.output_layer.weight, gain=1.0)
-            if self.output_layer.bias is not None:
-                nn.init.constant_(self.output_layer.bias, 0.0)
 
     def forward(
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-        is_inference: bool = False,
-        **kwargs,
-    ) -> HeadOutput:
+    ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
         state = state if state is not None else {}
 
-        # 1. Process neck -> flatten
-        x = self.neck(x)
-        if x.dim() > 2:
-            x = x.flatten(1, -1)
+        # Process neck
+        x = self.process_input(x)  # (B, flat_dim)
 
-        # 2. Prepare for LSTM: (B, Seq=1, Features)
+        # Prepare for LSTM: (B, Seq=1, Features)
         x = x.unsqueeze(1)
 
-        # Retrieve state using self.name prefix
-        hidden = state.get(f"{self.name}_reward_hidden")
-        step_count = state.get(f"{self.name}_step_count")
+        # Retrieve state
+        hidden = state.get("reward_hidden")
+        step_count = state.get("step_count")
         parent_cumulative = state.get(
-            f"{self.name}_cumulative_reward",
-            torch.zeros(x.shape[0], 1, device=x.device),
+            "cumulative_reward", torch.zeros(x.shape[0], 1, device=x.device)
         )
 
         if hidden is None:
@@ -229,67 +112,44 @@ class ValuePrefixRewardHead(RewardHead):
         if hidden is not None:
             h, c = hidden
             # Identify indices that need reset
+            # step_count > 0 and step_count % horizon == 0
             reset_mask = (step_count > 0) & (step_count % self.lstm_horizon_len == 0)
 
             if reset_mask.any():
+                # Reset corresponding batch elements in h and c
                 mask_idx = reset_mask.view(-1)
                 h[:, mask_idx] = 0.0
                 c[:, mask_idx] = 0.0
                 hidden = (h, c)
 
+                # USER FIX: Reset effective parent and step count for subtraction/accumulation
                 effective_parent_cumulative[reset_mask] = 0.0
                 effective_step_count[reset_mask] = 0.0
 
         # LSTM step
         output, (h_n, c_n) = self.lstm(x, hidden)
+
+        # Output is (B, 1, Hidden)
         output = output.squeeze(1)
 
         # Final projection: Predicted Cumulative Reward (Value Prefix)
         logits = self.output_layer(output)
-        # GET INSTANT REWARD
-        instant_reward = None
-        metrics = {}
-        if is_inference:
-            expected_cumulative = self.representation.to_expected_value(logits)
-            if expected_cumulative.dim() == 1:
-                expected_cumulative = expected_cumulative.unsqueeze(-1)
-            instant_reward = (
-                expected_cumulative - effective_parent_cumulative
-            ).squeeze(-1)
+        expected_cumulative = self.representation.to_expected_value(logits)
+        # Ensure (B, 1) shape for consistent accumulation with parent_cumulative
+        if expected_cumulative.dim() == 1:
+            expected_cumulative = expected_cumulative.unsqueeze(-1)
 
-        # New state
+        # GET INSTANT REWARD: subtract (potentially reset) parent cumulative → (B,)
+        instant_reward = (expected_cumulative - effective_parent_cumulative).squeeze(-1)
+
+        # New state: Preserve all existing keys and update internal ones
         new_state = state.copy()
         new_state.update(
             {
-                f"{self.name}_reward_hidden": (h_n, c_n),
-                f"{self.name}_step_count": effective_step_count + 1,
-                f"{self.name}_cumulative_reward": expected_cumulative,
+                "reward_hidden": (h_n, c_n),
+                "step_count": effective_step_count + 1,
+                "cumulative_reward": expected_cumulative,
             }
         )
 
-        return HeadOutput(
-            training_tensor=logits,
-            inference_tensor=instant_reward,
-            state=new_state,
-            metrics=self.compute_metrics(logits, instant_reward),
-        )
-
-    def compute_metrics(
-        self,
-        training_tensor: torch.Tensor,
-        inference_tensor: Optional[Any] = None,
-    ) -> Dict[str, float]:
-        metrics = {}
-        with torch.inference_mode():
-            if instant_reward is not None:
-                diag_reward = instant_reward
-            else:
-                # Need to re-compute instant_reward for training stats (with no gradients)
-                diag_expected_cumulative = self.representation.to_expected_value(logits)
-                if diag_expected_cumulative.dim() == 1:
-                    diag_expected_cumulative = diag_expected_cumulative.unsqueeze(-1)
-                diag_reward = (
-                    diag_expected_cumulative - effective_parent_cumulative
-                ).squeeze(-1)
-            metrics["mean"] = diag_reward.mean().item()
-        return metrics
+        return logits, new_state, instant_reward

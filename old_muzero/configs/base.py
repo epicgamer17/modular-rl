@@ -68,7 +68,6 @@ class ConfigBase:
                     if k not in self.config_dict:
                         self.config_dict[k] = v
 
-
     @classmethod
     def load(cls, filepath: str):
         with open(filepath, "r") as f:

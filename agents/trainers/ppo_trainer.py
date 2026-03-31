@@ -3,18 +3,18 @@ import time
 import numpy as np
 from typing import Optional, List, Dict, Any
 from pathlib import Path
-from agents.trainers.base_trainer import BaseTrainer
-from agents.executors.local_executor import LocalExecutor
-from agents.executors.torch_mp_executor import TorchMPExecutor
-from agents.factories.action_selector import SelectorFactory
-from agents.action_selectors.policy_sources import NetworkPolicySource
+from old_muzero.agents.trainers.base_trainer import BaseTrainer
+from old_muzero.agents.executors.local_executor import LocalExecutor
+from old_muzero.agents.executors.torch_mp_executor import TorchMPExecutor
+from old_muzero.agents.action_selectors.factory import SelectorFactory
+from old_muzero.agents.action_selectors.policy_sources import NetworkPolicySource
 
+# from old_muzero.agents.workers.actors import get_actor_class # REMOVED as unused
 
+from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
 
-from modules.models.agent_network import AgentNetwork
-
-# from agents.policies.ppo_policy import PPOPolicy # REMOVED
-from stats.stats import StatTracker, PlotType
+# from old_muzero.agents.policies.ppo_policy import PPOPolicy # REMOVED
+from old_muzero.stats.stats import StatTracker, PlotType
 
 
 class PPOTrainer(BaseTrainer):
@@ -46,47 +46,30 @@ class PPOTrainer(BaseTrainer):
         super().__init__(config, env, device, name, stats, test_agents)
 
         # 1. Initialize Network
-        from agents.factories.builders import make_backbone_fn, make_head_fn
-
         # New standard: input_shape excludes batch dimension
         input_shape = self.obs_dim
-
-        # Build functional components
-        representation_fn = make_backbone_fn(getattr(config, "representation_backbone", None))
-        memory_core_fn = make_backbone_fn(getattr(config, "prediction_backbone", None))
-
-        head_fns = {}
-        if hasattr(config, "heads") and config.heads:
-            for name, head_cfg in config.heads.items():
-                head_fns[name] = make_head_fn(head_cfg)
-
-        self.agent_network = AgentNetwork(
+        self.agent_network = ModularAgentNetwork(
+            config=config,
             input_shape=input_shape,
             num_actions=self.num_actions,
-            representation_fn=representation_fn,
-            memory_core_fn=memory_core_fn,
-            head_fns=head_fns,
-            num_players=getattr(config.game, "num_players", 1),
         )
         self.agent_network.to(device)
 
         # Initialize weights
-        if getattr(config, "kernel_initializer", None) is not None:
+        if config.kernel_initializer is not None:
             self.agent_network.initialize(config.kernel_initializer)
 
         if config.multi_process:
             self.agent_network.share_memory()
 
         # 2. Initialize Action Selector and Policy Source
-        from agents.action_selectors.decorators import PPODecorator
-        raw_selector = SelectorFactory.create(
+        self.action_selector = SelectorFactory.create(
             config.action_selector.config_dict
         )
-        self.action_selector = PPODecorator(raw_selector)
         self.policy_source = NetworkPolicySource(self.agent_network)
 
         # 3. Initialize Replay Buffer
-        from agents.factories.replay_buffer import create_ppo_buffer
+        from old_muzero.replay_buffers.buffer_factories import create_ppo_buffer
 
         self.replay_buffer = create_ppo_buffer(
             observation_dimensions=self.obs_dim,
@@ -98,59 +81,30 @@ class PPOTrainer(BaseTrainer):
         )
 
         # 4. Initialize Executor
-        from agents.factories.executor import create_executor
+        from old_muzero.agents.executors.factory import create_executor
 
         self.executor = create_executor(config)
 
         # 5. Initialize Learner via Factory
-        from agents.factories.learner import build_universal_learner
+        from old_muzero.agents.learner.factory import build_universal_learner
 
         self.learner = build_universal_learner(
             config=config,
             agent_network=self.agent_network,
             device=device,
-            weight_broadcast_fn=self.executor.update_parameters,
-            validator_params={
-                "minibatch_size": config.minibatch_size,
-                "num_actions": self.num_actions,
-                "num_players": getattr(config.game, "num_players", 1),
-            },
+            weight_broadcast_fn=self.executor.update_weights,
         )
 
-        # 6. Initialize Workers
-        from agents.workers.actors import RolloutActor
-
-        # Prepare worker args
-        # For PPO, we use the GymAdapter for the environment
-        adapter_cls = self._get_adapter_class()
-        env_factory = config.game.env_factory
-
-        worker_args = (
-            adapter_cls,
-            (env_factory,),
-            self.agent_network,
-            self.policy_source,
-            self.replay_buffer,
-            self.action_selector,
-            getattr(config, "actor_device", "cpu"),
-            getattr(config.game, "num_actions", None),
-            getattr(config.game, "num_players", 1),
-        )
-        
-        # Launch rollout workers
-        num_workers = config.num_workers if hasattr(config, "num_workers") else 1
-        self.executor.launch_workers(RolloutActor, worker_args, num_workers=num_workers)
-
-        # 7. Compile network for the learner (main process)
+        # 6. Compile network for the learner (main process)
         if config.compilation.enabled:
-            if device.type == "mps":
-                print("Skipping torch.compile on Apple Silicon (MPS).")
-            else:
-                self.agent_network = torch.compile(
-                    self.agent_network,
-                    mode=config.compilation.mode,
-                    fullgraph=config.compilation.fullgraph,
-                )
+            self.agent_network.compile(
+                mode=config.compilation.mode, fullgraph=config.compilation.fullgraph
+            )
+
+        # Note: We do not launch actor workers here because PPOTrainer currently uses an
+        # inline data collection loop within `train()`. Launching workers would cause them
+        # to execute `play_sequence()`, which PPOLearner's buffer does not currently support
+        # (raises NotImplementedError for sequence processing).
 
     def train(self) -> None:
         """
@@ -200,25 +154,106 @@ class PPOTrainer(BaseTrainer):
         """
         Single training step for PPO: collects a full epoch of data and optimizes.
         """
-        # 1. Update weights before collection
-        self.executor.update_parameters(weights=self.agent_network.state_dict())
+        # 1. Collect trajectory data (steps_per_epoch transitions)
+        steps_collected = 0
+        trajectory_start_index = 0
+        completed_scores = []
+        completed_lengths = []
 
-        # 2. Collect trajectory data via actor
-        from agents.workers.actors import RolloutActor
-        
-        # collect_data will request 'steps_per_epoch' from RolloutActor
-        # Results is a list of dicts (one per worker)
-        results, collection_stats = self.executor.collect_data(
-            num_steps=self.config.steps_per_epoch,
-            worker_type=RolloutActor
-        )
+        while steps_collected < self.config.steps_per_epoch:
+            with torch.no_grad():
+                # Get state from environment
+                state, info = self._env.reset()
+                done = False
+                current_episode_score = 0.0
+                current_episode_length = 0
 
-        # 3. Log collection stats
-        self._record_collection_metrics(results)
+                while not done and steps_collected < self.config.steps_per_epoch:
+                    obs_tensor = torch.tensor(
+                        state, dtype=torch.float32, device=self.device
+                    ).unsqueeze(0)
+                    result = self.policy_source.get_inference(obs=obs_tensor, info=info)
+                    action, metadata = self.action_selector.select_action(
+                        result=result,
+                        info=info,
+                        exploration=True,
+                    )
 
+                    log_prob = metadata.get("log_prob")
+                    value = metadata.get("value")
+
+                    assert (
+                        log_prob is not None
+                    ), f"log_prob is None. Metadata: {metadata}"
+                    assert value is not None, f"value is None. Metadata: {metadata}"
+
+                    action_val = action.item()
+
+                    # Environment step
+                    next_state, reward, terminated, truncated, next_info = (
+                        self._env.step(action_val)
+                    )
+                    done = terminated or truncated
+
+                    # Store transition
+                    self.replay_buffer.store(
+                        observations=state,
+                        actions=action_val,
+                        values=float(value.item() if torch.is_tensor(value) else value),
+                        old_log_probs=float(
+                            log_prob.item() if torch.is_tensor(log_prob) else log_prob
+                        ),
+                        rewards=reward,
+                        dones=done,
+                        info=info,
+                    )
+
+                    state = next_state
+                    info = next_info
+                    current_episode_score += reward
+                    current_episode_length += 1
+                    steps_collected += 1
+
+                    if done:
+                        completed_scores.append(current_episode_score)
+                        completed_lengths.append(current_episode_length)
+                        # reset for next episode in same epoch
+                        current_episode_score = 0.0
+                        current_episode_length = 0
+
+                # Finish trajectory with bootstrap value
+                if terminated:
+                    last_value = 0.0
+                else:
+                    with torch.inference_mode():
+                        obs = torch.tensor(state).unsqueeze(0).to(self.device)
+                        out = self.agent_network.obs_inference(obs)
+                        last_value = out.value.item()
+
+                trajectory_end_index = self.replay_buffer.size
+                trajectory_slice = slice(trajectory_start_index, trajectory_end_index)
+
+                if trajectory_end_index > trajectory_start_index:
+                    input_processor = self.replay_buffer.input_processor
+                    result = input_processor.finish_trajectory(
+                        self.replay_buffer.buffers,
+                        trajectory_slice,
+                        last_value=last_value,
+                    )
+                    if result:
+                        for key, value in result.items():
+                            self.replay_buffer.buffers[key][trajectory_slice] = value
+
+                trajectory_start_index = trajectory_end_index
+
+        # Log collection stats
+        if completed_scores:
+            for s, l in zip(completed_scores, completed_lengths):
+                self.stats.append("score", float(s))
+                self.stats.append("episode_length", float(l))
 
         # 3. Learning step
-        from agents.learner.batch_iterators import PPOEpochIterator
+        from old_muzero.agents.learner.batch_iterators import PPOEpochIterator
 
         iterator = PPOEpochIterator(
             replay_buffer=self.replay_buffer,
@@ -244,7 +279,7 @@ class PPOTrainer(BaseTrainer):
     def _setup_stats(self):
         """Initializes the stat tracker with PPO-specific keys and plot types."""
         super()._setup_stats()
-        from stats.stats import PlotType
+        from old_muzero.stats.stats import PlotType
 
         stat_keys = [
             "policy_loss",

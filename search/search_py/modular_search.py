@@ -5,42 +5,38 @@ from torch import Tensor
 import torch.nn.functional as F
 from torch.distributions import Categorical
 import math
-from modules.utils import support_to_scalar
-from modules.models.inference_output import (
-    InferenceOutput,
-    batch_recurrent_state,
-    unbatch_recurrent_state,
-)
-from search.search_selectors import (
+from old_muzero.modules.utils import support_to_scalar
+from old_muzero.modules.world_models.inference_output import InferenceOutput
+from old_muzero.search.search_selectors import (
     SelectionStrategy,
     TopScoreSelection,
     SamplingSelection,
 )
-from search.backpropogation import Backpropagator, AverageDiscountedReturnBackpropagator
-from search.initial_searchsets import SearchSet, SelectAll, SelectTopK
-from search.nodes import ChanceNode, DecisionNode
-from search.min_max_stats import MinMaxStats
-from search.prior_injectors import (
+from old_muzero.search.backpropogation import Backpropagator, AverageDiscountedReturnBackpropagator
+from old_muzero.search.initial_searchsets import SearchSet, SelectAll, SelectTopK
+from old_muzero.search.nodes import ChanceNode, DecisionNode
+from old_muzero.search.min_max_stats import MinMaxStats
+from old_muzero.search.prior_injectors import (
     PriorInjector,
     ActionTargetInjector,
     DirichletInjector,
     GumbelInjector,
 )
-from search.root_policies import (
+from old_muzero.search.root_policies import (
     RootPolicyStrategy,
     CompletedQValuesRootPolicy,
     VisitFrequencyPolicy,
 )
-from utils.utils import get_legal_moves
-from search.pruners import PruningMethod, NoPruning, SequentialHalvingPruning
-from search.scoring_methods import (
+from old_muzero.utils.utils import get_legal_moves
+from old_muzero.search.pruners import PruningMethod, NoPruning, SequentialHalvingPruning
+from old_muzero.search.scoring_methods import (
     GumbelScoring,
     LeastVisitedScoring,
     UCBScoring,
     DeterministicChanceScoring,
 )
-from modules.models.agent_network import AgentNetwork
-from .utils import _safe_log_prob
+from old_muzero.modules.agent_nets.base import BaseAgentNetwork
+from .utils import _safe_log_probs
 
 
 class ModularSearch:
@@ -93,7 +89,7 @@ class ModularSearch:
                 DeterministicChanceScoring()
             )
 
-            from search.search_py.root_policies import (
+            from old_muzero.search.search_py.root_policies import (
                 BestActionRootPolicy,
                 VisitFrequencyPolicy,
             )
@@ -122,7 +118,7 @@ class ModularSearch:
             self.pruning_method: PruningMethod = NoPruning()
             self.internal_pruning_method: PruningMethod = NoPruning()
 
-            from search.search_py.backpropogation import (
+            from old_muzero.search.search_py.backpropogation import (
                 MinimaxBackpropagator,
                 AverageDiscountedReturnBackpropagator,
             )
@@ -172,7 +168,7 @@ class ModularSearch:
         self,
         observation: Any,
         info: Dict[str, Any],
-        agent_network: AgentNetwork,
+        agent_network: BaseAgentNetwork,
         trajectory_action=None,
         exploration: bool = True,
     ):
@@ -190,13 +186,7 @@ class ModularSearch:
         # 1. Inference
         assert not root.expanded()
 
-        # Root inference expects a batch dimension [1, ...]
-        # We unsqueeze here since the Actor/Selector might have squeezed it for Tier-1 efficiency.
-        if torch.is_tensor(observation) and observation.dim() == len(agent_network.input_shape):
-            observation = observation.unsqueeze(0)
-            
         outputs: InferenceOutput = agent_network.obs_inference(observation)
-
 
         val_raw = outputs.value
         root_policy_dist = outputs.policy
@@ -207,10 +197,10 @@ class ModularSearch:
                 raise ValueError(
                     "Search requires a policy distribution with logits/probs."
                 )
-            policy_logits = self._safe_log_prob(policy_probs)
+            policy_logits = self._safe_log_probs(policy_probs)
         if policy_logits.dim() == 1:
             policy_logits = policy_logits.unsqueeze(0)
-        network_state = outputs.recurrent_state
+        network_state = outputs.network_state
 
         # 3. Legal Moves
         # TODO: MOVE THE MASKING INTO THE ACTOR
@@ -264,9 +254,8 @@ class ModularSearch:
             policy, legal_moves, selection_count, trajectory_action
         )
 
-        # NOTE: Old MuZero parity testing only. The legacy search only seeded the
-        # root visit count here and did not preload the root value accumulator.
         root.visits += 1
+        root.value_sum += v_pi_scalar
 
         # 7. Expand Root
         root.expand(
@@ -331,7 +320,7 @@ class ModularSearch:
         # already baked into root.child_priors by the GumbelInjector.
         # Non-Gumbel searches use argmax of the clean target policy.
         if self.config.gumbel:
-            from search.search_py.utils import (
+            from old_muzero.search.search_py.utils import (
                 get_completed_q,
                 calculate_gumbel_sigma,
             )
@@ -372,7 +361,7 @@ class ModularSearch:
         self,
         batched_obs: Any,
         batch_info: Dict[str, Any],
-        agent_network: AgentNetwork,
+        agent_network: BaseAgentNetwork,
         trajectory_actions=None,
         exploration: bool = True,
     ):
@@ -394,29 +383,17 @@ class ModularSearch:
             )
             # Standardize back to a list of dicts for Python MCTS loops
             # This is slow but modular_search is slow anyway.
-            new_batched_info = []
-            for i in range(B):
-                item_dict = {}
-                for k, v in batched_info.items():
-                    # If v is a collection that matches the batch size, index it
-                    if hasattr(v, "__getitem__") and not isinstance(v, (str, bytes, dict)):
-                        # Some collections like tensors or arrays
-                        try:
-                            if len(v) == B:
-                                val = v[i]
-                            else:
-                                val = v
-                        except:
-                            val = v
-                    else:
-                        val = v
-                    
-                    # Convert single-element tensors to scalars for Python loops
-                    if torch.is_tensor(val) and val.numel() == 1:
-                        val = val.item()
-                    item_dict[k] = val
-                new_batched_info.append(item_dict)
-            batched_info = new_batched_info
+            batched_info = [
+                {
+                    k: (
+                        v[i].item()
+                        if torch.is_tensor(v[i]) and v[i].numel() == 1
+                        else v[i]
+                    )
+                    for k, v in batched_info.items()
+                }
+                for i in range(B)
+            ]
 
         assert all(
             "player" in i for i in batched_info
@@ -443,18 +420,23 @@ class ModularSearch:
                 raise ValueError(
                     "Search requires a policy distribution with logits/probs."
                 )
-            policy_logits = self._safe_log_prob(policy_probs)
+            policy_logits = self._safe_log_probs(policy_probs)
 
         if trajectory_actions is None:
             trajectory_actions = [None] * B
 
-        unbatched_states = unbatch_recurrent_state(outputs.recurrent_state)
+        unbatched_states = outputs.network_state.unbatch()
 
         # Legal Moves
         legal_moves_batch = get_legal_moves(batched_info)
         if legal_moves_batch is None:
             legal_moves_batch = [list(range(self.num_actions))] * B
-
+        elif (
+            len(legal_moves_batch) == 1
+            and isinstance(legal_moves_batch[0], list)
+            and len(legal_moves_batch[0]) == B
+        ):
+            legal_moves_batch = legal_moves_batch[0]
 
         # 2. Expand all B roots
         min_max_stats_list = []
@@ -501,9 +483,8 @@ class ModularSearch:
             )
 
             root = roots[b]
-            # NOTE: Old MuZero parity testing only. Match the legacy root init
-            # path and avoid preloading the root value accumulator.
             root.visits += 1
+            root.value_sum += v_pi_scalar
             root.expand(
                 allowed_actions=selected_actions,
                 to_play=batched_to_play[b],
@@ -563,7 +544,7 @@ class ModularSearch:
             # Gumbel MuZero: play argmax(g + σ) — Paper Alg. 2.
             # Non-Gumbel: play argmax of the clean target policy.
             if self.config.gumbel:
-                from search.search_py.utils import (
+                from old_muzero.search.search_py.utils import (
                     get_completed_q,
                     calculate_gumbel_sigma,
                 )
@@ -737,12 +718,12 @@ class ModularSearch:
         if node.is_decision:
             if parent.is_decision:
                 outputs: InferenceOutput = agent_network.hidden_state_inference(
-                    parent.recurrent_state,
+                    parent.network_state,
                     torch.as_tensor([action_or_code], device=self.device),
                 )
 
                 reward = outputs.reward
-                network_state = outputs.recurrent_state
+                network_state = outputs.network_state
                 value = outputs.value
                 policy = outputs.policy.probs
                 if policy is None:
@@ -787,12 +768,12 @@ class ModularSearch:
                 one_hot_code = F.one_hot(action_t, num_classes=num_codes)
 
                 outputs: InferenceOutput = agent_network.hidden_state_inference(
-                    parent.recurrent_state,
+                    parent.network_state,
                     one_hot_code.unsqueeze(0).float(),
                 )
 
                 reward = float(outputs.reward)
-                network_state = outputs.recurrent_state
+                network_state = outputs.network_state
                 value = float(outputs.value)
                 policy = outputs.policy.probs
                 if policy is None:
@@ -832,7 +813,7 @@ class ModularSearch:
             # 2. Sample a Code
             # 3. Get Next State & Reward (Create DecisionNode)
             outputs: InferenceOutput = agent_network.afterstate_inference(
-                parent.recurrent_state,
+                parent.network_state,
                 torch.as_tensor(
                     [action_or_code],
                     device=self.device,
@@ -840,7 +821,7 @@ class ModularSearch:
                 ),
             )
 
-            network_state = outputs.recurrent_state
+            network_state = outputs.network_state
             value = float(outputs.value)
             code_probs = outputs.policy.probs
 
@@ -1110,7 +1091,7 @@ class ModularSearch:
             action = d["action"]
 
             if node.is_decision:
-                state = parent.recurrent_state
+                state = parent.network_state
                 assert (
                     state is not None
                 ), f"Parent node {type(parent)} at search path index {len(d['path'])-2} has network_state=None. Node type: {type(node)}"
@@ -1123,7 +1104,7 @@ class ModularSearch:
                     }
                 )
             elif node.is_chance:
-                state = parent.recurrent_state
+                state = parent.network_state
                 assert (
                     state is not None
                 ), f"Parent node {type(parent)} has network_state=None for ChanceNode expansion. Parent to_play: {parent.to_play}"
@@ -1138,7 +1119,7 @@ class ModularSearch:
         if recurrent_inputs:
             # 1. Batch full opaque states recursively
             full_states = [x["state"] for x in recurrent_inputs]
-            batched_states = batch_recurrent_state(full_states)
+            batched_states = type(full_states[0]).batch(full_states)
 
             # 2. Prepare actions
             act_list = []
@@ -1164,7 +1145,7 @@ class ModularSearch:
             )
 
             # 4. Unbatch everything recursively
-            unbatched_next_states = unbatch_recurrent_state(outputs.recurrent_state)
+            unbatched_next_states = outputs.network_state.unbatch()
 
             rewards = outputs.reward
             values = outputs.value
@@ -1194,7 +1175,7 @@ class ModularSearch:
         if afterstate_inputs:
             # 1. Batch opaque states
             full_after_states = [x["state"] for x in afterstate_inputs]
-            batched_after_states = batch_recurrent_state(full_after_states)
+            batched_after_states = type(full_after_states[0]).batch(full_after_states)
 
             actions = (
                 torch.tensor(
@@ -1209,7 +1190,7 @@ class ModularSearch:
             )
 
             # 2. Unbatch opaque states
-            unbatched_afterstates = unbatch_recurrent_state(outputs.recurrent_state)
+            unbatched_afterstates = outputs.network_state.unbatch()
 
             values = outputs.value
             code_probs_batch = outputs.policy.probs
@@ -1517,18 +1498,15 @@ class ModularSearch:
             action = d["action"]
 
             if node.is_decision:
-                state = parent.recurrent_state
+                state = parent.network_state
                 recurrent_inputs.append({"state": state, "action": action, "idx": i})
             elif node.is_chance:
-                state = parent.recurrent_state
+                state = parent.network_state
                 afterstate_inputs.append({"state": state, "action": action, "idx": i})
 
         if recurrent_inputs:
             full_states = [x["state"] for x in recurrent_inputs]
-            if isinstance(full_states[0], dict):
-                batched_states = batch_recurrent_state(full_states)
-            else:
-                batched_states = type(full_states[0]).batch(full_states)
+            batched_states = type(full_states[0]).batch(full_states)
 
             act_list = []
             for x in recurrent_inputs:
@@ -1547,7 +1525,7 @@ class ModularSearch:
             outputs: InferenceOutput = agent_network.hidden_state_inference(
                 batched_states, actions
             )
-            unbatched_next_states = unbatch_recurrent_state(outputs.recurrent_state)
+            unbatched_next_states = outputs.network_state.unbatch()
 
             rewards = outputs.reward
             values = outputs.value
@@ -1570,7 +1548,7 @@ class ModularSearch:
 
         if afterstate_inputs:
             full_after_states = [x["state"] for x in afterstate_inputs]
-            batched_after_states = batch_recurrent_state(full_after_states)
+            batched_after_states = type(full_after_states[0]).batch(full_after_states)
 
             act_list = []
             for x in afterstate_inputs:
@@ -1584,7 +1562,7 @@ class ModularSearch:
             outputs: InferenceOutput = agent_network.afterstate_inference(
                 batched_after_states, actions
             )
-            unbatched_next_states = unbatch_recurrent_state(outputs.recurrent_state)
+            unbatched_next_states = outputs.network_state.unbatch()
             values = outputs.value
             code_probs_batch = outputs.policy.probs
 

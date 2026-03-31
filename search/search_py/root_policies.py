@@ -1,13 +1,13 @@
 from abc import ABC, abstractmethod
 import torch
 
-from search.utils import (
+from old_muzero.search.utils import (
     calculate_gumbel_sigma,
     get_completed_q,
     get_completed_q_improved_policy,
 )
 
-from search.scoring_methods import QValueScoring
+from old_muzero.search.scoring_methods import QValueScoring
 
 
 class RootPolicyStrategy(ABC):

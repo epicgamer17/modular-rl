@@ -1,5 +1,5 @@
 from .game import GameConfig
-from utils.wrappers import (
+from old_muzero.utils.wrappers import (
     ActionMaskInInfoWrapper,
     ChannelLastToFirstWrapper,
     FrameStackWrapper,
@@ -9,7 +9,7 @@ from utils.wrappers import (
 from pettingzoo.classic import tictactoe_v3
 
 
-def env_factory(render_mode="rgb_array"):
+def make_env(render_mode="rgb_array"):
     env = tictactoe_v3.env(render_mode=render_mode)
     env = ActionMaskInInfoWrapper(env)
     env = FrameStackWrapper(env, 4, channel_first=False)
@@ -20,7 +20,7 @@ def env_factory(render_mode="rgb_array"):
 
 
 class TicTacToeConfig(GameConfig):
-    def __init__(self, env_factory=env_factory):
+    def __init__(self, make_env=make_env):
         super(TicTacToeConfig, self).__init__(
             num_actions=9,
             max_score=1,
@@ -33,5 +33,5 @@ class TicTacToeConfig(GameConfig):
             multi_agent=True,
             num_players=2,
             # has_intermediate_rewards=False,
-            env_factory=env_factory,
+            make_env=make_env,
         )

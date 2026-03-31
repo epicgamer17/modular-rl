@@ -1,7 +1,5 @@
 from typing import Any, Dict, List, Optional, Tuple, Type
 from .base import BaseExecutor
-from agents.workers.payloads import WorkerPayload, TaskRequest, TaskType
-import torch
 
 
 class LocalExecutor(BaseExecutor):
@@ -20,53 +18,42 @@ class LocalExecutor(BaseExecutor):
         for _, worker in new_workers:
             worker.setup()
         self.workers.extend(new_workers)
-        # Type-name to task mapping
-        self.pending_tasks = {}
 
     def _fetch_available_results(self) -> List[Any]:
+        # For local executor, we run one episode per worker synchronously
+        # to simulate "fetching available results"
         results = []
         for worker_cls, worker in self.workers:
             type_name = worker_cls.__name__
 
-            task = self.pending_tasks.pop(type_name, None)
-            if task:
-                payload = worker.execute(task)
-                results.append(payload)
+            # Use signaling for Tester to prevent running it continuously
+            use_signaling = type_name == "Tester"
+
+            if use_signaling:
+                if self.worker_signals.get(type_name, False):
+                    results.append((type_name, worker.play_sequence()))
+                    # Reset tester signal after running
+                    self.worker_signals[type_name] = False
+            else:
+                results.append((type_name, worker.play_sequence()))
 
         return results
 
-    def update_parameters(
-        self,
-        weights: Optional[Dict[str, torch.Tensor]] = None,
-        hyperparams: Optional[Dict[str, Any]] = None,
+    def update_weights(
+        self, state_dict: Dict[str, Any], params: Optional[Dict[str, Any]] = None
     ):
         for _, w in self.workers:
-            w.update_parameters(weights=weights, hyperparams=hyperparams)
+            w.agent_network.load_state_dict(state_dict)
+            if hasattr(w.agent_network, "reset_noise"):
+                w.agent_network.reset_noise()
+            if params is not None and hasattr(w, "action_selector"):
+                w.action_selector.update_parameters(params)
+            w.update_parameters(params)
 
-    def request_work(self, worker_type: Type, **kwargs):
-        """Signals that work is pending and stores the TaskRequest for the specified worker type."""
+    def request_work(self, worker_type: Type):
+        """Signals the trigger event for the specified worker type."""
         type_name = worker_type.__name__
-        
-        # Map legacy kwargs to TaskType
-        task_type = None
-        batch_size = 0
-        
-        if "num_steps" in kwargs:
-            task_type = TaskType.COLLECT
-            batch_size = kwargs.pop("num_steps")
-        elif "num_episodes" in kwargs:
-            task_type = TaskType.EVALUATE
-            batch_size = kwargs.pop("num_episodes")
-        elif "batch_size" in kwargs:
-            task_type = TaskType.REANALYZE
-            batch_size = kwargs.pop("batch_size")
-        else:
-            # Default to collect if nothing specified
-            task_type = TaskType.COLLECT
-            batch_size = 1000
-            
-        request = TaskRequest(task_type=task_type, batch_size=batch_size, kwargs=kwargs)
-        self.pending_tasks[type_name] = request
+        self.worker_signals[type_name] = True
 
     def stop(self):
         self.workers = []

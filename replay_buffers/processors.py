@@ -3,8 +3,8 @@ import numpy as np
 import torch
 from abc import ABC, abstractmethod
 from collections import deque
-from replay_buffers.utils import discounted_cumulative_sums
-from utils.utils import legal_moves_mask
+from old_muzero.replay_buffers.utils import discounted_cumulative_sums
+from old_muzero.utils.utils import legal_moves_mask
 from logging import warning
 
 # ==========================================
@@ -28,21 +28,6 @@ class InputProcessor(ABC):
 
     def process_sequence(self, sequence, **kwargs):
         """Optional hook for processing entire sequence objects."""
-        # Fail-fast: Ensure that if an actor flushes an unfinished chunk, they provide a bootstrap_value.
-        # Failing to do so will result in GAE calculating a future return of 0.0, destroying the value network.
-        if (
-            sequence is not None
-            and hasattr(sequence, "terminated_history")
-            and len(sequence.terminated_history) > 0
-        ):
-            if (
-                not sequence.terminated_history[-1]
-                and not sequence.truncated_history[-1]
-            ):
-                assert (
-                    "bootstrap_value" in kwargs or "last_value" in kwargs
-                ), f"[Fail-Fast] Unfinished sequence (len={len(sequence)}) flushed without a bootstrap_value!"
-
         # Default behavior: iterate over transitions and apply process_single
         transitions = kwargs.get("transitions")
         if transitions is None:
@@ -97,11 +82,6 @@ class InputProcessor(ABC):
                     if i + 1 < len(sequence.legal_moves_history)
                     else None
                 ),
-                "log_prob": (
-                    sequence.log_prob_history[i]
-                    if i < len(sequence.log_prob_history)
-                    else None
-                ),
             }
             # Add next_infos if available (usually not in Sequence but for completeness)
             if hasattr(sequence, "next_infos") and i < len(sequence.next_infos):
@@ -109,6 +89,15 @@ class InputProcessor(ABC):
 
             transitions.append(t)
         return transitions
+
+    def finish_trajectory(self, buffers, trajectory_slice, **kwargs):
+        """
+        Optional hook called when a trajectory ends.
+        Override to compute trajectory-level computations (e.g., GAE).
+        Returns:
+            Optional dict of computed values to store in buffer.
+        """
+        return None
 
     def clear(self):
         pass
@@ -172,6 +161,17 @@ class StackedInputProcessor(InputProcessor):
                 return None
             data.update(result)
         return data
+
+    def finish_trajectory(self, buffers, trajectory_slice, **kwargs):
+        """
+        Calls finish_trajectory on all processors, aggregating results.
+        """
+        result = {}
+        for p in self.processors:
+            traj_result = p.finish_trajectory(buffers, trajectory_slice, **kwargs)
+            if traj_result:
+                result.update(traj_result)
+        return result
 
     def get_processor(self, processor_type):
         """
@@ -292,8 +292,8 @@ class FilterKeysInputProcessor(InputProcessor):
 
 class TerminationFlagsInputProcessor(InputProcessor):
     """
-    Ensures 'terminated'/'truncated' and 'dones' flags are present for transition pipelines.
-    Computes an authoritative 'done' if missing.
+    Ensures 'terminated'/'truncated' flags are present for transition pipelines.
+    Defaults are conservative and backward-compatible with older call sites.
     """
 
     def __init__(
@@ -307,22 +307,9 @@ class TerminationFlagsInputProcessor(InputProcessor):
         self.truncated_key = truncated_key
 
     def process_single(self, **kwargs):
-        # 1. Read explicitly provided flags
-        terminated = bool(kwargs.get(self.terminated_key))
-        truncated = bool(kwargs.get(self.truncated_key))
-
-        assert (
-            terminated is not None and truncated is not None
-        ), "terminated and truncated flags must be present"
-
-        # 2. Compute authoritative done
-        is_done = terminated or truncated
-
-        # 3. Explicitly inject ALL keys back into kwargs
-        kwargs[self.terminated_key] = terminated
-        kwargs[self.truncated_key] = truncated
-        kwargs[self.done_key] = is_done
-
+        done = bool(kwargs.get(self.done_key, False))
+        kwargs[self.terminated_key] = bool(kwargs.get(self.terminated_key, done))
+        kwargs[self.truncated_key] = bool(kwargs.get(self.truncated_key, False))
         return kwargs
 
 
@@ -388,23 +375,22 @@ class NStepInputProcessor(InputProcessor):
         final_terminated = buffer[-1].get(self.terminated_key, final_done)
         final_truncated = buffer[-1].get(self.truncated_key, False)
 
-        # Corrected N-Step Summation (Forward)
-        for i, transition in enumerate(list(buffer)):
+        # Iterate reversed from newest to oldest
+        for transition in reversed(list(buffer)):
             r = transition.get(self.reward_key, 0.0)
             d = transition.get(self.done_key, False)
 
-            # Apply discount based on step index (gamma^i * r_i)
-            final_reward += (self.gamma**i) * r
-
             # If a step was terminal, it cuts the n-step chain
             if d:
+                final_reward = r
                 final_next_obs = transition.get("next_observations")
                 final_next_info = transition.get("next_infos")
                 final_next_legal_moves = transition.get("next_legal_moves")
                 final_done = True
                 final_terminated = transition.get(self.terminated_key, True)
                 final_truncated = transition.get(self.truncated_key, False)
-                break
+            else:
+                final_reward = r + self.gamma * final_reward
 
         # 2. Prepare the output
         # The output is the oldest transition, but with updated reward/next_obs/done
@@ -867,59 +853,104 @@ class ObservationDecompressionProcessor(OutputProcessor):
 
 
 class GAEProcessor(InputProcessor):
+    """
+    Computes Generalized Advantage Estimation (GAE) at trajectory end.
+    Passes through single steps unchanged, then finalizes with GAE calculation.
+    """
+
     def __init__(self, gamma, gae_lambda):
         self.gamma = gamma
         self.gae_lambda = gae_lambda
 
     def process_single(self, *args, **kwargs):
-        # We only compute GAE on full sequences/chunks
         return kwargs
 
     def process_sequence(self, sequence, **kwargs):
-        # 1. Fail-Fast Boundary Check
-        # If the episode hasn't ended, the actor MUST provide the bootstrap value.
-        is_terminal = bool(sequence.terminated_history[-1]) or bool(
-            sequence.done_history[-1]
+        """
+        Computes GAE over a full sequence of transitions.
+        """
+        transitions = kwargs.get("transitions")
+        if transitions is None:
+            transitions = self._sequence_to_transitions(sequence)
+
+        if transitions is None or len(transitions) == 0:
+            return {"transitions": []}
+
+        # Extract rewards and values
+        rewards_np = np.array(
+            [t.get("rewards", 0.0) for t in transitions], dtype=np.float32
+        )
+        values_np = np.array(
+            [t.get("values", 0.0) for t in transitions], dtype=np.float32
         )
 
-        if not is_terminal:
-            assert (
-                "bootstrap_value" in kwargs
-            ), "[Fail-Fast] Unfinished PPO chunk requires a bootstrap_value in kwargs!"
-            last_val = kwargs["bootstrap_value"]
+        # PPO usually expects a last value for the next state of the final transition.
+        # Check if sequence has value_history that is n+1 long
+        if (
+            sequence is not None
+            and hasattr(sequence, "value_history")
+            and len(sequence.value_history) > len(transitions)
+        ):
+            last_value = sequence.value_history[-1]
         else:
-            last_val = 0.0
+            last_value = 0.0
 
-        # 2. Extract arrays from the sequence object
-        rewards = np.array(sequence.rewards, dtype=np.float32)
-        values = np.array(sequence.value_history, dtype=np.float32)
+        dones_np = np.array([t.get("dones", False) for t in transitions], dtype=bool)
 
-        # 4. Calculate GAE and Returns using pure math from functional/advantages.py
-        from agents.learner.functional.advantages import compute_gae
+        rewards_pad = np.append(rewards_np, last_value)
+        values_pad = np.append(values_np, last_value)
 
-        advantages, returns = compute_gae(
-            rewards=rewards,
-            values=values,
-            bootstrap_value=last_val,
-            gamma=self.gamma,
-            gae_lambda=self.gae_lambda,
+        # Vectorized GAE
+        deltas = (
+            rewards_pad[:-1]
+            + self.gamma * values_pad[1:] * (~dones_np)
+            - values_pad[:-1]
         )
 
-        # 7. Package the flattened transitions for the Replay Buffer
-        processed_transitions = []
-        for i in range(len(rewards)):
-            processed_transitions.append(
-                {
-                    "observations": sequence.observation_history[i],
-                    "actions": sequence.action_history[i],
-                    "log_prob": sequence.log_prob_history[i],  # Unified singular key
-                    "values": values[i],  # Old values needed for Value Clipping
-                    "advantages": advantages[i],
-                    "returns": returns[i],  # Target for Value Loss
-                }
-            )
+        advantages = discounted_cumulative_sums(
+            deltas, self.gamma * self.gae_lambda
+        ).copy()
+        returns = discounted_cumulative_sums(rewards_pad, self.gamma).copy()[:-1]
 
-        return {"transitions": processed_transitions}
+        adv_list = advantages.tolist()
+        ret_list = returns.tolist()
+        for t, adv, ret in zip(transitions, adv_list, ret_list):
+            t["advantages"] = adv
+            t["returns"] = ret
+            t["old_log_probs"] = t["policies"]
+
+        return {"transitions": transitions}
+
+    def finish_trajectory(self, buffers, trajectory_slice, last_value=0):
+        """
+        Compute GAE advantages and returns for a trajectory segment in old single-step mode.
+        """
+        rewards = torch.cat(
+            (
+                buffers["rewards"][trajectory_slice],
+                torch.tensor([last_value], dtype=torch.float32),
+            )
+        )
+        values = torch.cat(
+            (
+                buffers["values"][trajectory_slice],
+                torch.tensor([last_value], dtype=torch.float32),
+            )
+        )
+
+        deltas = rewards[:-1] + self.gamma * values[1:] - values[:-1]
+
+        deltas_np = deltas.detach().cpu().numpy()
+        rewards_np = rewards.detach().cpu().numpy()
+
+        advantages = torch.from_numpy(
+            discounted_cumulative_sums(deltas_np, self.gamma * self.gae_lambda).copy()
+        ).to(torch.float32)
+        returns = torch.from_numpy(
+            discounted_cumulative_sums(rewards_np, self.gamma).copy()
+        ).to(torch.float32)[:-1]
+
+        return {"advantages": advantages, "returns": returns}
 
 
 # ==========================================
@@ -1020,12 +1051,12 @@ class NStepUnrollProcessor(OutputProcessor):
             > 0
         )
 
-        # NOTE: Old MuZero parity testing only. Restrict obs/value targets to the
-        # old contract that excluded post-terminal steps.
+        # Obs/Value Mask: Valid states (including terminal states), consistent with game ID and episode boundary
         obs_mask = same_game & (~post_done_mask)
 
-        # Dynamics/Policy Mask: Valid transitions (excluding terminal states and post-terminal)
-        dynamics_mask = same_game & (~post_done_mask) & (~raw_dones)
+        # Dynamics/Policy Mask: Valid transitions (excluding terminal states)
+        # We cannot predict next state or policy FROM a terminal state
+        dynamics_mask = obs_mask & (~raw_dones)
 
         # 5. Compute N-Step Targets
         target_values, target_rewards = self._compute_n_step_targets(
@@ -1063,18 +1094,16 @@ class NStepUnrollProcessor(OutputProcessor):
         for u in range(self.unroll_steps + 1):
             is_consistent = dynamics_mask[:, u]
 
-            raw_p = raw_policies[:, u]
-            target_policies[is_consistent, u] = raw_p[is_consistent]
-            # NOTE: Old MuZero parity testing only. Restore the legacy fallback so
-            # invalid policy rows do not become all-zero training targets.
+            target_policies[is_consistent, u] = raw_policies[is_consistent, u]
             target_policies[~is_consistent, u] = 1.0 / self.num_actions
 
+            # To_play targets: valid at non-root states within the same game,
+            # including terminal (terminal has a valid "whose turn" answer).
+            # Zeroed at root (u=0) and post-terminal.
+            is_consistent_tp = (u > 0) & (~post_done_mask[:, u]) & same_game[:, u]
             tp_indices = torch.clamp(raw_to_plays[:, u].long(), 0, self.num_players - 1)
             target_to_plays[range(batch_size), u, tp_indices] = 1.0
-
-            # NOTE: Old MuZero parity testing only. Restore the legacy masking
-            # contract that drops terminal/post-terminal to-play targets.
-            target_to_plays[~is_consistent, u] = 0
+            target_to_plays[~is_consistent_tp, u] = 0
 
             target_dones[is_consistent, u] = raw_dones[is_consistent, u]
             target_dones[~is_consistent, u] = True
@@ -1088,12 +1117,6 @@ class NStepUnrollProcessor(OutputProcessor):
                 target_actions[~is_consistent, u] = int(
                     np.random.randint(0, self.num_actions)
                 )
-
-        # Contract: Initial state (root) should always have a terminal flag of False
-        # to correctly signal state/mask resets in recurrent unrolls.
-        assert not target_dones[
-            :, 0
-        ].all(), "Initial state (root) should always have a terminal flag of False"
 
         # 7. Unroll Observations
         obs_indices = all_indices[:, : self.unroll_steps + 1]
@@ -1109,19 +1132,9 @@ class NStepUnrollProcessor(OutputProcessor):
                     is_absorbing, step - 1
                 ]
 
-        # 8. Chance Encoder Inputs
-        # Stack current and next observations along the channel dimension (dim=2)
-        # resulting in [B, T, 2*C, H, W]
-        chance_encoder_inputs = None
-        if self.unroll_steps > 0:
-            chance_encoder_inputs = torch.cat(
-                [unroll_observations[:, :-1], unroll_observations[:, 1:]], dim=2
-            )
-
         return dict(
             observations=buffers["observations"][indices_tensor],
             unroll_observations=unroll_observations,
-            chance_encoder_inputs=chance_encoder_inputs,
             has_valid_obs_mask=obs_valid_mask,
             has_valid_action_mask=dynamics_mask[:, : self.unroll_steps + 1],
             rewards=target_rewards,
@@ -1150,29 +1163,201 @@ class NStepUnrollProcessor(OutputProcessor):
         device,
     ):
         """
-        Delegates to pure math in functional/returns.py
+        Vectorized N-step target calculation.
         """
-        from agents.learner.functional.returns import compute_unrolled_n_step_targets
+        # 1. Setup Dimensions and Windows
+        num_windows = self.unroll_steps + 1
+        n_step = self.n_step
+        gamma = self.gamma
 
-        return compute_unrolled_n_step_targets(
-            raw_rewards=raw_rewards,
-            raw_values=raw_values,
-            raw_to_plays=raw_to_plays,
-            raw_terminated=raw_terminated | raw_truncated,
-            valid_mask=valid_mask,
-            gamma=self.gamma,
-            n_step=self.n_step,
-            unroll_steps=self.unroll_steps,
-            lstm_horizon_len=self.lstm_horizon_len,
-            value_prefix=self.value_prefix,
+        # Pre-compute gamma vector: [1, g, g^2, ..., g^(n-1)]
+        # Shape: [1, 1, n_step]
+        gammas = (
+            gamma ** torch.arange(n_step, dtype=torch.float32, device=device)
+        ).reshape(1, 1, n_step)
+
+        # 2. Slice/Pad inputs to ensure we don't go out of bounds for the unfold
+        # The 'raw' tensors typically have length >= num_windows + n_step
+        # We need to create 'num_windows' windows of size 'n_step'.
+        # The length required for this is: num_windows + n_step - 1.
+
+        required_len = num_windows + n_step - 1
+        raw_dones = raw_terminated | raw_truncated
+
+        # Helper to pad if needed
+        def safe_slice_unfold(tensor, length, size, step):
+            if tensor.shape[1] < length:
+                pad_len = length - tensor.shape[1]
+                # Pad last dim (time)
+                # pad format: (pad_left, pad_right, pad_top, pad_bottom...)
+                # we want to pad dim 1. 2D tensor (B, L) -> (0, pad_len)
+                # 3D tensor (B, L, C) -> (0, 0, 0, pad_len) ?? No, F.pad works on last dim first.
+                if tensor.dim() == 2:
+                    tensor = torch.nn.functional.pad(tensor, (0, pad_len))
+                elif tensor.dim() == 3:
+                    # (B, L, C) -> pad L means pad dim 1.
+                    # F.pad(dHW, dC, dL, dB) order?
+                    # "Padding size: The padding size by which to pad some dimensions of input are described starting from the last dimension and moving forward."
+                    # For (B, L, C): last is C (pad 0,0). Next is L (pad 0, pad_len).
+                    tensor = torch.nn.functional.pad(tensor, (0, 0, 0, pad_len))
+
+            return tensor[:, :length].unfold(1, size, step)
+
+        # [B, num_windows, n_step]
+        rewards_windows = safe_slice_unfold(raw_rewards, required_len, n_step, 1)
+        to_plays_windows = safe_slice_unfold(raw_to_plays, required_len, n_step, 1)
+        dones_windows = safe_slice_unfold(raw_dones, required_len, n_step, 1)
+        valid_windows = safe_slice_unfold(valid_mask, required_len, n_step, 1)
+
+        # Current ToPlay for each window start (u)
+        # We need raw_to_plays to be long enough for simple indexing too
+        if raw_to_plays.shape[1] < num_windows:
+            raw_to_plays = torch.nn.functional.pad(
+                raw_to_plays, (0, num_windows - raw_to_plays.shape[1])
+            )
+
+        # Shape: [B, num_windows, 1]
+        current_to_plays = raw_to_plays[:, :num_windows].unsqueeze(2)
+
+        # 3. Compute Value Masks
+        # Game Boundary Mask (from valid_mask) & Done Mask
+        # We need to compute a mask that handles the "break" when a done occurs.
+        # Original logic:
+        #   valid = valid_mask & (~has_ended)
+        #   has_ended |= done & valid
+
+        # This implies:
+        # - If done[k] is True, then mask[k] is VALID (we count the terminal reward).
+        # - But mask[k+1] and onwards are INVALID.
+
+        dones_float = dones_windows.float()
+        # cumsum gives [0, 0, 1, 1] for dones [0, 0, 1, 0]
+        # We want to forbid steps AFTER the first done.
+        # Shift cumsum right by 1 to get "was done before this step?"
+        was_done_before = torch.cat(
+            [
+                torch.zeros((batch_size, num_windows, 1), device=device),
+                torch.cumsum(dones_float, dim=2)[:, :, :-1],
+            ],
+            dim=2,
         )
 
+        # Check if "was done before" > 0 or if "was done before" depends on valid mask?
+        # Typically simple cumsum is enough if we assume raw_dones are correct.
 
-# TODO: shoud we remove this?
-class PPOBatchProcessor(OutputProcessor):
+        # Valid Reward Steps:
+        # 1. Original valid_mask is True (same game)
+        # 2. No done happened BEFORE this step in the window
+        valid_steps_mask = valid_windows & (was_done_before == 0)
+
+        # 4. Compute Discounted Rewards
+        # Player Sign: compared to current_to_play
+        # [B, W, N]
+        signs = torch.where(current_to_plays == to_plays_windows, 1.0, -1.0)
+
+        # Weighted Rewards
+        # sum(gamma^k * R_k * sign_k * valid_k)
+
+        weighted_rewards = rewards_windows * gammas * signs * valid_steps_mask.float()
+
+        # [B, num_windows]
+        summed_rewards = weighted_rewards.sum(dim=2)
+
+        # 5. Compute Bootstrap Value
+        # Value at u + n_step (the boot_idx)
+        # Boot indices: u + n_step
+        boot_indices = torch.arange(n_step, n_step + num_windows, device=device)
+        # Clamp to safeguard against OOB (though logic should prevent using it)
+        safe_boot_indices = torch.clamp(boot_indices, max=raw_values.shape[1] - 1)
+
+        # [B, num_windows]
+        boot_values = raw_values[:, safe_boot_indices]
+        boot_to_plays = raw_to_plays[:, safe_boot_indices]
+
+        # Bootstrap Validity:
+        # 1. Boot index must be within valid range (num_windows + n_step < max_size ideally)
+        # 2. boot index valid_mask must be true
+        # 3. Game must NOT have ended inside the n_step window.
+
+        # Check if any done occurred in the valid part of the window
+        # If valid_steps_mask has valid done, it's fine for reward, but kills bootstrap.
+        # If any 'done' & 'valid' occurred in window -> no bootstrap.
+        # We can sum up (dones_windows & valid_steps_mask).
+        # If > 0, then we hit a done.
+        terminated_windows = safe_slice_unfold(raw_terminated, required_len, n_step, 1)
+        hit_terminated_in_window = (
+            terminated_windows.float() * valid_steps_mask.float()
+        ).sum(dim=2) > 0
+
+        boot_is_valid = (
+            valid_mask[:, safe_boot_indices]
+            & (~hit_terminated_in_window)
+            & (~raw_terminated[:, safe_boot_indices])
+        )
+
+        # Boot Sign
+        boot_signs = torch.where(
+            current_to_plays.squeeze(2) == boot_to_plays, 1.0, -1.0
+        )
+
+        boot_term = (gamma**n_step) * boot_values * boot_signs
+
+        # Final Target Values
+        target_values = summed_rewards + torch.where(
+            boot_is_valid, boot_term, torch.tensor(0.0, device=device)
+        )
+
+        # Grounding: Ensure that any targets for padded steps (past game end) are explicitly 0.0
+        # This is important for "safe absorbing states" logic where we want to learn V(s_absorbing) = 0
+        target_values = target_values * valid_mask[:, :num_windows].float()
+
+        # 6. Target Rewards (Value Prefix or Instant)
+        target_rewards = torch.zeros(
+            (batch_size, num_windows), dtype=torch.float32, device=device
+        )
+
+        if self.value_prefix and self.lstm_horizon_len > 0:
+            # Reimplement prefix accumulation loop (fast enough for small unroll_steps)
+            prefix_sum = torch.zeros(batch_size, device=device)
+            horizon_id = 0
+
+            for u in range(1, num_windows):
+                if horizon_id % self.lstm_horizon_len == 0:
+                    prefix_sum = torch.zeros(batch_size, device=device)
+                horizon_id += 1
+
+                # Reward at u-1
+                if (u - 1) < raw_rewards.shape[1]:
+                    # We assume raw_rewards are valid for the prefix calculation
+                    # (ignoring valid_mask logic here as per original implementation appearance
+                    # or assuming consistency)
+                    prefix_sum = prefix_sum + raw_rewards[:, u - 1]
+
+                # Check if the TRANSITION to this node is valid (state u-1 must be non-terminal)
+                is_valid = valid_mask[:, u - 1]
+                target_rewards[is_valid, u] = prefix_sum[is_valid]
+        else:
+            # Standard: target_rewards[u] = raw_rewards[u-1]
+            # The reward at step u is for the transition FROM state u-1,
+            # so validity is determined by dynamics_mask at position u-1.
+            t_rew = raw_rewards[:, : num_windows - 1]
+            mask_slice = valid_mask[:, : num_windows - 1]  # positions 0..K-1
+
+            # We assign to target_rewards[:, 1:]
+            # But we must respect the mask
+            # Safe way: fill zero, then assign masked
+
+            # Slice match: [B, num_windows-1]
+            target_slice = torch.zeros_like(target_rewards[:, 1:])
+            target_slice[mask_slice] = t_rew[mask_slice]
+            target_rewards[:, 1:] = target_slice
+
+        return target_values, target_rewards
+
+
+class AdvantageNormalizer(OutputProcessor):
     """
-    Formats batches for policy gradient methods.
-    Does NOT normalize advantages (handled at the mini-batch iterator level).
+    Normalizes advantages and formats batches for policy gradient methods.
     """
 
     def process_batch(
@@ -1181,11 +1366,16 @@ class PPOBatchProcessor(OutputProcessor):
         # In PPO we usually sample the whole filled rollout and then minibatch in the learner.
         sl = slice(None) if indices is None else indices
 
+        advantages = buffers["advantages"][sl].to(torch.float32)
+        advantage_mean = advantages.mean()
+        advantage_std = advantages.std()
+        normalized_advantages = (advantages - advantage_mean) / (advantage_std + 1e-10)
+
         return dict(
             observations=buffers["observations"][sl],
             actions=buffers["actions"][sl],
-            advantages=buffers["advantages"][sl],
+            advantages=normalized_advantages,
             returns=buffers["returns"][sl],
-            log_prob=buffers["log_prob"][sl],
+            old_log_probs=buffers["old_log_probs"][sl],
             legal_moves_masks=buffers["legal_moves_masks"][sl],
         )

@@ -1,141 +1,79 @@
-from typing import Tuple, Literal, Union, List, Optional
+from typing import Tuple
 import torch
-from torch import nn, Tensor
-from modules.utils import build_normalization_layer, calculate_same_padding, unpack
-from configs.modules.backbones.conv import ConvConfig
-from configs.modules.backbones.deconv import DeconvConfig
+from torch import nn
+from old_muzero.modules.blocks.conv import Conv2dStack
+from old_muzero.configs.modules.backbones.conv import ConvConfig
 
 
 class ConvBackbone(nn.Module):
-    """Standard Convolutional backbone implementation."""
+    """Standard Convolutional backbone implementation using Conv2dStack."""
 
-    def __init__(
-        self,
-        input_shape: Tuple[int, ...],
-        filters: List[int],
-        kernel_sizes: List[int],
-        strides: List[int],
-        norm_type: str = "batch",
-        activation: nn.Module = nn.ReLU(),
-        noisy_sigma: float = 0.0,
-        **kwargs,
-    ):
+    def __init__(self, config: ConvConfig, input_shape: Tuple[int, ...]):
         super().__init__()
+        self.config = config
         self.input_shape = input_shape
-        self.noisy = noisy_sigma != 0
 
-        layers = []
-        current_input_channels = input_shape[0]
-        h, w = input_shape[1], input_shape[2]
-        
-        for i in range(len(filters)):
-            # Padding calculation
-            manual_padding, torch_padding = calculate_same_padding(
-                (h, w), kernel_sizes[i], strides[i]
-            )
+        self.stack = Conv2dStack(
+            input_shape=input_shape,
+            filters=config.filters,
+            kernel_sizes=config.kernel_sizes,
+            strides=config.strides,
+            activation=config.activation,
+            noisy_sigma=config.noisy_sigma,
+            norm_type=config.norm_type,
+        )
 
-            # Bias rule: bias=False if followed by normalization
-            use_bias = norm_type == "none"
+        # Calculate output shape (C, H, W)
+        # Conv2dStack uses padding='same' (via calculate_same_padding)
+        curr_h, curr_w = input_shape[1], input_shape[2]
+        for stride in config.strides:
+            curr_h = (curr_h + stride - 1) // stride
+            curr_w = (curr_w + stride - 1) // stride
 
-            # Convolutional layer
-            conv = nn.Conv2d(
-                in_channels=current_input_channels,
-                out_channels=filters[i],
-                kernel_size=kernel_sizes[i],
-                stride=strides[i],
-                padding=torch_padding if torch_padding is not None else 0,
-                bias=use_bias,
-            )
-
-            # Normalization layer
-            norm_layer = build_normalization_layer(norm_type, filters[i], dim=2)
-
-            # Construct sequential block for this stage
-            if manual_padding is None:
-                stage = nn.Sequential(conv, norm_layer, activation)
-            else:
-                stage = nn.Sequential(
-                    nn.ZeroPad2d(manual_padding),
-                    conv,
-                    norm_layer,
-                    activation,
-                )
-
-            layers.append(stage)
-            current_input_channels = filters[i]
-
-            # Update spatial dimensions for next iteration
-            stride_h, stride_w = unpack(strides[i])
-            h = (h + stride_h - 1) // stride_h
-            w = (w + stride_w - 1) // stride_w
-
-        self.model = nn.Sequential(*layers)
-        self.output_shape = (current_input_channels, h, w)
+        self.output_shape = (self.stack.output_channels, curr_h, curr_w)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Standard forward pass for a feature extraction backbone."""
-        assert x.dim() == len(self.input_shape) + 1, f"ConvBackbone input must be (Batch, *input_shape), got shape {x.shape}"
-        return self.model(x)
+        return self.stack(x)
+
 
     def reset_noise(self) -> None:
-        if not self.noisy:
-            return
-        for m in self.model.modules():
-            if hasattr(m, "reset_noise"):
-                m.reset_noise()
+        self.stack.reset_noise()
 
 
 class DeconvBackbone(nn.Module):
-    """Backbone for upscaling/decoding tasks."""
+    """
+    Backbone for upscaling/decoding tasks (e.g. Dreamer decoder).
+    Wraps ConvTranspose2dStack.
+    """
 
-    def __init__(
-        self,
-        input_shape: Tuple[int, ...],
-        filters: List[int],
-        kernel_sizes: List[int],
-        strides: List[int],
-        output_padding: Optional[List[int]] = None,
-        norm_type: str = "batch",
-        activation: nn.Module = nn.ReLU(),
-        **kwargs,
-    ):
+    def __init__(self, config: "DeconvConfig", input_shape: Tuple[int, ...]):
         super().__init__()
+        self.config = config
         self.input_shape = input_shape
 
-        layers = []
-        current_input_channels = input_shape[0]
-        op_list = output_padding if output_padding is not None else [0] * len(filters)
+        # Late import to avoid circular dependency
+        from old_muzero.modules.blocks.conv import ConvTranspose2dStack
 
-        for i in range(len(filters)):
-            k = unpack(kernel_sizes[i])
-            s = unpack(strides[i])
-            op = unpack(op_list[i])
+        self.stack = ConvTranspose2dStack(
+            input_shape=input_shape,
+            filters=config.filters,
+            kernel_sizes=config.kernel_sizes,
+            strides=config.strides,
+            activation=config.activation,
+            norm_type=config.norm_type,
+            output_padding=config.output_padding,
+        )
 
-            use_bias = norm_type == "none"
-            conv = nn.ConvTranspose2d(
-                in_channels=current_input_channels,
-                out_channels=filters[i],
-                kernel_size=k,
-                stride=s,
-                padding=0,
-                output_padding=op,
-                bias=use_bias,
-            )
-
-            norm_layer = build_normalization_layer(norm_type, filters[i], dim=2)
-            layers.append(nn.Sequential(conv, norm_layer, activation))
-            current_input_channels = filters[i]
-
-        self.model = nn.Sequential(*layers)
         self.output_shape = self._get_output_shape()
 
     def _get_output_shape(self) -> Tuple[int, ...]:
+        # Dummy forward pass to determine output shape if not explicitly provided
         with torch.no_grad():
-            dummy = torch.zeros(1, *self.input_shape)
-            out = self.model(dummy)
+            dummy = torch.zeros(
+                1, *self.input_shape, device=self.stack._layers[0][0].weight.device
+            )
+            out = self.stack(dummy)
             return tuple(out.shape[1:])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Standard forward pass for a feature extraction backbone."""
-        assert x.dim() == len(self.input_shape) + 1, f"DeconvBackbone input must be (Batch, *input_shape), got shape {x.shape}"
-        return self.model(x)
+        return self.stack(x)

@@ -1,10 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 import torch
 import torch.nn as nn
 from torch import Tensor
-import math
-import numpy as np
 
 
 class BaseTargetBuilder(ABC):
@@ -39,7 +37,7 @@ class SingleStepFormatter(BaseTargetBuilder):
             "q_values",
             "returns",
             "advantages",
-            "log_prob",
+            "old_log_probs",
         ]
 
     def build_targets(
@@ -96,20 +94,23 @@ class TargetBuilderPipeline(BaseTargetBuilder):
         network: nn.Module,
         current_targets: Dict[str, torch.Tensor],
     ) -> None:
-        all_generated_keys = set()
         for builder in self.builders:
+            # Capture keys before mutation to check for illegal collisions
             pre_keys = set(current_targets.keys())
+
             builder.build_targets(batch, predictions, network, current_targets)
 
+            # The Fail-Fast Collision Check
             new_keys = set(current_targets.keys()) - pre_keys
-            collisions = all_generated_keys.intersection(new_keys)
+            collisions = pre_keys.intersection(new_keys)
 
             # Anchors are allowed to be updated by subsequent builders
             collisions -= {"weights", "gradient_scales"}
             if collisions:
-                raise RuntimeError(...)
-
-            all_generated_keys.update(new_keys)
+                raise RuntimeError(
+                    f"TargetBuilder collision! Builder {builder.__class__.__name__} tried to overwrite keys: {collisions}. "
+                    "Ensure builders have disjoint responsibilities."
+                )
 
 
 class TemporalDifferenceBuilder(BaseTargetBuilder):
@@ -150,44 +151,35 @@ class TemporalDifferenceBuilder(BaseTargetBuilder):
         with torch.inference_mode():
             # Double DQN: Use online network for action selection
             online_next_out = network.learner_inference({"observations": next_obs})
-            # Handle potential variation in Q-value naming
-            next_q = online_next_out.get("q_values", online_next_out.get("q_logits"))
-
-            # Cleanly strip temporal dimension if present: [B, 1, Actions] -> [B, Actions]
-            if next_q.dim() == 3 and next_q.shape[1] == 1:
-                next_q = next_q.squeeze(1)
-
-            if next_masks is not None:
-                if next_masks.dim() == 3 and next_masks.shape[1] == 1:
-                    next_masks = next_masks.squeeze(1)
-                next_q = next_q.masked_fill(~next_masks.bool(), -float("inf"))
-
-            next_actions = next_q.argmax(dim=-1)
+            next_q_values = online_next_out["q_values"]
 
             # Use target network for value estimation
             target_out = self.target_network.learner_inference(
                 {"observations": next_obs}
             )
-            target_q = target_out.get("q_values", target_out.get("q_logits"))
-            if target_q.dim() == 3 and target_q.shape[1] == 1:
-                target_q = target_q.squeeze(1)
+            target_q_values = target_out["q_values"]
 
-        from agents.learner.functional.targets import compute_td_target
+        # Ensure shapes are [B, Actions]
+        if next_q_values.dim() == 3:
+            next_q_values = next_q_values.squeeze(1)
+        if target_q_values.dim() == 3:
+            target_q_values = target_q_values.squeeze(1)
 
-        max_next_q = target_q[
+        if next_masks is not None:
+            next_q_values = next_q_values.masked_fill(~next_masks.bool(), -float("inf"))
+
+        next_actions = next_q_values.argmax(dim=-1)
+        max_next_q = target_q_values[
             torch.arange(batch_size, device=rewards.device), next_actions
         ]
 
-        # Use pure math from functional/targets.py
-        target_q_val = compute_td_target(
-            rewards, terminal_mask, max_next_q, self.gamma, self.n_step
-        )
+        target_q = rewards + (1 - terminal_mask.float()) * discount * max_next_q
 
-        # Whitelist the mathematical labels required for the loss pipeline
-        if "q_values" in current_targets:
-            raise RuntimeError("Collision on 'q_values' in TemporalDifferenceBuilder.")
+        # Whitelist the mathematical labels required for the loss
+        if "values" in current_targets:
+            raise RuntimeError("Collision on 'values' in TemporalDifferenceBuilder.")
 
-        current_targets["q_values"] = target_q_val
+        current_targets["values"] = target_q
         current_targets["rewards"] = rewards
         current_targets["dones"] = terminal_mask.float()
         current_targets["next_actions"] = next_actions
@@ -230,58 +222,54 @@ class DistributionalTargetBuilder(BaseTargetBuilder):
         batch_size = rewards.shape[0]
         discount = self.gamma**self.n_step
 
-        # We need the representation to compute expected Q-values for action selection
-        representation = network.components["behavior_heads"]["q_logits"].representation
-
         with torch.inference_mode():
-            # Double DQN: Use online network for action selection
+            # Double DQN: Use online network for action selection (argmax a' over Q)
+            # Use learner_inference to get [B, Actions] q_values
             online_next_out = network.learner_inference({"observations": next_obs})
-            next_q_logits = online_next_out["q_logits"]
-
-            # Cleanly strip temporal dimension if present: [B, 1, Actions, Atoms] -> [B, Actions, Atoms]
-            if next_q_logits.dim() == 4 and next_q_logits.shape[1] == 1:
-                next_q_logits = next_q_logits.squeeze(1)
-
-            # Get Expected Q-Values for argmax (resolves the bug of argmaxing the atoms dim)
-            expected_next_q = representation.to_expected_value(next_q_logits)
+            next_q_values = online_next_out["q_values"]
+            if next_q_values.ndim == 3:
+                next_q_values = next_q_values.squeeze(1)
 
             if next_masks is not None:
-                if next_masks.dim() == 3 and next_masks.shape[1] == 1:
-                    next_masks = next_masks.squeeze(1)
-                expected_next_q = expected_next_q.masked_fill(
+                next_q_values = next_q_values.masked_fill(
                     ~next_masks.bool(), -float("inf")
                 )
-
-            # Argmax over expected values: [B, Actions] -> [B]
-            next_actions = expected_next_q.argmax(dim=-1)
+            next_actions = next_q_values.argmax(dim=-1)
 
             # Target network evaluation: Get probabilities of atoms for the chosen action
             target_out = self.target_network.learner_inference(
                 {"observations": next_obs}
             )
-            target_next_logits = target_out["q_logits"]
+            next_q_logits = target_out["q_logits"]  # [B, 1, Actions, Atoms]
+            if next_q_logits.ndim == 4:
+                next_q_logits = next_q_logits.squeeze(1)
 
-            if target_next_logits.dim() == 4 and target_next_logits.shape[1] == 1:
-                target_next_logits = target_next_logits.squeeze(1)
+            # [B, Actions, Atoms] -> [B, Atoms]
+            next_probs = torch.softmax(
+                next_q_logits[
+                    torch.arange(batch_size, device=rewards.device), next_actions
+                ],
+                dim=-1,
+            )
 
-            # Extract logits for chosen actions: [B, Actions, Atoms] -> [B, Atoms]
-            chosen_next_logits = target_next_logits[
-                torch.arange(batch_size, device=rewards.device), next_actions
-            ]
+        # 2. Get the base grid geometry from the network's representation
+        # It MUST be a C51Representation (or similar with support)
+        representation = network.components["q_head"].representation
+        assert hasattr(
+            representation, "project_onto_grid"
+        ), "DistributionalTargetBuilder requires a representation with project_onto_grid API."
 
-            # Compute probabilities for the projected atoms
-            next_probs = torch.softmax(chosen_next_logits, dim=-1)
+        base_support = representation.support.to(rewards.device)
 
-        from agents.learner.functional.targets import compute_c51_target
+        # 3. Do the MDP Math: Shift the support! (Tz = r + gamma * z)
+        # [B, 1] + [B, 1] * [1, Atoms] -> [B, Atoms]
+        shifted_support = rewards.unsqueeze(1) + discount * (
+            1.0 - terminal_mask.float()
+        ).unsqueeze(1) * base_support.unsqueeze(0)
 
-        # Use pure math from functional/targets.py
-        target_distribution = compute_c51_target(
-            rewards=rewards,
-            next_probs=next_probs,
-            support=representation.support.to(rewards.device),
-            dones=terminal_mask,
-            gamma=self.gamma,
-            n_step=self.n_step,
+        # 4. Delegate the pure geometric projection back to the representation
+        target_distribution = representation.project_onto_grid(
+            shifted_support=shifted_support, probabilities=next_probs
         )
 
         # 5. Whitelist the labels for the loss module
@@ -323,6 +311,16 @@ class PassThroughTargetBuilder(BaseTargetBuilder):
                 current_targets[key] = batch[key]
 
 
+class MCTSExtractor(BaseTargetBuilder):
+    """Generates targets by extracting MCTS search statistics from the batch."""
+
+    def build_targets(self, batch, predictions, network, current_targets) -> None:
+        target_keys = ["values", "rewards", "policies", "actions", "to_plays"]
+        for key in target_keys:
+            if key in batch and key not in current_targets:
+                current_targets[key] = batch[key]
+
+
 class SequencePadder(BaseTargetBuilder):
     """Modifier: Pads transition-aligned data (length K) to state-aligned length (T)."""
 
@@ -349,35 +347,23 @@ class SequenceMaskBuilder(BaseTargetBuilder):
         base_mask = batch.get(
             "is_same_game", torch.ones((B, T), device=device, dtype=torch.bool)
         )
-        obs_mask = batch.get("has_valid_obs_mask")
+
         current_targets["value_mask"] = base_mask.clone()
         current_targets["masks"] = base_mask.clone()
+        current_targets["policy_mask"] = batch.get(
+            "has_valid_obs_mask", base_mask
+        ).clone()
 
-        # NOTE: Old MuZero parity testing only. Legacy policy loss used the
-        # observation-valid mask, not the action-valid mask.
-        current_targets["policy_mask"] = (
-            obs_mask.bool() if obs_mask is not None else base_mask.clone()
-        )
-
-        # Rewards are predicted everywhere except the root (t=0). 
-        # This includes terminal transition (r_k) and and transitions after terminal (r > k).
+        # Rewards are transitions; root (t=0) does not get a reward prediction
         reward_mask = base_mask.clone()
         reward_mask[:, 0] = False
         current_targets["reward_mask"] = reward_mask
 
-        # NOTE: Old MuZero parity testing only. Legacy to_play used the
-        # observation-valid mask and relied on the replay pipeline to zero out
-        # invalid targets after terminal states.
-        to_play_mask = obs_mask.bool() if obs_mask is not None else base_mask.clone()
+        # To-Play is state-aligned, but we might not want loss on the root if the representation doesn't predict it
+        to_play_mask = batch.get("has_valid_obs_mask", base_mask).clone()
         to_play_mask[:, 0] = False
-        to_play_mask &= reward_mask
+        to_play_mask &= reward_mask  # Cap at terminal states
         current_targets["to_play_mask"] = to_play_mask
-        
-        # Auxiliary masks (Consistency, Sigma, Commitment)
-        # Standard: Consistency matches to_play_mask (valid unrolled dynamics checkpoints)
-        current_targets["consistency_mask"] = to_play_mask.clone()
-        current_targets["sigma_mask"] = to_play_mask.clone()
-        current_targets["commitment_mask"] = base_mask.clone() # Usually valid for all encoded states
 
 
 class SequenceInfrastructureBuilder(BaseTargetBuilder):
@@ -445,7 +431,7 @@ class LatentConsistencyBuilder(BaseTargetBuilder):
         # NOT strict inference_mode tensors which crash loss functions.
         with torch.no_grad():
             initial_out = network.obs_inference(flat_obs)
-            real_latents = initial_out.recurrent_state["dynamics"]
+            real_latents = initial_out.network_state.dynamics
 
             # No more .clone() hacks!
             # real_latents is already safely detached.
@@ -457,41 +443,4 @@ class LatentConsistencyBuilder(BaseTargetBuilder):
         consistency_targets = normalized_targets.reshape(
             batch_size, unroll_len, -1
         ).detach()
-        current_targets["targets_latent"] = consistency_targets
-
-
-class SequenceTargetPipeline(TargetBuilderPipeline):
-    """
-    Standardizes the target pipeline for unrolled sequence algorithms (MuZero, PPO).
-    Takes the pure algorithmic builders and automatically seals them with the
-    required padding, masking, and infrastructure.
-    """
-
-    def __init__(
-        self, algorithmic_builders: List[BaseTargetBuilder], unroll_steps: int
-    ):
-        # 1. The pure math (e.g., ChanceTargetBuilder, DistributionalTargetBuilder)
-        builders = list(algorithmic_builders)
-
-        # 2. The non-negotiable infrastructure
-        builders.extend(
-            [
-                SequencePadder(unroll_steps),
-                SequenceMaskBuilder(),
-                SequenceInfrastructureBuilder(unroll_steps),
-            ]
-        )
-
-        super().__init__(builders)
-
-
-class SingleStepTargetPipeline(TargetBuilderPipeline):
-    """
-    Standardizes the target pipeline for single-step algorithms (DQN, Rainbow, SAC).
-    """
-
-    def __init__(self, algorithmic_builders: List[BaseTargetBuilder]):
-        builders = list(algorithmic_builders)
-        builders.append(SingleStepFormatter())
-
-        super().__init__(builders)
+        current_targets["consistency_targets"] = consistency_targets

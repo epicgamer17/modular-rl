@@ -1,10 +1,9 @@
-import torch
-import dataclasses
-from agents.action_selectors.selectors import BaseActionSelector
-from agents.action_selectors.types import InferenceResult
-from torch.distributions import Categorical
-from utils.schedule import create_schedule, Schedule, ScheduleConfig
 from typing import Any, Dict, Optional, Tuple
+import torch
+from old_muzero.agents.action_selectors.selectors import BaseActionSelector
+from old_muzero.agents.action_selectors.types import InferenceResult
+from torch.distributions import Categorical
+from old_muzero.utils.schedule import create_schedule, Schedule, ScheduleConfig
 
 
 class PPODecorator(BaseActionSelector):
@@ -41,6 +40,15 @@ class PPODecorator(BaseActionSelector):
 
         return action, metadata
 
+    def mask_actions(
+        self,
+        values: torch.Tensor,
+        legal_moves: Any,
+        mask_value: float = -float("inf"),
+        device: Optional[torch.device] = None,
+    ) -> torch.Tensor:
+        return self.inner_selector.mask_actions(values, legal_moves, mask_value, device)
+
     def update_parameters(self, params_dict: Dict[str, Any]) -> None:
         """
         Pass parameter updates down to the inner selector.
@@ -59,12 +67,10 @@ class TemperatureSelector(BaseActionSelector):
     Exploration=False forces temperature to 0.0 regardless of schedule.
     """
 
-    def __init__(
-        self, inner_selector: BaseActionSelector, schedule_config: ScheduleConfig
-    ):
-        super().__init__()
+    def __init__(self, inner_selector: BaseActionSelector, config: Any):
+        super().__init__(config)
         self.inner_selector = inner_selector
-        self.schedule_config = schedule_config
+        self.schedule_config: ScheduleConfig = config.temperature_schedule
         self.schedule: Schedule = create_schedule(self.schedule_config)
         self.use_training_steps: bool = self.schedule_config.with_training_steps
         self._last_step: int = -1
@@ -118,19 +124,31 @@ class TemperatureSelector(BaseActionSelector):
 
         # Apply temperature
         if temp == 0.0:
-            # Greedy selection on current logits (already masked by LegalMovesMaskDecorator)
+            mask = info.get("legal_moves_mask", info.get("legal_moves")) if info else None
+            if mask is not None:
+                logits = self.mask_actions(logits, mask)
             best_actions = logits.argmax(dim=-1)
             logits = torch.full_like(logits, -float("inf"))
             logits.scatter_(1, best_actions.unsqueeze(1), 0.0)
         elif temp != 1.0:
             logits = logits / temp
 
-        # Return a new frozen result with the heated logits
-        result = dataclasses.replace(result, logits=logits, probs=None)
+        # Write heated logits back; clear probs so downstream selector uses the new values
+        result.logits = logits
+        result.probs = None
 
         return self.inner_selector.select_action(
             result, info, exploration=exploration, **kwargs
         )
+
+    def mask_actions(
+        self,
+        values: torch.Tensor,
+        legal_moves: Any,
+        mask_value: float = -float("inf"),
+        device: Optional[torch.device] = None,
+    ) -> torch.Tensor:
+        return self.inner_selector.mask_actions(values, legal_moves, mask_value, device)
 
     def update_parameters(self, params_dict: Dict[str, Any]) -> None:
         """

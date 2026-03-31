@@ -1,5 +1,4 @@
 from __future__ import annotations
-from agents.learner.losses.shape_validator import ShapeValidator
 
 from dataclasses import dataclass, field
 import time
@@ -20,17 +19,17 @@ from torch.nn.utils import clip_grad_norm_
 
 
 if TYPE_CHECKING:
-    from agents.learner.target_builders import BaseTargetBuilder
-    from agents.learner.losses import LossPipeline
-    from agents.learner.callbacks import Callback
-    from modules.models.agent_network import AgentNetwork
+    from old_muzero.agents.learner.target_builders import BaseTargetBuilder
+    from old_muzero.agents.learner.losses import LossPipeline
+    from old_muzero.agents.learner.callbacks import Callback
+    from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
 
-from agents.learner.callbacks import (
+from old_muzero.agents.learner.callbacks import (
     CallbackList,
     EarlyStopIteration,
     MPSCacheClearCallback,
 )
-from utils.telemetry import finalize_metrics
+from old_muzero.utils.telemetry import finalize_metrics
 
 
 @dataclass
@@ -64,7 +63,8 @@ class UniversalLearner:
 
     def __init__(
         self,
-        agent_network: AgentNetwork,
+        config,
+        agent_network: ModularAgentNetwork,
         device: torch.device,
         num_actions: int,
         observation_dimensions: Tuple[int, ...],
@@ -77,11 +77,8 @@ class UniversalLearner:
         lr_scheduler: Optional[Union[Any, Dict[str, Any]]] = None,
         callbacks: Optional[List[Callback]] = None,
         clipnorm: Optional[float] = None,
-        gradient_accumulation_steps: int = 1,
-        max_grad_norm: Optional[float] = None,
-        validator_params: Optional[Dict[str, Any]] = None,
-        **kwargs,
     ):
+        self.config = config
         self.agent_network = agent_network
         self.device = device
         self.num_actions = num_actions
@@ -91,18 +88,6 @@ class UniversalLearner:
         self.target_builder = target_builder
         self.loss_pipeline = loss_pipeline
         self.clipnorm = clipnorm
-        self.gradient_accumulation_steps = gradient_accumulation_steps
-        self.max_grad_norm = max_grad_norm or clipnorm
-
-        # 5. Validation (Moved from network)
-        v_params = dict(validator_params or {})
-        if "num_players" not in v_params:
-            # Fallback to network's num_players if available
-            v_params["num_players"] = getattr(self.agent_network, "num_players", 1)
-        if "num_actions" not in v_params:
-            v_params["num_actions"] = self.num_actions
-            
-        self.validator = ShapeValidator(**v_params)
 
         # Normalize optimizers and schedulers into dictionaries
         if isinstance(optimizer, dict):
@@ -134,7 +119,7 @@ class UniversalLearner:
         mini-batches across multiple epochs. The learner just processes until
         the iterator is exhausted or a callback raises EarlyStopIteration.
         """
-        accum_steps = self.gradient_accumulation_steps
+        accum_steps = getattr(self.config, "gradient_accumulation_steps", 1)
 
         current_result: Optional[StepResult] = None
         yielded_current_result = False
@@ -155,20 +140,24 @@ class UniversalLearner:
 
                 # 2. Backward Pass (Routed to specific optimizers)
                 # We iterate over unique optimizers to avoid redundant backward passes on aggregated losses
-                losses = list(result.loss.items())
-                for i, (opt_key, total_loss) in enumerate(losses):
+                for opt_key, total_loss in result.loss.items():
+                    # CRITICAL: Scale the loss so the accumulated gradients are averaged!
                     loss_tensor = total_loss / accum_steps
 
-                    # Only retain the graph if this is NOT the last loss
-                    retain = len(losses) > 1 and i < (len(losses) - 1)
-                    loss_tensor.backward(retain_graph=retain)
+                    # Backward with retain_graph as multiple optimizers might share parameters
+                    loss_tensor.backward(retain_graph=len(result.loss) > 1)
+
                 # 3. Accumulation Boundary
                 if (step_idx + 1) % accum_steps == 0:
 
                     # Optional Gradient Clipping (Global across all parameters)
-                    if self.max_grad_norm is not None and self.max_grad_norm > 0:
+                    if self.clipnorm is not None and self.clipnorm > 0:
                         torch.nn.utils.clip_grad_norm_(
-                            self.agent_network.parameters(), self.max_grad_norm
+                            self.agent_network.parameters(), self.clipnorm
+                        )
+                    elif hasattr(self.config, "max_grad_norm"):
+                        torch.nn.utils.clip_grad_norm_(
+                            self.agent_network.parameters(), self.config.max_grad_norm
                         )
 
                     # Step and clear
@@ -186,20 +175,7 @@ class UniversalLearner:
                     # Fire on_optimizer_step_end (e.g. noisy net reset)
                     self.callbacks.on_optimizer_step_end(learner=self)
 
-                # 4. Throughput Metrics
-                t_now = time.perf_counter()
-                dt = t_now - t_last
-                t_last = t_now
-
-                # Fetch B, T from any valid prediction
-                any_pred = next(
-                    p for p in result.predictions.values() if torch.is_tensor(p)
-                )
-                B, T = any_pred.shape[:2]
-
-                result.loss_dict["learner_throughput"] = (B * T) / dt if dt > 0 else 0
-
-                # 5. Fire on_step_end
+                # 4. Fire on_step_end
                 self.callbacks.on_step_end(
                     learner=self,
                     predictions=result.predictions,
@@ -211,6 +187,19 @@ class UniversalLearner:
                 )
 
                 yielded_current_result = True
+
+                # 5. Throughput Metrics
+                t_now = time.perf_counter()
+                dt = t_now - t_last
+                t_last = t_now
+
+                # Fetch B, T from any valid prediction
+                any_pred = next(
+                    p for p in result.predictions.values() if torch.is_tensor(p)
+                )
+                B, T = any_pred.shape[:2]
+
+                result.loss_dict["learner_throughput"] = (B * T) / dt if dt > 0 else 0
                 yield self._build_step_metrics(result)
 
         except EarlyStopIteration:
@@ -232,16 +221,12 @@ class UniversalLearner:
         1. Forward Pass (Predictions)
         2. Build Targets (via TargetBuilder or passthrough)
         3. Run Loss Pipeline
-        4. Priorities
+        4. Priories
         """
         # 1. Predictions
         predictions = self.agent_network.learner_inference(batch)
 
-        # 2. Validation
-        if self.validator is not None:
-            self.validator.validate_predictions(predictions)
-
-        # 3. Targets (Strict Delegation)
+        # 2. Targets (Strict Delegation)
         # The TargetBuilder is the ONLY source of truth for the LossPipeline.
         targets: Dict[str, torch.Tensor] = {}
         if self.target_builder is not None:
@@ -252,44 +237,10 @@ class UniversalLearner:
                 current_targets=targets,  # Mutated in-place!
             )
 
-        import os
-        if os.environ.get("DEBUG_LEARNER", "0") == "1":
-            print("\n" + "="*80)
-            print(f"🧠 LEARNER DEBUG (Step {self.training_step})")
-            print("="*80)
-            
-            print("\n--- BATCH (INPUTS/MASKS) ---")
-            for k, v in batch.items():
-                if torch.is_tensor(v) and str(v.dtype) in ("torch.bool", "torch.int64", "torch.int32", "torch.int8"):
-                    # Only print discrete/boolean variables (like actions, done, valid masks) to save screen space
-                    print(f"📦 {k} {list(v.shape)}:\n{v}\n")
-            
-            print("\n--- PREDICTIONS ---")
-            for k, v in predictions.items():
-                if torch.is_tensor(v):
-                    print(f"🔸 {k} {list(v.shape)}:\n{v}\n")
-                    
-            print("\n--- TARGETS ---")
-            for k, v in targets.items():
-                if torch.is_tensor(v):
-                    print(f"🎯 {k} {list(v.shape)}:\n{v}\n")
-            
-            # Print gradient scales if present in targets (these act as masks)
-            if "gradient_scales" in targets:
-                scales = targets["gradient_scales"]
-                print("\n--- GRADIENT SCALES (MASKS) ---")
-                if isinstance(scales, dict):
-                    for k, v in scales.items():
-                        if torch.is_tensor(v):
-                            print(f"⚖️ {k} {list(v.shape)}:\n{v}\n")
-                elif torch.is_tensor(scales):
-                     print(f"⚖️ gradient_scales {list(scales.shape)}:\n{scales}\n")
-                        
-            print("="*80 + "\n")
-
+        # 3. PER weights
         weights = batch.get("weights")
         if weights is not None and torch.is_tensor(weights):
-            weights = weights.to(self.device, non_blocking=True).float().contiguous()
+            weights = weights.to(self.device).float()
 
         # 4. Loss calculation
         loss, loss_dict, priorities = self.loss_pipeline.run(
@@ -330,27 +281,29 @@ class UniversalLearner:
         self.training_step = state.get("training_step", 0)
 
         if "optimizers" in state:
-            for k, opt in self.optimizers.items():
+            for k, v in self.optimizers.items():
                 if k in state["optimizers"]:
-                    opt.load_state_dict(state["optimizers"][k])
+                    v.load_state_dict(state["optimizers"][k])
+        # Backward compatibility for old checkpoints
+        elif "optimizer" in state:
+            if "default" in self.optimizers:
+                self.optimizers["default"].load_state_dict(state["optimizer"])
 
         if "lr_schedulers" in state:
-            for k, sched in self.lr_schedulers.items():
+            for k, v in self.lr_schedulers.items():
                 if k in state["lr_schedulers"]:
-                    sched.load_state_dict(state["lr_schedulers"][k])
+                    v.load_state_dict(state["lr_schedulers"][k])
+        # Backward compatibility for old checkpoints
+        elif "lr_scheduler" in state:
+            if "default" in self.lr_schedulers:
+                self.lr_schedulers["default"].load_state_dict(state["lr_scheduler"])
 
     def _build_step_metrics(self, step_result: StepResult) -> Dict[str, Any]:
-        """Final cleanup of metrics to ensure no tensors leak to the logger."""
-        metrics = {}
-        for k, v in step_result.loss_dict.items():
-            metrics[k] = v.detach().cpu().item() if torch.is_tensor(v) else v
-
-        metrics["loss"] = sum(
-            loss.detach().cpu().item() for loss in step_result.loss.values()
-        )
+        metrics = dict(step_result.loss_dict)
+        metrics["loss"] = sum(loss.item() for loss in step_result.loss.values())
 
         finalized_metrics = finalize_metrics(step_result.meta.setdefault("metrics", {}))
-        for k, v in finalized_metrics.items():
-            metrics[k] = v.detach().cpu().item() if torch.is_tensor(v) else v
+        if finalized_metrics:
+            metrics["metrics"] = finalized_metrics
 
         return metrics

@@ -1,8 +1,6 @@
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple, Type
-from agents.workers.payloads import WorkerPayload
-import torch
 
 
 class BaseExecutor(ABC):
@@ -28,37 +26,33 @@ class BaseExecutor(ABC):
         pass  # pragma: no cover
 
     @abstractmethod
-    def update_parameters(
-        self,
-        weights: Optional[Dict[str, torch.Tensor]] = None,
-        hyperparams: Optional[Dict[str, Any]] = None,
+    def update_weights(
+        self, state_dict: Dict[str, Any], params: Optional[Dict[str, Any]] = None
     ):
-        """Updates the weights and/or hyperparameters of the workers."""
+        """Updates the weights of the workers."""
         pass  # pragma: no cover
 
     @abstractmethod
-    def request_work(self, worker_type: Type, **kwargs):
+    def request_work(self, worker_type: Type):
         """
         Requests that workers of a specific type perform their task.
-        Args:
-            worker_type: Class reference for the target workers.
-            **kwargs: Arguments for the worker task (e.g. num_steps, num_episodes).
+        For some executors, this signals an event to wake up idle workers.
         """
         pass  # pragma: no cover
 
-    def launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int):
+    def launch(self, worker_cls: Type, args: Tuple, num_workers: int):
         """Initializes and starts a group of workers. Appends to existing workers."""
         self._launch_workers(worker_cls, args, num_workers)
 
     def collect_data(
-        self, num_steps: Optional[int] = None, worker_type: Optional[Type] = None
+        self, min_samples: Optional[int] = None, worker_type: Optional[Type] = None
     ) -> Tuple[List[Any], Dict[str, Any]]:
         """
-        Collects data from workers.
-        If num_steps is provided, it explicitly triggers workers to collect those steps.
+        Collects data from workers, accumulating until min_samples is reached.
+        If min_samples is None, returns whatever is currently available.
 
         Args:
-            num_steps: If provided, requests workers to collect this many steps.
+            min_samples: Minimum number of samples to collect before returning.
             worker_type: If provided, only returns results from this worker type.
                          Other types are buffered internally.
 
@@ -72,25 +66,15 @@ class BaseExecutor(ABC):
         if type_name and type_name in self.result_buffer:
             results.extend(self.result_buffer.pop(type_name))
 
-        # 2. Trigger work if num_steps requested
-        if num_steps is not None and worker_type:
-            self.request_work(worker_type, num_steps=num_steps)
-
-        # 3. Fetch new results and route them
+        # 2. Fetch new results and route them
         def fetch_and_route():
             new_batch = self._fetch_available_results()
             for obj in new_batch:
-                if isinstance(obj, WorkerPayload):
-                    t_name = obj.worker_type
-                    # Standard interface: we primarily return metrics to the trainer
-                    # but ensure trajectory data is included if it exists in the payload.
-                    data = obj.metrics
-                    if obj.data is not None:
-                        if not data:
-                            data = obj.data
-                        elif isinstance(obj.data, dict):
-                            data = {**data, **obj.data}
-
+                # Results should be tuples/dicts/objects with type info if mixed
+                # For backward compatibility, if it's not a (type, data) tuple,
+                # we assume it matches the current request or default.
+                if isinstance(obj, tuple) and len(obj) == 2 and isinstance(obj[0], str):
+                    t_name, data = obj
                     if type_name and t_name == type_name:
                         results.append(data)
                     else:
@@ -98,15 +82,25 @@ class BaseExecutor(ABC):
                             self.result_buffer[t_name] = []
                         self.result_buffer[t_name].append(data)
                 else:
+                    # Default: assume it's what we asked for
                     results.append(obj)
 
-        if num_steps is not None and worker_type:
-            # For synchronous requests, we wait until we have at least one result or a timeout
-            # (In LocalExecutor this is immediate, in TorchMP it might take a moment)
-            while not results:
+        if min_samples is not None:
+            while True:
+                current_transitions = sum(
+                    r.get("episode_length", 0) for r in results if isinstance(r, dict)
+                )
+                if current_transitions >= min_samples:
+                    break
+
+                old_len = len(results)
                 fetch_and_route()
-                if not results:
-                    time.sleep(0.001)
+                if len(results) == old_len:
+                    # No new results being returned, break to avoid infinite loop
+                    break
+
+                # Sleep more if no progress made to avoid busy waiting in multi-process case
+                time.sleep(0.01)
         else:
             fetch_and_route()
 

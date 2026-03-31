@@ -22,7 +22,7 @@ _VALID_BACKENDS = {"python", "cpp", "aos"}
 _DEFAULT_BACKEND = "python"
 _BACKEND_ENV_VAR = "MCTS_BACKEND"
 
-# Keep python submodule imports working: `from search.search_factories import ...`
+# Keep python submodule imports working: `from old_muzero.search.search_factories import ...`
 __path__[:] = [str(_PACKAGE_DIR), str(_SEARCH_PY_DIR)]
 
 _active_backend: str | None = None

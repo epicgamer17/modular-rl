@@ -1,645 +1,521 @@
-import torch
-import numpy as np
 import time
+import torch
+from typing import Any, Callable, Dict, Optional, Tuple
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, Type
 
-from modules.models.agent_network import AgentNetwork
-from agents.action_selectors.policy_sources import BasePolicySource, SearchPolicySource, NetworkPolicySource
-from agents.environments.adapters import BaseAdapter
-from agents.workers.state_management import SequenceManager
-from replay_buffers.modular_buffer import ModularReplayBuffer
-from agents.workers.payloads import TaskRequest, TaskType, WorkerPayload
-from agents.action_selectors.selectors import BaseActionSelector
-from agents.action_selectors.types import InferenceResult
+from old_muzero.replay_buffers.sequence import Sequence
+from old_muzero.agents.action_selectors.selectors import BaseActionSelector
+from old_muzero.agents.action_selectors.types import InferenceResult
+from old_muzero.agents.action_selectors.policy_sources import (
+    BasePolicySource,
+    NetworkPolicySource,
+    SearchPolicySource,
+)
+from old_muzero.configs.base import Config
+from old_muzero.replay_buffers.modular_buffer import ModularReplayBuffer
+from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
+from old_muzero.utils.wrappers import wrap_recording
+import numpy as np
 
 
 class BaseActor(ABC):
     """
-    Abstract base class for all primary actors.
-    Provides a standardized API for Orchestrators and Executors.
-    """
-
-    @abstractmethod
-    def setup(self) -> None:
-        """Initializes the actor and its internal state."""
-        pass
-
-    @abstractmethod
-    def update_parameters(
-        self,
-        weights: Optional[Dict[str, torch.Tensor]] = None,
-        hyperparams: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """Updates model weights and/or hyperparameters."""
-        pass
-
-    @abstractmethod
-    def execute(self, request: TaskRequest) -> WorkerPayload:
-        """Single entry point for all worker tasks."""
-        pass
-
-    @abstractmethod
-    def get_state(self) -> Dict[str, Any]:
-        """Returns the current state/metrics of the actor."""
-        pass
-
-
-class RolloutActor(BaseActor):
-    """
-    The main worker for data collection.
-    Iterates between inference and environment stepping, storing results locally
-    via a SequenceManager before flushing them to a centralized ReplayBuffer.
+    Abstract base class for all actors.
+    Handles core game loop and step-level transition collection.
     """
 
     def __init__(
         self,
-        adapter_cls: Type[BaseAdapter],
-        adapter_args: Tuple[Any, ...],
-        network: AgentNetwork,
-        policy_source: BasePolicySource,
-        buffer: ModularReplayBuffer,
-        action_selector: Optional[BaseActionSelector] = None,
-        actor_device: str = "cpu",
-        num_actions: Optional[int] = None,
-        num_players: int = 1,
-        test_agents: Optional[List[Any]] = None,
-        flush_incomplete: bool = True,
+        env_factory: Callable[[], Any],
+        agent_network: ModularAgentNetwork,
+        action_selector: BaseActionSelector,
+        replay_buffer: ModularReplayBuffer,
+        num_players: Optional[int] = None,
+        config: Optional[Any] = None,
+        device: Optional[torch.device] = None,
+        name: str = "agent",
+        *,
         worker_id: int = 0,
-        **kwargs,
+        policy_source: Optional[BasePolicySource] = None,
     ):
         """
-        Initializes the RolloutActor.
+        Initializes the BaseActor.
 
         Args:
-            adapter_cls: The EnvironmentAdapter class.
-            adapter_args: Arguments for the adapter class (e.g. env_factory).
-            network: Neural network for value/policy estimation.
-            policy_source: Strategy for retrieving InferenceResults.
-            buffer: Replay Buffer reference for storing completed sequences.
-            action_selector: Optional action selector.
-            actor_device: Device to use for the environment and network.
-            num_actions: Number of actions in the environment.
-            num_players: Number of players in the game.
-            test_agents: Optional list of agents for evaluation.
-            flush_incomplete: If True (PPO default), force-flush active sequences at the
-                end of each collect() call to produce fixed-length chunks. If False
-                (MuZero), only store sequences that terminated naturally so every stored
-                slot has a valid MCTS policy.
-            worker_id: Unique ID for this worker.
+            env_factory: Factory function to create the environment.
+            agent_network: Neural network for value/policy estimation.
+            action_selector: Strategy for selecting actions from network output.
+            num_players: Number of players.
         """
+        self.env_factory = env_factory
+        self.agent_network = agent_network
+        self.selector = action_selector
+        self.replay_buffer = replay_buffer
+        self.config = config
+        self.device = device or torch.device("cpu")
+        self.name = name
         self.worker_id = worker_id
-        # 1. Build the adapter for this worker
-        # Most adapters take (env_factory, device, num_actions)
-        device = torch.device(actor_device)
+        self.env = env_factory()
 
-        self.adapter = adapter_cls(
-            *adapter_args, device=device, num_actions=num_actions
-        )
-        self.agent_network = network
-        self.policy_source = policy_source
-        assert (
-            action_selector is not None
-        ), "ActionSelector is mandatory for RolloutActor (Null Object Pattern). Provide a valid selector (e.g., CategoricalSelector, ArgmaxSelector)."
-        self.action_selector = action_selector
-        self.buffer = buffer
-        self.flush_incomplete = flush_incomplete
-
-        self.num_envs = self.adapter.num_envs
-        self.seq_manager = SequenceManager(num_players, self.num_envs)
-
-        # Internal state for the collection loop
-        self.obs, self.info = self.adapter.reset()
-
-        # Seed the initial state for each environment sequence
-        # Sequence contract: len(obs) == len(action) + 1
-        for i in range(self.num_envs):
-            player_id = 0
-            if "player_id" in self.info:
-                p_id_batch = self.info["player_id"]
-                player_id = (
-                    p_id_batch[i].item()
-                    if torch.is_tensor(p_id_batch)
-                    else p_id_batch[i]
-                )
-
-            self.seq_manager.append(
-                i,
-                {
-                    "observation": self.obs[i].cpu().numpy(),
-                    "terminated": False,
-                    "truncated": False,
-                    "player_id": player_id,
-                },
-            )
-
-        self.total_steps = 0
-        self.episodes_completed = 0
-        self.completed_scores = []
-        self.completed_lengths = []
-
-        # Track current episode progress across envs
-        self.num_players = num_players
-        self.current_lengths = np.zeros(self.num_envs)
-        self.current_scores = np.zeros((self.num_envs, num_players))
-
-    def setup(self) -> None:
-        """Prepares the network for rollout (eval mode)."""
-        self.agent_network.eval()
-
-    def update_parameters(
-        self,
-        weights: Optional[Dict[str, torch.Tensor]] = None,
-        hyperparams: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """Updates network weights (from weights) and/or selector hyperparameters."""
-        if weights:
-            # Handle potentially compiled model state dicts
-            clean_params = {k.replace("_orig_mod.", ""): v for k, v in weights.items()}
-            self.agent_network.load_state_dict(clean_params, strict=False)
-
-            # Reset noise if present on the network
-            if hasattr(self.agent_network, "reset_noise"):
-                self.agent_network.reset_noise()
-
-        if hyperparams:
-            if self.action_selector and hasattr(
-                self.action_selector, "update_parameters"
-            ):
-                self.action_selector.update_parameters(hyperparams)
-
-            if hasattr(self.policy_source, "update_parameters"):
-                self.policy_source.update_parameters(hyperparams)
-
-    def get_state(self) -> Dict[str, Any]:
-        """Returns rolling statistics for logging."""
-        scores = np.array(self.completed_scores) if self.completed_scores else np.zeros((0, self.num_players))
-        avg_score_vec = np.mean(scores, axis=0) if scores.size > 0 else np.zeros(self.num_players)
-        
-        # Format scores based on player count
-        if self.num_players == 1:
-            score_metrics = {"avg_score": float(avg_score_vec[0])}
+        # Initialize PolicySource
+        if policy_source is not None:
+            self.policy_source = policy_source
         else:
-            score_metrics = {f"avg_score_p{p}": float(avg_score_vec[p]) for p in range(self.num_players)}
-            score_metrics["avg_score"] = float(np.mean(avg_score_vec))
-            
-        return {
-            "total_steps": self.total_steps,
-            "episodes_completed": self.episodes_completed,
-            **score_metrics,
-            "avg_length": (
-                np.mean(self.completed_lengths) if self.completed_lengths else 0.0
-            ),
-        }
-
-    def execute(self, request: TaskRequest) -> WorkerPayload:
-        if request.task_type != TaskType.COLLECT:
-            raise ValueError(
-                f"RolloutActor only supports {TaskType.COLLECT}, got {request.task_type}"
+            use_search = hasattr(config, "search_backend") and getattr(
+                config, "search_enabled", False
             )
 
-        metrics = self.collect(request.batch_size)
-        return WorkerPayload(worker_type=self.__class__.__name__, metrics=metrics)
+            if use_search:
+                from old_muzero.search.factory import SearchBackendFactory
 
-    @torch.inference_mode()
-    def collect(self, num_steps: int) -> Dict[str, Any]:
+                search_engine = SearchBackendFactory.create(config)
+                self.policy_source = SearchPolicySource(
+                    search_engine, self.agent_network, config
+                )
+            else:
+                self.policy_source = NetworkPolicySource(self.agent_network)
+
+        # Determine num_players if not provided
+        if num_players is not None:
+            self.num_players = num_players
+        else:
+            self.num_players = self._detect_num_players()
+
+        # State for step-level collection
+        self._state = None
+        self._info = None
+        self._done = True  # Start as done to trigger reset
+        self._episode_reward = 0.0
+        self._episode_length = 0
+
+    @abstractmethod
+    def _detect_num_players(self) -> int:
+        """Actor-specific player count detection."""
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def _get_player_id(self) -> Optional[str]:
+        """Returns current player ID for multi-player, None for single-player."""
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def _finalize_episode_info(self, sequence: Sequence) -> None:
+        """Add env-specific info to sequence at episode end."""
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def _get_score(self, sequence: Sequence) -> float:
+        """Calculate episode score in env-specific way."""
+        pass  # pragma: no cover
+
+    def setup(self):
+        """Re-initializes the environment."""
+        self.env = self.env_factory()
+
+        # Wrap with RecordVideo if enabled in config and we are the first worker
+        if (
+            self.config is not None
+            and hasattr(self.config, "record_video")
+            and self.config.record_video
+            and self.worker_id == 0
+        ):
+            interval = getattr(self.config, "record_video_interval", 1000)
+            self.env = wrap_recording(
+                self.env,
+                video_folder=f"videos/{self.name}",
+                episode_trigger=lambda ep_id: ep_id % interval == 0,
+            )
+
+        if self.config.compilation.enabled:
+            self.agent_network.compile(
+                mode=self.config.compilation.mode,
+                fullgraph=self.config.compilation.fullgraph,
+            )
+
+        self._done = True
+
+    def reset(self) -> Tuple[Any, Dict[str, Any]]:
         """
-        Main execution loop. Performs num_steps environment steps across managed environments.
-        Returns metrics for the collection call.
+        Resets the environment and actor state.
+
+        Returns:
+            Initial observation and info dictionary.
         """
-        steps_this_call = 0
+        self._state, info = self._reset_env()
+        self._info = self._sanitize_boundary_data(info)
+        self._done = False
+        self._episode_reward = 0.0
+        self._episode_length = 0
+        return self._state, self._info
 
-        steps_this_call = 0
-        batch_scores = []
-        batch_lengths = []
-        start_time = time.time()
+    def _sanitize_boundary_data(self, info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Converts legal_moves and player IDs into pre-vectorized tensors.
+        This minimizes overhead in the search loop and prevents graph breaks.
+        """
+        if info is None:
+            info = {}
 
-        while steps_this_call < num_steps:
-            # 1. Unified Inference Pass
+        player_id = self._get_player_id()
+        player_val = player_id if isinstance(player_id, int) else 0
+
+        # Vectorize player ID: [1] tensor for single actor (AOS contract requires shape[0] == 1)
+        info["player"] = torch.tensor([player_val], dtype=torch.int8, device=self.device)
+
+        # Vectorize legal moves: 1D boolean tensor [num_actions]
+        num_actions = self.agent_network.num_actions
+        mask = torch.zeros(num_actions, dtype=torch.bool, device=self.device)
+
+        legal = info.get("legal_moves", [])
+        if isinstance(legal, (list, np.ndarray, torch.Tensor)) and len(legal) > 0:
+            mask[legal] = True
+        else:
+            mask.fill_(True)
+
+        info["legal_moves"] = mask
+        info["legal_moves_mask"] = mask
+        return info
+
+    @abstractmethod
+    def _reset_env(self) -> Tuple[Any, Dict[str, Any]]:
+        """Environment-specific reset logic."""
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def _step_env(self, action: Any) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
+        """
+        Environment-specific step logic.
+
+        Returns:
+            Tuple of (next_obs, reward, terminated, truncated, info).
+        """
+        pass  # pragma: no cover
+
+    def step(self) -> Dict[str, Any]:
+        """
+        Performs one interaction step with the environment.
+
+        Returns:
+            A dictionary containing transition details.
+        """
+        with torch.inference_mode():  # ADD THIS
+            if self._done:
+                self.reset()
+
+            player_id = self._get_player_id()
+
+            # Convert observation to tensor
+            obs_tensor = torch.as_tensor(
+                self._state, dtype=torch.float32, device=self.device
+            )
+
+            # Determine expected input shape
+            expected_shape = self.agent_network.input_shape
+            if obs_tensor.dim() == len(expected_shape):
+                obs_tensor = obs_tensor.unsqueeze(0)
+
+            # Perform inference via PolicySource
+            # Note: info now contains pre-vectorized 'player' and 'legal_moves'
             result = self.policy_source.get_inference(
-                self.obs, self.info, agent_network=self.agent_network
+                obs=obs_tensor,
+                info=self._info,
+                agent_network=self.agent_network,
+                player_id=player_id,
+                to_play=(
+                    player_id if isinstance(player_id, int) else 0
+                ),  # Search needs to_play
             )
 
-            # 2. Resilient Action Extraction (Null Object Pattern)
-            # NO BRANCHING. Responsibility live strictly in the selector.
-            actions, metadata = self.action_selector.select_action(
-                result,
-                self.info,
-                exploration=True,
-                episode_step=int(np.max(self.current_lengths)),
+            action, metadata = self.selector.select_action(
+                result=result,
+                info=self._info,
+                player_id=player_id,
+                episode_step=self._episode_length,
             )
+            # Merge search_metadata (and other extras) from the policy source result
+            if result.extra_metadata:
+                for k, v in result.extra_metadata.items():
+                    if k not in metadata or metadata[k] is None:
+                        metadata[k] = v
+                    elif k == "search_metadata" and isinstance(v, dict):
+                        if isinstance(metadata.get(k), dict):
+                            metadata[k].update(v)
+                        else:
+                            metadata[k] = v
 
-            # 3. Step the Adapter (Hides messy environment library logic)
-            next_obs, rewards, terminals, truncations, infos = self.adapter.step(
-                actions
-            )
+            # Fallback for policy: if selector didn't provide one, use the probs from the source
+            if metadata.get("policy") is None and result.probs is not None:
+                metadata["policy"] = result.probs
 
-            # 4. Process Transitions and Boundary Logic
-            for i in range(self.num_envs):
-                # Capture player info for scores before possibly using next state's info
-                p_id_acting = 0
-                if "player_id" in self.info:
-                    p_ids_acting = self.info["player_id"]
-                    p_id_acting = int(p_ids_acting[i].item() if torch.is_tensor(p_ids_acting) else p_ids_acting[i])
+            # Fallback for value: CategoricalSelector/TemperatureSelector don't set this,
+            # but SearchPolicySource always provides the MCTS root value in result.value.
+            # Without this, value_history is empty and bootstrap targets are all zero.
+            if metadata.get("value") is None and result.value is not None:
+                metadata["value"] = result.value
 
-                # 4. Process Rewards and Scores
-                all_rewards = infos.get("all_rewards")
-                if all_rewards is not None:
-                    # Support AEC-style index dicts or batched tensors
-                    if isinstance(all_rewards, dict):
-                        for p_idx, r_val in all_rewards.items():
-                            self.current_scores[i, p_idx] += float(r_val)
-                    elif isinstance(all_rewards, (list, np.ndarray, torch.Tensor)):
-                        # Handle batched rewards vector per-environment
-                        r_vec = all_rewards[i]
-                        if torch.is_tensor(r_vec):
-                            r_vec = r_vec.cpu().numpy()
-                        self.current_scores[i] += r_vec
-                else:
-                    self.current_scores[i, p_id_acting] += rewards[i].item()
-                self.current_lengths[i] += 1
+            # Standardize: If we are a sequential actor (batch size 1),
+            # flatten [1, ...] tensors in metadata to avoid "too many dimensions" in buffer.
+            if obs_tensor.shape[0] == 1:
+                for k, v in metadata.items():
+                    if torch.is_tensor(v) and v.dim() > 0 and v.shape[0] == 1:
+                        # PPODecorator and others might provide [1, A] or [1]
+                        # We want it to be [A] or scalar for chronological history
+                        metadata[k] = v.squeeze(0)
 
-                # Determine next state's player ID
-                p_id_next = 0
-                if "player_id" in infos:
-                    p_ids_next = infos["player_id"]
-                    p_id_next = int(p_ids_next[i].item() if torch.is_tensor(p_ids_next) else p_ids_next[i])
+            action_val = action.item()
 
-                # Build step dictionary. Default to next_obs, but check for terminal data.
-                obs_history_val = next_obs[i].cpu().numpy()
-                player_id_val = p_id_next
-                
-                is_done = bool(terminals[i].item() or truncations[i].item())
-                if is_done and "terminal_observation" in infos:
-                    # Use preserved terminal observation instead of reset observation
-                    obs_history_val = infos["terminal_observation"]
-                    if isinstance(obs_history_val, torch.Tensor):
-                        obs_history_val = obs_history_val[i].cpu().numpy()
-                    elif isinstance(obs_history_val, list):
-                        obs_history_val = obs_history_val[i]
-                    
-                    # Use preserved terminal info for player_id
-                    if "terminal_info" in infos:
-                        t_info = infos["terminal_info"]
-                        if "player_id" in t_info:
-                            p_t_ids = t_info["player_id"]
-                            player_id_val = int(p_t_ids[i].item() if torch.is_tensor(p_t_ids) else p_t_ids[i])
+            final_metadata = {**result.extra_metadata, **metadata}
 
-                step_dict = {
-                    "observation": obs_history_val,
-                    "action": actions[i].item(),
-                    "reward": rewards[i].item(),
-                    "terminated": terminals[i].item(),
-                    "truncated": truncations[i].item(),
-                    "player_id": player_id_val,
-                }
+            next_obs, reward, term, trunc, next_info = self._step_env(action_val)
 
-                # Optional metadata
-                if result.value is not None:
-                    step_dict["value"] = result.value[i].item()
-                
-                # Search target policies
-                target_p = result.extras.get("target_policies")
-                if target_p is not None:
-                    step_dict["policy"] = target_p[i].cpu().numpy()
-                elif result.probs is not None:
-                    step_dict["policy"] = result.probs[i].cpu().numpy()
+            if next_info is None:
+                next_info = {}
 
-                lp = metadata.get("log_prob")
-                if lp is not None:
-                    step_dict["log_prob"] = lp[i].item()
+            self._done = term or trunc
+            self._episode_reward += reward
+            self._episode_length += 1
 
-                mask = self.info.get("legal_moves_mask")
-                if mask is not None:
-                    step_dict["legal_moves"] = (
-                        torch.where(mask[i])[0].cpu().numpy().tolist()
-                    )
-
-                # Store in SequenceManager
-                self.seq_manager.append(i, step_dict)
-
-                if is_done:
-                    # Flush the completed episode
-                    completed_seq = self.seq_manager.flush(i)
-                    self.buffer.store_aggregate(completed_seq)
-
-                    self.episodes_completed += 1
-                    ep_score = self.current_scores[i].copy()
-                    ep_len = int(self.current_lengths[i])
-                    
-                    self.completed_scores.append(ep_score)
-                    self.completed_lengths.append(ep_len)
-                    batch_scores.append(ep_score)
-                    batch_lengths.append(ep_len)
-                    
-                    self.current_scores[i].fill(0.0)
-                    self.current_lengths[i] = 0
-
-                    if len(self.completed_scores) > 100:
-                        self.completed_scores.pop(0)
-                        self.completed_lengths.pop(0)
-
-                    # Seed the NEW episode with the reset observation (already in next_obs)
-                    self.seq_manager.append(
-                        i,
-                        {
-                            "observation": next_obs[i].cpu().numpy(),
-                            "terminated": False,
-                            "truncated": False,
-                            "player_id": p_id_next, 
-                        },
-                    )
-
-            # Update global state for next step
-            self.obs, self.info = next_obs, infos
-
-            # Record metrics
-            batch_steps = self.num_envs
-            steps_this_call += batch_steps
-            self.total_steps += batch_steps
-
-        # 6. Force-Flush at Chunk Boundary (PPO Bootstrap)
-        # Only flush incomplete sequences when explicitly enabled (PPO needs fixed-length
-        # chunks for GAE; MuZero must store complete episodes so every slot has a policy).
-        if not self.flush_incomplete:
-            return {
-                **self.get_state(),
-                "steps_this_call": steps_this_call,
-                "batch_scores": batch_scores,
-                "batch_lengths": batch_lengths,
-                "duration": time.time() - start_time,
-                "steps_per_second": steps_this_call / (time.time() - (start_time + 1e-6)),
+            transition_info = {
+                "state": self._state,
+                "action": action_val,
+                "reward": reward,
+                "next_state": next_obs,
+                "done": self._done,
+                "terminated": bool(term),
+                "truncated": bool(trunc),
+                "info": self._info,
+                "next_info": next_info,
+                "player": player_id,
+                "metadata": final_metadata,
             }
 
-        # Calculate bootstrap values for all active trajectories
-        with torch.inference_mode():
-            final_result = self.policy_source.get_inference(
-                self.obs,
-                self.info,
-                agent_network=self.agent_network,
-                exploration=False,
-            )
-            final_values = final_result.value
+            self._state = next_obs
+            self._info = self._sanitize_boundary_data(next_info)
 
-        for i in range(self.num_envs):
-            active_seq = self.seq_manager.get_sequence(i)
-            # Only force-flush the chunk if we actually took steps in it (len > 1)
-            if len(active_seq.observation_history) > 1:
-                seq = self.seq_manager.flush(i)
-
-                # Use scalar value extraction (handles search or direct V)
-                v = (
-                    final_values[i].item()
-                    if final_values.dim() > 0
-                    else final_values.item()
-                )
-                self.buffer.store_aggregate(seq, bootstrap_value=v)
-
-                # 7. Seed the NEXT chunk starting with this observation
-                # (Ensures the first transition of the next collect() has s_0)
-                p_id = 0
-                if "player_id" in self.info:
-                    p_id_batch = self.info["player_id"]
-                    p_id = (
-                        p_id_batch[i].item()
-                        if torch.is_tensor(p_id_batch)
-                        else p_id_batch[i]
-                    )
-
-                self.seq_manager.append(
-                    i,
-                    {
-                        "observation": self.obs[i].cpu().numpy(),
-                        "terminated": False,
-                        "truncated": False,
-                        "player_id": p_id,
-                    },
-                )
-
-        return {
-            **self.get_state(),
-            "steps_this_call": steps_this_call,
-            "batch_scores": batch_scores,
-            "batch_lengths": batch_lengths,
-            "duration": time.time() - start_time,
-            "steps_per_second": steps_this_call / (time.time() - (start_time + 1e-6)),
-        }
-
-
-class EvaluatorActor(BaseActor):
-    """
-    Dedicated worker for evaluation and testing.
-    Runs greedy episodes without a Replay Buffer or Sequence Manager.
-    Accumulates internal metrics for averaged reporting.
-    """
-
-    def __init__(
-        self,
-        adapter_cls: Type[BaseAdapter],
-        adapter_args: Tuple[Any, ...],
-        network: AgentNetwork,
-        policy_source: BasePolicySource,
-        buffer: Optional[ModularReplayBuffer],
-        action_selector: Optional[BaseActionSelector] = None,
-        actor_device: str = "cpu",
-        num_actions: Optional[int] = None,
-        num_players: int = 1,
-        test_agents: Optional[List[Any]] = None,
-        worker_id: int = 0,
-        **kwargs,
-    ):
-        """
-        Initializes the EvaluatorActor.
-
-        Args:
-            adapter_cls: EnvironmentAdapter class.
-            adapter_args: Arguments for the adapter class.
-            network: Greedy network for performance evaluation.
-            policy_source: Inference provider.
-            buffer: Placeholder for argument consistency (not used).
-            action_selector: Optional action selection provider for evaluation.
-            actor_device: Device to use for the environment and network.
-            num_actions: Number of actions in the environment.
-            num_players: Number of players in the environment.
-            test_agents: Optional list of agents for evaluation.
-            worker_id: Worker identifier.
-        """
-        self.worker_id = worker_id
-        device = torch.device(actor_device)
-        self.adapter = adapter_cls(
-            *adapter_args, device=device, num_actions=num_actions
-        )
-
-        self.agent_network = network
-        self.policy_source = policy_source
-        assert (
-            action_selector is not None
-        ), "ActionSelector is mandatory for EvaluatorActor (Null Object Pattern). Provide a valid selector (e.g., ArgmaxSelector)."
-        self.action_selector = action_selector
-        self.num_players = num_players
-        self.test_agents = test_agents
-        self.num_envs = self.adapter.num_envs
-
-        self.total_reward = 0.0
-        self.episodes_completed = 0
-
-    def setup(self) -> None:
-        self.agent_network.eval()
-
-    def update_parameters(
-        self,
-        weights: Optional[Dict[str, torch.Tensor]] = None,
-        hyperparams: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        if weights:
-            clean_params = {k.replace("_orig_mod.", ""): v for k, v in weights.items()}
-            self.agent_network.load_state_dict(clean_params, strict=False)
-
-    def get_state(self) -> Dict[str, Any]:
-        return {
-            "episodes_completed": self.episodes_completed,
-            "total_reward": self.total_reward,
-            "average_reward": self.total_reward / max(1, self.episodes_completed),
-        }
-
-    def execute(self, request: TaskRequest) -> WorkerPayload:
-        if request.task_type != TaskType.EVALUATE:
-            raise ValueError(
-                f"EvaluatorActor only supports {TaskType.EVALUATE}, got {request.task_type}"
-            )
-
-        metrics = self.evaluate(request.batch_size, **request.kwargs)
-        return WorkerPayload(worker_type=self.__class__.__name__, metrics=metrics)
+            return transition_info
 
     @torch.inference_mode()
-    def evaluate(self, num_episodes: int, **kwargs) -> Dict[str, Any]:
+    def play_sequence(self, stats_tracker: Optional[Any] = None) -> Dict[str, Any]:
         """
-        Standardized Evaluation Driver.
-        Supports Gym (1P), Self-Play (MP), and Matrix (Vs Agent) evaluation.
+        Runs one complete episode, stores it in the replay buffer, and returns stats.
+
+        Args:
+            stats_tracker: Optional statistics tracker for logging.
+
+        Returns:
+            A dictionary containing episode statistics.
         """
-        # Determine Mode
-        opponents = self.test_agents if self.test_agents else [None]
-        is_multiplayer = self.num_players > 1
-        is_vs_agents = self.test_agents is not None
-        
-        results = {}
-        all_student_scores = []
-        all_episode_lengths = []
-        
-        # Track per-position scores for VS AGENT mode
-        # pos_scores[agent_name][position] = list of total rewards
-        pos_scores: Dict[str, Dict[int, List[float]]] = {}
-        
-        for opponent in opponents:
-            opp_name = opponent.name if hasattr(opponent, 'name') else "self"
-            pos_scores[opp_name] = {p: [] for p in range(self.num_players)}
-            
-            # Matrix Evaluation: Student takes every position against this opponent
-            # For 1P (Gym), student_pos is always 0.
-            for student_pos in range(self.num_players):
-                for _ in range(num_episodes):
-                    obs, info = self.adapter.reset()
-                    episode_length = 0
-                    student_ep_reward = 0.0
-                    done = False
-                    trunc = False
-                    
-                    while not (done or trunc):
-                        # 1. Identify current player
-                        curr_p = info.get("player_id", 0)
-                        if torch.is_tensor(curr_p):
-                            curr_p = int(curr_p.item())
-                        
-                        # 2. Select strategy
-                        if curr_p == student_pos:
-                            use_search = kwargs.get("use_search", True)
-                            if use_search and isinstance(self.policy_source, SearchPolicySource):
-                                result = self.policy_source.get_inference(
-                                    obs, info, agent_network=self.agent_network, exploration=False
-                                )
-                            else:
-                                output = self.agent_network.obs_inference(obs)
-                                result = InferenceResult.from_inference_output(output)
-                        else:
-                            # Opponent (Mock or other Agent)
-                            # Fallback if opponent is None but we are in MP (Self-Play)
-                            acting_agent = opponent if opponent is not None else self.agent_network
-                            if hasattr(acting_agent, "obs_inference"):
-                                out_opp = acting_agent.obs_inference(obs, info=info)
-                                result = InferenceResult.from_inference_output(out_opp)
-                            else:
-                                # Standard nn.Module fallback
-                                out_opp = acting_agent(obs)
-                                result = InferenceResult.from_inference_output(out_opp)
+        start_time = time.time()
+        sequence = Sequence(self.num_players)
 
-                        # 3. Take Action
-                        actions, _ = self.action_selector.select_action(
-                            result, info, exploration=False
-                        )
-                        
-                        # 4. Environment Step
-                        obs, rewards, terminals, truncations, info = self.adapter.step(actions)
-                        
-                        # 5. Reward Extraction
-                        all_rewards = info.get("all_rewards")
-                        if all_rewards is not None:
-                            # Standard MP Interface
-                            if isinstance(all_rewards, (list, tuple, np.ndarray, torch.Tensor)):
-                                student_ep_reward += float(all_rewards[student_pos])
-                            elif isinstance(all_rewards, dict):
-                                # Try integer index first, then agent_id
-                                if student_pos in all_rewards:
-                                    student_ep_reward += float(all_rewards[student_pos])
-                                else:
-                                    agent_id = self.adapter.agents[student_pos]
-                                    student_ep_reward += float(all_rewards.get(agent_id, 0.0))
-                        else:
-                            # Gym Fallback: rewards is assumed to be student reward
-                            student_ep_reward += float(rewards.item())
-                            
-                        done = bool(terminals.any().item())
-                        trunc = bool(truncations.any().item())
-                        episode_length += 1
-                        
-                    pos_scores[opp_name][student_pos].append(student_ep_reward)
-                    all_student_scores.append(student_ep_reward)
-                    all_episode_lengths.append(episode_length)
+        state, info = self.reset()
+        legal_moves = info.get("legal_moves", []) if info else []
+        sequence.append(
+            state, terminated=False, truncated=False, legal_moves=legal_moves
+        )
 
-        # AGGREGATION PHASE
-        if not is_multiplayer:
-            # 1P Mode: Min, Max, Mean
-            results["score"] = float(np.mean(all_student_scores))
-            results["min_score"] = float(np.min(all_student_scores))
-            results["max_score"] = float(np.max(all_student_scores))
-        elif not is_vs_agents:
-            # Self-Play Mode: Mean across episodes (Player 1 focus usually)
-            self_play_scores = pos_scores["self"][0]
-            results["score"] = {
-                "avg": float(np.mean(self_play_scores)),
-                **{f"p{p}": float(np.mean(s_list)) for p, s_list in pos_scores["self"].items()}
-            }
-        else:
-            # Vs Agents Mode: Per agent details + Global position scores
-            total_per_pos = {p: [] for p in range(self.num_players)}
-            
-            for opp_name, scores_dict in pos_scores.items():
-                opp_all = []
-                for p, s_list in scores_dict.items():
-                    opp_all.extend(s_list)
-                    total_per_pos[p].extend(s_list)
-                
-                results[f"vs_{opp_name}_score"] = {
-                    "avg": float(np.mean(opp_all)),
-                    **{f"p{p}": float(np.mean(s_list)) for p, s_list in scores_dict.items()}
-                }
-            
-            # Global per-position summaries
-            results["score"] = {
-                "avg": float(np.mean(all_student_scores)),
-                **{f"p{p}": float(np.mean(total_per_pos[p])) for p in range(self.num_players)}
-            }
+        mcts_sims_total = 0
+        mcts_search_total = 0.0
+        while not self._done:
+            player_id = self._get_player_id()
+            transition = self.step()
 
-        results["avg_length"] = float(np.mean(all_episode_lengths))
-        results["episodes_completed"] = len(all_episode_lengths)
-        
-        return results
+            metadata = transition["metadata"]
+            if "search_metadata" in metadata:
+                mcts_sims_total += int(
+                    metadata["search_metadata"].get("mcts_simulations", 0)
+                )
+                mcts_search_total += float(
+                    metadata["search_metadata"].get("mcts_search_time", 0.0)
+                )
+
+            # Extract policies/values from metadata if available
+            # This logic depends on what decorators inject
+            policies = metadata.get("target_policies", metadata.get("policy"))
+
+            next_info = transition["next_info"]
+            next_legal_moves = next_info.get("legal_moves", []) if next_info else []
+            all_player_rewards = (
+                next_info.get("all_player_rewards", None) if next_info else None
+            )
+
+            sequence.append(
+                observation=transition["next_state"],
+                terminated=transition["terminated"],
+                truncated=transition["truncated"],
+                action=transition["action"],
+                reward=transition["reward"],
+                policy=policies,
+                value=metadata.get("value"),
+                player_id=player_id,
+                legal_moves=next_legal_moves,
+                all_player_rewards=all_player_rewards,
+            )
+
+        # Append terminal state's to_play. player_id_history has N entries
+        # (one per step) but observation_history has N+1. The processor maps
+        # player_id_history[i] -> tps_t[i], so the terminal state (index N)
+        # would fall back to 0. Fix: capture the next-in-line player after the
+        # last step -- this is whose turn it would be at the terminal state.
+        terminal_player_id = self._get_player_id()
+        if terminal_player_id is not None:
+            sequence.player_id_history.append(terminal_player_id)
+
+        sequence.duration_seconds = time.time() - start_time
+        sequence.stats["mcts_simulations"] = mcts_sims_total
+        sequence.stats["mcts_search_time"] = mcts_search_total
+        self._finalize_episode_info(sequence)
+
+        # Write directly to the buffer
+        self.replay_buffer.store_aggregate(sequence)
+
+        if stats_tracker:
+            score = self._get_score(sequence)
+            stats_tracker.append("score", score)
+            stats_tracker.append("episode_length", len(sequence))
+            stats_tracker.increment_steps(len(sequence))
+
+        # Return stats dictionary instead of Sequence directly
+        episode_stats = {
+            "duration_seconds": sequence.duration_seconds,
+            "episode_length": len(sequence),
+            "score": self._get_score(sequence),
+            "mcts_simulations": mcts_sims_total,
+            "mcts_search_time": mcts_search_total,
+        }
+        if "final_player_rewards" in sequence.stats:
+            episode_stats["final_player_rewards"] = sequence.stats[
+                "final_player_rewards"
+            ]
+
+        return episode_stats
+
+    def update_parameters(self, params_dict: Dict[str, Any]) -> None:
+        """
+        Updates the internal parameters of the actor's components.
+        Forwards updates to the action selector.
+        """
+        self.selector.update_parameters(params_dict)
+
+
+def get_actor_class(env: Any, config: Optional[Any] = None) -> type[BaseActor]:
+    """
+    Determines the appropriate actor class for a given environment instance.
+
+    Args:
+        env: An environment instance.
+        config: Optional configuration object to detect vectorized execution.
+
+    Returns:
+        The actor class (GymPufferActor, PettingZooPufferActor, GymActor, or PettingZooActor).
+    """
+    # 1. Check for Vectorized Execution (Fat Workers)
+    if config.num_envs_per_worker > 1:
+        from old_muzero.agents.workers.puffer_actor import GymPufferActor, PettingZooPufferActor
+
+        # Detect PettingZoo for Puffer
+        is_pz = hasattr(env, "possible_agents")
+        if not is_pz and hasattr(env, "unwrapped"):
+            unwrapped = env.unwrapped
+            is_pz = hasattr(unwrapped, "possible_agents")
+
+        if is_pz:
+            return PettingZooPufferActor
+        return GymPufferActor
+
+    # 2. Check both the wrapper and the unwrapped environment for PettingZoo indicators
+    # PettingZoo AEC environments have 'possible_agents'
+    is_pz = hasattr(env, "possible_agents")
+    if not is_pz and hasattr(env, "unwrapped"):
+        unwrapped = env.unwrapped
+        is_pz = hasattr(unwrapped, "possible_agents")
+
+    if is_pz:
+        return PettingZooActor
+
+    # 3. Default to GymActor for standard Gymnasium environments
+    return GymActor
+
+
+class GymActor(BaseActor):
+    """Actor specialized for Gymnasium single-player environments."""
+
+    def _detect_num_players(self) -> int:
+        return 1
+
+    def _get_player_id(self) -> None:
+        return None
+
+    def _finalize_episode_info(self, sequence: Sequence) -> None:
+        pass
+
+    def _get_score(self, sequence: Sequence) -> float:
+        return sum(sequence.rewards)
+
+    def _reset_env(self) -> Tuple[Any, Dict[str, Any]]:
+        result = self.env.reset()
+
+        # Handle different Gymnasium reset() return formats
+        if isinstance(result, tuple) and len(result) == 2:
+            obs, info = result
+            return obs, info or {}
+
+        # Handle older Gym API (obs only) or misidentified PettingZoo (None)
+        return result, {}
+
+    def _step_env(self, action: Any) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
+        obs, reward, term, trunc, info = self.env.step(action)
+        return obs, float(reward), term, trunc, info
+
+
+class PettingZooActor(BaseActor):
+    """Actor specialized for PettingZoo AEC multi-player environments."""
+
+    def _detect_num_players(self) -> int:
+        return len(self.env.possible_agents)
+
+    def _get_player_id(self) -> Optional[int]:
+        agent = self.env.agent_selection
+        if hasattr(self.env, "possible_agents") and self.env.possible_agents:
+            try:
+                return self.env.possible_agents.index(agent)
+            except ValueError:
+                pass
+
+        # Fallback string parsing
+        if isinstance(agent, str):
+            try:
+                return int(agent.split("_")[-1])
+            except ValueError:
+                pass
+        return 0
+
+    def _finalize_episode_info(self, sequence: Sequence) -> None:
+        sequence.stats["final_player_rewards"] = dict(self.env.rewards)
+
+    def _get_score(self, sequence: Sequence) -> float:
+        final_rewards = dict(self.env.rewards)
+        agent_id = (
+            self.env.possible_agents[0] if self.env.possible_agents else "player_0"
+        )
+        return final_rewards.get(agent_id, 0.0)
+
+    def _reset_env(self) -> Tuple[Any, Dict[str, Any]]:
+        self.env.reset()
+        obs, reward, term, trunc, info = self.env.last()
+        return obs, info
+
+    def _step_env(self, action: Any) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
+        player_id = self.env.agent_selection
+        self.env.step(action)
+        obs, reward, term, trunc, info = self.env.last()
+
+        # PettingZoo AEC rewards are incremental and can be extracted per-agent
+        player_reward = float(self.env.rewards.get(player_id, 0.0))
+
+        # Include all rewards in info for potential trainer-side processing
+        if info is None:
+            info = {}
+        info["all_player_rewards"] = dict(self.env.rewards)
+
+        return obs, player_reward, term, trunc, info

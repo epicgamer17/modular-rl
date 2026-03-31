@@ -5,11 +5,11 @@ import torch.multiprocessing as mp
 from dataclasses import dataclass
 from typing import List, Optional, Any
 
-from replay_buffers.processors import IdentityInputProcessor, StandardOutputProcessor
-from replay_buffers.writers import CircularWriter
-from replay_buffers.samplers import UniformSampler
-from replay_buffers.concurrency import ConcurrencyBackend, LocalBackend
-from utils.utils import numpy_dtype_to_torch_dtype
+from old_muzero.replay_buffers.processors import IdentityInputProcessor, StandardOutputProcessor
+from old_muzero.replay_buffers.writers import CircularWriter
+from old_muzero.replay_buffers.samplers import UniformSampler
+from old_muzero.replay_buffers.concurrency import ConcurrencyBackend, LocalBackend
+from old_muzero.utils.utils import numpy_dtype_to_torch_dtype
 
 
 @dataclass
@@ -263,15 +263,27 @@ class ModularReplayBuffer:
                     # print(f"Storing non terminal with priority {p}")
                     self.sampler.on_store(idx, priority=p)
 
+    def finish_trajectory(self, last_value=0):
+        """
+        Calculates advantages and returns for the most recently stored trajectory.
+        Delegates to the input processor's finish_trajectory hook.
+        """
+        # We assume the most recent trajectory ends at the current pointer
+        # This is primarily for PPO-style sequential buffers
+        from old_muzero.replay_buffers.writers import PPOWriter
+
+        trajectory_slice = slice(0, self.size)
+        results = self.input_processor.finish_trajectory(
+            self.buffers, trajectory_slice, last_value=last_value
+        )
+        if results:
+            for key, val in results.items():
+                if key in self.buffers:
+                    self.buffers[key][trajectory_slice] = val
+
     def _write_to_buffer(self, name, idx, val):
-        # Safely convert NumPy arrays and NumPy scalars (np.float32, np.int64) into PyTorch tensors
-        if isinstance(val, (np.ndarray, np.generic)):
-            val = torch.as_tensor(val)
-
-        # If it's a PyTorch tensor on a different device (like GPU), move it to CPU for the buffer
-        if torch.is_tensor(val) and val.device.type != "cpu":
-            val = val.cpu()
-
+        if isinstance(val, np.ndarray):
+            val = torch.from_numpy(val)
         self.buffers[name][idx] = val
 
     def sample(self):

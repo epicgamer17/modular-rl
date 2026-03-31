@@ -4,8 +4,6 @@ from catanatron.models.map import BASE_MAP_TEMPLATE, NUM_NODES, LandTile
 from catanatron.models.enums import RESOURCES, Action, ActionType
 from catanatron.models.board import get_edges
 import torch
-from torch.distributions import Categorical
-from modules.models.inference_output import InferenceOutput
 
 BASE_TOPOLOGY = BASE_MAP_TEMPLATE.topology
 TILE_COORDINATES = [x for x, y in BASE_TOPOLOGY.items() if y == LandTile]
@@ -90,39 +88,32 @@ class CatanPlayerWrapper:
         # remember the initial color (not strictly necessary, but harmless)
         self.init_color = color
 
-    def obs_inference(self, obs: torch.Tensor, **kwargs) -> InferenceOutput:
+    def predict(self, observation, info, env=None, *args, **kwargs):
+        # pass through; env will be available in select_actions via prediction[2]
+        return observation, info, env
+
+    def select_actions(self, prediction, info, *args, **kwargs):
         """
-        Standardized inference interface for CatanPlayerWrapper.
-        Requires 'adapter' in kwargs to access the environment's game state.
+        prediction[2] is expected to be the env (per your usage).
+        We fetch the game from the env and ensure the wrapped player's color
+        equals the game's current_color() before decision/search.
         """
-        adapter = kwargs.get("adapter")
-        if adapter is None:
-            raise ValueError("CatanPlayerWrapper requires 'adapter' in obs_inference kwargs")
-        
+        # Unpack env from the prediction (per your predict() return)
+        env = prediction[2]
         # PettingZoo's OrderEnforcingWrapper blocks unknown attrs like `game`.
         # Use the base env for direct Catan state access.
-        # GymAdapter/PettingZooAdapter usually have .env
-        env = getattr(adapter, "env", None)
-        if env is None:
-            # Fallback for other adapter types
-            env = getattr(adapter, "vec_env", None)
-            
         game = env.unwrapped.game
 
-        # Ensure the player's color matches the current game state
+        # IMPORTANT: set the player's color to the game's current color so
+        # the AlphaBeta (or other search) uses the correct color in its logic.
+        # This ensures correctness even when the environment rotated color->agent mapping.
         self.player.color = game.state.current_color()
 
-        # Decide using the wrapped catanatron player
+        # Now call the player's decision routine using the real game state.
         action = self.player.decide(game, game.playable_actions)
 
         # Convert to action-space integer
         action_int = to_action_space(action)
-        
-        batch_size = obs.shape[0]
-        probs = torch.zeros((batch_size, ACTION_SPACE_SIZE), device=obs.device)
-        probs[:, action_int] = 1.0
-        
-        return InferenceOutput(
-            policy=Categorical(probs=probs),
-            value=torch.zeros((batch_size,), device=obs.device)
-        )
+
+        # Return as a tensor (same as your original wrapper)
+        return torch.tensor(action_int)

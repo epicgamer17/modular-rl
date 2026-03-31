@@ -1,7 +1,7 @@
 import torch
-from typing import Any, Dict, List, Tuple, Optional, Callable
-from agents.registries.base import register_agent
-from agents.learner.losses import (
+from typing import Any, Dict, List, Tuple
+from old_muzero.agents.registries.base import register_agent
+from old_muzero.agents.learner.losses import (
     LossPipeline,
     ValueLoss,
     PolicyLoss,
@@ -12,31 +12,32 @@ from agents.learner.losses import (
     SigmaLoss,
     CommitmentLoss,
 )
-from agents.learner.callbacks import (
+from old_muzero.agents.learner.callbacks import (
     ResetNoiseCallback,
     MetricEarlyStopCallback,
 )
-from modules.utils import get_lr_scheduler
-from agents.learner.target_builders import (
-    PassThroughTargetBuilder,
-    ChanceTargetBuilder,
-    SequenceTargetPipeline,
+from old_muzero.modules.utils import get_lr_scheduler
+from old_muzero.agents.learner.target_builders import (
+    TargetBuilderPipeline,
     LatentConsistencyBuilder,
+    MCTSExtractor,
+    SequencePadder,
+    SequenceMaskBuilder,
+    SequenceInfrastructureBuilder,
+    ChanceTargetBuilder,
 )
 
 
-from agents.learner.losses.representations import IdentityRepresentation
-from agents.learner.losses.priorities import ExpectedValueErrorPriorityComputer
+from old_muzero.agents.learner.losses.representations import IdentityRepresentation
+from old_muzero.agents.learner.losses.priorities import ExpectedValueErrorPriorityComputer
 
 
 def build_muzero_loss_pipeline(config, agent_network, device):
     # Extract representations from heads
-    val_rep = agent_network.components["behavior_heads"]["state_value"].representation
-    pol_rep = agent_network.components["behavior_heads"]["policy_logits"].representation
-    
-    wm_heads = agent_network.components["world_model"].heads
-    rew_rep = wm_heads["reward_logits"].representation if "reward_logits" in wm_heads else None
-    tp_rep = wm_heads["to_play_logits"].representation if "to_play_logits" in wm_heads else None
+    val_rep = agent_network.components["value_head"].representation
+    pol_rep = agent_network.components["policy_head"].representation
+    rew_rep = agent_network.components["world_model"].reward_head.representation
+    tp_rep = agent_network.components["world_model"].to_play_head.representation
 
     modules = [
         ValueLoss(
@@ -79,12 +80,8 @@ def build_muzero_loss_pipeline(config, agent_network, device):
         )
 
     if config.stochastic:
-        as_val_rep = agent_network.components["behavior_heads"][
-            "afterstate_value"
-        ].representation
-        sigma_rep = agent_network.components[
-            "world_model"
-        ].dynamics_pipeline.sigma_head.representation
+        as_val_rep = agent_network.components["afterstate_value_head"].representation
+        sigma_rep = agent_network.components["world_model"].sigma_head.representation
 
         modules.extend(
             [
@@ -111,11 +108,7 @@ def build_muzero_loss_pipeline(config, agent_network, device):
 
 @register_agent("muzero")
 def build_muzero(
-    config: Any,
-    agent_network: Any,
-    device: torch.device,
-    priority_update_fn: Optional[Callable] = None,
-    set_beta_fn: Optional[Callable] = None,
+    config: Any, agent_network: Any, device: torch.device
 ) -> Dict[str, Any]:
     # 1. Losses
     loss_pipeline = build_muzero_loss_pipeline(config, agent_network, device)
@@ -151,46 +144,26 @@ def build_muzero(
     lr_schedulers["default"] = get_lr_scheduler(opt, config)
 
     # 3. Callbacks
-    from agents.learner.callbacks import (
-        ResetNoiseCallback,
-        MetricEarlyStopCallback,
-        PriorityUpdaterCallback,
-    )
-    from utils.schedule import create_schedule
-
     callbacks = []
     if getattr(config, "use_noisy_net", False):
         callbacks.append(ResetNoiseCallback())
     if getattr(config, "use_early_stopping", False):
         callbacks.append(MetricEarlyStopCallback(threshold=config.early_stopping_kl))
 
-    # Priority Updates (PER)
-    if priority_update_fn is not None:
-        per_beta_schedule_config = getattr(config, "per_beta_schedule", None)
-        per_beta_schedule = create_schedule(per_beta_schedule_config)
-        callbacks.append(
-            PriorityUpdaterCallback(
-                priority_update_fn=priority_update_fn,
-                set_beta_fn=set_beta_fn,
-                per_beta_schedule=per_beta_schedule,
-            )
-        )
-
     # 4. Target Builder
-    algorithmic_builders = [
-        PassThroughTargetBuilder(
-            ["values", "rewards", "policies", "actions", "to_plays"]
-        ),
+    builders = [
+        MCTSExtractor(),
+        SequencePadder(unroll_steps=config.unroll_steps),
+        SequenceMaskBuilder(),
+        SequenceInfrastructureBuilder(unroll_steps=config.unroll_steps),
     ]
     if getattr(config, "consistency_loss_factor", 0) > 0:
-        algorithmic_builders.append(LatentConsistencyBuilder())
+        builders.append(LatentConsistencyBuilder())
 
     if config.stochastic:
-        algorithmic_builders.append(ChanceTargetBuilder())
+        builders.append(ChanceTargetBuilder())
 
-    target_builder = SequenceTargetPipeline(
-        algorithmic_builders=algorithmic_builders, unroll_steps=config.unroll_steps
-    )
+    target_builder = TargetBuilderPipeline(builders)
 
     return {
         "loss_pipeline": loss_pipeline,

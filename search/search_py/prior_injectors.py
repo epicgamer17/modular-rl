@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 
-from .utils import _safe_log_prob
+from .utils import _safe_log_probs
 
 
 class PriorInjector(ABC):
@@ -115,7 +115,7 @@ class GumbelInjector(PriorInjector):
             if logits is not None:
                 logits = logits.cpu()
         if logits is None:
-            logits = _safe_log_prob(policy).cpu()
+            logits = _safe_log_probs(policy).cpu()
         if logits.dim() > 1:
             if logits.shape[0] != 1:
                 raise ValueError("GumbelInjector expects a single policy vector.")

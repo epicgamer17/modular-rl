@@ -1,81 +1,69 @@
-from dataclasses import dataclass, field
-from typing import Tuple, Optional, Dict, Any, Callable
+from typing import Tuple, Optional, Callable, Dict, Any
 import torch
 from torch import nn, Tensor
-from modules.utils import get_flat_dim
-from configs.modules.backbones.base import BackboneConfig
-from configs.modules.architecture_config import ArchitectureConfig
-from agents.learner.losses.representations import BaseRepresentation
-from abc import ABC, abstractmethod
+from old_muzero.modules.backbones.factory import BackboneFactory
+from old_muzero.configs.modules.backbones.base import BackboneConfig
+from old_muzero.configs.modules.architecture_config import ArchitectureConfig
+from old_muzero.agents.learner.losses.representations import BaseRepresentation
+from old_muzero.modules.blocks.dense import build_dense
 
 
-@dataclass
-class HeadOutput:
-    """Strict contract for head outputs."""
-
-    training_tensor: torch.Tensor  # e.g., logits, pre-tanh values (for the Learner)
-    inference_tensor: Any  # e.g., td.Distribution, argmax action, softmaxed probs (for the Actor)
-    state: Dict[str, torch.Tensor] = field(default_factory=dict)  # For recurrent heads
-    metrics: Dict[str, float] = field(default_factory=dict)  # Stateless telemetry from the head
-
-
-class BaseHead(nn.Module, ABC):
+class BaseHead(nn.Module):
     """
-    Abstract Base Class for all network heads.
-    Enforces the initialization signature and the forward contract.
+    Base class for all network heads.
+    Handles an optional neck (modular backbone) and standard initialization.
     """
 
     def __init__(
         self,
+        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
-        neck_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
-        noisy_sigma: float = 0.0,
-        name: Optional[str] = None,
-        input_source: str = "default",
-        **kwargs,
+        neck_config: Optional[BackboneConfig] = None,
     ):
         super().__init__()
-        self.noisy_sigma = noisy_sigma
+        self.arch_config = arch_config
         self.input_shape = input_shape
         self.representation = representation
-        self.neck_fn = neck_fn
-        self.name = name or self.__class__.__name__
-        self.input_source = input_source
 
-    def _get_flat_dim(self, module: nn.Module, input_shape: Tuple[int, ...]) -> int:
-        """Utility for heads to calculate their output feature dimension using a dummy pass."""
-        return get_flat_dim(module, input_shape)
+        # 1. Neck (optional modular backbone associated with the head)
+        self.neck = BackboneFactory.create(neck_config, input_shape)
+        self.output_shape = self.neck.output_shape
+        self.flat_dim = self._get_flat_dim(self.output_shape)
 
-    @abstractmethod
+        # 2. Final Output Layer
+        self.output_layer = None
+        if self.representation is not None:
+            self.output_layer = build_dense(
+                in_features=self.flat_dim,
+                out_features=self.representation.num_features,
+                sigma=self.arch_config.noisy_sigma,
+            )
+
+    def _get_flat_dim(self, shape: Tuple[int, ...]) -> int:
+        flat = 1
+        for dim in shape:
+            flat *= dim
+        return flat
+
+
+    def reset_noise(self) -> None:
+        if hasattr(self.neck, "reset_noise"):
+            self.neck.reset_noise()
+        if self.output_layer is not None and hasattr(self.output_layer, "reset_noise"):
+            self.output_layer.reset_noise()
+
     def forward(
-        self,
-        x: Tensor,
-        state: Optional[Dict[str, Any]] = None,
-        is_inference: bool = False,
-        **kwargs,
-    ) -> HeadOutput:
-        """Returns HeadOutput conforming to the (training, inference, state) contract."""
-        pass
+        self, x: Tensor, state: Optional[Dict[str, Any]] = None
+    ) -> Tuple[Tensor, Dict[str, Any]]:
+        """Standard forward pass: neck -> output_layer -> strategy."""
+        x = self.process_input(x)
+        logits = self.output_layer(x)
+        return logits, state if state is not None else {}
 
-    def compute_metrics(
-        self,
-        training_tensor: torch.Tensor,
-        inference_tensor: Optional[Any] = None,
-    ) -> Dict[str, float]:
-        """
-        Stateless reporting of head-specific diagnostics.
-        Override this to provide telemetry (e.g., entropy, mean value).
-        """
-        return {}
-
-    def init_weights(self) -> None:
-        """
-        Component-owned initialization strategy.
-        Base implementation uses orthogonal initialization (gain=1.0) and zero bias.
-        """
-        for m in self.modules():
-            if isinstance(m, (nn.Linear, nn.Conv2d)):
-                nn.init.orthogonal_(m.weight, gain=1.0)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0.0)
+    def process_input(self, x: Tensor) -> Tensor:
+        """Helper to pass input through neck and flatten it."""
+        x = self.neck(x)
+        if x.dim() > 2:
+            x = x.flatten(1, -1)
+        return x

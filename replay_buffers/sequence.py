@@ -33,7 +33,6 @@ class Sequence:
     truncated_history: list = field(default_factory=list)
     done_history: list = field(default_factory=list)
     player_id_history: list = field(default_factory=list)
-    log_prob_history: list = field(default_factory=list)
     stats: Dict[str, Any] = field(default_factory=dict)
     duration_seconds: float = 0.0
 
@@ -50,7 +49,6 @@ class Sequence:
         legal_moves: Optional[List[int]] = None,
         chance: Optional[int] = None,
         all_player_rewards: Optional[Dict[str, float]] = None,
-        log_prob: Optional[float] = None,
     ):
         self.observation_history.append(observation)
         self.terminated_history.append(bool(terminated))
@@ -72,8 +70,6 @@ class Sequence:
             self.chance_history.append(chance)
         if all_player_rewards is not None:
             self.all_player_rewards_history.append(all_player_rewards)
-        if log_prob is not None:
-            self.log_prob_history.append(log_prob)
 
     def __len__(self):
         return len(self.action_history)

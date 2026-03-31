@@ -6,8 +6,8 @@ import dill as pickle
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
 import gymnasium as gym
-from stats.stats import StatTracker
-from modules.utils import get_uncompiled_model
+from old_muzero.stats.stats import StatTracker
+from old_muzero.modules.utils import get_uncompiled_model
 
 
 class BaseTrainer:
@@ -29,12 +29,7 @@ class BaseTrainer:
         self.device = device
         self.name = name
         self.stats = stats if stats is not None else StatTracker(name=name)
-
-        # Priority: 1. test_agents args, 2. config.game.test_agents, 3. empty list
-        self.test_agents = test_agents
-        if self.test_agents is None:
-            self.test_agents = getattr(config.game, "test_agents", [])
-
+        self.test_agents = test_agents if test_agents is not None else []
         self._env = env
 
         # Detect player_id for PettingZoo environments
@@ -68,51 +63,55 @@ class BaseTrainer:
         self._setup_stats()
 
     def setup_tester(self):
-        """Initializes the EvaluatorActor via an Executor."""
-        from agents.workers.actors import EvaluatorActor
-        from agents.environments.adapters import GymAdapter
-        from agents.action_selectors.selectors import (
-            ArgmaxSelector,
-            LegalMovesMaskDecorator,
-        )
+        """Initializes the Tester using the TestFactory and launched via an Executor."""
+        from old_muzero.agents.workers.tester import TestFactory, Tester
+        from old_muzero.agents.executors.local_executor import LocalExecutor
+        from old_muzero.agents.executors.torch_mp_executor import TorchMPExecutor
 
         # 1. Initialize Executor if not already done
         if self.executor is None:
-            from agents.factories.executor import create_executor
+            from old_muzero.agents.executors.factory import create_executor
 
             self.executor = create_executor(self.config)
 
-        # 2. Prepare worker args
-        adapter_cls = self._get_adapter_class()
-        env_factory = self.config.game.env_factory
-        # Ensure evaluator respects legal moves!
-        selector = LegalMovesMaskDecorator(ArgmaxSelector())
-
-        # Priority: Use SearchPolicySource if available (e.g. MuZero), otherwise standard policy_source
-        active_policy_source = getattr(self, "search_policy_source", self.policy_source)
-
-        worker_args = (
-            adapter_cls,
-            (env_factory,),
-            self.agent_network,
-            active_policy_source,
-            None,  # Index 4 (buffer placeholder)
-            selector,  # action_selector
-            getattr(self.config, "actor_device", "cpu"),
-            getattr(self.config.game, "num_actions", None),
-            self.num_players,
-            self.test_agents,
+        # 2. Prepare test types
+        test_types = TestFactory.create_default_test_types(
+            self.config, num_trials=self.test_trials
         )
+        from old_muzero.agents.workers.tester import VsAgentTest
 
-        # 3. Launch EvaluatorActor
-        self.executor.launch_workers(EvaluatorActor, worker_args, num_workers=1)
+        for agent in self.test_agents:
+            for player_idx in range(self.num_players):
+                test_types.append(
+                    VsAgentTest(
+                        name=f"vs_{agent.name}_p{player_idx}",
+                        num_trials=self.test_trials,
+                        opponent=agent,
+                        player_idx=player_idx,
+                    )
+                )
+
+        # 3. Launch Tester
+        # 1. Safely unwrap the network before passing across process boundaries
+        uncompiled_network = get_uncompiled_model(self.agent_network)
+
+        # 2. Launch Tester
+        launch_args = TestFactory.get_launch_args(
+            config=self.config,
+            agent_network=uncompiled_network,  # Pass the uncompiled version!
+            action_selector=self.action_selector,
+            device=torch.device("cpu"),
+            name=f"{self.name}_tester",
+            test_types=test_types,
+        )
+        self.executor.launch(Tester, launch_args, num_workers=1)
 
     def trigger_test(self, state_dict: Dict[str, Any], step: int):
         """
         Triggers evaluation. For LocalExecutor, this runs immediately.
         For TorchMPExecutor, it ensures weights are synced.
         """
-        from agents.workers.actors import EvaluatorActor
+        from old_muzero.agents.workers.tester import Tester
 
         if not self._tester_launched:
             self.setup_tester()
@@ -123,38 +122,28 @@ class BaseTrainer:
         # Update step (weights are shared via shared_memory if multi_process=True)
         self._tester_step = step
 
-        # Signal executor to run test with optional search toggle
-        self.executor.request_work(
-            EvaluatorActor,
-            num_episodes=self.test_trials,
-            use_search=getattr(self.config, "eval_use_search", True),
-        )
+        # Signal executor to run test (both local and multi-process need this now)
+        self.executor.request_work(Tester)
 
         # If local, run synchronously now
         if not self.config.multi_process:
-            results, _ = self.executor.collect_data(
-                num_steps=None, worker_type=EvaluatorActor
-            )
+            # LocalExecutor._fetch_available_results runs play_sequence
+            results, _ = self.executor.collect_data(min_samples=1, worker_type=Tester)
             for res in results:
                 self._process_test_results(res, step)
 
     def poll_test(self):
         """Polls for background test results from the executor."""
-        from agents.workers.actors import EvaluatorActor
+        from old_muzero.agents.workers.tester import Tester
 
         if self.executor is None or not self.config.multi_process:
             return
 
-        # Fetch whatever is available in the result queue for EvaluatorActor
-        results, _ = self.executor.collect_data(
-            num_steps=None, worker_type=EvaluatorActor
-        )
+        # Fetch whatever is available in the result queue for Tester
+        results, _ = self.executor.collect_data(min_samples=None, worker_type=Tester)
         if results:
             # We only care about the most recent test result for logging
-            # The result from EvaluatorActor.evaluate is a dict with 'score', etc.
-            # BaseExecutor.collect_data returns (worker_type_name, result_data) tuples for each worker
-            for res in results:
-                self._process_test_results(res, self._tester_step)
+            self._process_test_results(results[-1], self._tester_step)
 
     def stop_test(self):
         """Stops the executor (stops everything)."""
@@ -162,53 +151,45 @@ class BaseTrainer:
             self.executor.stop()
             self.executor = None
 
-    def _process_test_results(self, res: Dict[str, Any], step: int):
-        """Logs results from EvaluatorActor."""
-        for key, value in res.items():
-            if key == "score":
-                if isinstance(value, dict):
-                    for subkey, subval in value.items():
-                        self.stats.append("test_score", subval, subkey=subkey)
-                    if "avg" in value:
-                        print(f"[test] score: {value['avg']:.3f} (step {step})")
+    def _process_test_results(self, all_results: Dict[str, Dict[str, Any]], step: int):
+        """Logs results from all test types."""
+        for test_name, res in all_results.items():
+            # Standard evaluation (e.g., standard, self_play)
+            if test_name == "self_play":
+                # Only log p0_score for self_play to show consistent training progress
+                if "p0_score" in res:
+                    self.stats.append("test_score", res["p0_score"], subkey="p0")
+                elif "score" in res:
+                    self.stats.append("test_score", res["score"], subkey="avg")
+
+            elif test_name == "standard":
+                if "score" in res:
+                    self.stats.append("test_score", res["score"], subkey="avg")
+
+            # Vs Agent evaluations (e.g., vs_Random_p0, vs_Random_p1)
+            elif test_name.startswith("vs_"):
+                # Parse base agent name (e.g., vs_Random_p0 -> vs_Random)
+                parts = test_name.split("_")
+                # Expected format: vs_{agent_name}_p{idx}
+                if (
+                    len(parts) >= 3
+                    and parts[-1].startswith("p")
+                    and parts[-1][1:].isdigit()
+                ):
+                    agent_name = "_".join(parts[:-1])  # e.g. vs_Random
+                    player_idx = parts[-1]  # e.g. p0
+
+                    if "score" in res:
+                        # Group by agent name, use player_idx as subkey
+                        self.stats.append(
+                            f"{agent_name}_score", res["score"], subkey=player_idx
+                        )
                 else:
-                    self.stats.append("test_score", value, subkey="avg")
-                    print(f"[test] score: {value:.3f} (step {step})")
-            elif key == "avg_length":
-                self.stats.append("episode_length", value, subkey="test")
-                print(f"[test] avg_length: {value:.1f}")
-            elif key.startswith("vs_"):
-                # Structured results for Matrix Evaluation:
-                # f"vs_{opp_name}_score": {"p0": score0, "p1": score1, "avg": avg_score}
-                if isinstance(value, dict):
-                    for subkey, subval in value.items():
-                        self.stats.append(key, subval, subkey=subkey)
-                    if "avg" in value:
-                        print(f"[test] {key}: {value['avg']:.3f}")
-                else:
-                    self.stats.append(key, value, subkey="avg")
-                    print(f"[test] {key}: {value:.3f}")
+                    # Fallback for non-indexed vs tests
+                    if "score" in res:
+                        self.stats.append(f"{test_name}_score", res["score"])
 
-    def _get_adapter_class(self):
-        """Dynamically selects the correct environment adapter."""
-        from agents.environments.adapters import (
-            GymAdapter,
-            PettingZooAdapter,
-            VectorAdapter,
-        )
-
-        # If the config specifies vectorized (e.g., PufferLib or Gym.vector)
-        if hasattr(self.config, "game") and getattr(
-            self.config.game, "vectorized", False
-        ):
-            return VectorAdapter
-
-        # If there are multiple players, it's PettingZoo (AEC or Parallel)
-        if self.num_players > 1:
-            return PettingZooAdapter
-
-        # Fallback to standard Gym
-        return GymAdapter
+            print(f"[{test_name}] score: {res.get('score', 0):.3f} (step {step})")
 
     def _detect_player_id(self, env) -> str:
         if self.config.game.num_players > 1:
@@ -295,9 +276,7 @@ class BaseTrainer:
             if key == "metrics":
                 self._record_structured_metrics(value)
             else:
-                # Ensure value is detached and converted to float if it's a scalar tensor
-                val = value.detach().cpu().item() if torch.is_tensor(value) else value
-                self.stats.append(key, val)
+                self.stats.append(key, value)
 
     def _record_structured_metrics(self, metrics: Optional[Dict[str, Any]]) -> None:
         if not metrics:
@@ -315,17 +294,9 @@ class BaseTrainer:
                     )
             elif isinstance(value, dict):
                 for subkey, subvalue in value.items():
-                    # Ensure subvalue is detached and converted to float if it's a scalar tensor
-                    val = (
-                        subvalue.detach().cpu().item()
-                        if torch.is_tensor(subvalue)
-                        else subvalue
-                    )
-                    self.stats.set(key, val, subkey=subkey)
+                    self.stats.set(key, subvalue, subkey=subkey)
             else:
-                # Ensure value is detached and converted to float if it's a scalar tensor
-                val = value.detach().cpu().item() if torch.is_tensor(value) else value
-                self.stats.append(key, val)
+                self.stats.append(key, value)
 
     @classmethod
     def load_from_checkpoint(
@@ -372,17 +343,13 @@ class BaseTrainer:
 
     def _setup_stats(self):
         """Initializes the stat tracker with common keys and plot types."""
-        from stats.stats import PlotType
+        from old_muzero.stats.stats import PlotType
 
         stat_keys = [
             "score",
             "episode_length",
             "test_score",
         ]
-
-        if self.num_players > 1:
-            # We already have 'score' with subkeys for each player, no need for avg_score_pX
-            pass
 
         # Add test_score vs other agents if applicable
         for agent in self.test_agents:
@@ -395,11 +362,7 @@ class BaseTrainer:
 
         for key in stat_keys:
             if key not in self.stats.stats:
-                if (
-                    "test_score" in key
-                    or "_score" in key
-                    or (key == "score" and self.num_players > 1)
-                ):
+                if "test_score" in key or "_score" in key:
                     self.stats._init_key(key, subkeys=test_subkeys)
                 else:
                     self.stats._init_key(key)
@@ -429,30 +392,3 @@ class BaseTrainer:
                 PlotType.BEST_FIT_LINE,
                 PlotType.VARIATION_FILL,
             )
-
-    def _record_collection_metrics(self, results: List[Dict[str, Any]]):
-        """Standardized recording of collection metrics (score, lengths) from workers."""
-        for res in results:
-            for score in res.get("batch_scores", []):
-                # If plural players, record as subkeys
-                if isinstance(score, (list, np.ndarray)) and len(score) > 1:
-                    data = {f"p{i}": float(s) for i, s in enumerate(score)}
-                    data["avg"] = float(np.mean(score))
-                    for subkey, subval in data.items():
-                        self.stats.append("score", subval, subkey=subkey)
-                else:
-                    # Single player or scalar score
-                    self.stats.append("score", float(score))
-
-            for length in res.get("batch_lengths", []):
-                self.stats.append("episode_length", float(length))
-
-            # 2. Worker summaries and rolling stats
-            for key, value in res.items():
-                if key in ["batch_scores", "batch_lengths"]:
-                    continue
-
-                # Log throughput metrics
-                if any(tag in key for tag in ["fps", "steps_per_second"]):
-                    if isinstance(value, (int, float, np.number)):
-                        self.stats.append(key, float(value))

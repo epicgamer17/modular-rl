@@ -1,18 +1,18 @@
 from typing import Type, Union
 from .base import AgentConfig
-from configs.base import (
+from old_muzero.configs.base import (
     DistributionalConfig,
     NoisyConfig,
     EpsilonGreedyConfig,
 )
-from configs.modules.backbones.base import BackboneConfig
-from agents.factories.backbone_config import BackboneConfigFactory
-from configs.modules.heads.base import HeadConfig
-from configs.modules.heads.q import QHeadConfig, DuelingQHeadConfig
-from configs.modules.output_strategies import OutputStrategyConfigFactory
-from agents.factories.backbone_config import BackboneConfigFactory
-from configs.modules.architecture_config import ArchitectureConfig
-from utils.utils import tointlists
+from old_muzero.configs.modules.backbones.base import BackboneConfig
+from old_muzero.configs.modules.backbones.factory import BackboneConfigFactory
+from old_muzero.configs.modules.heads.base import HeadConfig
+from old_muzero.configs.modules.heads.q import QHeadConfig, DuelingQHeadConfig
+from old_muzero.configs.modules.output_strategies import OutputStrategyConfigFactory
+from old_muzero.configs.modules.backbones.factory import BackboneConfigFactory
+from old_muzero.configs.modules.architecture_config import ArchitectureConfig
+from old_muzero.utils.utils import tointlists
 
 
 class RainbowConfig(
@@ -36,7 +36,6 @@ class RainbowConfig(
             self.noisy_sigma = 0.5  # Restore Rainbow Default
 
         self.backbone: BackboneConfig = self.parse_backbone_config("backbone")
-        self.prediction_backbone = self.backbone
 
         # Mixin: Epsilon Greedy
         self.parse_epsilon_greedy_params()
@@ -62,20 +61,20 @@ class RainbowConfig(
             assert self.v_min != None and self.v_max != None
 
         # --- Head Configuration ---
-        head_dict = self.parse_field("head", None, required=False)
-        if head_dict is not None:
-            # 1. Inject Global Noisy Sigma
-            if "noisy_sigma" not in head_dict:
-                head_dict["noisy_sigma"] = self.noisy_sigma
+        head_dict = self.parse_field("head", {}, required=False)
 
-            # 2. Handle Output Strategy & Sync Atom Size
-            # If user defines strategy in head, we prioritize it and sync back to self.atom_size
-            if "output_strategy" in head_dict:
-                strat = head_dict["output_strategy"]
-                if strat.get("type") == "c51":
-                    # Check for atom_size update
-                    if "num_atoms" in strat:
-                        self.atom_size = strat["num_atoms"]
+        # 1. Inject Global Noisy Sigma
+        if "noisy_sigma" not in head_dict:
+            head_dict["noisy_sigma"] = self.noisy_sigma
+
+        # 2. Handle Output Strategy & Sync Atom Size
+        # If user defines strategy in head, we prioritize it and sync back to self.atom_size
+        if "output_strategy" in head_dict:
+            strat = head_dict["output_strategy"]
+            if strat.get("type") == "c51":
+                # Check for atom_size update
+                if "num_atoms" in strat:
+                    self.atom_size = strat["num_atoms"]
 
                 # Check for bounds update (Sync Game Defaults -> Strategy)
                 if "v_min" not in strat and self.v_min is not None:
@@ -91,7 +90,6 @@ class RainbowConfig(
 
         # If user DID NOT define strategy, infer from self.atom_size (Legacy/Fallback)
         else:
-            head_dict = {}
             if self.atom_size > 1:
                 head_dict["output_strategy"] = {
                     "type": "c51",
@@ -102,16 +100,11 @@ class RainbowConfig(
             else:
                 head_dict["output_strategy"] = {"type": "scalar"}
 
-        self.heads = {}
         # 3. Construct Head Config
-        if head_dict is not None:
-            if self.dueling:
-                self.head = DuelingQHeadConfig(head_dict)
-            else:
-                self.head = QHeadConfig(head_dict)
-            self.heads["q_logits"] = self.head
+        if self.dueling:
+            self.head = DuelingQHeadConfig(head_dict)
         else:
-            self.head = None
+            self.head = QHeadConfig(head_dict)
 
     def _verify_game(self):
         assert self.game.is_discrete, "Rainbow only supports discrete action spaces"

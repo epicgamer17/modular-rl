@@ -1,31 +1,18 @@
 import torch
 import yaml
 import os
-from modules.utils import (
+from old_muzero.modules.utils import (
+    prepare_kernel_initializers,
     prepare_activations,
+    kernel_initializer_wrapper,
 )
 import torch.nn.functional as F
-from configs.games.game import GameConfig
-from configs.modules.compilation import CompilationConfig
-from utils.schedule import ScheduleConfig
+from old_muzero.configs.games.game import GameConfig
+from old_muzero.configs.modules.compilation import CompilationConfig
+from old_muzero.utils.schedule import ScheduleConfig
 
 
 class ConfigBase:
-    def parse_dict_field(self, field_name, default=None, required=True):
-        value = self.parse_field(field_name, default=default, required=required)
-        if value is None:
-            return None
-        if not isinstance(value, dict):
-            raise TypeError(
-                f"Expected dict for field {field_name!r}, got {type(value).__name__}"
-            )
-
-        merged = {}
-        if isinstance(default, dict):
-            merged.update(default)
-        merged.update(value)
-        return merged
-
     def parse_field(
         self, field_name, default=None, wrapper=None, required=True, dtype=None
     ):
@@ -80,6 +67,7 @@ class ConfigBase:
                 for k, v in self.config_dict[block].items():
                     if k not in self.config_dict:
                         self.config_dict[k] = v
+
 
     @classmethod
     def load(cls, filepath: str):
@@ -357,11 +345,13 @@ class Config(
             "kernel_initializer",
             None,
             required=False,
+            wrapper=kernel_initializer_wrapper,
         )
         self.prob_layer_initializer = self.parse_field(
             "prob_layer_initializer",
             None,
             required=False,
+            wrapper=kernel_initializer_wrapper,
         )
         self.norm_type: str = self.parse_field("norm_type", "none")
         self.replay_interval: int = self.parse_field("replay_interval", 1, wrapper=int)
@@ -381,8 +371,8 @@ class Config(
             self.game is not None
         ), "Config requires a game config to be provided in 'game' field"
         assert (
-            self.game.env_factory is not None
-        ), "Game config must provide a valid environment factory (env_factory)"
+            self.game.make_env is not None
+        ), "Game config must provide a valid environment factory (make_env)"
 
     @classmethod
     def load(cls, filepath: str):
@@ -402,7 +392,7 @@ class ActorConfig(ConfigBase):
         super().__init__(config_dict)
         self.adam_epsilon = self.parse_field("adam_epsilon", 1e-7)
         self.learning_rate = self.parse_field("learning_rate", 0.005)
-        self.clipnorm = self.parse_field("clipnorm", None, required=False)
+        self.clipnorm = self.parse_field("clipnorm", None)
         self.optimizer: torch.optim.Optimizer = self.parse_field(
             "optimizer", torch.optim.Adam
         )
@@ -413,7 +403,7 @@ class CriticConfig(ConfigBase):
         super().__init__(config_dict)
         self.adam_epsilon = self.parse_field("adam_epsilon", 1e-7)
         self.learning_rate = self.parse_field("learning_rate", 0.005)
-        self.clipnorm = self.parse_field("clipnorm", None, required=False)
+        self.clipnorm = self.parse_field("clipnorm", None)
         self.optimizer: torch.optim.Optimizer = self.parse_field(
             "optimizer", torch.optim.Adam
         )

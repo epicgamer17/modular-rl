@@ -82,13 +82,13 @@ def apply_dirichlet_noise(
     blended = (1.0 - fraction) * probs + fraction * noise  # [B, A]
 
     # --- Safe log: 0-probability slots become -inf ---
-    log_prob = torch.where(
+    log_probs = torch.where(
         blended > 0,
         blended.log(),
         torch.full_like(blended, -float("inf")),
     )
 
-    return log_prob
+    return log_probs
 
 
 def mask_invalid_actions(

@@ -1,15 +1,10 @@
-from typing import Tuple, Optional, Dict, Any, Callable
-import torch
+from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
-import torch.nn as nn
-from .base import BaseHead, HeadOutput
-from agents.learner.losses.representations import (
-    BaseRepresentation,
-    ClassificationRepresentation,
-)
-from configs.modules.architecture_config import ArchitectureConfig
-from configs.modules.backbones.base import BackboneConfig
-from modules.backbones.mlp import build_dense, NoisyLinear
+import torch
+from .base import BaseHead
+from old_muzero.agents.learner.losses.representations import BaseRepresentation, ClassificationRepresentation
+from old_muzero.configs.modules.architecture_config import ArchitectureConfig
+from old_muzero.configs.modules.backbones.base import BackboneConfig
 
 
 class ToPlayHead(BaseHead):
@@ -19,76 +14,25 @@ class ToPlayHead(BaseHead):
 
     def __init__(
         self,
+        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         num_players: int,
         representation: Optional[BaseRepresentation] = None,
-        neck_fn: Optional[Callable[[Tuple[int, ...]], nn.Module]] = None,
-        noisy_sigma: float = 0.0,
-        name: Optional[str] = None,
-        input_source: str = "default",
-        **kwargs,
+        neck_config: Optional[BackboneConfig] = None,
     ):
         if representation is None:
             representation = ClassificationRepresentation(num_classes=num_players)
-        super().__init__(
-            input_shape,
-            representation,
-            neck_fn=neck_fn,
-            noisy_sigma=noisy_sigma,
-            name=name,
-            input_source=input_source,
-        )
-
-        # 1. Heads now build their own feature architecture (neck)
-        if self.neck_fn is not None:
-            self.neck = self.neck_fn(input_shape=input_shape)
-        else:
-            self.neck = nn.Identity()
-            self.neck.output_shape = input_shape
-
-        self.output_shape = self.neck.output_shape
-        self.flat_dim = self._get_flat_dim(self.neck, input_shape)
-
-        # 2. Heads now define their own Final Output layer
-        self.output_layer = build_dense(
-            in_features=self.flat_dim,
-            out_features=self.representation.num_features,
-            sigma=self.noisy_sigma,
-        )
-
-    def reset_noise(self) -> None:
-        """Propagate noise reset through the head's submodules."""
-        if hasattr(self.neck, "reset_noise"):
-            self.neck.reset_noise()
-        if isinstance(self.output_layer, NoisyLinear):
-            self.output_layer.reset_noise()
+        super().__init__(arch_config, input_shape, representation, neck_config)
 
     def forward(
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-        is_inference: bool = False,
-        **kwargs,
-    ) -> HeadOutput:
-        """Returns HeadOutput with (logits, player_idx, state)"""
-        # 1. Processing neck -> flatten
-        x = self.neck(x)
-        if x.dim() > 2:
-            x = x.flatten(1, -1)
-
-        # 2. Final Output Projection
-        logits = self.output_layer(x)
-
-        # 3. Mathematical Transform
-        player_idx = None
-        if is_inference:
-            player_idx = self.representation.to_expected_value(logits).long()
-
-        return HeadOutput(
-            training_tensor=logits,
-            inference_tensor=player_idx,
-            state=state if state is not None else {},
-        )
+    ) -> Tuple[Tensor, Optional[Dict[str, Any]], Tensor]:
+        """Returns: (logits, state, player_idx)"""
+        logits, new_state = super().forward(x, state)
+        player_idx = self.representation.to_expected_value(logits).long()
+        return logits, new_state, player_idx
 
 
 class RelativeToPlayHead(ToPlayHead):
@@ -101,34 +45,28 @@ class RelativeToPlayHead(ToPlayHead):
         self,
         x: Tensor,
         state: Optional[Dict[str, Any]] = None,
-        is_inference: bool = False,
-        **kwargs,
-    ) -> HeadOutput:
-        """Returns HeadOutput with (logits, next_player_idx, state)"""
-        # 1. Get raw logits from ToPlayHead's projection phase
-        res = super().forward(x, state, is_inference=is_inference, **kwargs)
-        logits = res.training_tensor
+    ) -> Tuple[Tensor, Dict[str, Any], Tensor]:
+        """Returns: (logits, state, player_idx)"""
+        # 1. Get logits from BaseHead
+        logits, _ = super(ToPlayHead, self).forward(x, state)
 
-        # 3. Conditionally Calculate actual next player index
-        player_idx = None
-        new_state = state.copy() if state is not None else {}
-
-        if is_inference:
-            # Extract current player index from state
-            current_player_idx = state.get(
-                f"{self.name}_current_player_idx",
-                torch.zeros(x.shape[0], device=x.device, dtype=torch.long),
-            )
-            # Calculate the shift (ΔP)
-            delta_p = self.representation.to_expected_value(logits).long()
-            # Calculate actual next player index: (current + shift) % num_players
-            num_players = self.representation.num_features
-            player_idx = (current_player_idx + delta_p) % num_players
-            # Update the opaque state
-            new_state[f"{self.name}_current_player_idx"] = player_idx
-
-        return HeadOutput(
-            training_tensor=logits,
-            inference_tensor=player_idx,
-            state=new_state,
+        # 2. Extract current player index from state
+        if state is None:
+            state = {}
+        current_player_idx = state.get(
+            "current_player_idx",
+            torch.zeros(x.shape[0], device=x.device, dtype=torch.long),
         )
+
+        # 3. Calculate the shift (ΔP)
+        delta_p = self.representation.to_expected_value(logits).long()
+
+        # 4. Calculate actual next player index: (current + shift) % num_players
+        num_players = self.representation.num_features
+        player_idx = (current_player_idx + delta_p) % num_players
+
+        # 5. Update the opaque state
+        new_state = state.copy()
+        new_state["current_player_idx"] = player_idx
+
+        return logits, new_state, player_idx

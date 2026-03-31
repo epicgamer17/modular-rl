@@ -11,7 +11,7 @@ from typing import Any, Dict, Iterator
 
 import torch
 
-from replay_buffers.modular_buffer import ModularReplayBuffer
+from old_muzero.replay_buffers.modular_buffer import ModularReplayBuffer
 
 
 class SingleBatchIterator:
@@ -24,12 +24,7 @@ class SingleBatchIterator:
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         batch = self.replay_buffer.sample()
         yield {
-            k: (
-                v.to(self.device, non_blocking=True).contiguous()
-                if torch.is_tensor(v)
-                else v
-            )
-            for k, v in batch.items()
+            k: v.to(self.device) if torch.is_tensor(v) else v for k, v in batch.items()
         }
 
 
@@ -50,11 +45,7 @@ class RepeatSampleIterator:
         for _ in range(self.num_iterations):
             batch = self.replay_buffer.sample()
             yield {
-                k: (
-                    v.to(self.device, non_blocking=True).contiguous()
-                    if torch.is_tensor(v)
-                    else v
-                )
+                k: v.to(self.device) if torch.is_tensor(v) else v
                 for k, v in batch.items()
             }
 
@@ -72,13 +63,11 @@ class PPOEpochIterator:
         num_epochs: int,
         num_minibatches: int,
         device: torch.device,
-        normalize_advantages: bool = True,
     ):
         self.replay_buffer = replay_buffer
         self.num_epochs = num_epochs
         self.num_minibatches = num_minibatches
         self.device = device
-        self.normalize_advantages = normalize_advantages
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         batch = self.replay_buffer.sample()
@@ -92,16 +81,10 @@ class PPOEpochIterator:
                 batch_indices = indices[start:end]
                 sub_batch = {
                     k: (
-                        v[batch_indices].to(self.device, non_blocking=True).contiguous()
+                        v[batch_indices].to(self.device)
                         if torch.is_tensor(v) and v.shape[0] == num_samples
                         else v
                     )
                     for k, v in batch.items()
                 }
-                
-                # Advantage Normalization (at the mini-batch level)
-                if self.normalize_advantages and "advantages" in sub_batch:
-                    from agents.learner.functional.advantages import normalize_advantages
-                    sub_batch["advantages"] = normalize_advantages(sub_batch["advantages"])
-                    
                 yield sub_batch
