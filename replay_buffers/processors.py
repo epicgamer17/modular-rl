@@ -1187,6 +1187,7 @@ class PPOBatchProcessor(OutputProcessor):
         return dict(
             observations=buffers["observations"][sl],
             actions=buffers["actions"][sl],
+            values=buffers["values"][sl],
             advantages=buffers["advantages"][sl],
             returns=buffers["returns"][sl],
             log_prob=buffers["log_prob"][sl],
