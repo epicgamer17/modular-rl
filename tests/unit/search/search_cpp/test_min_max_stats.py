@@ -42,3 +42,12 @@ def test_min_max_stats_strict_known_bounds():
     # Updating within bounds should not shift the normalization
     stats.update(0.0)
     assert math.isclose(stats.normalize(0.5), 0.75, rel_tol=1e-7)
+
+@pytest.mark.skipif(not HAS_CPP, reason="C++ search backend not available.")
+def test_min_max_stats_known_bounds_apply_on_first_call():
+    """CONTRACT: C++ MinMaxStats must use known bounds on the first normalize call."""
+    stats = MinMaxStats([-1.0, 1.0], False, 0.01)
+
+    assert math.isclose(stats.normalize(-1.0), 0.0, rel_tol=1e-7)
+    assert math.isclose(stats.normalize(0.0), 0.5, rel_tol=1e-7)
+    assert math.isclose(stats.normalize(1.0), 1.0, rel_tol=1e-7)
