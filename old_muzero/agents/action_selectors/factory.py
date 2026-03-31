@@ -1,0 +1,81 @@
+from typing import Dict, Any
+from old_muzero.agents.action_selectors.selectors import (
+    CategoricalSelector,
+    EpsilonGreedySelector,
+    ArgmaxSelector,
+    BaseActionSelector,
+)
+from old_muzero.agents.action_selectors.decorators import PPODecorator, TemperatureSelector
+
+
+class SelectorFactory:
+    """Dynamically builds an Action Selector chain from a config."""
+
+    REGISTRY = {
+        # Base Selectors
+        "categorical": CategoricalSelector,
+        "epsilon_greedy": EpsilonGreedySelector,
+        "argmax": ArgmaxSelector,
+        # Decorators
+        "ppo_injector": PPODecorator,
+        "temperature": TemperatureSelector,
+    }
+
+    @classmethod
+    def create(cls, config: Dict[str, Any]) -> BaseActionSelector:
+        """
+        Builds the selector chain.
+        Expects a dict like:
+        {
+            "base": {"type": "categorical", "kwargs": {"exploration": True}},
+            "decorators": [{"type": "temperature", "kwargs": {...}}]
+        }
+        """
+        # 1. Instantiate the Base Selector
+        # Handle if config itself is a SelectorConfig object or a plain dict
+        if hasattr(config, "base"):
+            base_cfg = config.base
+        else:
+            base_cfg = config.get("base", {})
+        # Handle if base_cfg is a Config object or dict
+        if hasattr(base_cfg, "type"):
+            base_type = base_cfg.type
+            base_kwargs = getattr(base_cfg, "kwargs", {})
+        else:
+            base_type = base_cfg.get("type")
+            base_kwargs = base_cfg.get("kwargs", {})
+
+        if base_type not in cls.REGISTRY:
+            # Fallback or error
+            if base_type is None:
+                raise ValueError("Selector config must specify a 'base' type.")
+            raise ValueError(f"Unknown selector type: {base_type}")
+
+        # Create the inner-most selector
+        # Pass the config object (base_cfg) to the constructor
+        selector = cls.REGISTRY[base_type](config=base_cfg, **base_kwargs)
+
+        # 2. Recursively wrap it with Decorators (Inside-Out)
+        if hasattr(config, "decorators"):
+            decorators_cfg = config.decorators
+        else:
+            decorators_cfg = config.get("decorators", [])
+        for dec_cfg in decorators_cfg:
+            # Handle if dec_cfg is a Config object or dict
+            if hasattr(dec_cfg, "type"):
+                dec_type = dec_cfg.type
+                dec_kwargs = getattr(dec_cfg, "kwargs", {})
+            else:
+                dec_type = dec_cfg.get("type")
+                dec_kwargs = dec_cfg.get("kwargs", {})
+
+            if dec_type not in cls.REGISTRY:
+                raise ValueError(f"Unknown decorator type: {dec_type}")
+
+            decorator_class = cls.REGISTRY[dec_type]
+
+            # Wrap the current selector!
+            selector = decorator_class(inner_selector=selector, **dec_kwargs)
+
+        # Return the fully wrapped, ready-to-use pipeline
+        return selector
