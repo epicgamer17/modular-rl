@@ -12,7 +12,7 @@ class GameConfig:
         num_players,
         num_actions,
         # has_intermediate_rewards,
-        make_env=None,
+        env_factory=None,
     ):
         self.max_score = max_score
         self.min_score = min_score
@@ -27,7 +27,7 @@ class GameConfig:
         self.multi_agent = multi_agent
         self.num_players = num_players
         # self.has_intermediate_rewards = has_intermediate_rewards
-        self.make_env = make_env
+        self.env_factory = env_factory
 
     def __eq__(self, o: object) -> bool:
         if not isinstance(o, GameConfig):

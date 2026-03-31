@@ -114,7 +114,6 @@ class RainbowTrainer(BaseTrainer):
 
         self.training_selector = ArgmaxSelector()
 
-
         self.buffer = create_dqn_buffer(
             observation_dimensions=self.obs_dim,
             max_size=config.replay_buffer_size,
@@ -147,7 +146,7 @@ class RainbowTrainer(BaseTrainer):
 
         num_workers = config.num_workers
         worker_args = (
-            config.game.make_env,
+            config.game.env_factory,
             self.agent_network,
             self.action_selector,
             self.buffer,

@@ -12,9 +12,14 @@ from old_muzero.configs.modules.backbones.base import BackboneConfig
 from old_muzero.configs.modules.backbones.factory import BackboneConfigFactory
 from old_muzero.configs.modules.heads.to_play import ToPlayHeadConfig
 from old_muzero.configs.modules.heads.policy import PolicyHeadConfig
-from old_muzero.configs.modules.heads.chance_probability import ChanceProbabilityHeadConfig
+from old_muzero.configs.modules.heads.chance_probability import (
+    ChanceProbabilityHeadConfig,
+)
 from old_muzero.configs.modules.heads.value import ValueHeadConfig
-from old_muzero.configs.modules.heads.reward import RewardHeadConfig, ValuePrefixRewardHeadConfig
+from old_muzero.configs.modules.heads.reward import (
+    RewardHeadConfig,
+    ValuePrefixRewardHeadConfig,
+)
 from old_muzero.configs.modules.heads.base import HeadConfig
 from old_muzero.configs.modules.architecture_config import ArchitectureConfig
 import torch.nn.functional as F
@@ -167,7 +172,7 @@ class MuZeroConfig(
                 self.chance_encoder_backbone = default_bb_cfg
         else:
             # Final defaults if nothing provided
-            dense_default = {"type": "dense"}
+            dense_default = {"type": "mlp"}
             if self.representation_backbone is None:
                 self.representation_backbone = BackboneConfigFactory.create(
                     dense_default

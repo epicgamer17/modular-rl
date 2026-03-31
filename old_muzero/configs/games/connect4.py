@@ -4,12 +4,12 @@ from .game import GameConfig
 from pettingzoo.classic import connect4_v3
 
 
-def make_env(render_mode=None):
+def env_factory(render_mode=None):
     return connect4_v3.env(render_mode=render_mode)
 
 
 class Connect4Config(GameConfig):
-    def __init__(self, make_env=make_env):
+    def __init__(self, env_factory=env_factory):
         super(Connect4Config, self).__init__(
             num_actions=7,
             max_score=1,
@@ -22,5 +22,5 @@ class Connect4Config(GameConfig):
             multi_agent=True,
             num_players=2,
             # has_intermediate_rewards=False,
-            make_env=make_env,
+            env_factory=env_factory,
         )

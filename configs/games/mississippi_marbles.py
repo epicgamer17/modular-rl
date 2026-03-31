@@ -4,12 +4,12 @@ from .game import GameConfig
 from pettingzoo.classic import mississippi_marbles_v3
 
 
-def make_env(render_mode=None):
+def env_factory(render_mode=None):
     return mississippi_marbles_v3.env(render_mode=render_mode)
 
 
 class MississippiMarblesConfig(GameConfig):
-    def __init__(self, make_env=make_env):
+    def __init__(self, env_factory=env_factory):
         super(MississippiMarblesConfig, self).__init__(
             num_actions=10,
             max_score=20000,  # technically infinite, but this is a good enough approximation
@@ -22,5 +22,5 @@ class MississippiMarblesConfig(GameConfig):
             multi_agent=True,
             num_players=2,  # could be more
             # has_intermediate_rewards=False,
-            make_env=make_env,
+            env_factory=env_factory,
         )
