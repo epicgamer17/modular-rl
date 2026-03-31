@@ -14,8 +14,29 @@ def build_ppo_loss_pipeline(config, agent_network, device):
     pol_rep = agent_network.components["behavior_heads"]["policy_logits"].representation
     val_rep = agent_network.components["behavior_heads"]["state_value"].representation
 
-    from agents.learner.losses import ClippedValueLoss
+    from agents.learner.losses import ClippedValueLoss, ValueLoss
     
+    # Select Value Loss module
+    if getattr(config, "clip_value_loss", True):
+        value_loss_module = ClippedValueLoss(
+            device=device,
+            representation=val_rep,
+            clip_param=config.clip_param,
+            target_key="returns",
+            optimizer_name="default",
+            loss_factor=config.critic_coefficient,
+            name="value_loss",
+        )
+    else:
+        value_loss_module = ValueLoss(
+            device=device,
+            representation=val_rep,
+            target_key="returns",
+            optimizer_name="default",
+            loss_factor=config.critic_coefficient,
+            name="value_loss",
+        )
+
     return LossPipeline(
         config=config,
         modules=[
@@ -27,15 +48,7 @@ def build_ppo_loss_pipeline(config, agent_network, device):
                 optimizer_name="default",
                 name="policy_loss",
             ),
-            ClippedValueLoss(
-                device=device,
-                representation=val_rep,
-                clip_param=config.clip_param,
-                target_key="returns",
-                optimizer_name="default",
-                loss_factor=config.critic_coefficient,
-                name="value_loss",
-            ),
+            value_loss_module,
         ]
     )
 

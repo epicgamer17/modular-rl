@@ -23,6 +23,7 @@ def test_ppo_advantage_normalization_flow():
         BufferConfig("actions", shape=(), dtype=torch.int64),
         BufferConfig("advantages", shape=(), dtype=torch.float32),
         BufferConfig("returns", shape=(), dtype=torch.float32),
+        BufferConfig("values", shape=(), dtype=torch.float32),
         BufferConfig("log_prob", shape=(), dtype=torch.float32),
         BufferConfig("legal_moves_masks", shape=(1,), dtype=torch.bool),
     ]
@@ -40,6 +41,7 @@ def test_ppo_advantage_normalization_flow():
             actions=torch.tensor(0),
             advantages=torch.tensor(float(i + 1) * 1000.0),
             returns=torch.tensor(0.0),
+            values=torch.tensor(0.0),
             log_prob=torch.tensor(0.0),
             legal_moves_masks=torch.tensor([True])
         )
@@ -114,6 +116,7 @@ def test_gaeprocessor_integration():
     # Setup mock buffers
     buffers = {
         "advantages": torch.tensor(raw_advs, dtype=torch.float32),
+        "values": torch.zeros(2),
         "observations": torch.zeros(2, 1),
         "actions": torch.zeros(2, dtype=torch.int64),
         "returns": torch.zeros(2),

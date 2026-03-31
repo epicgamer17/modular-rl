@@ -122,6 +122,14 @@ def make_head_fn(config: Optional[HeadConfig], **kwargs) -> Optional[Callable]:
     head_kwargs = {k: v for k, v in vars(config).items() if k not in exclude}
     head_kwargs.update(kwargs)
     
+    # 4. Resolve sub-backbones (e.g. value_hidden_backbone -> value_hidden_backbone_fn)
+    # We look for all fields ending in 'backbone' and create their _fn equivalent.
+    for key in list(head_kwargs.keys()):
+        if str(key).endswith("backbone"):
+            val = head_kwargs.pop(key)
+            if val is not None:
+                head_kwargs[f"{key}_fn"] = make_backbone_fn(val)
+
     # Inject resolved dependencies
     head_kwargs["representation"] = representation
     head_kwargs["neck_fn"] = neck_fn

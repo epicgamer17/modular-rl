@@ -353,10 +353,10 @@ def _normalize_hidden_state(S: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
     max_val = S_flat.max(dim=1, keepdim=True)[0]
     
     # Expand back to original shape for broadcasting
-    # (min_val and max_val are [B, 1], broadcasting to (B, *) is automatic except for 4D)
-    if S.dim() == 4:
-        min_val = min_val.view(batch_size, 1, 1, 1)
-        max_val = max_val.view(batch_size, 1, 1, 1)
+    # (min_val and max_val are [B, 1], broadcasting to (B, *) requires proper singleton dimensions)
+    view_shape = [batch_size] + [1] * (S.dim() - 1)
+    min_val = min_val.view(*view_shape)
+    max_val = max_val.view(*view_shape)
         
     denominator = max_val - min_val
     denominator = torch.where(denominator < eps, torch.ones_like(denominator), denominator)

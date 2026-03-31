@@ -349,8 +349,19 @@ class SequenceMaskBuilder(BaseTargetBuilder):
         base_mask = batch.get(
             "is_same_game", torch.ones((B, T), device=device, dtype=torch.bool)
         )
+        if base_mask.shape[1] < T:
+            # Pad base_mask: [B, 1] (True) + [B, T-1] -> [B, T]
+            # In MuZero, the root t=0 is always part of the same sequence as itself.
+            padding = torch.ones((B, T - base_mask.shape[1]), device=device, dtype=torch.bool)
+            base_mask = torch.cat([padding, base_mask], dim=1)
+
         # raw_dones[t] is True if s_t is terminal
         raw_dones = batch.get("dones", torch.zeros((B, T), device=device, dtype=torch.bool))
+        if raw_dones.shape[1] < T:
+            # Pad raw_dones: [B, 1] (False) + [B, T-1] -> [B, T]
+            # Transition to root (s_0) is never terminal in an unroll starting at s_0.
+            padding = torch.zeros((B, T - raw_dones.shape[1]), device=device, dtype=torch.bool)
+            raw_dones = torch.cat([padding, raw_dones], dim=1)
         
         # post_done_mask[t] is True if we already passed a terminal state (s_{t-1} or earlier were terminal)
         cumulative_dones = torch.cumsum(raw_dones.float(), dim=1)

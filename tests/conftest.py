@@ -68,6 +68,7 @@ def base_muzero_config_dict():
         "discount_factor": 0.99,
         "unroll_steps": 3,
         "lr_init": 0.01,
+        "atom_size": 601,
         "architecture": {"backbone": {"type": "identity"}},
         "action_selector": {"base": {"type": "categorical"}},
         "policy_head": {
