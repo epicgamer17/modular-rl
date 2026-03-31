@@ -1,6 +1,6 @@
 from typing import Any, Callable
-from old_muzero.configs.base import ConfigBase
-from old_muzero.modules.utils import prepare_activations
+from configs.base import ConfigBase
+from modules.utils import prepare_activations
 from torch import nn
 
 

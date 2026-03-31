@@ -1,5 +1,5 @@
 from typing import Optional
-from old_muzero.configs.base import ConfigBase
+from configs.base import ConfigBase
 
 
 class OutputStrategyConfig(ConfigBase):

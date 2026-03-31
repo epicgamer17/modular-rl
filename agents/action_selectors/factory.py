@@ -1,11 +1,11 @@
 from typing import Dict, Any
-from old_muzero.agents.action_selectors.selectors import (
+from agents.action_selectors.selectors import (
     CategoricalSelector,
     EpsilonGreedySelector,
     ArgmaxSelector,
     BaseActionSelector,
 )
-from old_muzero.agents.action_selectors.decorators import PPODecorator, TemperatureSelector
+from agents.action_selectors.decorators import PPODecorator, TemperatureSelector
 
 
 class SelectorFactory:

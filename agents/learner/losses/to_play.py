@@ -1,7 +1,8 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Optional
-from old_muzero.agents.learner.losses.base import BaseLoss, LossRepresentation
+from agents.learner.losses.base import BaseLoss, LossRepresentation
+
 
 class ToPlayLoss(BaseLoss):
     """Loss for learning to predict who's turn it is."""
@@ -26,6 +27,7 @@ class ToPlayLoss(BaseLoss):
             loss_factor=loss_factor,
             name=name,
         )
+
 
 class RelativeToPlayLoss(BaseLoss):
     """

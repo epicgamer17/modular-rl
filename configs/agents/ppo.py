@@ -1,14 +1,14 @@
 from typing import Type
 from .base import AgentConfig
-from old_muzero.configs.base import DistributionalConfig, NoisyConfig
-from old_muzero.configs.modules.heads.policy import PolicyHeadConfig
-from old_muzero.configs.modules.heads.value import ValueHeadConfig
-from old_muzero.configs.modules.heads.base import HeadConfig
-from old_muzero.configs.modules.backbones.base import BackboneConfig
-from old_muzero.configs.modules.backbones.factory import BackboneConfigFactory
-from old_muzero.configs.modules.architecture_config import ArchitectureConfig
-from old_muzero.configs.base import ActorConfig
-from old_muzero.configs.base import CriticConfig
+from configs.base import DistributionalConfig, NoisyConfig
+from configs.modules.heads.policy import PolicyHeadConfig
+from configs.modules.heads.value import ValueHeadConfig
+from configs.modules.heads.base import HeadConfig
+from configs.modules.backbones.base import BackboneConfig
+from configs.modules.backbones.factory import BackboneConfigFactory
+from configs.modules.architecture_config import ArchitectureConfig
+from configs.base import ActorConfig
+from configs.base import CriticConfig
 
 
 class PPOConfig(AgentConfig, DistributionalConfig, NoisyConfig):

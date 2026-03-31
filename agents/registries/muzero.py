@@ -1,7 +1,7 @@
 import torch
 from typing import Any, Dict, List, Tuple
-from old_muzero.agents.registries.base import register_agent
-from old_muzero.agents.learner.losses import (
+from agents.registries.base import register_agent
+from agents.learner.losses import (
     LossPipeline,
     ValueLoss,
     PolicyLoss,
@@ -12,12 +12,12 @@ from old_muzero.agents.learner.losses import (
     SigmaLoss,
     CommitmentLoss,
 )
-from old_muzero.agents.learner.callbacks import (
+from agents.learner.callbacks import (
     ResetNoiseCallback,
     MetricEarlyStopCallback,
 )
-from old_muzero.modules.utils import get_lr_scheduler
-from old_muzero.agents.learner.target_builders import (
+from modules.utils import get_lr_scheduler
+from agents.learner.target_builders import (
     TargetBuilderPipeline,
     LatentConsistencyBuilder,
     MCTSExtractor,
@@ -28,11 +28,30 @@ from old_muzero.agents.learner.target_builders import (
 )
 
 
-from old_muzero.agents.learner.losses.representations import IdentityRepresentation
-from old_muzero.agents.learner.losses.priorities import ExpectedValueErrorPriorityComputer
+from agents.learner.losses.representations import IdentityRepresentation
+from agents.learner.losses.priorities import ExpectedValueErrorPriorityComputer
 
 
-def build_muzero_loss_pipeline(config, agent_network, device):
+def build_muzero_loss_pipeline(
+    agent_network: Any,
+    device: torch.device,
+    minibatch_size: int,
+    unroll_steps: int,
+    num_actions: int,
+    atom_size: int,
+    value_loss_function: Any,
+    value_loss_factor: float,
+    policy_loss_function: Any,
+    policy_loss_factor: float,
+    reward_loss_function: Any,
+    reward_loss_factor: float,
+    num_players: int,
+    to_play_loss_factor: float,
+    consistency_loss_factor: float,
+    stochastic: bool,
+    chance_q_loss_factor: float = 0.0,
+    sigma_loss_factor: float = 0.0,
+):
     # Extract representations from heads
     val_rep = agent_network.components["value_head"].representation
     pol_rep = agent_network.components["policy_head"].representation
@@ -43,43 +62,43 @@ def build_muzero_loss_pipeline(config, agent_network, device):
         ValueLoss(
             device=device,
             representation=val_rep,
-            loss_fn=config.value_loss_function,
-            loss_factor=config.value_loss_factor,
+            loss_fn=value_loss_function,
+            loss_factor=value_loss_factor,
         ),
         PolicyLoss(
             device=device,
             representation=pol_rep,
-            loss_fn=config.policy_loss_function,
-            loss_factor=config.policy_loss_factor,
+            loss_fn=policy_loss_function,
+            loss_factor=policy_loss_factor,
         ),
         RewardLoss(
             device=device,
             representation=rew_rep,
-            loss_fn=config.reward_loss_function,
-            loss_factor=config.reward_loss_factor,
+            loss_fn=reward_loss_function,
+            loss_factor=reward_loss_factor,
         ),
     ]
 
-    if config.game.num_players > 1:
+    if num_players > 1:
         modules.append(
             ToPlayLoss(
                 device=device,
                 representation=tp_rep,
-                loss_factor=config.to_play_loss_factor,
+                loss_factor=to_play_loss_factor,
             )
         )
 
-    if config.consistency_loss_factor > 0:
+    if consistency_loss_factor > 0:
         modules.append(
             ConsistencyLoss(
                 device=device,
                 representation=IdentityRepresentation(),
                 agent_network=agent_network,
-                loss_factor=config.consistency_loss_factor,
+                loss_factor=consistency_loss_factor,
             )
         )
 
-    if config.stochastic:
+    if stochastic:
         as_val_rep = agent_network.components["afterstate_value_head"].representation
         sigma_rep = agent_network.components["world_model"].sigma_head.representation
 
@@ -88,12 +107,12 @@ def build_muzero_loss_pipeline(config, agent_network, device):
                 ChanceQLoss(
                     device=device,
                     representation=as_val_rep,
-                    loss_factor=config.chance_q_loss_factor,
+                    loss_factor=chance_q_loss_factor,
                 ),
                 SigmaLoss(
                     device=device,
                     representation=sigma_rep,
-                    loss_factor=config.sigma_loss_factor,
+                    loss_factor=sigma_loss_factor,
                 ),
                 CommitmentLoss(
                     device=device,
@@ -103,7 +122,14 @@ def build_muzero_loss_pipeline(config, agent_network, device):
         )
 
     priority_computer = ExpectedValueErrorPriorityComputer(value_representation=val_rep)
-    return LossPipeline(config, modules, priority_computer=priority_computer)
+    return LossPipeline(
+        modules=modules,
+        priority_computer=priority_computer,
+        minibatch_size=minibatch_size,
+        unroll_steps=unroll_steps,
+        num_actions=num_actions,
+        atom_size=atom_size,
+    )
 
 
 @register_agent("muzero")
@@ -111,7 +137,26 @@ def build_muzero(
     config: Any, agent_network: Any, device: torch.device
 ) -> Dict[str, Any]:
     # 1. Losses
-    loss_pipeline = build_muzero_loss_pipeline(config, agent_network, device)
+    loss_pipeline = build_muzero_loss_pipeline(
+        agent_network=agent_network,
+        device=device,
+        minibatch_size=config.minibatch_size,
+        unroll_steps=config.unroll_steps,
+        num_actions=config.game.num_actions,
+        atom_size=config.atom_size,
+        value_loss_function=config.value_loss_function,
+        value_loss_factor=config.value_loss_factor,
+        policy_loss_function=config.policy_loss_function,
+        policy_loss_factor=config.policy_loss_factor,
+        reward_loss_function=config.reward_loss_function,
+        reward_loss_factor=config.reward_loss_factor,
+        num_players=config.game.num_players,
+        to_play_loss_factor=config.to_play_loss_factor,
+        consistency_loss_factor=config.consistency_loss_factor,
+        stochastic=config.stochastic,
+        chance_q_loss_factor=getattr(config, "chance_q_loss_factor", 0.0),
+        sigma_loss_factor=getattr(config, "sigma_loss_factor", 0.0),
+    )
 
     # 2. Setup Optimizers and Schedulers
     from torch.optim.adam import Adam

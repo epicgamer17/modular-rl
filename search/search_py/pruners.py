@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import math
 from typing import Any, List, Optional, Tuple, Dict
 import torch
-from old_muzero.search.min_max_stats import MinMaxStats
+from search.min_max_stats import MinMaxStats
 
 
 class PruningMethod(ABC):

@@ -19,17 +19,17 @@ from torch.nn.utils import clip_grad_norm_
 
 
 if TYPE_CHECKING:
-    from old_muzero.agents.learner.target_builders import BaseTargetBuilder
-    from old_muzero.agents.learner.losses import LossPipeline
-    from old_muzero.agents.learner.callbacks import Callback
-    from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
+    from agents.learner.target_builders import BaseTargetBuilder
+    from agents.learner.losses import LossPipeline
+    from agents.learner.callbacks import Callback
+    from modules.agent_nets.modular import ModularAgentNetwork
 
-from old_muzero.agents.learner.callbacks import (
+from agents.learner.callbacks import (
     CallbackList,
     EarlyStopIteration,
     MPSCacheClearCallback,
 )
-from old_muzero.utils.telemetry import finalize_metrics
+from utils.telemetry import finalize_metrics
 
 
 @dataclass

@@ -5,8 +5,8 @@ from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any, List, Callable
 from dataclasses import dataclass
 
-from old_muzero.search.nodes import ChanceNode, DecisionNode
-from old_muzero.search.utils import get_completed_q_improved_policy
+from search.nodes import ChanceNode, DecisionNode
+from search.utils import get_completed_q_improved_policy
 
 
 # --- Scoring Methods ---

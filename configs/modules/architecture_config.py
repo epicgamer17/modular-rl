@@ -1,6 +1,6 @@
 from typing import Any, Callable, Optional, Dict
-from old_muzero.configs.base import ConfigBase
-from old_muzero.modules.utils import prepare_activations, kernel_initializer_wrapper
+from configs.base import ConfigBase
+from modules.utils import prepare_activations, kernel_initializer_wrapper
 
 
 class ArchitectureConfig(ConfigBase):

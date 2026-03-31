@@ -1,11 +1,11 @@
 from typing import Tuple, Optional, Callable, Dict, Any
 import torch
 from torch import nn, Tensor
-from old_muzero.modules.backbones.factory import BackboneFactory
-from old_muzero.configs.modules.backbones.base import BackboneConfig
-from old_muzero.configs.modules.architecture_config import ArchitectureConfig
-from old_muzero.agents.learner.losses.representations import BaseRepresentation
-from old_muzero.modules.blocks.dense import build_dense
+from modules.backbones.factory import BackboneFactory
+from configs.modules.backbones.base import BackboneConfig
+from configs.modules.architecture_config import ArchitectureConfig
+from agents.learner.losses.representations import BaseRepresentation
+from modules.blocks.dense import build_dense
 
 
 class BaseHead(nn.Module):
@@ -45,7 +45,6 @@ class BaseHead(nn.Module):
         for dim in shape:
             flat *= dim
         return flat
-
 
     def reset_noise(self) -> None:
         if hasattr(self.neck, "reset_noise"):

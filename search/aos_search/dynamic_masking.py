@@ -19,8 +19,8 @@ import math
 
 import torch
 
-from old_muzero.search.aos_search.tree import FlatTree
-from old_muzero.search.aos_search.min_max_stats import VectorizedMinMaxStats
+from search.aos_search.tree import FlatTree
+from search.aos_search.min_max_stats import VectorizedMinMaxStats
 
 
 # ---------------------------------------------------------------------------

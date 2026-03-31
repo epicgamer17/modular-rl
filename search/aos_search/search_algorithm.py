@@ -1,5 +1,5 @@
 import torch
-from old_muzero.search.aos_search.search_factories import build_search_pipeline
+from search.aos_search.search_factories import build_search_pipeline
 
 
 class ModularSearch:

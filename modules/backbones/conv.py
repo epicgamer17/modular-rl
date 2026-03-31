@@ -1,8 +1,8 @@
 from typing import Tuple
 import torch
 from torch import nn
-from old_muzero.modules.blocks.conv import Conv2dStack
-from old_muzero.configs.modules.backbones.conv import ConvConfig
+from modules.blocks.conv import Conv2dStack
+from configs.modules.backbones.conv import ConvConfig
 
 
 class ConvBackbone(nn.Module):
@@ -35,7 +35,6 @@ class ConvBackbone(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.stack(x)
 
-
     def reset_noise(self) -> None:
         self.stack.reset_noise()
 
@@ -52,7 +51,7 @@ class DeconvBackbone(nn.Module):
         self.input_shape = input_shape
 
         # Late import to avoid circular dependency
-        from old_muzero.modules.blocks.conv import ConvTranspose2dStack
+        from modules.blocks.conv import ConvTranspose2dStack
 
         self.stack = ConvTranspose2dStack(
             input_shape=input_shape,

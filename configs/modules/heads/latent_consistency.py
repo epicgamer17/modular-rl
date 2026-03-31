@@ -1,4 +1,4 @@
-from old_muzero.configs.modules.heads.base import HeadConfig
+from configs.modules.heads.base import HeadConfig
 
 
 class LatentConsistencyHeadConfig(HeadConfig):

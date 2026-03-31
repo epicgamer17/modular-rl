@@ -14,9 +14,9 @@ from typing import (
 import torch
 from torch import nn
 
-from old_muzero.agents.learner.base import UniversalLearner
-from old_muzero.agents.learner.target_builders import TemporalDifferenceBuilder
-from old_muzero.agents.learner.callbacks import (
+from agents.learner.base import UniversalLearner
+from agents.learner.target_builders import TemporalDifferenceBuilder
+from agents.learner.callbacks import (
     PriorityUpdaterCallback,
     WeightBroadcastCallback,
     MetricEarlyStopCallback,
@@ -24,11 +24,11 @@ from old_muzero.agents.learner.callbacks import (
     ResetNoiseCallback,
     EpsilonGreedySchedulerCallback,
 )
-from old_muzero.agents.learner.losses import LossPipeline
-from old_muzero.modules.utils import get_lr_scheduler
+from agents.learner.losses import LossPipeline
+from modules.utils import get_lr_scheduler
 
 if TYPE_CHECKING:
-    from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
+    from modules.agent_nets.modular import ModularAgentNetwork
 
 
 def build_loss_pipeline(
@@ -50,24 +50,62 @@ def build_loss_pipeline(
         raise ValueError("config.agent_type must be explicitly defined.")
 
     if agent_type == "muzero":
-        from old_muzero.agents.registries.muzero import build_muzero_loss_pipeline
+        from agents.registries.muzero import build_muzero_loss_pipeline
 
-        return build_muzero_loss_pipeline(config, agent_network, device)
+        return build_muzero_loss_pipeline(
+            agent_network=agent_network,
+            device=device,
+            minibatch_size=config.minibatch_size,
+            unroll_steps=config.unroll_steps,
+            num_actions=agent_network.num_actions,
+            atom_size=getattr(config, "atom_size", 1),
+            value_loss_function=config.value_loss_function,
+            value_loss_factor=config.value_loss_factor,
+            policy_loss_function=config.policy_loss_function,
+            policy_loss_factor=config.policy_loss_factor,
+            reward_loss_function=config.reward_loss_function,
+            reward_loss_factor=config.reward_loss_factor,
+            num_players=config.game.num_players,
+            to_play_loss_factor=config.to_play_loss_factor,
+            consistency_loss_factor=config.consistency_loss_factor,
+            stochastic=config.stochastic,
+            chance_q_loss_factor=getattr(config, "chance_q_loss_factor", 0.0),
+            sigma_loss_factor=getattr(config, "sigma_loss_factor", 0.0),
+        )
 
     elif agent_type == "ppo":
-        from old_muzero.agents.registries.ppo import build_ppo_loss_pipeline
+        from agents.registries.ppo import build_ppo_loss_pipeline
 
-        return build_ppo_loss_pipeline(config, agent_network, device)
+        return build_ppo_loss_pipeline(
+            agent_network=agent_network,
+            device=device,
+            clip_param=config.clip_param,
+            entropy_coefficient=config.entropy_coefficient,
+            critic_coefficient=config.critic_coefficient,
+            minibatch_size=config.minibatch_size,
+            num_actions=agent_network.num_actions,
+        )
 
     elif agent_type == "rainbow":
-        from old_muzero.agents.registries.rainbow import build_rainbow_loss_pipeline
+        from agents.registries.rainbow import build_rainbow_loss_pipeline
 
-        return build_rainbow_loss_pipeline(config, agent_network, device)
+        return build_rainbow_loss_pipeline(
+            agent_network=agent_network,
+            device=device,
+            minibatch_size=config.minibatch_size,
+            num_actions=agent_network.num_actions,
+            atom_size=getattr(config, "atom_size", 1),
+        )
 
     elif agent_type == "supervised":
-        from old_muzero.agents.registries.supervised import build_supervised_loss_pipeline
+        from agents.registries.supervised import build_supervised_loss_pipeline
 
-        return build_supervised_loss_pipeline(config, agent_network, device)
+        return build_supervised_loss_pipeline(
+            agent_network=agent_network,
+            device=device,
+            minibatch_size=config.minibatch_size,
+            num_actions=agent_network.num_actions,
+        )
 
     raise ValueError(f"Unknown agent type: {agent_type}")
 
@@ -110,7 +148,7 @@ def build_universal_learner(
         # This is a bit of a leap, but in this framework buffers that support PER follow this pattern.
         # If not, it will fail-fast as requested.
         set_beta_fn = getattr(priority_update_fn.__self__, "set_beta", None)
-        from old_muzero.utils.schedule import create_schedule
+        from utils.schedule import create_schedule
 
         per_beta_schedule_config = getattr(config, "per_beta_schedule", None)
         per_beta_schedule = create_schedule(per_beta_schedule_config)
@@ -135,7 +173,7 @@ def build_universal_learner(
 
     # 1. Delegate core component creation to registries
     if agent_type == "muzero":
-        from old_muzero.agents.registries.muzero import build_muzero
+        from agents.registries.muzero import build_muzero
 
         muzero_components = build_muzero(config, agent_network, device)
         optimizers = muzero_components["optimizers"]
@@ -144,7 +182,7 @@ def build_universal_learner(
         target_builder = muzero_components["target_builder"]
         observation_dtype = muzero_components.get("observation_dtype", torch.float32)
     elif agent_type == "ppo":
-        from old_muzero.agents.registries.ppo import build_ppo
+        from agents.registries.ppo import build_ppo
 
         ppo_components = build_ppo(config, agent_network, device)
         optimizers = ppo_components["optimizers"]
@@ -152,7 +190,7 @@ def build_universal_learner(
         callbacks.extend(ppo_components["callbacks"])
         target_builder = ppo_components.get("target_builder")
     elif agent_type == "rainbow":
-        from old_muzero.agents.registries.rainbow import build_rainbow
+        from agents.registries.rainbow import build_rainbow
 
         rainbow_components = build_rainbow(
             config, agent_network, device, target_agent_network=target_agent_network
@@ -163,7 +201,7 @@ def build_universal_learner(
         target_builder = rainbow_components["target_builder"]
         observation_dtype = rainbow_components.get("observation_dtype", torch.uint8)
     elif agent_type == "supervised":
-        from old_muzero.agents.registries.supervised import build_supervised
+        from agents.registries.supervised import build_supervised
 
         supervised_components = build_supervised(config, agent_network, device)
         optimizers = supervised_components["optimizers"]

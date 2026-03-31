@@ -1,15 +1,15 @@
 import torch
 import time
 from typing import Optional, List, Dict, Any
-from old_muzero.agents.trainers.base_trainer import BaseTrainer
-from old_muzero.agents.learner.factory import build_universal_learner
-from old_muzero.agents.learner.batch_iterators import SingleBatchIterator
-from old_muzero.replay_buffers.buffer_factories import create_muzero_buffer
-from old_muzero.agents.action_selectors.selectors import CategoricalSelector
-from old_muzero.agents.action_selectors.decorators import TemperatureSelector
-from old_muzero.agents.workers.actors import get_actor_class
-from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
-from old_muzero.stats.stats import StatTracker, PlotType
+from agents.trainers.base_trainer import BaseTrainer
+from agents.learner.factory import build_universal_learner
+from agents.learner.batch_iterators import SingleBatchIterator
+from replay_buffers.buffer_factories import create_muzero_buffer
+from agents.action_selectors.selectors import CategoricalSelector
+from agents.action_selectors.decorators import TemperatureSelector
+from agents.workers.actors import get_actor_class
+from modules.agent_nets.modular import ModularAgentNetwork
+from stats.stats import StatTracker, PlotType
 
 
 class MuZeroTrainer(BaseTrainer):
@@ -90,7 +90,7 @@ class MuZeroTrainer(BaseTrainer):
             observation_compression=config.observation_compression,
         )
         # 5. Initialize Executor
-        from old_muzero.agents.executors.factory import create_executor
+        from agents.executors.factory import create_executor
 
         self.executor = create_executor(config)
 
@@ -192,7 +192,7 @@ class MuZeroTrainer(BaseTrainer):
 
     def _setup_stats(self):
         """Initializes the stat tracker with all required keys and plot types."""
-        from old_muzero.stats.stats import PlotType
+        from stats.stats import PlotType
 
         test_score_keys = (
             [f"vs_{agent.name}_score" for agent in self.test_agents]

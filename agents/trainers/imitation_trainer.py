@@ -5,17 +5,17 @@ from typing import List, Optional
 
 import torch
 
-from old_muzero.agents.action_selectors.factory import SelectorFactory
-from old_muzero.agents.learner.base import UniversalLearner
-from old_muzero.agents.learner.batch_iterators import RepeatSampleIterator
-from old_muzero.agents.learner.callbacks import ResetNoiseCallback
-from old_muzero.agents.trainers.base_trainer import BaseTrainer
-from old_muzero.agents.workers.actors import get_actor_class
-from old_muzero.agents.learner.losses import ImitationLoss, LossPipeline
-from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
-from old_muzero.modules.utils import get_lr_scheduler
-from old_muzero.replay_buffers.buffer_factories import create_nfsp_buffer
-from old_muzero.stats.stats import PlotType, StatTracker
+from agents.action_selectors.factory import SelectorFactory
+from agents.learner.base import UniversalLearner
+from agents.learner.batch_iterators import RepeatSampleIterator
+from agents.learner.callbacks import ResetNoiseCallback
+from agents.trainers.base_trainer import BaseTrainer
+from agents.workers.actors import get_actor_class
+from agents.learner.losses import ImitationLoss, LossPipeline
+from modules.agent_nets.modular import ModularAgentNetwork
+from modules.utils import get_lr_scheduler
+from replay_buffers.buffer_factories import create_nfsp_buffer
+from stats.stats import PlotType, StatTracker
 
 
 class ImitationTrainer(BaseTrainer):
@@ -88,7 +88,19 @@ class ImitationTrainer(BaseTrainer):
         lr_scheduler = get_lr_scheduler(optimizer, config)
 
         # Loss
-        loss_pipeline = LossPipeline([ImitationLoss(config, device, self.num_actions)])
+        pol_rep = self.agent_network.components["policy_head"].representation
+        loss_module = ImitationLoss(
+            device=device,
+            representation=pol_rep,
+            loss_fn=config.policy_loss_function,
+            loss_factor=getattr(config, "policy_loss_factor", 1.0),
+        )
+        loss_pipeline = LossPipeline(
+            modules=[loss_module],
+            minibatch_size=config.minibatch_size,
+            num_actions=self.num_actions,
+            unroll_steps=0,
+        )
         loss_pipeline.validate_dependencies(
             network_output_keys={"policies"},
             target_keys={"target_policies"},
@@ -111,7 +123,7 @@ class ImitationTrainer(BaseTrainer):
         self.learner.replay_buffer = self.buffer
 
         # Executor + actors
-        from old_muzero.agents.executors.factory import create_executor
+        from agents.executors.factory import create_executor
 
         self.executor = create_executor(config)
         self.actor_cls = get_actor_class(env, config)

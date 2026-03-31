@@ -1,4 +1,4 @@
-from old_muzero.search.search_py.modular_search import ModularSearch
+from search.search_py.modular_search import ModularSearch
 
 
 def create_mcts(config, device, num_actions) -> ModularSearch:

@@ -1,10 +1,10 @@
-from old_muzero.utils.wrappers import (
+from utils.wrappers import (
     ActionMaskInInfoWrapper,
     AppendAgentSelectionWrapper,
     FrameStackWrapper,
     TwoPlayerPlayerPlaneWrapper,
 )
-from old_muzero.configs.games.game import GameConfig
+from configs.games.game import GameConfig
 from custom_gym_envs.envs.catan import (
     env as catan_env,
     CatanAECEnv,

@@ -1,18 +1,18 @@
 from typing import Type, Union
 from .base import AgentConfig
-from old_muzero.configs.base import (
+from configs.base import (
     DistributionalConfig,
     NoisyConfig,
     EpsilonGreedyConfig,
 )
-from old_muzero.configs.modules.backbones.base import BackboneConfig
-from old_muzero.configs.modules.backbones.factory import BackboneConfigFactory
-from old_muzero.configs.modules.heads.base import HeadConfig
-from old_muzero.configs.modules.heads.q import QHeadConfig, DuelingQHeadConfig
-from old_muzero.configs.modules.output_strategies import OutputStrategyConfigFactory
-from old_muzero.configs.modules.backbones.factory import BackboneConfigFactory
-from old_muzero.configs.modules.architecture_config import ArchitectureConfig
-from old_muzero.utils.utils import tointlists
+from configs.modules.backbones.base import BackboneConfig
+from configs.modules.backbones.factory import BackboneConfigFactory
+from configs.modules.heads.base import HeadConfig
+from configs.modules.heads.q import QHeadConfig, DuelingQHeadConfig
+from configs.modules.output_strategies import OutputStrategyConfigFactory
+from configs.modules.backbones.factory import BackboneConfigFactory
+from configs.modules.architecture_config import ArchitectureConfig
+from utils.utils import tointlists
 
 
 class RainbowConfig(

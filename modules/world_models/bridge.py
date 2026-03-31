@@ -13,6 +13,7 @@ What is OLD (unchanged for isolation):
 - RewardHead + ToPlayHead
 - unroll_physics loop logic
 """
+
 from __future__ import annotations
 
 import torch
@@ -20,9 +21,9 @@ import torch.nn.functional as F
 from torch import nn, Tensor
 from typing import Any, Tuple, Optional, Dict
 
-from old_muzero.modules.world_models.inference_output import WorldModelOutput, PhysicsOutput
-from old_muzero.modules.world_models.world_model import WorldModelInterface
-from old_muzero.modules.utils import scale_gradient, _normalize_hidden_state
+from modules.world_models.inference_output import WorldModelOutput, PhysicsOutput
+from modules.world_models.world_model import WorldModelInterface
+from modules.utils import scale_gradient, _normalize_hidden_state
 
 
 class WorldModelBridge(WorldModelInterface, nn.Module):
@@ -32,13 +33,16 @@ class WorldModelBridge(WorldModelInterface, nn.Module):
     ModularAgentNetwork._init_muzero can drop this in via the world_model_cls kwarg.
     """
 
-    def __init__(self, config: Any, observation_dimensions: Tuple[int, ...], num_actions: int):
+    def __init__(
+        self, config: Any, observation_dimensions: Tuple[int, ...], num_actions: int
+    ):
         super().__init__()
         self.config = config
         self.num_actions = num_actions
 
         # 1. OLD Representation — provides .output_shape and obs->latent encoding
-        from old_muzero.modules.world_models.components.representation import Representation
+        from modules.world_models.components.representation import Representation
+
         self.representation = Representation(config, observation_dimensions)
         latent_shape = self.representation.output_shape
 
@@ -51,19 +55,34 @@ class WorldModelBridge(WorldModelInterface, nn.Module):
             h, w = latent_shape[1], latent_shape[2]
             if num_actions == h * w:
                 from modules.embeddings.actions.spatial import SpatialActionEmbedding
+
                 emb_dim = config.action_embedding_dim
                 emb = SpatialActionEmbedding(num_actions, h, w, embedding_dim=emb_dim)
-                print(f"  WorldModelBridge: SpatialActionEmbedding ({h}x{w} board, emb_dim={emb_dim})")
+                print(
+                    f"  WorldModelBridge: SpatialActionEmbedding ({h}x{w} board, emb_dim={emb_dim})"
+                )
             else:
-                from modules.embeddings.actions.efficient_zero import EfficientZeroActionEmbedding
-                emb = EfficientZeroActionEmbedding(num_actions, config.action_embedding_dim)
+                from modules.embeddings.actions.efficient_zero import (
+                    EfficientZeroActionEmbedding,
+                )
+
+                emb = EfficientZeroActionEmbedding(
+                    num_actions, config.action_embedding_dim
+                )
                 emb_dim = config.action_embedding_dim
-                print(f"  WorldModelBridge: EfficientZeroActionEmbedding (dim={emb_dim})")
+                print(
+                    f"  WorldModelBridge: EfficientZeroActionEmbedding (dim={emb_dim})"
+                )
         else:
-            from modules.embeddings.actions.efficient_zero import EfficientZeroActionEmbedding
+            from modules.embeddings.actions.efficient_zero import (
+                EfficientZeroActionEmbedding,
+            )
+
             emb = EfficientZeroActionEmbedding(num_actions, config.action_embedding_dim)
             emb_dim = config.action_embedding_dim
-            print(f"  WorldModelBridge: EfficientZeroActionEmbedding (vector, dim={emb_dim})")
+            print(
+                f"  WorldModelBridge: EfficientZeroActionEmbedding (vector, dim={emb_dim})"
+            )
 
         action_encoder = ActionEncoder(emb, emb_dim)
         # Match OLD MuZero: BN is commented out in old Dynamics._fuse_and_process,
@@ -73,23 +92,30 @@ class WorldModelBridge(WorldModelInterface, nn.Module):
         )
 
         # 3. OLD Dynamics backbone
-        from old_muzero.modules.backbones.factory import BackboneFactory
-        self.dynamics_net = BackboneFactory.create(config.dynamics_backbone, latent_shape)
-        assert self.dynamics_net.output_shape == latent_shape, (
-            f"Dynamics output {self.dynamics_net.output_shape} != latent {latent_shape}"
+        from modules.backbones.factory import BackboneFactory
+
+        self.dynamics_net = BackboneFactory.create(
+            config.dynamics_backbone, latent_shape
         )
+        assert (
+            self.dynamics_net.output_shape == latent_shape
+        ), f"Dynamics output {self.dynamics_net.output_shape} != latent {latent_shape}"
 
         # 4. OLD Reward head
-        from old_muzero.modules.heads.factory import HeadFactory
-        from old_muzero.agents.learner.losses.representations import get_representation
+        from modules.heads.factory import HeadFactory
+        from agents.learner.losses.representations import get_representation
+
         r_rep = get_representation(config.reward_head.output_strategy)
         self.reward_head = HeadFactory.create(
-            config.reward_head, config.arch,
-            input_shape=self.dynamics_net.output_shape, representation=r_rep,
+            config.reward_head,
+            config.arch,
+            input_shape=self.dynamics_net.output_shape,
+            representation=r_rep,
         )
 
         # 5. OLD ToPlay head
-        from old_muzero.modules.heads.to_play import ToPlayHead
+        from modules.heads.to_play import ToPlayHead
+
         tp_rep = get_representation(config.to_play_head.output_strategy)
         self.to_play_head = ToPlayHead(
             arch_config=config.arch,
@@ -116,7 +142,9 @@ class WorldModelBridge(WorldModelInterface, nn.Module):
     def recurrent_inference(
         self, hidden_state: Tensor, action: Tensor, recurrent_state: Any = None
     ) -> WorldModelOutput:
-        action_oh = F.one_hot(action.view(-1).long(), num_classes=self.num_actions).float()
+        action_oh = F.one_hot(
+            action.view(-1).long(), num_classes=self.num_actions
+        ).float()
         action_oh = action_oh.to(hidden_state.device)
         next_latent = self._forward_dynamics(hidden_state, action_oh)
         reward_logits, new_state, instant_reward = self.reward_head(
@@ -153,7 +181,9 @@ class WorldModelBridge(WorldModelInterface, nn.Module):
         current_head_state = head_state
 
         for k in range(actions.shape[1]):
-            wm_out = self.recurrent_inference(current_latent, actions[:, k], current_head_state)
+            wm_out = self.recurrent_inference(
+                current_latent, actions[:, k], current_head_state
+            )
             rewards.append(wm_out.reward)
             to_plays.append(wm_out.to_play_logits)
             current_latent = wm_out.features

@@ -1,6 +1,6 @@
 from typing import List, Optional
 from .base import HeadConfig
-from old_muzero.configs.modules.output_strategies import (
+from configs.modules.output_strategies import (
     OutputStrategyConfig,
     ScalarStrategyConfig,
     OutputStrategyConfigFactory,

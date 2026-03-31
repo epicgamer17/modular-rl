@@ -3,18 +3,18 @@ import time
 import numpy as np
 from typing import Optional, List, Dict, Any
 from pathlib import Path
-from old_muzero.agents.trainers.base_trainer import BaseTrainer
-from old_muzero.agents.executors.local_executor import LocalExecutor
-from old_muzero.agents.executors.torch_mp_executor import TorchMPExecutor
-from old_muzero.agents.action_selectors.factory import SelectorFactory
-from old_muzero.agents.action_selectors.policy_sources import NetworkPolicySource
+from agents.trainers.base_trainer import BaseTrainer
+from agents.executors.local_executor import LocalExecutor
+from agents.executors.torch_mp_executor import TorchMPExecutor
+from agents.action_selectors.factory import SelectorFactory
+from agents.action_selectors.policy_sources import NetworkPolicySource
 
-# from old_muzero.agents.workers.actors import get_actor_class # REMOVED as unused
+# from agents.workers.actors import get_actor_class # REMOVED as unused
 
-from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
+from modules.agent_nets.modular import ModularAgentNetwork
 
-# from old_muzero.agents.policies.ppo_policy import PPOPolicy # REMOVED
-from old_muzero.stats.stats import StatTracker, PlotType
+# from agents.policies.ppo_policy import PPOPolicy # REMOVED
+from stats.stats import StatTracker, PlotType
 
 
 class PPOTrainer(BaseTrainer):
@@ -69,7 +69,7 @@ class PPOTrainer(BaseTrainer):
         self.policy_source = NetworkPolicySource(self.agent_network)
 
         # 3. Initialize Replay Buffer
-        from old_muzero.replay_buffers.buffer_factories import create_ppo_buffer
+        from replay_buffers.buffer_factories import create_ppo_buffer
 
         self.replay_buffer = create_ppo_buffer(
             observation_dimensions=self.obs_dim,
@@ -81,12 +81,12 @@ class PPOTrainer(BaseTrainer):
         )
 
         # 4. Initialize Executor
-        from old_muzero.agents.executors.factory import create_executor
+        from agents.executors.factory import create_executor
 
         self.executor = create_executor(config)
 
         # 5. Initialize Learner via Factory
-        from old_muzero.agents.learner.factory import build_universal_learner
+        from agents.learner.factory import build_universal_learner
 
         self.learner = build_universal_learner(
             config=config,
@@ -253,7 +253,7 @@ class PPOTrainer(BaseTrainer):
                 self.stats.append("episode_length", float(l))
 
         # 3. Learning step
-        from old_muzero.agents.learner.batch_iterators import PPOEpochIterator
+        from agents.learner.batch_iterators import PPOEpochIterator
 
         iterator = PPOEpochIterator(
             replay_buffer=self.replay_buffer,
@@ -279,7 +279,7 @@ class PPOTrainer(BaseTrainer):
     def _setup_stats(self):
         """Initializes the stat tracker with PPO-specific keys and plot types."""
         super()._setup_stats()
-        from old_muzero.stats.stats import PlotType
+        from stats.stats import PlotType
 
         stat_keys = [
             "policy_loss",

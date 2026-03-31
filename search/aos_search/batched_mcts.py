@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import torch
 
-from old_muzero.search.aos_search.tree import FlatTree
-from old_muzero.search.aos_search.scoring import ScoringFn, ucb_score_fn
-from old_muzero.search.aos_search.backpropogation import BackpropFn, average_discounted_backprop
-from old_muzero.search.aos_search.min_max_stats import VectorizedMinMaxStats
+from search.aos_search.tree import FlatTree
+from search.aos_search.scoring import ScoringFn, ucb_score_fn
+from search.aos_search.backpropogation import BackpropFn, average_discounted_backprop
+from search.aos_search.min_max_stats import VectorizedMinMaxStats
 import torch.utils._pytree as pytree
 import torch.distributions as dists
-from old_muzero.modules.world_models.inference_output import InferenceOutput
+from modules.world_models.inference_output import InferenceOutput
 
 # ---------------------------------------------------------------------------
 # Constants

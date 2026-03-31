@@ -2,9 +2,10 @@ import torch
 import numpy as np
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
-from old_muzero.agents.learner.losses.base import BaseLoss
-from old_muzero.agents.learner.losses.priorities import BasePriorityComputer, NullPriorityComputer
-from old_muzero.agents.learner.losses.shape_validator import ShapeValidator
+from agents.learner.losses.base import BaseLoss
+from agents.learner.losses.priorities import BasePriorityComputer, NullPriorityComputer
+from agents.learner.losses.shape_validator import ShapeValidator
+
 
 class LossPipeline:
     """
@@ -14,14 +15,24 @@ class LossPipeline:
 
     def __init__(
         self,
-        config: Any,
-        modules: List[BaseLoss],
+        modules: List[BaseLoss] = None,
         priority_computer: Optional[BasePriorityComputer] = None,
+        # Explicit validator args
+        minibatch_size: int = None,
+        unroll_steps: int = 0,
+        num_actions: int = 0,
+        atom_size: int = 1,
+        support_range: Optional[int] = None,
     ):
-        self.config = config
-        self.modules = modules
+        self.modules = modules or []
         self.priority_computer = priority_computer or NullPriorityComputer()
-        self.shape_validator = ShapeValidator(config)
+        self.shape_validator = ShapeValidator(
+            minibatch_size=minibatch_size,
+            unroll_steps=unroll_steps,
+            num_actions=num_actions,
+            atom_size=atom_size,
+            support_range=support_range,
+        )
 
     def validate_dependencies(
         self, network_output_keys: set[str], target_keys: set[str]
@@ -54,7 +65,7 @@ class LossPipeline:
         """
         Run the loss pipeline in a single vectorized pass across all sequence steps.
         """
-        from old_muzero.modules.utils import scale_gradient
+        from modules.utils import scale_gradient
 
         # 1. Shape Validation and Latency Setup
         start_time = time.perf_counter()
@@ -81,9 +92,7 @@ class LossPipeline:
         for module in self.modules:
             # Blindly compute: decision logic now lives in the Factory/Registry
             # Compute ([B, T] elementwise loss, metrics_dict)
-            elementwise_loss, module_metrics = module.compute_loss(
-                predictions, targets
-            )
+            elementwise_loss, module_metrics = module.compute_loss(predictions, targets)
             all_elementwise_losses[module.name] = elementwise_loss
             mask = module.get_mask(targets)
 

@@ -35,9 +35,9 @@ class SearchBackendFactory:
         # 2. Use old_muzero's own search module (not the new search/ package)
         backend = getattr(config, "search_backend", "python")
         if backend == "python":
-            from old_muzero.search.search_py.modular_search import ModularSearch
+            from search.search_py.modular_search import ModularSearch
         elif backend == "aos":
-            from old_muzero.search.aos_search.search_algorithm import ModularSearch
+            from search.aos_search.search_algorithm import ModularSearch
         else:
             raise ValueError(f"Unsupported search backend for old_muzero: {backend}")
 

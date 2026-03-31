@@ -1,7 +1,7 @@
 from typing import Tuple, Optional
 import torch
 from torch import nn
-from old_muzero.configs.modules.backbones.recurrent import RecurrentConfig
+from configs.modules.backbones.recurrent import RecurrentConfig
 
 
 class RecurrentBackbone(nn.Module):
@@ -44,4 +44,3 @@ class RecurrentBackbone(nn.Module):
 
         output, h_n = self.rnn(x, h)
         return output[:, -1, :], h_n  # Return last output and hidden state
-

@@ -1,6 +1,6 @@
 from typing import Callable, Type, Optional, List, Dict
 from .base import AgentConfig
-from old_muzero.configs.base import (
+from configs.base import (
     SearchConfig,
     ValuePrefixConfig,
     ConsistencyConfig,
@@ -8,23 +8,23 @@ from old_muzero.configs.base import (
     NoisyConfig,
     EarlyStoppingConfig,
 )
-from old_muzero.configs.modules.backbones.base import BackboneConfig
-from old_muzero.configs.modules.backbones.factory import BackboneConfigFactory
-from old_muzero.configs.modules.heads.to_play import ToPlayHeadConfig
-from old_muzero.configs.modules.heads.policy import PolicyHeadConfig
-from old_muzero.configs.modules.heads.chance_probability import (
+from configs.modules.backbones.base import BackboneConfig
+from configs.modules.backbones.factory import BackboneConfigFactory
+from configs.modules.heads.to_play import ToPlayHeadConfig
+from configs.modules.heads.policy import PolicyHeadConfig
+from configs.modules.heads.chance_probability import (
     ChanceProbabilityHeadConfig,
 )
-from old_muzero.configs.modules.heads.value import ValueHeadConfig
-from old_muzero.configs.modules.heads.reward import (
+from configs.modules.heads.value import ValueHeadConfig
+from configs.modules.heads.reward import (
     RewardHeadConfig,
     ValuePrefixRewardHeadConfig,
 )
-from old_muzero.configs.modules.heads.base import HeadConfig
-from old_muzero.configs.modules.architecture_config import ArchitectureConfig
+from configs.modules.heads.base import HeadConfig
+from configs.modules.architecture_config import ArchitectureConfig
 import torch.nn.functional as F
-from old_muzero.utils.utils import tointlists
-from old_muzero.utils.schedule import ScheduleConfig
+from utils.utils import tointlists
+from utils.schedule import ScheduleConfig
 import copy
 
 

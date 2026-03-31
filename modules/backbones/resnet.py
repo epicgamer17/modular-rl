@@ -1,8 +1,8 @@
 from typing import Tuple
 import torch
 from torch import nn
-from old_muzero.modules.blocks.residual import ResidualStack
-from old_muzero.configs.modules.backbones.resnet import ResNetConfig
+from modules.blocks.residual import ResidualStack
+from configs.modules.backbones.resnet import ResNetConfig
 
 
 class ResNetBackbone(nn.Module):
@@ -34,7 +34,6 @@ class ResNetBackbone(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.stack(x)
-
 
     def reset_noise(self) -> None:
         self.stack.reset_noise()

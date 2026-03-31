@@ -1,27 +1,34 @@
 import torch
 from typing import Any, Dict, List, Tuple
-from old_muzero.agents.registries.base import register_agent
-from old_muzero.agents.learner.losses import LossPipeline, ClippedSurrogateLoss, ValueLoss
+from agents.registries.base import register_agent
+from agents.learner.losses import LossPipeline, ClippedSurrogateLoss, ValueLoss
 import torch.nn.functional as F
-from old_muzero.modules.utils import get_lr_scheduler
-from old_muzero.agents.learner.callbacks import MetricEarlyStopCallback
+from modules.utils import get_lr_scheduler
+from agents.learner.callbacks import MetricEarlyStopCallback
 from torch.optim.adam import Adam
 from torch.optim.sgd import SGD
 
 
-def build_ppo_loss_pipeline(config, agent_network, device):
+def build_ppo_loss_pipeline(
+    agent_network: Any,
+    device: torch.device,
+    clip_param: float,
+    entropy_coefficient: float,
+    critic_coefficient: float,
+    minibatch_size: int,
+    num_actions: int,
+):
     # Extract representation from heads directly
     pol_rep = agent_network.components["policy_head"].representation
     val_rep = agent_network.components["value_head"].representation
 
     return LossPipeline(
-        config=config,
         modules=[
             ClippedSurrogateLoss(
                 device=device,
                 representation=pol_rep,
-                clip_param=config.clip_param,
-                entropy_coefficient=config.entropy_coefficient,
+                clip_param=clip_param,
+                entropy_coefficient=entropy_coefficient,
                 optimizer_name="policy",
             ),
             ValueLoss(
@@ -29,16 +36,27 @@ def build_ppo_loss_pipeline(config, agent_network, device):
                 representation=val_rep,
                 target_key="returns",
                 optimizer_name="value",
-                loss_factor=config.critic_coefficient,
+                loss_factor=critic_coefficient,
             ),
-        ]
+        ],
+        minibatch_size=minibatch_size,
+        num_actions=num_actions,
+        unroll_steps=0,  # PPO is single-step
     )
 
 
 @register_agent("ppo")
 def build_ppo(config: Any, agent_network: Any, device: torch.device) -> Dict[str, Any]:
     # 1. Losses
-    loss_pipeline = build_ppo_loss_pipeline(config, agent_network, device)
+    loss_pipeline = build_ppo_loss_pipeline(
+        agent_network=agent_network,
+        device=device,
+        clip_param=config.clip_param,
+        entropy_coefficient=config.entropy_coefficient,
+        critic_coefficient=config.critic_coefficient,
+        minibatch_size=config.minibatch_size,
+        num_actions=config.game.num_actions,
+    )
 
     # 2. Optimizers & Schedulers
     optimizers = {}
@@ -83,13 +101,20 @@ def build_ppo(config: Any, agent_network: Any, device: torch.device) -> Dict[str
         callbacks.append(MetricEarlyStopCallback(threshold=config.early_stopping_kl))
 
     # 4. Target Builder
-    from old_muzero.agents.learner.target_builders import PassThroughTargetBuilder, TargetBuilderPipeline, SingleStepFormatter
-    target_builder = TargetBuilderPipeline([
-        PassThroughTargetBuilder(
-            ["values", "returns", "actions", "old_log_probs", "advantages"]
-        ),
-        SingleStepFormatter()
-    ])
+    from agents.learner.target_builders import (
+        PassThroughTargetBuilder,
+        TargetBuilderPipeline,
+        SingleStepFormatter,
+    )
+
+    target_builder = TargetBuilderPipeline(
+        [
+            PassThroughTargetBuilder(
+                ["values", "returns", "actions", "old_log_probs", "advantages"]
+            ),
+            SingleStepFormatter(),
+        ]
+    )
 
     return {
         "loss_pipeline": loss_pipeline,

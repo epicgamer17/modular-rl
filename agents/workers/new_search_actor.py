@@ -8,17 +8,21 @@ everything else (PettingZoo env loop, old replay buffer, old executor) unchanged
 Must live in a proper module (not a Jupyter notebook cell) so that
 TorchMPExecutor can pickle and spawn worker processes.
 """
+
 from __future__ import annotations
 
 from typing import Any, Callable, Optional
 import torch
 
-from old_muzero.agents.workers.actors import PettingZooActor
-from old_muzero.agents.workers.tester import Tester
-from old_muzero.replay_buffers.modular_buffer import ModularReplayBuffer
-from old_muzero.agents.action_selectors.selectors import BaseActionSelector
-from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
-from old_muzero.agents.action_selectors.policy_sources import SearchPolicySource, NetworkPolicySource
+from agents.workers.actors import PettingZooActor
+from agents.workers.tester import Tester
+from replay_buffers.modular_buffer import ModularReplayBuffer
+from agents.action_selectors.selectors import BaseActionSelector
+from modules.agent_nets.modular import ModularAgentNetwork
+from agents.action_selectors.policy_sources import (
+    SearchPolicySource,
+    NetworkPolicySource,
+)
 
 
 class NewSearchPettingZooActor(PettingZooActor):

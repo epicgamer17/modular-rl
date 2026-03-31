@@ -3,18 +3,18 @@ import torch
 from typing import Any, Callable, Dict, Optional, Tuple
 from abc import ABC, abstractmethod
 
-from old_muzero.replay_buffers.sequence import Sequence
-from old_muzero.agents.action_selectors.selectors import BaseActionSelector
-from old_muzero.agents.action_selectors.types import InferenceResult
-from old_muzero.agents.action_selectors.policy_sources import (
+from replay_buffers.sequence import Sequence
+from agents.action_selectors.selectors import BaseActionSelector
+from agents.action_selectors.types import InferenceResult
+from agents.action_selectors.policy_sources import (
     BasePolicySource,
     NetworkPolicySource,
     SearchPolicySource,
 )
-from old_muzero.configs.base import Config
-from old_muzero.replay_buffers.modular_buffer import ModularReplayBuffer
-from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
-from old_muzero.utils.wrappers import wrap_recording
+from configs.base import Config
+from replay_buffers.modular_buffer import ModularReplayBuffer
+from modules.agent_nets.modular import ModularAgentNetwork
+from utils.wrappers import wrap_recording
 import numpy as np
 
 
@@ -66,7 +66,7 @@ class BaseActor(ABC):
             )
 
             if use_search:
-                from old_muzero.search.factory import SearchBackendFactory
+                from search.factory import SearchBackendFactory
 
                 search_engine = SearchBackendFactory.create(config)
                 self.policy_source = SearchPolicySource(
@@ -160,7 +160,9 @@ class BaseActor(ABC):
         player_val = player_id if isinstance(player_id, int) else 0
 
         # Vectorize player ID: [1] tensor for single actor (AOS contract requires shape[0] == 1)
-        info["player"] = torch.tensor([player_val], dtype=torch.int8, device=self.device)
+        info["player"] = torch.tensor(
+            [player_val], dtype=torch.int8, device=self.device
+        )
 
         # Vectorize legal moves: 1D boolean tensor [num_actions]
         num_actions = self.agent_network.num_actions
@@ -411,7 +413,7 @@ def get_actor_class(env: Any, config: Optional[Any] = None) -> type[BaseActor]:
     """
     # 1. Check for Vectorized Execution (Fat Workers)
     if config.num_envs_per_worker > 1:
-        from old_muzero.agents.workers.puffer_actor import GymPufferActor, PettingZooPufferActor
+        from agents.workers.puffer_actor import GymPufferActor, PettingZooPufferActor
 
         # Detect PettingZoo for Puffer
         is_pz = hasattr(env, "possible_agents")

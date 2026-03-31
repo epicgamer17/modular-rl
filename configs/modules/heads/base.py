@@ -1,7 +1,7 @@
 from typing import Optional
-from old_muzero.configs.base import ConfigBase
-from old_muzero.configs.modules.backbones.base import BackboneConfig
-from old_muzero.configs.modules.backbones.factory import BackboneConfigFactory
+from configs.base import ConfigBase
+from configs.modules.backbones.base import BackboneConfig
+from configs.modules.backbones.factory import BackboneConfigFactory
 
 
 class HeadConfig(ConfigBase):

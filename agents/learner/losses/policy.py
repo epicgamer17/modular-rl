@@ -1,7 +1,8 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Dict, Optional, Tuple
-from old_muzero.agents.learner.losses.base import BaseLoss, LossRepresentation
+from agents.learner.losses.base import BaseLoss, LossRepresentation
+
 
 class PolicyLoss(BaseLoss):
     """Policy prediction loss module."""
@@ -44,6 +45,7 @@ class PolicyLoss(BaseLoss):
             metrics["approx_kl"] = kl.item()
 
         return loss, metrics
+
 
 class ClippedSurrogateLoss(BaseLoss):
     def __init__(
@@ -110,6 +112,7 @@ class ClippedSurrogateLoss(BaseLoss):
             approx_kl = (old_log_probs - log_probs).mean()
 
         return loss, {"approx_kl": approx_kl.item()}
+
 
 class ImitationLoss(BaseLoss):
     def __init__(

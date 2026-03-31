@@ -9,16 +9,16 @@ from .chance_probability import ChanceProbabilityHead
 from .continuation import ContinuationHead
 from .observation import ObservationHead
 from .latent_consistency import LatentConsistencyHead
-from old_muzero.configs.modules.heads.to_play import ToPlayHeadConfig
-from old_muzero.configs.modules.heads.value import ValueHeadConfig
-from old_muzero.configs.modules.heads.reward import RewardHeadConfig, ValuePrefixRewardHeadConfig
-from old_muzero.configs.modules.heads.policy import PolicyHeadConfig
-from old_muzero.configs.modules.heads.chance_probability import ChanceProbabilityHeadConfig
-from old_muzero.configs.modules.heads.continuation import ContinuationHeadConfig
-from old_muzero.configs.modules.heads.observation import ObservationHeadConfig
-from old_muzero.configs.modules.heads.latent_consistency import LatentConsistencyHeadConfig
-from old_muzero.configs.modules.heads.base import HeadConfig
-from old_muzero.configs.modules.architecture_config import ArchitectureConfig
+from configs.modules.heads.to_play import ToPlayHeadConfig
+from configs.modules.heads.value import ValueHeadConfig
+from configs.modules.heads.reward import RewardHeadConfig, ValuePrefixRewardHeadConfig
+from configs.modules.heads.policy import PolicyHeadConfig
+from configs.modules.heads.chance_probability import ChanceProbabilityHeadConfig
+from configs.modules.heads.continuation import ContinuationHeadConfig
+from configs.modules.heads.observation import ObservationHeadConfig
+from configs.modules.heads.latent_consistency import LatentConsistencyHeadConfig
+from configs.modules.heads.base import HeadConfig
+from configs.modules.architecture_config import ArchitectureConfig
 
 
 class HeadFactory:

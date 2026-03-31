@@ -1,12 +1,12 @@
-from old_muzero.configs.base import (
+from configs.base import (
     ConfigBase,
     OptimizationConfig,
     ReplayConfig,
 )
-from old_muzero.configs.modules.backbones.base import BackboneConfig
-from old_muzero.configs.modules.backbones.factory import BackboneConfigFactory
-from old_muzero.configs.modules.architecture_config import ArchitectureConfig
-from old_muzero.modules.utils import (
+from configs.modules.backbones.base import BackboneConfig
+from configs.modules.backbones.factory import BackboneConfigFactory
+from configs.modules.architecture_config import ArchitectureConfig
+from modules.utils import (
     prepare_activations,
     prepare_kernel_initializers,
     kernel_initializer_wrapper,

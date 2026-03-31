@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 import torch
-from old_muzero.modules.world_models.inference_output import InferenceOutput
+from modules.world_models.inference_output import InferenceOutput
 
 
 @dataclass

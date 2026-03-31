@@ -12,14 +12,14 @@ from typing import Callable, Any, Optional, Tuple, Dict, List
 from abc import abstractmethod
 
 import pufferlib.vector
-from old_muzero.replay_buffers.sequence import Sequence
-from old_muzero.agents.workers.actors import BaseActor
-from old_muzero.utils.wrappers import AECSequentialWrapper
-from old_muzero.replay_buffers.modular_buffer import ModularReplayBuffer
-from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
-from old_muzero.agents.action_selectors.selectors import BaseActionSelector
-from old_muzero.agents.action_selectors.types import InferenceResult
-from old_muzero.agents.action_selectors.policy_sources import (
+from replay_buffers.sequence import Sequence
+from agents.workers.actors import BaseActor
+from utils.wrappers import AECSequentialWrapper
+from replay_buffers.modular_buffer import ModularReplayBuffer
+from modules.agent_nets.modular import ModularAgentNetwork
+from agents.action_selectors.selectors import BaseActionSelector
+from agents.action_selectors.types import InferenceResult
+from agents.action_selectors.policy_sources import (
     BasePolicySource,
     NetworkPolicySource,
     SearchPolicySource,
@@ -330,19 +330,23 @@ class GymPufferActor(BasePufferActor):
     def _get_score(self, sequence: Sequence) -> float:
         return sum(sequence.rewards)
 
-    def _extract_batched_info(
-        self, infos: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+    def _extract_batched_info(self, infos: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Ready-to-use vectorized tensors for Gymnasium environments."""
         num_actions = self.agent_network.num_actions
 
         # 1. Vectorize Legal Moves and Players
-        mask = torch.zeros((self.num_envs, num_actions), dtype=torch.bool, device=self.device)
+        mask = torch.zeros(
+            (self.num_envs, num_actions), dtype=torch.bool, device=self.device
+        )
         player_tensor = torch.zeros(self.num_envs, dtype=torch.int8, device=self.device)
 
         if not infos:
             mask.fill_(True)
-            return {"legal_moves": mask, "legal_moves_mask": mask, "player": player_tensor}
+            return {
+                "legal_moves": mask,
+                "legal_moves_mask": mask,
+                "player": player_tensor,
+            }
 
         for i in range(self.num_envs):
             info = infos[i] if (infos and i < len(infos)) else {}
@@ -384,13 +388,13 @@ class PettingZooPufferActor(BasePufferActor):
             return final_rewards.get("player_0", 0.0)
         return sum(sequence.rewards)
 
-    def _extract_batched_info(
-        self, infos: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+    def _extract_batched_info(self, infos: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Ready-to-use vectorized tensors for PettingZoo environments."""
         num_actions = self.agent_network.num_actions
 
-        mask = torch.zeros((self.num_envs, num_actions), dtype=torch.bool, device=self.device)
+        mask = torch.zeros(
+            (self.num_envs, num_actions), dtype=torch.bool, device=self.device
+        )
         player_ids = []
 
         if not infos:
@@ -398,7 +402,9 @@ class PettingZooPufferActor(BasePufferActor):
             return {
                 "legal_moves": mask,
                 "legal_moves_mask": mask,
-                "player": torch.zeros(self.num_envs, dtype=torch.int8, device=self.device),
+                "player": torch.zeros(
+                    self.num_envs, dtype=torch.int8, device=self.device
+                ),
             }
 
         batch_indices = []

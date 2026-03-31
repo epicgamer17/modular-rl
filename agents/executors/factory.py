@@ -1,4 +1,4 @@
-from old_muzero.configs.base import Config
+from configs.base import Config
 from typing import Any
 
 

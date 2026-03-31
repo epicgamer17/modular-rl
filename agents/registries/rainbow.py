@@ -1,18 +1,25 @@
 import torch
 from typing import Any, Dict, List, Tuple, Optional
-from old_muzero.agents.registries.base import register_agent
-from old_muzero.agents.learner.losses import LossPipeline, QBootstrappingLoss
-from old_muzero.agents.learner.losses.priorities import MaxLossPriorityComputer
-from old_muzero.modules.utils import create_optimizer, get_lr_scheduler
-from old_muzero.agents.learner.target_builders import (
+from agents.registries.base import register_agent
+from agents.learner.losses import LossPipeline, QBootstrappingLoss
+from agents.learner.losses.priorities import MaxLossPriorityComputer
+from modules.utils import create_optimizer, get_lr_scheduler
+from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
     DistributionalTargetBuilder,
     TargetBuilderPipeline,
     SingleStepFormatter,
 )
-from old_muzero.agents.action_selectors.selectors import ArgmaxSelector
+from agents.action_selectors.selectors import ArgmaxSelector
 
-def build_rainbow_loss_pipeline(config, agent_network, device):
+
+def build_rainbow_loss_pipeline(
+    agent_network: Any,
+    device: torch.device,
+    minibatch_size: int,
+    atom_size: int = 1,
+    loss_function: Any = None,
+):
     representation = None
     if (
         agent_network is not None
@@ -21,17 +28,23 @@ def build_rainbow_loss_pipeline(config, agent_network, device):
     ):
         representation = agent_network.components["q_head"].representation
 
-    is_distributional = getattr(config, "atom_size", 1) > 1
+    is_distributional = atom_size > 1
 
     td_loss_module = QBootstrappingLoss(
         device=device,
         representation=representation,
         is_categorical=is_distributional,
-        loss_fn=getattr(config, "loss_function", None),
+        loss_fn=loss_function,
     )
     priority_computer = MaxLossPriorityComputer(loss_key="QBootstrappingLoss")
 
-    return LossPipeline(config, [td_loss_module], priority_computer=priority_computer)
+    return LossPipeline(
+        modules=[td_loss_module],
+        priority_computer=priority_computer,
+        minibatch_size=minibatch_size,
+        atom_size=atom_size,
+        unroll_steps=0,  # Rainbow is single-step (TD)
+    )
 
 
 @register_agent("rainbow")
@@ -42,7 +55,13 @@ def build_rainbow(
     target_agent_network: Optional[torch.nn.Module] = None,
 ) -> Dict[str, Any]:
     # 1. Losses
-    loss_pipeline = build_rainbow_loss_pipeline(config, agent_network, device)
+    loss_pipeline = build_rainbow_loss_pipeline(
+        agent_network=agent_network,
+        device=device,
+        minibatch_size=config.minibatch_size,
+        atom_size=getattr(config, "atom_size", 1),
+        loss_function=getattr(config, "loss_function", None),
+    )
 
     # 2. Setup Optimizers and Schedulers
     from torch.optim.adam import Adam
@@ -75,7 +94,7 @@ def build_rainbow(
     lr_schedulers["default"] = get_lr_scheduler(opt, config)
 
     # 3. Callbacks
-    from old_muzero.agents.learner.callbacks import TargetNetworkSyncCallback, ResetNoiseCallback
+    from agents.learner.callbacks import TargetNetworkSyncCallback, ResetNoiseCallback
 
     callbacks = []
     if getattr(config, "use_noisy_net", False):
@@ -100,19 +119,23 @@ def build_rainbow(
     assert (
         target_agent_network is not None
     ), "Rainbow requires a target_agent_network for TD target building."
-    
+
     is_distributional = getattr(config, "atom_size", 1) > 1
-    builder_cls = DistributionalTargetBuilder if is_distributional else TemporalDifferenceBuilder
-    
-    target_builder = TargetBuilderPipeline([
-        builder_cls(
-            target_network=target_agent_network,
-            gamma=config.discount_factor,
-            n_step=config.n_step,
-            bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
-        ),
-        SingleStepFormatter()
-    ])
+    builder_cls = (
+        DistributionalTargetBuilder if is_distributional else TemporalDifferenceBuilder
+    )
+
+    target_builder = TargetBuilderPipeline(
+        [
+            builder_cls(
+                target_network=target_agent_network,
+                gamma=config.discount_factor,
+                n_step=config.n_step,
+                bootstrap_on_truncated=getattr(config, "bootstrap_on_truncated", False),
+            ),
+            SingleStepFormatter(),
+        ]
+    )
 
     return {
         "loss_pipeline": loss_pipeline,

@@ -1,7 +1,7 @@
 from typing import Optional, Dict, Any, TypeVar, Type
 import torch
-from old_muzero.configs.modules.architecture_config import ArchitectureConfig
-from old_muzero.configs.base import (
+from configs.modules.architecture_config import ArchitectureConfig
+from configs.base import (
     ConfigBase,
     OptimizationConfig,
     ReplayConfig,
@@ -12,13 +12,13 @@ from old_muzero.configs.base import (
     CompilationConfig,
 )
 import torch.nn.functional as F
-from old_muzero.modules.utils import (
+from modules.utils import (
     prepare_activations,
     prepare_kernel_initializers,
     kernel_initializer_wrapper,
 )
-from old_muzero.configs.games.game import GameConfig
-from old_muzero.configs.selectors import SelectorConfig
+from configs.games.game import GameConfig
+from configs.selectors import SelectorConfig
 
 
 class AgentConfig(

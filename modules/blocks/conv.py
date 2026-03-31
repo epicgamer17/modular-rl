@@ -1,7 +1,7 @@
 from typing import Callable, Literal, Tuple
 
 from torch import nn, Tensor
-from old_muzero.modules.utils import build_normalization_layer, calculate_padding
+from modules.utils import build_normalization_layer, calculate_padding
 
 
 def unpack(x: int | Tuple):
@@ -19,8 +19,8 @@ def unpack(x: int | Tuple):
 # modules/conv2d_stack.py
 from typing import Callable, Tuple
 from torch import nn, Tensor
-from old_muzero.modules.blocks.base_stack import BaseStack
-from old_muzero.modules.utils import (
+from modules.blocks.base_stack import BaseStack
+from modules.utils import (
     calculate_same_padding,
     unpack,
 )  # Import utility
@@ -166,5 +166,3 @@ class ConvTranspose2dStack(BaseStack):
             # Dreamer decoder usually activates all but final distribution head.
             x = self.activation(x)
         return x
-
-

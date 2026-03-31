@@ -3,15 +3,15 @@ from __future__ import annotations
 from typing import Callable, Dict, Any, Iterable, List, Optional, TYPE_CHECKING
 
 import torch
-from old_muzero.utils.telemetry import (
+from utils.telemetry import (
     add_latent_visualization_metric,
     append_metric,
     set_metric,
 )
 
 if TYPE_CHECKING:
-    from old_muzero.agents.learner.base import StepResult, UniversalLearner
-    from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
+    from agents.learner.base import StepResult, UniversalLearner
+    from modules.agent_nets.modular import ModularAgentNetwork
 from abc import ABC, abstractmethod
 
 
@@ -151,7 +151,7 @@ class TargetNetworkSyncCallback(Callback):
         if self.sync_interval > 0 and learner.training_step % self.sync_interval != 0:
             return
 
-        from old_muzero.modules.utils import get_clean_state_dict
+        from modules.utils import get_clean_state_dict
 
         with torch.no_grad():
             clean_state = get_clean_state_dict(learner.agent_network)

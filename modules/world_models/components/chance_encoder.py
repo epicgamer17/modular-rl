@@ -1,9 +1,9 @@
 from typing import Tuple, Callable
 import torch
 from torch import nn
-from old_muzero.configs.agents.muzero import MuZeroConfig
-from old_muzero.modules.backbones.factory import BackboneFactory
-from old_muzero.modules.utils import zero_weights_initializer
+from configs.agents.muzero import MuZeroConfig
+from modules.backbones.factory import BackboneFactory
+from modules.utils import zero_weights_initializer
 
 
 class ChanceEncoder(nn.Module):
@@ -60,7 +60,6 @@ class ChanceEncoder(nn.Module):
         one_hot_st = (one_hot - probs).detach() + probs
 
         return probs, one_hot_st
-
 
 
 # TODO ADD MORE CHANCE ENCODERS, gumbel softmax, output logits instead of probs, LightZero version, etc

@@ -2,9 +2,12 @@ from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
 import torch
 from .base import BaseHead
-from old_muzero.agents.learner.losses.representations import BaseRepresentation, ClassificationRepresentation
-from old_muzero.configs.modules.architecture_config import ArchitectureConfig
-from old_muzero.configs.modules.backbones.base import BackboneConfig
+from agents.learner.losses.representations import (
+    BaseRepresentation,
+    ClassificationRepresentation,
+)
+from configs.modules.architecture_config import ArchitectureConfig
+from configs.modules.backbones.base import BackboneConfig
 
 
 class ToPlayHead(BaseHead):

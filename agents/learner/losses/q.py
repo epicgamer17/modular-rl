@@ -1,7 +1,8 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Dict, Optional, Tuple
-from old_muzero.agents.learner.losses.base import BaseLoss, LossRepresentation
+from agents.learner.losses.base import BaseLoss, LossRepresentation
+
 
 class QBootstrappingLoss(BaseLoss):
     """
@@ -22,7 +23,7 @@ class QBootstrappingLoss(BaseLoss):
         # 1. Determine Pred/Target keys and default Loss function based on atom_size
         pred_key = "q_logits" if is_categorical else "q_values"
         target_key = "q_logits" if is_categorical else "values"
-        
+
         if loss_fn is None:
             loss_fn = F.cross_entropy if is_categorical else F.mse_loss
 
@@ -81,6 +82,7 @@ class QBootstrappingLoss(BaseLoss):
             raw_loss = self.loss_fn(selected_preds, flat_targets, reduction="none")
 
         return raw_loss.reshape(B, T), {}
+
 
 class ChanceQLoss(BaseLoss):
     """Loss for stochastic muzero chance Q heads."""

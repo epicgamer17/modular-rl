@@ -1,5 +1,5 @@
 from .game import GameConfig
-from old_muzero.utils.wrappers import (
+from utils.wrappers import (
     ActionMaskInInfoWrapper,
     ChannelLastToFirstWrapper,
     FrameStackWrapper,

@@ -1,7 +1,7 @@
 from torch import nn
 from torch import Tensor
 
-from old_muzero.configs.base import Config
+from configs.base import Config
 
 
 class Projector(nn.Module):

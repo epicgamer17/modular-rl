@@ -5,11 +5,11 @@ import torch.multiprocessing as mp
 from dataclasses import dataclass
 from typing import List, Optional, Any
 
-from old_muzero.replay_buffers.processors import IdentityInputProcessor, StandardOutputProcessor
-from old_muzero.replay_buffers.writers import CircularWriter
-from old_muzero.replay_buffers.samplers import UniformSampler
-from old_muzero.replay_buffers.concurrency import ConcurrencyBackend, LocalBackend
-from old_muzero.utils.utils import numpy_dtype_to_torch_dtype
+from replay_buffers.processors import IdentityInputProcessor, StandardOutputProcessor
+from replay_buffers.writers import CircularWriter
+from replay_buffers.samplers import UniformSampler
+from replay_buffers.concurrency import ConcurrencyBackend, LocalBackend
+from utils.utils import numpy_dtype_to_torch_dtype
 
 
 @dataclass
@@ -270,7 +270,7 @@ class ModularReplayBuffer:
         """
         # We assume the most recent trajectory ends at the current pointer
         # This is primarily for PPO-style sequential buffers
-        from old_muzero.replay_buffers.writers import PPOWriter
+        from replay_buffers.writers import PPOWriter
 
         trajectory_slice = slice(0, self.size)
         results = self.input_processor.finish_trajectory(

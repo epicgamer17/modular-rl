@@ -1,15 +1,15 @@
 import torch
 import yaml
 import os
-from old_muzero.modules.utils import (
+from modules.utils import (
     prepare_kernel_initializers,
     prepare_activations,
     kernel_initializer_wrapper,
 )
 import torch.nn.functional as F
-from old_muzero.configs.games.game import GameConfig
-from old_muzero.configs.modules.compilation import CompilationConfig
-from old_muzero.utils.schedule import ScheduleConfig
+from configs.games.game import GameConfig
+from configs.modules.compilation import CompilationConfig
+from utils.schedule import ScheduleConfig
 
 
 class ConfigBase:

@@ -1,8 +1,8 @@
 import torch
-from old_muzero.replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
-from old_muzero.replay_buffers.concurrency import LocalBackend, TorchMPBackend, ConcurrencyBackend
+from replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
+from replay_buffers.concurrency import LocalBackend, TorchMPBackend, ConcurrencyBackend
 from typing import Dict, Optional
-from old_muzero.replay_buffers.processors import (
+from replay_buffers.processors import (
     InputProcessor,
     IdentityInputProcessor,
     NStepInputProcessor,
@@ -19,18 +19,18 @@ from old_muzero.replay_buffers.processors import (
     ObservationCompressionProcessor,
     ObservationDecompressionProcessor,
 )
-from old_muzero.replay_buffers.writers import (
+from replay_buffers.writers import (
     CircularWriter,
     SharedCircularWriter,
     ReservoirWriter,
     PPOWriter,
 )
-from old_muzero.replay_buffers.samplers import (
+from replay_buffers.samplers import (
     PrioritizedSampler,
     UniformSampler,
     WholeBufferSampler,
 )
-from old_muzero.utils.utils import legal_moves_mask
+from utils.utils import legal_moves_mask
 
 
 # class RenameKeyInputProcessor(InputProcessor):

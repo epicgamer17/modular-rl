@@ -1,5 +1,5 @@
 import torch
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 
 class ShapeValidator:
@@ -8,24 +8,22 @@ class ShapeValidator:
     Ensures that data matches expected minibatch_size, unroll_steps (K), and action dimensions.
     """
 
-    def __init__(self, config: Any):
-        self.config = config
-        self.B = config.minibatch_size
-        # Multi-step unrolling (MuZero) uses unroll_steps (K).
-        # Sequence length is K+1.
-        self.K = getattr(config, "unroll_steps", 0)
-        self.T = self.K + 1
-        self.num_actions = getattr(config.game, "num_actions", 0)
+    def __init__(
+        self,
+        minibatch_size: int,
+        unroll_steps: int = 0,
+        num_actions: int = 0,
+        atom_size: int = 1,
+        support_range: Optional[int] = None,
+    ):
+        self.B = minibatch_size
+        self.K = unroll_steps
+        self.num_actions = num_actions
+        self.atom_size = atom_size
+        if self.atom_size == 1 and support_range is not None:
+            self.atom_size = (support_range * 2) + 1
 
-        # Support/Atoms for distributional RL
-        self.atom_size = getattr(config, "atom_size", 1)
-        if (
-            self.atom_size == 1
-            and hasattr(config, "support_range")
-            and config.support_range is not None
-        ):
-            # MuZero style support
-            self.atom_size = (config.support_range * 2) + 1
+        self.T = self.K + 1
 
     def validate(
         self, predictions: Dict[str, torch.Tensor], targets: Dict[str, torch.Tensor]

@@ -6,8 +6,8 @@ import dill as pickle
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
 import gymnasium as gym
-from old_muzero.stats.stats import StatTracker
-from old_muzero.modules.utils import get_uncompiled_model
+from stats.stats import StatTracker
+from modules.utils import get_uncompiled_model
 
 
 class BaseTrainer:
@@ -64,13 +64,13 @@ class BaseTrainer:
 
     def setup_tester(self):
         """Initializes the Tester using the TestFactory and launched via an Executor."""
-        from old_muzero.agents.workers.tester import TestFactory, Tester
-        from old_muzero.agents.executors.local_executor import LocalExecutor
-        from old_muzero.agents.executors.torch_mp_executor import TorchMPExecutor
+        from agents.workers.tester import TestFactory, Tester
+        from agents.executors.local_executor import LocalExecutor
+        from agents.executors.torch_mp_executor import TorchMPExecutor
 
         # 1. Initialize Executor if not already done
         if self.executor is None:
-            from old_muzero.agents.executors.factory import create_executor
+            from agents.executors.factory import create_executor
 
             self.executor = create_executor(self.config)
 
@@ -78,7 +78,7 @@ class BaseTrainer:
         test_types = TestFactory.create_default_test_types(
             self.config, num_trials=self.test_trials
         )
-        from old_muzero.agents.workers.tester import VsAgentTest
+        from agents.workers.tester import VsAgentTest
 
         for agent in self.test_agents:
             for player_idx in range(self.num_players):
@@ -111,7 +111,7 @@ class BaseTrainer:
         Triggers evaluation. For LocalExecutor, this runs immediately.
         For TorchMPExecutor, it ensures weights are synced.
         """
-        from old_muzero.agents.workers.tester import Tester
+        from agents.workers.tester import Tester
 
         if not self._tester_launched:
             self.setup_tester()
@@ -134,7 +134,7 @@ class BaseTrainer:
 
     def poll_test(self):
         """Polls for background test results from the executor."""
-        from old_muzero.agents.workers.tester import Tester
+        from agents.workers.tester import Tester
 
         if self.executor is None or not self.config.multi_process:
             return
@@ -343,7 +343,7 @@ class BaseTrainer:
 
     def _setup_stats(self):
         """Initializes the stat tracker with common keys and plot types."""
-        from old_muzero.stats.stats import PlotType
+        from stats.stats import PlotType
 
         stat_keys = [
             "score",

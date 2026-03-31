@@ -1,9 +1,9 @@
 from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
 from .base import BaseHead
-from old_muzero.agents.learner.losses.representations import ClassificationRepresentation
-from old_muzero.configs.modules.architecture_config import ArchitectureConfig
-from old_muzero.configs.modules.backbones.base import BackboneConfig
+from agents.learner.losses.representations import ClassificationRepresentation
+from configs.modules.architecture_config import ArchitectureConfig
+from configs.modules.backbones.base import BackboneConfig
 
 
 class ChanceProbabilityHead(BaseHead):

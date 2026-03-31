@@ -22,7 +22,7 @@ _VALID_BACKENDS = {"python", "cpp", "aos"}
 _DEFAULT_BACKEND = "python"
 _BACKEND_ENV_VAR = "MCTS_BACKEND"
 
-# Keep python submodule imports working: `from old_muzero.search.search_factories import ...`
+# Keep python submodule imports working: `from search.search_factories import ...`
 __path__[:] = [str(_PACKAGE_DIR), str(_SEARCH_PY_DIR)]
 
 _active_backend: str | None = None
@@ -124,9 +124,13 @@ def configure_backend(config: Any = None, backend: str | None = None) -> str:
             return requested
         except Exception as exc:
             # If explicitly requested via arguments or config, fail loudly.
-            is_explicit = (backend is not None) or (_extract_backend_from_config(config) is not None)
+            is_explicit = (backend is not None) or (
+                _extract_backend_from_config(config) is not None
+            )
             if is_explicit:
-                raise ImportError(f"C++ backend explicitly requested but unavailable: {exc}") from exc
+                raise ImportError(
+                    f"C++ backend explicitly requested but unavailable: {exc}"
+                ) from exc
 
             warnings.warn(
                 f"C++ backend requested but unavailable ({exc}). Falling back to Python backend.",

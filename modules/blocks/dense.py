@@ -13,7 +13,6 @@ class Dense(nn.Module):
             in_features=in_features, out_features=out_features, bias=bias
         )
 
-
     def forward(self, inputs: Tensor) -> Tensor:
         return self.layer(inputs)
 
@@ -104,7 +103,6 @@ class NoisyDense(nn.Module):
         else:
             return None
 
-
     def forward(self, input: Tensor) -> Tensor:
         return functional.F.linear(input, self.weight, self.bias)
 
@@ -124,8 +122,8 @@ def build_dense(
 # modules/dense_stack.py
 from typing import Callable, List
 from torch import nn, Tensor
-from old_muzero.modules.blocks.base_stack import BaseStack
-from old_muzero.modules.utils import build_normalization_layer
+from modules.blocks.base_stack import BaseStack
+from modules.utils import build_normalization_layer
 
 
 class DenseStack(BaseStack):
@@ -173,5 +171,3 @@ class DenseStack(BaseStack):
         return x
 
     # ... (extra_repr is optional but can be kept)
-
-

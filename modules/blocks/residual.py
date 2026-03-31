@@ -1,11 +1,11 @@
 from typing import Callable, Literal, Tuple, Union
 
 from torch import nn, Tensor
-from old_muzero.modules.utils import calculate_padding
+from modules.utils import calculate_padding
 
 # modules/residual_block.py (New File)
 from torch import nn, Tensor
-from old_muzero.modules.utils import build_normalization_layer, calculate_same_padding, unpack
+from modules.utils import build_normalization_layer, calculate_same_padding, unpack
 
 
 class ResidualBlock(nn.Module):
@@ -95,7 +95,7 @@ class ResidualBlock(nn.Module):
 
 # modules/residual_stack.py
 from torch import nn, Tensor
-from old_muzero.modules.blocks.base_stack import BaseStack
+from modules.blocks.base_stack import BaseStack
 
 
 class ResidualStack(BaseStack):
@@ -155,5 +155,3 @@ class ResidualStack(BaseStack):
         for layer in self._layers:
             x = layer(x)
         return x
-
-

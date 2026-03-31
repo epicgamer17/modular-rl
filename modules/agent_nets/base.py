@@ -3,8 +3,8 @@ from typing import Any, Dict, List, Optional, Callable, Union, Tuple
 import torch
 from torch import nn, Tensor
 
-from old_muzero.modules.utils import kernel_initializer_wrapper
-from old_muzero.modules.world_models.inference_output import InferenceOutput
+from modules.utils import kernel_initializer_wrapper
+from modules.world_models.inference_output import InferenceOutput
 
 
 class BaseAgentNetwork(nn.Module, ABC):
@@ -49,9 +49,11 @@ class BaseAgentNetwork(nn.Module, ABC):
 
     def reset_noise(self) -> None:
         """Resamples NoisyNet parameters across all layers recursively."""
+
         def _reset_recursive(m):
             if hasattr(m, "reset_noise") and callable(m.reset_noise):
                 m.reset_noise()
+
         self.apply(_reset_recursive)
 
     @abstractmethod
@@ -66,7 +68,9 @@ class BaseAgentNetwork(nn.Module, ABC):
         """Standard interface for MuZero-style latent rollout (Recurrent Inference)."""
         pass
 
-    def afterstate_inference(self, network_state: Any, action: Tensor) -> InferenceOutput:
+    def afterstate_inference(
+        self, network_state: Any, action: Tensor
+    ) -> InferenceOutput:
         """
         Optional interface for Stochastic MuZero (Afterstate Inference).
         If the architecture does not support stochasticity, this will raise NotImplementedError.

@@ -5,7 +5,7 @@ from torch import Tensor
 from typing import Tuple, Dict, Any
 from torch import nn
 import torch
-from old_muzero.modules.world_models.inference_output import WorldModelOutput
+from modules.world_models.inference_output import WorldModelOutput
 
 
 class WorldModelInterface(ABC):

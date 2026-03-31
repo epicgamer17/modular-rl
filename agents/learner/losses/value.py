@@ -1,7 +1,8 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Optional
-from old_muzero.agents.learner.losses.base import BaseLoss, LossRepresentation
+from agents.learner.losses.base import BaseLoss, LossRepresentation
+
 
 class ValueLoss(BaseLoss):
     """Value prediction loss module (Universal)."""

@@ -1,5 +1,5 @@
 from .base import HeadConfig
-from old_muzero.configs.modules.output_strategies import (
+from configs.modules.output_strategies import (
     CategoricalConfig,
     OutputStrategyConfigFactory,
 )

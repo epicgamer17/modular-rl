@@ -1,13 +1,13 @@
 from typing import Type, Dict
-from old_muzero.configs.modules.backbones.resnet import ResNetConfig
-from old_muzero.configs.modules.backbones.deconv import DeconvConfig
-from old_muzero.configs.modules.backbones.denseresnet import DenseResNetConfig
-from old_muzero.configs.modules.backbones.dense import DenseConfig
-from old_muzero.configs.modules.backbones.conv import ConvConfig
-from old_muzero.configs.modules.backbones.recurrent import RecurrentConfig
-from old_muzero.configs.modules.backbones.transformer import TransformerConfig
-from old_muzero.configs.modules.backbones.identity import IdentityConfig
-from old_muzero.configs.modules.backbones.base import BackboneConfig
+from configs.modules.backbones.resnet import ResNetConfig
+from configs.modules.backbones.deconv import DeconvConfig
+from configs.modules.backbones.denseresnet import DenseResNetConfig
+from configs.modules.backbones.dense import DenseConfig
+from configs.modules.backbones.conv import ConvConfig
+from configs.modules.backbones.recurrent import RecurrentConfig
+from configs.modules.backbones.transformer import TransformerConfig
+from configs.modules.backbones.identity import IdentityConfig
+from configs.modules.backbones.base import BackboneConfig
 
 
 class BackboneConfigFactory:

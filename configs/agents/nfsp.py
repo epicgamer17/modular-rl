@@ -1,6 +1,6 @@
-from old_muzero.configs.agents.rainbow_dqn import RainbowConfig
-from old_muzero.configs.agents.supervised import SupervisedConfig
-from old_muzero.configs.base import Config, ConfigBase
+from configs.agents.rainbow_dqn import RainbowConfig
+from configs.agents.supervised import SupervisedConfig
+from configs.base import Config, ConfigBase
 from torch.optim import Optimizer, Adam
 
 

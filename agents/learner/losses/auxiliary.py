@@ -1,7 +1,8 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Dict, Optional, Tuple
-from old_muzero.agents.learner.losses.base import BaseLoss, LossRepresentation
+from agents.learner.losses.base import BaseLoss, LossRepresentation
+
 
 class ConsistencyLoss(BaseLoss):
     """Latent consistency loss (stochastic/standard MuZero)."""
@@ -28,6 +29,7 @@ class ConsistencyLoss(BaseLoss):
             name=name,
         )
 
+
 class SigmaLoss(BaseLoss):
     """Loss for sigma prediction (stochastic MuZero)."""
 
@@ -51,6 +53,7 @@ class SigmaLoss(BaseLoss):
             loss_factor=loss_factor,
             name=name,
         )
+
 
 class CommitmentLoss(BaseLoss):
     """VQ-VAE commitment cost for encoder (stochastic MuZero)."""

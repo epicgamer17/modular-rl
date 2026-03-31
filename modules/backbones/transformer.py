@@ -1,7 +1,7 @@
 from typing import Tuple
 import torch
 from torch import nn
-from old_muzero.configs.modules.backbones.transformer import TransformerConfig
+from configs.modules.backbones.transformer import TransformerConfig
 
 
 class TransformerBackbone(nn.Module):
@@ -46,4 +46,3 @@ class TransformerBackbone(nn.Module):
         x = self.embedding(x)
         x = self.transformer_encoder(x)
         return x[:, -1, :]  # Return last token's representation
-

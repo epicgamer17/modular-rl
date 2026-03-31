@@ -4,16 +4,16 @@ import numpy as np
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Union, Tuple
 
-from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
-from old_muzero.agents.action_selectors.selectors import BaseActionSelector
-from old_muzero.agents.action_selectors.types import InferenceResult
-from old_muzero.agents.action_selectors.policy_sources import (
+from modules.agent_nets.modular import ModularAgentNetwork
+from agents.action_selectors.selectors import BaseActionSelector
+from agents.action_selectors.types import InferenceResult
+from agents.action_selectors.policy_sources import (
     BasePolicySource,
     NetworkPolicySource,
     SearchPolicySource,
 )
-from old_muzero.configs.base import Config
-from old_muzero.replay_buffers.modular_buffer import ModularReplayBuffer
+from configs.base import Config
+from replay_buffers.modular_buffer import ModularReplayBuffer
 
 
 class NetworkAgent:
@@ -41,7 +41,7 @@ class NetworkAgent:
         )
 
         if use_search:
-            from old_muzero.search.factory import SearchBackendFactory
+            from search.factory import SearchBackendFactory
 
             search_engine = SearchBackendFactory.create(self.config)
             self.policy_source = SearchPolicySource(
@@ -311,7 +311,7 @@ class Tester:
         )
 
         if use_search:
-            from old_muzero.search.factory import SearchBackendFactory
+            from search.factory import SearchBackendFactory
 
             search_engine = SearchBackendFactory.create(config)
             self.policy_source = SearchPolicySource(

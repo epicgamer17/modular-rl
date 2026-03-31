@@ -7,9 +7,9 @@ from torch import nn, Tensor, optim
 from typing import TYPE_CHECKING, Iterable, Optional, Tuple, Any, Callable
 
 if TYPE_CHECKING:
-    from old_muzero.configs.base import Config
+    from configs.base import Config
 
-from old_muzero.utils.schedule import ScheduleConfig, Schedule, create_schedule
+from utils.schedule import ScheduleConfig, Schedule, create_schedule
 
 
 class LinearLR:

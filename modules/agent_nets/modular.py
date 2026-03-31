@@ -2,24 +2,24 @@ from typing import Callable, Tuple, Dict, Any, List, Optional
 import torch
 from torch import nn, Tensor
 
-from old_muzero.modules.agent_nets.base import BaseAgentNetwork
-from old_muzero.modules.world_models.inference_output import (
+from modules.agent_nets.base import BaseAgentNetwork
+from modules.world_models.inference_output import (
     InferenceOutput,
     MuZeroNetworkState,
 )
-from old_muzero.modules.world_models.muzero_world_model import MuzeroWorldModel
-from old_muzero.modules.backbones.factory import BackboneFactory
-from old_muzero.modules.heads.policy import PolicyHead
-from old_muzero.modules.heads.value import ValueHead
-from old_muzero.modules.heads.q import QHead, DuelingQHead
-from old_muzero.agents.learner.losses.representations import get_representation
-from old_muzero.modules.projectors.sim_siam import Projector
-from old_muzero.agents.learner.losses.shape_validator import ShapeValidator
+from modules.world_models.muzero_world_model import MuzeroWorldModel
+from modules.backbones.factory import BackboneFactory
+from modules.heads.policy import PolicyHead
+from modules.heads.value import ValueHead
+from modules.heads.q import QHead, DuelingQHead
+from agents.learner.losses.representations import get_representation
+from modules.projectors.sim_siam import Projector
+from agents.learner.losses.shape_validator import ShapeValidator
 
-from old_muzero.configs.agents.muzero import MuZeroConfig
-from old_muzero.configs.agents.ppo import PPOConfig
-from old_muzero.configs.agents.rainbow_dqn import RainbowConfig
-from old_muzero.configs.agents.supervised import SupervisedConfig
+from configs.agents.muzero import MuZeroConfig
+from configs.agents.ppo import PPOConfig
+from configs.agents.rainbow_dqn import RainbowConfig
+from configs.agents.supervised import SupervisedConfig
 
 
 class ModularAgentNetwork(BaseAgentNetwork):
@@ -198,8 +198,8 @@ class ModularAgentNetwork(BaseAgentNetwork):
         # We use a basic policy head. SupervisedConfig might not have a full PolicyHeadConfig,
         # but we can construct one or just use a simple linear layer.
         # For consistency with other modular nets, we'll try to use a PolicyHead if possible.
-        from old_muzero.configs.modules.heads.policy import PolicyHeadConfig
-        from old_muzero.configs.modules.backbones.factory import BackboneConfigFactory
+        from configs.modules.heads.policy import PolicyHeadConfig
+        from configs.modules.backbones.factory import BackboneConfigFactory
 
         # Create a default PolicyHeadConfig if not in SupervisedConfig
         neck_config = BackboneConfigFactory.create({"type": "identity"})
@@ -223,7 +223,6 @@ class ModularAgentNetwork(BaseAgentNetwork):
             if list(self.parameters())
             else torch.device("cpu")
         )
-
 
     def reset_noise(self) -> None:
         """Resamples NoisyNet parameters across all configured components."""
@@ -282,7 +281,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
             x = self.components["feature_block"](obs)
             Q_logits, _, policy_dist = self.components["q_head"](x)
 
-            q_vals = self.components["q_head"].representation.to_expected_value(Q_logits)
+            q_vals = self.components["q_head"].representation.to_expected_value(
+                Q_logits
+            )
             state_value = q_vals.max(dim=-1)[0]
 
             return InferenceOutput(
@@ -454,11 +455,18 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 output["values"].ndim >= 2 and output["values"].shape[1] == expected_T
             ), f"MuZero values shape mismatch: {output['values'].shape}"
             assert (
-                output["policies"].ndim >= 3 and output["policies"].shape[1] == expected_T
+                output["policies"].ndim >= 3
+                and output["policies"].shape[1] == expected_T
             ), f"MuZero policies shape mismatch: {output['policies'].shape}"
 
             # --- STRICT SYSTEM-WIDE VALIDATION ---
-            ShapeValidator(self.config).validate_predictions(output)
+            ShapeValidator(
+                minibatch_size=self.config.minibatch_size,
+                unroll_steps=getattr(self.config, "unroll_steps", 0),
+                num_actions=self.num_actions,
+                atom_size=getattr(self.config, "atom_size", 1),
+                support_range=getattr(self.config, "support_range", None),
+            ).validate_predictions(output)
 
             return output
 
@@ -486,7 +494,13 @@ class ModularAgentNetwork(BaseAgentNetwork):
             ), f"PPO policies shape mismatch: {output['policies'].shape}"
 
             # --- STRICT SYSTEM-WIDE VALIDATION ---
-            ShapeValidator(self.config).validate_predictions(output)
+            ShapeValidator(
+                minibatch_size=self.config.minibatch_size,
+                unroll_steps=getattr(self.config, "unroll_steps", 0),
+                num_actions=self.num_actions,
+                atom_size=getattr(self.config, "atom_size", 1),
+                support_range=getattr(self.config, "support_range", None),
+            ).validate_predictions(output)
 
             return output
 
@@ -497,7 +511,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
             # 1. Online Inference at s_t
             x = self.components["feature_block"](initial_observation)
             Q_logits, _, _ = self.components["q_head"](x)
-            q_vals = self.components["q_head"].representation.to_expected_value(Q_logits)
+            q_vals = self.components["q_head"].representation.to_expected_value(
+                Q_logits
+            )
 
             output = {
                 "q_values": q_vals.unsqueeze(1),
@@ -513,7 +529,13 @@ class ModularAgentNetwork(BaseAgentNetwork):
             ), f"Rainbow q_logits shape mismatch: {output['q_logits'].shape}"
 
             # --- STRICT SYSTEM-WIDE VALIDATION ---
-            ShapeValidator(self.config).validate_predictions(output)
+            ShapeValidator(
+                minibatch_size=self.config.minibatch_size,
+                unroll_steps=getattr(self.config, "unroll_steps", 0),
+                num_actions=self.num_actions,
+                atom_size=getattr(self.config, "atom_size", 1),
+                support_range=getattr(self.config, "support_range", None),
+            ).validate_predictions(output)
 
             return output
 
@@ -534,7 +556,13 @@ class ModularAgentNetwork(BaseAgentNetwork):
             ), f"Imitation policies shape mismatch: {output['policies'].shape}"
 
             # --- STRICT SYSTEM-WIDE VALIDATION ---
-            ShapeValidator(self.config).validate_predictions(output)
+            ShapeValidator(
+                minibatch_size=self.config.minibatch_size,
+                unroll_steps=getattr(self.config, "unroll_steps", 0),
+                num_actions=self.num_actions,
+                atom_size=getattr(self.config, "atom_size", 1),
+                support_range=getattr(self.config, "support_range", None),
+            ).validate_predictions(output)
 
             return output
 

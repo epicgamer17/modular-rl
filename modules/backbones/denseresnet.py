@@ -1,9 +1,9 @@
 from typing import Tuple
 import torch
 from torch import nn
-from old_muzero.modules.blocks.dense import build_dense
-from old_muzero.configs.modules.backbones.denseresnet import DenseResNetConfig
-from old_muzero.modules.utils import build_normalization_layer
+from modules.blocks.dense import build_dense
+from configs.modules.backbones.denseresnet import DenseResNetConfig
+from modules.utils import build_normalization_layer
 
 
 class DenseResidualBlock(nn.Module):
@@ -22,7 +22,6 @@ class DenseResidualBlock(nn.Module):
         x = self.linear(x)
         x = self.norm(x)
         return self.activation(x + residual)
-
 
     def reset_noise(self) -> None:
         if hasattr(self.linear, "reset_noise"):
@@ -77,7 +76,6 @@ class DenseResNetBackbone(nn.Module):
         for layer in self.layers:
             x = layer(x)
         return x
-
 
     def reset_noise(self) -> None:
         for layer in self.layers:

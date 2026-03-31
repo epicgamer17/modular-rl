@@ -1,8 +1,8 @@
 from typing import Tuple
 import torch
 from torch import nn
-from old_muzero.modules.blocks.dense import DenseStack
-from old_muzero.configs.modules.backbones.dense import DenseConfig
+from modules.blocks.dense import DenseStack
+from configs.modules.backbones.dense import DenseConfig
 
 
 class DenseBackbone(nn.Module):
@@ -35,7 +35,6 @@ class DenseBackbone(nn.Module):
         if x.dim() == 4:
             x = x.flatten(1, -1)
         return self.stack(x)
-
 
     def reset_noise(self) -> None:
         self.stack.reset_noise()

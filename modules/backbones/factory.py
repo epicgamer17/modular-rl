@@ -1,23 +1,23 @@
 from typing import Type, Dict, Tuple, Optional
 import torch
 from torch import nn
-from old_muzero.modules.backbones.resnet import ResNetBackbone
-from old_muzero.modules.backbones.denseresnet import DenseResNetBackbone
-from old_muzero.modules.backbones.dense import DenseBackbone
-from old_muzero.modules.backbones.conv import ConvBackbone
-from old_muzero.modules.backbones.recurrent import RecurrentBackbone
-from old_muzero.modules.backbones.transformer import TransformerBackbone
-from old_muzero.modules.backbones.identity import IdentityBackbone
-from old_muzero.modules.backbones.conv import DeconvBackbone
-from old_muzero.configs.modules.backbones.base import BackboneConfig
-from old_muzero.configs.modules.backbones.resnet import ResNetConfig
-from old_muzero.configs.modules.backbones.denseresnet import DenseResNetConfig
-from old_muzero.configs.modules.backbones.dense import DenseConfig
-from old_muzero.configs.modules.backbones.conv import ConvConfig
-from old_muzero.configs.modules.backbones.recurrent import RecurrentConfig
-from old_muzero.configs.modules.backbones.transformer import TransformerConfig
-from old_muzero.configs.modules.backbones.identity import IdentityConfig
-from old_muzero.configs.modules.backbones.deconv import DeconvConfig
+from modules.backbones.resnet import ResNetBackbone
+from modules.backbones.denseresnet import DenseResNetBackbone
+from modules.backbones.dense import DenseBackbone
+from modules.backbones.conv import ConvBackbone
+from modules.backbones.recurrent import RecurrentBackbone
+from modules.backbones.transformer import TransformerBackbone
+from modules.backbones.identity import IdentityBackbone
+from modules.backbones.conv import DeconvBackbone
+from configs.modules.backbones.base import BackboneConfig
+from configs.modules.backbones.resnet import ResNetConfig
+from configs.modules.backbones.denseresnet import DenseResNetConfig
+from configs.modules.backbones.dense import DenseConfig
+from configs.modules.backbones.conv import ConvConfig
+from configs.modules.backbones.recurrent import RecurrentConfig
+from configs.modules.backbones.transformer import TransformerConfig
+from configs.modules.backbones.identity import IdentityConfig
+from configs.modules.backbones.deconv import DeconvConfig
 
 
 class BackboneFactory:

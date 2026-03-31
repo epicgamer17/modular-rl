@@ -5,28 +5,28 @@ from typing import Any, Dict, List, Optional
 
 import torch
 
-from old_muzero.agents.learner.base import UniversalLearner
-from old_muzero.agents.learner.batch_iterators import RepeatSampleIterator
-from old_muzero.agents.learner.callbacks import (
+from agents.learner.base import UniversalLearner
+from agents.learner.batch_iterators import RepeatSampleIterator
+from agents.learner.callbacks import (
     PriorityUpdaterCallback,
     ResetNoiseCallback,
     TargetNetworkSyncCallback,
 )
-from old_muzero.agents.learner.target_builders import (
+from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
     PassThroughTargetBuilder,
 )
-from old_muzero.agents.learner.losses import (
+from agents.learner.losses import (
     ImitationLoss,
     LossPipeline,
     QBootstrappingLoss,
 )
-from old_muzero.replay_buffers.buffer_factories import (
+from replay_buffers.buffer_factories import (
     create_dqn_buffer,
     create_nfsp_buffer,
 )
-from old_muzero.agents.action_selectors.policy_sources import NFSPNetworkPolicySource
-from old_muzero.agents.action_selectors.selectors import (
+from agents.action_selectors.policy_sources import NFSPNetworkPolicySource
+from agents.action_selectors.selectors import (
     CategoricalSelector,
     EpsilonGreedySelector,
     NFSPSelector,
@@ -34,15 +34,15 @@ from old_muzero.agents.action_selectors.selectors import (
 )
 from torch.optim.adam import Adam
 from torch.optim.sgd import SGD
-from old_muzero.agents.executors.local_executor import LocalExecutor
-from old_muzero.agents.executors.torch_mp_executor import TorchMPExecutor
-from old_muzero.agents.trainers.base_trainer import BaseTrainer
-from old_muzero.agents.workers.actors import GymActor, PettingZooActor
-from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
-from old_muzero.modules.utils import get_clean_state_dict
-from old_muzero.replay_buffers.sequence import Sequence
-from old_muzero.stats.stats import StatTracker, PlotType
-from old_muzero.utils.schedule import create_schedule
+from agents.executors.local_executor import LocalExecutor
+from agents.executors.torch_mp_executor import TorchMPExecutor
+from agents.trainers.base_trainer import BaseTrainer
+from agents.workers.actors import GymActor, PettingZooActor
+from modules.agent_nets.modular import ModularAgentNetwork
+from modules.utils import get_clean_state_dict
+from replay_buffers.sequence import Sequence
+from stats.stats import StatTracker, PlotType
+from utils.schedule import create_schedule
 
 
 class _NFSPActorMixin:
@@ -307,7 +307,7 @@ class NFSPTrainer(BaseTrainer):
 
         rl_optimizer = create_opt(self.br_agent_network.parameters(), rl_config)
         rl_scheduler = get_lr_scheduler(rl_optimizer, rl_config)
-        from old_muzero.agents.learner.target_builders import (
+        from agents.learner.target_builders import (
             DistributionalTargetBuilder,
         )
 
@@ -332,7 +332,13 @@ class NFSPTrainer(BaseTrainer):
             is_categorical=is_distributional,
             loss_fn=getattr(rl_config, "loss_function", None),
         )
-        rl_loss_pipeline = LossPipeline(rl_config, [td_loss_module])
+        rl_loss_pipeline = LossPipeline(
+            modules=[td_loss_module],
+            minibatch_size=rl_config.minibatch_size,
+            num_actions=self.num_actions,
+            atom_size=getattr(rl_config, "atom_size", 1),
+            unroll_steps=0,  # NFSP RL is DQ(N)
+        )
 
         self.rl_learner = UniversalLearner(
             config=rl_config,
@@ -375,8 +381,7 @@ class NFSPTrainer(BaseTrainer):
         sl_scheduler = get_lr_scheduler(sl_optimizer, sl_config)
         sl_rep = self.avg_agent_network.components["policy_head"].representation
         sl_loss_pipeline = LossPipeline(
-            sl_config,
-            [
+            modules=[
                 ImitationLoss(
                     device=device,
                     representation=sl_rep,
@@ -384,6 +389,9 @@ class NFSPTrainer(BaseTrainer):
                     loss_factor=getattr(sl_config, "policy_loss_factor", 1.0),
                 )
             ],
+            minibatch_size=sl_config.minibatch_size,
+            num_actions=self.num_actions,
+            unroll_steps=0,
         )
 
         # SL uses PassThroughTargetBuilder for target_policies -> policies mapping if needed,

@@ -2,24 +2,24 @@ import torch
 import time
 from typing import Optional, List, Dict, Any, Tuple
 
-from old_muzero.agents.trainers.base_trainer import BaseTrainer
-from old_muzero.agents.learner.base import UniversalLearner
+from agents.trainers.base_trainer import BaseTrainer
+from agents.learner.base import UniversalLearner
 
-from old_muzero.agents.action_selectors.factory import SelectorFactory
-from old_muzero.agents.workers.actors import get_actor_class
-from old_muzero.modules.agent_nets.modular import ModularAgentNetwork
-from old_muzero.replay_buffers.transition import TransitionBatch, Transition
-from old_muzero.stats.stats import StatTracker, PlotType
-from old_muzero.utils.schedule import create_schedule
-from old_muzero.agents.learner.target_builders import (
+from agents.action_selectors.factory import SelectorFactory
+from agents.workers.actors import get_actor_class
+from modules.agent_nets.modular import ModularAgentNetwork
+from replay_buffers.transition import TransitionBatch, Transition
+from stats.stats import StatTracker, PlotType
+from utils.schedule import create_schedule
+from agents.learner.target_builders import (
     TemporalDifferenceBuilder,
 )
 from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
-from old_muzero.agents.learner.losses import QBootstrappingLoss
-from old_muzero.replay_buffers.buffer_factories import create_dqn_buffer
-from old_muzero.agents.learner.batch_iterators import RepeatSampleIterator
-from old_muzero.agents.learner.factory import build_universal_learner
+from agents.learner.losses import QBootstrappingLoss
+from replay_buffers.buffer_factories import create_dqn_buffer
+from agents.learner.batch_iterators import RepeatSampleIterator
+from agents.learner.factory import build_universal_learner
 
 
 class RainbowTrainer(BaseTrainer):
@@ -74,7 +74,7 @@ class RainbowTrainer(BaseTrainer):
             raise ValueError(f"Unsupported optimizer: {config.optimizer}")
 
         # Initialize target network
-        from old_muzero.modules.utils import get_clean_state_dict
+        from modules.utils import get_clean_state_dict
 
         clean_state = get_clean_state_dict(self.agent_network)
         self.target_agent_network.load_state_dict(clean_state, strict=False)
@@ -98,19 +98,19 @@ class RainbowTrainer(BaseTrainer):
         # Note: RainbowNetwork.initial_inference now handles calculating expected value from support
         # So we don't need to pass support explicitly to the selector in the old way
         # 9. Callbacks
-        from old_muzero.agents.learner.callbacks import (
+        from agents.learner.callbacks import (
             TargetNetworkSyncCallback,
             ResetNoiseCallback,
             PriorityUpdaterCallback,
             EpsilonGreedySchedulerCallback,
         )
-        from old_muzero.modules.utils import get_lr_scheduler
+        from modules.utils import get_lr_scheduler
 
         # 3. Initialize LR Scheduler
         self.lr_scheduler = get_lr_scheduler(self.optimizer, config)
 
         # 4. Initialize Action Selector for loss calculation (greedy for Double DQN)
-        from old_muzero.agents.action_selectors.selectors import ArgmaxSelector
+        from agents.action_selectors.selectors import ArgmaxSelector
 
         self.training_selector = ArgmaxSelector()
 
@@ -140,7 +140,7 @@ class RainbowTrainer(BaseTrainer):
         )
 
         # 5. Initialize Executor
-        from old_muzero.agents.executors.factory import create_executor
+        from agents.executors.factory import create_executor
 
         self.executor = create_executor(config)
 

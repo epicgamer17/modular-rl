@@ -5,6 +5,7 @@ infrastructure (new learner, new buffer, new executor, new actors).
 The OLD network's weights and forward pass are used exactly as-is.
 Only the interface is adapted to match what new code expects.
 """
+
 from __future__ import annotations
 
 import torch
@@ -13,10 +14,10 @@ from torch import nn, Tensor
 from typing import Any, Dict, Optional, Tuple
 from dataclasses import dataclass, field
 
-from old_muzero.modules.agent_nets.modular import (
+from modules.agent_nets.modular import (
     ModularAgentNetwork as OldModularAgentNetwork,
 )
-from old_muzero.modules.world_models.inference_output import (
+from modules.world_models.inference_output import (
     MuZeroNetworkState,
     InferenceOutput as OldInferenceOutput,
 )
@@ -117,9 +118,7 @@ class OldNetworkBridge(nn.Module):
             self.components["world_model"] = _WorldModelStub(wm_heads)
 
         # Device indicator for AgentNetwork.device property
-        self.register_buffer(
-            "_device_indicator", torch.zeros(1), persistent=False
-        )
+        self.register_buffer("_device_indicator", torch.zeros(1), persistent=False)
 
     @property
     def device(self) -> torch.device:
@@ -164,7 +163,9 @@ class OldNetworkBridge(nn.Module):
     # NEW ACTOR / SEARCH API
     # ================================================================
 
-    def obs_inference(self, obs: Tensor, recurrent_state=None, **kwargs) -> InferenceOutput:
+    def obs_inference(
+        self, obs: Tensor, recurrent_state=None, **kwargs
+    ) -> InferenceOutput:
         """Called by new search engine and new actors for root inference."""
         old_out: OldInferenceOutput = self.old_net.obs_inference(obs)
 
@@ -202,7 +203,9 @@ class OldNetworkBridge(nn.Module):
             wm_memory=network_state.get("wm_memory"),
         )
 
-        old_out: OldInferenceOutput = self.old_net.hidden_state_inference(old_ns, action)
+        old_out: OldInferenceOutput = self.old_net.hidden_state_inference(
+            old_ns, action
+        )
 
         rs = {}
         if old_out.network_state is not None:
@@ -250,8 +253,12 @@ class OldNetworkBridge(nn.Module):
             result["to_play_logits"] = tp
 
         # Pass through any extras
-        for key in ["latents_afterstates", "chance_logits", "chance_values",
-                     "chance_encoder_embeddings"]:
+        for key in [
+            "latents_afterstates",
+            "chance_logits",
+            "chance_values",
+            "chance_encoder_embeddings",
+        ]:
             if key in old_out:
                 result[key] = old_out[key]
 

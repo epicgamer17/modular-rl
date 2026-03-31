@@ -1,9 +1,9 @@
 from typing import Tuple, Callable
 import torch
 from torch import nn
-from old_muzero.configs.agents.muzero import MuZeroConfig
-from old_muzero.modules.backbones.factory import BackboneFactory
-from old_muzero.modules.utils import _normalize_hidden_state
+from configs.agents.muzero import MuZeroConfig
+from modules.backbones.factory import BackboneFactory
+from modules.utils import _normalize_hidden_state
 
 
 class Representation(nn.Module):
@@ -16,7 +16,6 @@ class Representation(nn.Module):
         self.input_shape = input_shape
         self.net = BackboneFactory.create(config.representation_backbone, input_shape)
         self.output_shape = self.net.output_shape
-
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         S = self.net(inputs)

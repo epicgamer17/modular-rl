@@ -1,6 +1,7 @@
 import torch
 from typing import Any, Dict, Optional, Tuple
-from old_muzero.agents.learner.losses.base import BaseLoss, LossRepresentation
+from agents.learner.losses.base import BaseLoss, LossRepresentation
+
 
 class RewardLoss(BaseLoss):
     """Reward prediction loss module."""

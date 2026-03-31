@@ -1,9 +1,9 @@
 from typing import Any, Dict, Optional, Tuple
 import torch
-from old_muzero.agents.action_selectors.selectors import BaseActionSelector
-from old_muzero.agents.action_selectors.types import InferenceResult
+from agents.action_selectors.selectors import BaseActionSelector
+from agents.action_selectors.types import InferenceResult
 from torch.distributions import Categorical
-from old_muzero.utils.schedule import create_schedule, Schedule, ScheduleConfig
+from utils.schedule import create_schedule, Schedule, ScheduleConfig
 
 
 class PPODecorator(BaseActionSelector):
@@ -124,7 +124,9 @@ class TemperatureSelector(BaseActionSelector):
 
         # Apply temperature
         if temp == 0.0:
-            mask = info.get("legal_moves_mask", info.get("legal_moves")) if info else None
+            mask = (
+                info.get("legal_moves_mask", info.get("legal_moves")) if info else None
+            )
             if mask is not None:
                 logits = self.mask_actions(logits, mask)
             best_actions = logits.argmax(dim=-1)

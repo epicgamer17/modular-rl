@@ -1,10 +1,13 @@
 from typing import Tuple, Optional, Dict, Any
 from torch import Tensor
 from .base import BaseHead
-from old_muzero.agents.learner.losses.representations import BaseRepresentation, IdentityRepresentation
-from old_muzero.configs.modules.architecture_config import ArchitectureConfig
-from old_muzero.configs.modules.backbones.base import BackboneConfig
-from old_muzero.modules.blocks.dense import build_dense
+from agents.learner.losses.representations import (
+    BaseRepresentation,
+    IdentityRepresentation,
+)
+from configs.modules.architecture_config import ArchitectureConfig
+from configs.modules.backbones.base import BackboneConfig
+from modules.blocks.dense import build_dense
 
 
 class LatentConsistencyHead(BaseHead):

@@ -11,7 +11,7 @@ from typing import Any, Dict, Iterator
 
 import torch
 
-from old_muzero.replay_buffers.modular_buffer import ModularReplayBuffer
+from replay_buffers.modular_buffer import ModularReplayBuffer
 
 
 class SingleBatchIterator:
@@ -35,7 +35,10 @@ class RepeatSampleIterator:
     """
 
     def __init__(
-        self, replay_buffer: ModularReplayBuffer, num_iterations: int, device: torch.device
+        self,
+        replay_buffer: ModularReplayBuffer,
+        num_iterations: int,
+        device: torch.device,
     ):
         self.replay_buffer = replay_buffer
         self.num_iterations = num_iterations
@@ -72,7 +75,9 @@ class PPOEpochIterator:
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         batch = self.replay_buffer.sample()
         num_samples = batch["observations"].shape[0]
-        minibatch_size = (num_samples + self.num_minibatches - 1) // self.num_minibatches
+        minibatch_size = (
+            num_samples + self.num_minibatches - 1
+        ) // self.num_minibatches
 
         for _ in range(self.num_epochs):
             indices = torch.randperm(num_samples, device="cpu")

@@ -5,25 +5,25 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from old_muzero.configs.agents.muzero import MuZeroConfig
-from old_muzero.modules.backbones.factory import BackboneFactory
-from old_muzero.modules.heads.factory import HeadFactory
-from old_muzero.modules.heads.to_play import ToPlayHead
-from old_muzero.modules.heads.reward import RewardHead
-from old_muzero.agents.learner.losses.representations import get_representation
-from old_muzero.modules.utils import scale_gradient, kernel_initializer_wrapper
-from old_muzero.modules.world_models.inference_output import (
+from configs.agents.muzero import MuZeroConfig
+from modules.backbones.factory import BackboneFactory
+from modules.heads.factory import HeadFactory
+from modules.heads.to_play import ToPlayHead
+from modules.heads.reward import RewardHead
+from agents.learner.losses.representations import get_representation
+from modules.utils import scale_gradient, kernel_initializer_wrapper
+from modules.world_models.inference_output import (
     MuZeroNetworkState,
     WorldModelOutput,
     PhysicsOutput,
 )
-from old_muzero.modules.world_models.world_model import WorldModelInterface
+from modules.world_models.world_model import WorldModelInterface
 
-from old_muzero.modules.world_models.components.representation import Representation
-from old_muzero.modules.world_models.components.dynamics import Dynamics, AfterstateDynamics
-from old_muzero.modules.world_models.components.chance_encoder import ChanceEncoder
+from modules.world_models.components.representation import Representation
+from modules.world_models.components.dynamics import Dynamics, AfterstateDynamics
+from modules.world_models.components.chance_encoder import ChanceEncoder
 
-from old_muzero.modules.world_models.world_model import WorldModelOutput
+from modules.world_models.world_model import WorldModelOutput
 
 
 class MuzeroWorldModel(WorldModelInterface, nn.Module):
@@ -325,7 +325,9 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 chance_logits_k = afterstate_out.chance
 
                 # 3. Encoder Inference
-                chance_encoder_embedding_k, chance_encoder_onehot_k = self.encoder(encoder_inputs[:, k])
+                chance_encoder_embedding_k, chance_encoder_onehot_k = self.encoder(
+                    encoder_inputs[:, k]
+                )
 
                 if self.config.use_true_chance_codes:
                     codes_k = F.one_hot(
@@ -407,7 +409,9 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             stacked_afterstates = torch.stack(latent_afterstates, dim=1)
             stacked_chance_logits = torch.stack(latent_code_probabilities, dim=1)
             stacked_backbone = torch.stack(afterstate_backbone_features, dim=1)
-            stacked_chance_encoder_embeddings = torch.stack(chance_encoder_embeddings, dim=1)
+            stacked_chance_encoder_embeddings = torch.stack(
+                chance_encoder_embeddings, dim=1
+            )
             stacked_chance_encoder_onehots = torch.stack(chance_encoder_onehots, dim=1)
 
         # 7. Compute target latents for consistency loss if requested

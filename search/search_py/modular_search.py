@@ -5,37 +5,37 @@ from torch import Tensor
 import torch.nn.functional as F
 from torch.distributions import Categorical
 import math
-from old_muzero.modules.utils import support_to_scalar
-from old_muzero.modules.world_models.inference_output import InferenceOutput
-from old_muzero.search.search_selectors import (
+from modules.utils import support_to_scalar
+from modules.world_models.inference_output import InferenceOutput
+from search.search_selectors import (
     SelectionStrategy,
     TopScoreSelection,
     SamplingSelection,
 )
-from old_muzero.search.backpropogation import Backpropagator, AverageDiscountedReturnBackpropagator
-from old_muzero.search.initial_searchsets import SearchSet, SelectAll, SelectTopK
-from old_muzero.search.nodes import ChanceNode, DecisionNode
-from old_muzero.search.min_max_stats import MinMaxStats
-from old_muzero.search.prior_injectors import (
+from search.backpropogation import Backpropagator, AverageDiscountedReturnBackpropagator
+from search.initial_searchsets import SearchSet, SelectAll, SelectTopK
+from search.nodes import ChanceNode, DecisionNode
+from search.min_max_stats import MinMaxStats
+from search.prior_injectors import (
     PriorInjector,
     ActionTargetInjector,
     DirichletInjector,
     GumbelInjector,
 )
-from old_muzero.search.root_policies import (
+from search.root_policies import (
     RootPolicyStrategy,
     CompletedQValuesRootPolicy,
     VisitFrequencyPolicy,
 )
-from old_muzero.utils.utils import get_legal_moves
-from old_muzero.search.pruners import PruningMethod, NoPruning, SequentialHalvingPruning
-from old_muzero.search.scoring_methods import (
+from utils.utils import get_legal_moves
+from search.pruners import PruningMethod, NoPruning, SequentialHalvingPruning
+from search.scoring_methods import (
     GumbelScoring,
     LeastVisitedScoring,
     UCBScoring,
     DeterministicChanceScoring,
 )
-from old_muzero.modules.agent_nets.base import BaseAgentNetwork
+from modules.agent_nets.base import BaseAgentNetwork
 from .utils import _safe_log_probs
 
 
@@ -89,7 +89,7 @@ class ModularSearch:
                 DeterministicChanceScoring()
             )
 
-            from old_muzero.search.search_py.root_policies import (
+            from search.search_py.root_policies import (
                 BestActionRootPolicy,
                 VisitFrequencyPolicy,
             )
@@ -118,7 +118,7 @@ class ModularSearch:
             self.pruning_method: PruningMethod = NoPruning()
             self.internal_pruning_method: PruningMethod = NoPruning()
 
-            from old_muzero.search.search_py.backpropogation import (
+            from search.search_py.backpropogation import (
                 MinimaxBackpropagator,
                 AverageDiscountedReturnBackpropagator,
             )
@@ -320,7 +320,7 @@ class ModularSearch:
         # already baked into root.child_priors by the GumbelInjector.
         # Non-Gumbel searches use argmax of the clean target policy.
         if self.config.gumbel:
-            from old_muzero.search.search_py.utils import (
+            from search.search_py.utils import (
                 get_completed_q,
                 calculate_gumbel_sigma,
             )
@@ -544,7 +544,7 @@ class ModularSearch:
             # Gumbel MuZero: play argmax(g + σ) — Paper Alg. 2.
             # Non-Gumbel: play argmax of the clean target policy.
             if self.config.gumbel:
-                from old_muzero.search.search_py.utils import (
+                from search.search_py.utils import (
                     get_completed_q,
                     calculate_gumbel_sigma,
                 )

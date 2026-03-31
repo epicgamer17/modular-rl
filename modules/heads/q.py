@@ -3,10 +3,10 @@ import torch
 from torch import nn, Tensor
 
 from .base import BaseHead
-from old_muzero.configs.modules.architecture_config import ArchitectureConfig
-from old_muzero.configs.modules.backbones.base import BackboneConfig
-from old_muzero.agents.learner.losses.representations import BaseRepresentation
-from old_muzero.modules.blocks.dense import DenseStack, build_dense
+from configs.modules.architecture_config import ArchitectureConfig
+from configs.modules.backbones.base import BackboneConfig
+from agents.learner.losses.representations import BaseRepresentation
+from modules.blocks.dense import DenseStack, build_dense
 
 
 class QHead(BaseHead):
@@ -45,7 +45,6 @@ class QHead(BaseHead):
             out_features=self.representation.num_features * self.num_actions,
             sigma=self.arch_config.noisy_sigma,
         )
-
 
     def reset_noise(self) -> None:
         super().reset_noise()
@@ -128,7 +127,6 @@ class DuelingQHead(BaseHead):
         if self.output_layer is not None:
             del self.output_layer
             self.output_layer = None
-
 
     def reset_noise(self) -> None:
         super().reset_noise()  # Neck

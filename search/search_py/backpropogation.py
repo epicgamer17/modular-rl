@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Any
 import torch
-from old_muzero.search.nodes import DecisionNode, ChanceNode
+from search.nodes import DecisionNode, ChanceNode
 
 
 class Backpropagator(ABC):

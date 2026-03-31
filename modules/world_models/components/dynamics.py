@@ -3,10 +3,10 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from old_muzero.configs.agents.muzero import MuZeroConfig
-from old_muzero.modules.embeddings.action_embedding import ActionEncoder
-from old_muzero.modules.backbones.factory import BackboneFactory
-from old_muzero.modules.utils import _normalize_hidden_state
+from configs.agents.muzero import MuZeroConfig
+from modules.embeddings.action_embedding import ActionEncoder
+from modules.backbones.factory import BackboneFactory
+from modules.utils import _normalize_hidden_state
 
 
 class BaseDynamics(nn.Module):
@@ -30,9 +30,7 @@ class BaseDynamics(nn.Module):
             action_space_size=num_actions,
             embedding_dim=self.action_embedding_dim,
             is_continuous=is_continuous,
-            single_action_plane=(
-                layer_prefix == "dynamics"
-            ),
+            single_action_plane=(layer_prefix == "dynamics"),
         )
 
         # 2. Fusion Layer (Move from ActionEncoder to Dynamics)
@@ -61,7 +59,6 @@ class BaseDynamics(nn.Module):
 
         self.net = BackboneFactory.create(bb_cfg, input_shape)
         self.output_shape = self.net.output_shape
-
 
     def _fuse_and_process(
         self, hidden_state: torch.Tensor, action: torch.Tensor
