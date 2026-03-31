@@ -4,7 +4,7 @@ from torch import nn, Tensor
 
 from .base import BaseHead
 from agents.learner.losses.representations import BaseRepresentation
-from modules.blocks.dense import DenseStack, build_dense
+from modules.blocks.linear import LinearStack, build_linear_block
 
 
 class QHead(BaseHead):
@@ -30,7 +30,7 @@ class QHead(BaseHead):
         self.input_dim = self.flat_dim  # From super()
 
         # 1. Hidden Layers
-        self.hidden_layers = DenseStack(
+        self.hidden_layers = LinearStack(
             initial_width=self.input_dim,
             widths=hidden_widths,
             activation=activation,
@@ -40,7 +40,7 @@ class QHead(BaseHead):
 
         # 2. Output Layer (Overwrites BaseHead's output_layer)
         # Output size: num_actions * atoms
-        self.output_layer = build_dense(
+        self.output_layer = build_linear_block(
             in_features=self.hidden_layers.output_width,
             out_features=self.representation.num_features * self.num_actions,
             sigma=noisy_sigma,
@@ -97,28 +97,28 @@ class DuelingQHead(BaseHead):
         self.input_dim = self.flat_dim
 
         # 1. Value Stream
-        self.value_hidden = DenseStack(
+        self.value_hidden = LinearStack(
             initial_width=self.input_dim,
             widths=value_hidden_widths,
             activation=activation,
             noisy_sigma=noisy_sigma,
             norm_type=norm_type,
         )
-        self.value_output = build_dense(
+        self.value_output = build_linear_block(
             in_features=self.value_hidden.output_width,
             out_features=self.representation.num_features,  # 1 value * atoms
             sigma=noisy_sigma,
         )
 
         # 2. Advantage Stream
-        self.advantage_hidden = DenseStack(
+        self.advantage_hidden = LinearStack(
             initial_width=self.input_dim,
             widths=advantage_hidden_widths,
             activation=activation,
             noisy_sigma=noisy_sigma,
             norm_type=norm_type,
         )
-        self.advantage_output = build_dense(
+        self.advantage_output = build_linear_block(
             in_features=self.advantage_hidden.output_width,
             out_features=self.representation.num_features
             * self.num_actions,  # N actions * atoms

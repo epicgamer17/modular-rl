@@ -447,9 +447,14 @@ def prepare_activations(activation: str | nn.Module | Callable):
     """
     Returns an activation module from a string name or returns the input if already a module/callable.
     """
-    if isinstance(activation, nn.Module) or (
-        callable(activation) and not isinstance(activation, str)
-    ):
+    if isinstance(activation, nn.Module):
+        return activation
+
+    # If it's a class (e.g. nn.ReLU), instantiate it
+    if isinstance(activation, type) and issubclass(activation, nn.Module):
+        return activation()
+
+    if callable(activation) and not isinstance(activation, str):
         return activation
 
     # print("Activation to prase: ", activation)
@@ -496,7 +501,7 @@ def calc_units(shape):
     if len(shape) == 1:
         return shape + shape
     if len(shape) == 2:
-        # dense layer -> (in_channels, out_channels)
+        # linear layer -> (in_channels, out_channels)
         return shape
     else:
         # conv_layer (Assuming convolution kernels (2D, 3D, or more).
@@ -547,14 +552,14 @@ def build_normalization_layer(
 
     Args:
         norm_type: The type of normalization ('batch', 'layer', 'none').
-        num_features: The number of features (channels for conv, width for dense).
-        dim: The dimension of the input tensor (2 for conv/2D, 1 for dense/1D).
+        num_features: The number of features (channels for conv, width for linear).
+        dim: The dimension of the input tensor (2 for conv/2D, 1 for linear/1D).
     """
     if norm_type == "batch":
         if dim == 2:
             return nn.BatchNorm2d(num_features)
         elif dim == 1:
-            # Batch norm for 1D (Dense) layers
+            # Batch norm for 1D (Linear) layers
             return nn.BatchNorm1d(num_features)
         else:
             raise ValueError(f"Batch norm for {dim}D not supported.")
@@ -588,7 +593,7 @@ def _normalize_hidden_state(S: torch.Tensor) -> torch.Tensor:
     # Handles both (B, W) for dense and (B, C, H, W) for spatial
 
     if S.dim() == 2:
-        # Case: (B, W) - Dense layer output
+        # Case: (B, W) - Linear layer output
         S_norm = S
         dim = 1
     elif S.dim() == 4:

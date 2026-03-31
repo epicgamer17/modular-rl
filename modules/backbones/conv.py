@@ -13,7 +13,7 @@ class ConvBackbone(nn.Module):
         filters: list[int],
         kernel_sizes: list[int],
         strides: list[int],
-        activation: str = "relu",
+        activation: nn.Module = nn.ReLU(),
         noisy_sigma: float = 0.0,
         norm_type: str = "none",
     ):
@@ -58,7 +58,7 @@ class DeconvBackbone(nn.Module):
         filters: list[int],
         kernel_sizes: list[int],
         strides: list[int],
-        activation: str = "relu",
+        activation: nn.Module = nn.ReLU(),
         norm_type: str = "none",
         output_padding: list[int] = None,
     ):

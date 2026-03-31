@@ -1,19 +1,19 @@
 from typing import Tuple
 import torch
 from torch import nn
-from modules.blocks.dense import build_dense
+from modules.blocks.linear import build_linear_block
 from modules.utils import build_normalization_layer
 
 
-class DenseResidualBlock(nn.Module):
-    """A single Dense Residual Block (Linear + Norm + Skip)."""
+class MLPResidualBlock(nn.Module):
+    """A single MLP Residual Block (Linear + Norm + Skip)."""
 
     def __init__(
         self, size: int, activation: nn.Module, norm_type: str, noisy_sigma: float
     ):
         super().__init__()
         self.activation = activation
-        self.linear = build_dense(size, size, sigma=noisy_sigma)
+        self.linear = build_linear_block(size, size, sigma=noisy_sigma)
         self.norm = build_normalization_layer(norm_type, size, dim=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -27,8 +27,8 @@ class DenseResidualBlock(nn.Module):
             self.linear.reset_noise()
 
 
-class DenseResNetBackbone(nn.Module):
-    """DenseResNet backbone implementation (MLP with residual connections)."""
+class MLPResNetBackbone(nn.Module):
+    """MLPResNet backbone implementation (MLP with residual connections)."""
 
     def __init__(
         self,
@@ -55,7 +55,7 @@ class DenseResNetBackbone(nn.Module):
             if width != current_width:
                 self.layers.append(
                     nn.Sequential(
-                        build_dense(current_width, width, sigma=noisy_sigma),
+                        build_linear_block(current_width, width, sigma=noisy_sigma),
                         build_normalization_layer(norm_type, width, dim=1),
                         activation,
                     )
@@ -64,7 +64,7 @@ class DenseResNetBackbone(nn.Module):
 
             # Add a residual block
             self.layers.append(
-                DenseResidualBlock(
+                MLPResidualBlock(
                     size=current_width,
                     activation=activation,
                     norm_type=norm_type,

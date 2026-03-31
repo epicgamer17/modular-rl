@@ -1,17 +1,17 @@
 from typing import Tuple
 import torch
 from torch import nn
-from modules.blocks.dense import DenseStack
+from modules.blocks.linear import LinearStack
 
 
-class DenseBackbone(nn.Module):
-    """Dense (MLP) backbone implementation using DenseStack."""
+class MLPBackbone(nn.Module):
+    """MLP backbone implementation using LinearStack."""
 
     def __init__(
         self,
         input_shape: Tuple[int, ...],
         widths: list[int],
-        activation: str = "relu",
+        activation: nn.Module = nn.ReLU(),
         noisy_sigma: float = 0.0,
         norm_type: str = "none",
     ):
@@ -26,7 +26,7 @@ class DenseBackbone(nn.Module):
             # Vector input (D,)
             initial_width = input_shape[0]
 
-        self.stack = DenseStack(
+        self.stack = LinearStack(
             initial_width=initial_width,
             widths=widths,
             activation=activation,

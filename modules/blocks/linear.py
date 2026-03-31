@@ -4,11 +4,11 @@ import torch
 from torch import nn, Tensor, functional
 
 
-class Dense(nn.Module):
+class LinearBlock(nn.Module):
     def __init__(
         self, in_features: int, out_features: int, bias: bool = True, *args, **kwargs
     ):
-        super(Dense, self).__init__(*args, **kwargs)
+        super(LinearBlock, self).__init__(*args, **kwargs)
         self.layer = nn.Linear(
             in_features=in_features, out_features=out_features, bias=bias
         )
@@ -20,7 +20,7 @@ class Dense(nn.Module):
         return self.layer.extra_repr()
 
 
-class NoisyDense(nn.Module):
+class NoisyLinear(nn.Module):
     """See https://arxiv.org/pdf/1706.10295."""
 
     @staticmethod
@@ -110,13 +110,13 @@ class NoisyDense(nn.Module):
         return f"in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None}, initial_sigma={self.initial_sigma}, use_factorized={self.use_factorized}"
 
 
-def build_dense(
+def build_linear_block(
     in_features: int, out_features: int, sigma: float = 0, bias: bool = True
 ):
     if sigma == 0:
-        return Dense(in_features, out_features, bias=bias)
+        return LinearBlock(in_features, out_features, bias=bias)
     else:
-        return NoisyDense(in_features, out_features, initial_sigma=sigma, bias=bias)
+        return NoisyLinear(in_features, out_features, initial_sigma=sigma, bias=bias)
 
 
 # modules/dense_stack.py
@@ -126,7 +126,7 @@ from modules.blocks.base_stack import BaseStack
 from modules.utils import build_normalization_layer
 
 
-class DenseStack(BaseStack):
+class LinearStack(BaseStack):
     def __init__(
         self,
         initial_width: int,
@@ -142,9 +142,9 @@ class DenseStack(BaseStack):
 
         current_input_width = initial_width
         for width in widths:
-            # Build the layer (Dense or NoisyDense)
+            # Build the layer (LinearBlock or NoisyLinear)
             use_bias = norm_type == "none"
-            dense_layer = build_dense(
+            linear_layer = build_linear_block(
                 in_features=current_input_width,
                 out_features=width,
                 sigma=noisy_sigma,
@@ -153,7 +153,7 @@ class DenseStack(BaseStack):
 
             norm_layer = build_normalization_layer(norm_type, width, dim=1)
 
-            layer = nn.Sequential(dense_layer, norm_layer)
+            layer = nn.Sequential(linear_layer, norm_layer)
             self._layers.append(layer)
             current_input_width = width
 

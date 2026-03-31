@@ -5,7 +5,7 @@ from torch import nn, Tensor
 
 
 class BaseStack(nn.Module):
-    """Base class for sequential network stacks (Dense, Conv, Residual)."""
+    """Base class for sequential network stacks (Linear, Conv, Residual)."""
 
     def __init__(self, activation: nn.Module = nn.ReLU(), noisy_sigma: float = 0):
         super().__init__()

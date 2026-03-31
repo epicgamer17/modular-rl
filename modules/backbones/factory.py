@@ -2,8 +2,8 @@ from typing import Type, Dict, Tuple, Optional
 import torch
 from torch import nn
 from modules.backbones.resnet import ResNetBackbone
-from modules.backbones.denseresnet import DenseResNetBackbone
-from modules.backbones.dense import DenseBackbone
+from modules.backbones.mlp_resnet import MLPResNetBackbone
+from modules.backbones.mlp import MLPBackbone
 from modules.backbones.conv import ConvBackbone
 from modules.backbones.recurrent import RecurrentBackbone
 from modules.backbones.transformer import TransformerBackbone
@@ -11,8 +11,8 @@ from modules.backbones.identity import IdentityBackbone
 from modules.backbones.conv import DeconvBackbone
 from configs.modules.backbones.base import BackboneConfig
 from configs.modules.backbones.resnet import ResNetConfig
-from configs.modules.backbones.denseresnet import DenseResNetConfig
-from configs.modules.backbones.dense import DenseConfig
+from configs.modules.backbones.mlp_resnet import MLPResNetConfig
+from configs.modules.backbones.mlp import MLPConfig
 from configs.modules.backbones.conv import ConvConfig
 from configs.modules.backbones.recurrent import RecurrentConfig
 from configs.modules.backbones.transformer import TransformerConfig
@@ -25,8 +25,8 @@ class BackboneFactory:
 
     _backbones: Dict[Type[BackboneConfig], Type[nn.Module]] = {
         ResNetConfig: ResNetBackbone,
-        DenseResNetConfig: DenseResNetBackbone,
-        DenseConfig: DenseBackbone,
+        MLPResNetConfig: MLPResNetBackbone,
+        MLPConfig: MLPBackbone,
         ConvConfig: ConvBackbone,
         RecurrentConfig: RecurrentBackbone,
         TransformerConfig: TransformerBackbone,
@@ -47,8 +47,8 @@ class BackboneFactory:
                 f"No backbone module registered for config type: {config_type}"
             )
 
-        if isinstance(config, DenseConfig):
-            return DenseBackbone(
+        if isinstance(config, MLPConfig):
+            return MLPBackbone(
                 input_shape=input_shape,
                 widths=config.widths,
                 activation=config.activation,
@@ -56,8 +56,8 @@ class BackboneFactory:
                 norm_type=config.norm_type,
             )
 
-        if isinstance(config, DenseResNetConfig):
-            return DenseResNetBackbone(
+        if isinstance(config, MLPResNetConfig):
+            return MLPResNetBackbone(
                 input_shape=input_shape,
                 widths=config.widths,
                 activation=config.activation,

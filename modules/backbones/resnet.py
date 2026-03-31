@@ -13,7 +13,7 @@ class ResNetBackbone(nn.Module):
         filters: list[int],
         kernel_sizes: list[int],
         strides: list[int],
-        activation: str = "relu",
+        activation: nn.Module = nn.ReLU(),
         noisy_sigma: float = 0.0,
         norm_type: str = "none",
     ):
