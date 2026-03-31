@@ -109,11 +109,15 @@ def build_supervised_network_components(
         feat_shape = input_shape
 
     pol_rep = get_representation(config.policy_head.output_strategy)
+    pol_neck = None
+    if config.policy_head.neck is not None:
+        pol_neck = BackboneFactory.create(config.policy_head.neck, feat_shape)
+
     policy_head = PolicyHead(
-        arch_config=config.arch,
         input_shape=feat_shape,
         representation=pol_rep,
-        neck_config=config.policy_head.neck,
+        neck=pol_neck,
+        noisy_sigma=config.arch.noisy_sigma,
     )
 
     return {

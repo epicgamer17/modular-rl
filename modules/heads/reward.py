@@ -4,9 +4,6 @@ from torch import nn
 import torch
 from .base import BaseHead
 from agents.learner.losses.representations import BaseRepresentation
-from configs.modules.architecture_config import ArchitectureConfig
-from configs.modules.backbones.base import BackboneConfig
-from configs.modules.heads.reward import ValuePrefixRewardHeadConfig
 from modules.blocks.dense import build_dense
 
 
@@ -18,12 +15,12 @@ class RewardHead(BaseHead):
 
     def __init__(
         self,
-        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
-        neck_config: Optional[BackboneConfig] = None,
+        neck: Optional[nn.Module] = None,
+        noisy_sigma: float = 0.0,
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config)
+        super().__init__(input_shape, representation, neck, noisy_sigma)
 
     def forward(
         self,
@@ -47,19 +44,20 @@ class ValuePrefixRewardHead(RewardHead):
 
     def __init__(
         self,
-        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
-        config: ValuePrefixRewardHeadConfig,
-        neck_config: Optional[BackboneConfig] = None,
+        lstm_hidden_size: int,
+        lstm_horizon_len: int,
+        neck: Optional[nn.Module] = None,
+        noisy_sigma: float = 0.0,
     ):
         # Pass representation=None to avoid creating the default output layer in BaseHead
         super().__init__(
-            arch_config, input_shape, representation=None, neck_config=neck_config
+            input_shape, representation=None, neck=neck, noisy_sigma=noisy_sigma
         )
         self.representation = representation
-        self.lstm_hidden_size = config.lstm_hidden_size
-        self.lstm_horizon_len = config.lstm_horizon_len
+        self.lstm_hidden_size = lstm_hidden_size
+        self.lstm_horizon_len = lstm_horizon_len
 
         # LSTM input size is the output of the neck (flat_dim)
         self.lstm = nn.LSTM(
@@ -72,7 +70,7 @@ class ValuePrefixRewardHead(RewardHead):
         self.output_layer = build_dense(
             in_features=self.lstm_hidden_size,
             out_features=self.representation.num_features,
-            sigma=self.arch_config.noisy_sigma,
+            sigma=noisy_sigma,
         )
 
     def forward(

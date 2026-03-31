@@ -1,9 +1,7 @@
 from typing import Tuple, Optional, Dict, Any
-from torch import Tensor
+from torch import nn, Tensor
 from .base import BaseHead
 from agents.learner.losses.representations import BaseRepresentation
-from configs.modules.architecture_config import ArchitectureConfig
-from configs.modules.backbones.base import BackboneConfig
 
 
 class ValueHead(BaseHead):
@@ -14,12 +12,12 @@ class ValueHead(BaseHead):
 
     def __init__(
         self,
-        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
-        neck_config: Optional[BackboneConfig] = None,
+        neck: Optional[nn.Module] = None,
+        noisy_sigma: float = 0.0,
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config)
+        super().__init__(input_shape, representation, neck, noisy_sigma)
 
     def forward(
         self,

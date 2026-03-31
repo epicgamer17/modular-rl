@@ -52,8 +52,17 @@ class HeadFactory:
 
         head_cls = cls._heads[config_type]
 
-        # Merge kwargs with config values if needed, or pass them explicitly
-        # For ToPlayHead, we might need num_players
+        # 1. Build Neck (Pre-instantiated)
+        neck = None
+        if hasattr(config, "neck") and config.neck is not None:
+            from modules.backbones.factory import BackboneFactory
+
+            neck = BackboneFactory.create(config.neck, input_shape)
+
+        # 2. Extract shared parameters from arch_config
+        noisy_sigma = getattr(arch_config, "noisy_sigma", 0.0)
+
+        # 3. Instantiate Head with explicit parameters
         if isinstance(config, ToPlayHeadConfig):
             num_players = kwargs.get("num_players", config.num_players)
             if num_players is None:
@@ -61,23 +70,21 @@ class HeadFactory:
                     "ToPlayHead requires num_players (either in config or passed to factory)"
                 )
             return ToPlayHead(
-                arch_config=arch_config,
                 input_shape=input_shape,
                 num_players=num_players,
-                neck_config=config.neck,
+                neck=neck,
+                noisy_sigma=noisy_sigma,
                 representation=kwargs.get("representation"),
             )
 
-        # PolicyHead
         if isinstance(config, PolicyHeadConfig):
             return PolicyHead(
-                arch_config=arch_config,
                 input_shape=input_shape,
-                neck_config=config.neck,
                 representation=kwargs.get("representation"),
+                neck=neck,
+                noisy_sigma=noisy_sigma,
             )
 
-        # ChanceProbabilityHead needs num_chance_codes
         if isinstance(config, ChanceProbabilityHeadConfig):
             num_chance_codes = kwargs.get("num_chance_codes")
             if num_chance_codes is None:
@@ -85,37 +92,35 @@ class HeadFactory:
                     "ChanceProbabilityHead requires num_chance_codes to be passed."
                 )
             return ChanceProbabilityHead(
-                arch_config=arch_config,
                 input_shape=input_shape,
                 num_chance_codes=num_chance_codes,
-                neck_config=config.neck,
+                neck=neck,
+                noisy_sigma=noisy_sigma,
             )
 
-        # ValuePrefixRewardHead takes specific config
         if isinstance(config, ValuePrefixRewardHeadConfig):
             return ValuePrefixRewardHead(
-                arch_config=arch_config,
-                input_shape=input_shape,
-                representation=kwargs.get(
-                    "representation"
-                ),  # Representation is usually created outside and passed in
-                config=config,
-                neck_config=config.neck,
-            )
-
-        # LatentConsistencyHead needs projection_dim
-        if isinstance(config, LatentConsistencyHeadConfig):
-            return LatentConsistencyHead(
-                arch_config=arch_config,
                 input_shape=input_shape,
                 representation=kwargs.get("representation"),
-                neck_config=config.neck,
+                lstm_hidden_size=config.lstm_hidden_size,
+                lstm_horizon_len=config.lstm_horizon_len,
+                neck=neck,
+                noisy_sigma=noisy_sigma,
+            )
+
+        if isinstance(config, LatentConsistencyHeadConfig):
+            return LatentConsistencyHead(
+                input_shape=input_shape,
+                representation=kwargs.get("representation"),
+                neck=neck,
+                noisy_sigma=noisy_sigma,
                 projection_dim=config.projection_dim,
             )
 
+        # Fallback for standard heads (ValueHead, RewardHead, etc.)
         return head_cls(
-            arch_config=arch_config,
             input_shape=input_shape,
             representation=kwargs.get("representation"),
-            neck_config=config.neck,
+            neck=neck,
+            noisy_sigma=noisy_sigma,
         )

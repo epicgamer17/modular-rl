@@ -3,8 +3,6 @@ import torch
 from torch import nn, Tensor
 
 from .base import BaseHead
-from configs.modules.architecture_config import ArchitectureConfig
-from configs.modules.backbones.base import BackboneConfig
 from agents.learner.losses.representations import BaseRepresentation
 from modules.blocks.dense import DenseStack, build_dense
 
@@ -17,14 +15,16 @@ class QHead(BaseHead):
 
     def __init__(
         self,
-        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
         hidden_widths: list[int],
         num_actions: int,
-        neck_config: Optional[BackboneConfig] = None,
+        neck: Optional[nn.Module] = None,
+        noisy_sigma: float = 0.0,
+        activation: nn.Module = nn.ReLU(),
+        norm_type: str = "none",
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config)
+        super().__init__(input_shape, representation, neck, noisy_sigma)
 
         self.num_actions = num_actions
         self.input_dim = self.flat_dim  # From super()
@@ -33,9 +33,9 @@ class QHead(BaseHead):
         self.hidden_layers = DenseStack(
             initial_width=self.input_dim,
             widths=hidden_widths,
-            activation=self.arch_config.activation,
-            noisy_sigma=self.arch_config.noisy_sigma,
-            norm_type=self.arch_config.norm_type,
+            activation=activation,
+            noisy_sigma=noisy_sigma,
+            norm_type=norm_type,
         )
 
         # 2. Output Layer (Overwrites BaseHead's output_layer)
@@ -43,7 +43,7 @@ class QHead(BaseHead):
         self.output_layer = build_dense(
             in_features=self.hidden_layers.output_width,
             out_features=self.representation.num_features * self.num_actions,
-            sigma=self.arch_config.noisy_sigma,
+            sigma=noisy_sigma,
         )
 
     def reset_noise(self) -> None:
@@ -81,15 +81,17 @@ class DuelingQHead(BaseHead):
 
     def __init__(
         self,
-        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
         value_hidden_widths: list[int],
         advantage_hidden_widths: list[int],
         num_actions: int,
-        neck_config: Optional[BackboneConfig] = None,
+        neck: Optional[nn.Module] = None,
+        noisy_sigma: float = 0.0,
+        activation: nn.Module = nn.ReLU(),
+        norm_type: str = "none",
     ):
-        super().__init__(arch_config, input_shape, representation, neck_config)
+        super().__init__(input_shape, representation, neck, noisy_sigma)
 
         self.num_actions = num_actions
         self.input_dim = self.flat_dim
@@ -98,29 +100,29 @@ class DuelingQHead(BaseHead):
         self.value_hidden = DenseStack(
             initial_width=self.input_dim,
             widths=value_hidden_widths,
-            activation=self.arch_config.activation,
-            noisy_sigma=self.arch_config.noisy_sigma,
-            norm_type=self.arch_config.norm_type,
+            activation=activation,
+            noisy_sigma=noisy_sigma,
+            norm_type=norm_type,
         )
         self.value_output = build_dense(
             in_features=self.value_hidden.output_width,
             out_features=self.representation.num_features,  # 1 value * atoms
-            sigma=self.arch_config.noisy_sigma,
+            sigma=noisy_sigma,
         )
 
         # 2. Advantage Stream
         self.advantage_hidden = DenseStack(
             initial_width=self.input_dim,
             widths=advantage_hidden_widths,
-            activation=self.arch_config.activation,
-            noisy_sigma=self.arch_config.noisy_sigma,
-            norm_type=self.arch_config.norm_type,
+            activation=activation,
+            noisy_sigma=noisy_sigma,
+            norm_type=norm_type,
         )
         self.advantage_output = build_dense(
             in_features=self.advantage_hidden.output_width,
             out_features=self.representation.num_features
             * self.num_actions,  # N actions * atoms
-            sigma=self.arch_config.noisy_sigma,
+            sigma=noisy_sigma,
         )
 
         # Remove BaseHead's generic output_layer as we have specialized ones

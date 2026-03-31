@@ -39,11 +39,84 @@ class BackboneFactory:
         cls, config: Optional[BackboneConfig], input_shape: Tuple[int, ...]
     ) -> nn.Module:
         if config is None:
-            return IdentityBackbone(None, input_shape)
+            return IdentityBackbone(input_shape)
+
         config_type = type(config)
         if config_type not in cls._backbones:
             raise ValueError(
                 f"No backbone module registered for config type: {config_type}"
             )
 
-        return cls._backbones[config_type](config, input_shape)
+        if isinstance(config, DenseConfig):
+            return DenseBackbone(
+                input_shape=input_shape,
+                widths=config.widths,
+                activation=config.activation,
+                noisy_sigma=config.noisy_sigma,
+                norm_type=config.norm_type,
+            )
+
+        if isinstance(config, DenseResNetConfig):
+            return DenseResNetBackbone(
+                input_shape=input_shape,
+                widths=config.widths,
+                activation=config.activation,
+                norm_type=config.norm_type,
+                noisy_sigma=config.noisy_sigma,
+            )
+
+        if isinstance(config, ConvConfig):
+            return ConvBackbone(
+                input_shape=input_shape,
+                filters=config.filters,
+                kernel_sizes=config.kernel_sizes,
+                strides=config.strides,
+                activation=config.activation,
+                noisy_sigma=config.noisy_sigma,
+                norm_type=config.norm_type,
+            )
+
+        if isinstance(config, DeconvConfig):
+            return DeconvBackbone(
+                input_shape=input_shape,
+                filters=config.filters,
+                kernel_sizes=config.kernel_sizes,
+                strides=config.strides,
+                activation=config.activation,
+                norm_type=config.norm_type,
+                output_padding=config.output_padding,
+            )
+
+        if isinstance(config, ResNetConfig):
+            return ResNetBackbone(
+                input_shape=input_shape,
+                filters=config.filters,
+                kernel_sizes=config.kernel_sizes,
+                strides=config.strides,
+                activation=config.activation,
+                noisy_sigma=config.noisy_sigma,
+                norm_type=config.norm_type,
+            )
+
+        if isinstance(config, RecurrentConfig):
+            return RecurrentBackbone(
+                input_shape=input_shape,
+                rnn_type=config.rnn_type,
+                hidden_size=config.hidden_size,
+                num_layers=config.num_layers,
+            )
+
+        if isinstance(config, TransformerConfig):
+            return TransformerBackbone(
+                input_shape=input_shape,
+                d_model=config.d_model,
+                num_heads=config.num_heads,
+                num_layers=config.num_layers,
+                d_ff=config.d_ff,
+                dropout=config.dropout,
+            )
+
+        if isinstance(config, IdentityConfig):
+            return IdentityBackbone(input_shape=input_shape)
+
+        raise ValueError(f"Unsupported backbone config type: {config_type}")

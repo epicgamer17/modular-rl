@@ -5,33 +5,32 @@ from configs.base import Config
 
 
 class Projector(nn.Module):
-    def __init__(self, input_dim: int, config: Config):
+    def __init__(
+        self,
+        input_dim: int,
+        projector_hidden_dim: int,
+        projector_output_dim: int,
+        predictor_hidden_dim: int,
+        predictor_output_dim: int,
+    ):
         super().__init__()
-
-        # Paper defaults (SimSiam/EfficientZero)
-        # Hidden dim is typically 2048 for ResNet50, but for MuZero
-        # it usually matches the representation size or slightly larger.
-        proj_hidden_dim = config.projector_hidden_dim
-        proj_output_dim = config.projector_output_dim
-        pred_hidden_dim = config.predictor_hidden_dim
-        pred_output_dim = config.predictor_output_dim
         self.projection = nn.Sequential(
-            nn.Linear(input_dim, proj_hidden_dim),
-            nn.BatchNorm1d(proj_hidden_dim),
+            nn.Linear(input_dim, projector_hidden_dim),
+            nn.BatchNorm1d(projector_hidden_dim),
             nn.ReLU(),
-            nn.Linear(proj_hidden_dim, proj_hidden_dim),
-            nn.BatchNorm1d(proj_hidden_dim),
+            nn.Linear(projector_hidden_dim, projector_hidden_dim),
+            nn.BatchNorm1d(projector_hidden_dim),
             nn.ReLU(),
-            nn.Linear(proj_hidden_dim, proj_output_dim),
-            nn.BatchNorm1d(proj_output_dim),
+            nn.Linear(projector_hidden_dim, projector_output_dim),
+            nn.BatchNorm1d(projector_output_dim),
         )
-        self.projection_head = nn.Sequential(
-            nn.Linear(proj_output_dim, pred_hidden_dim),
-            nn.BatchNorm1d(pred_hidden_dim),
+        self.prediction_head = nn.Sequential(
+            nn.Linear(projector_output_dim, predictor_hidden_dim),
+            nn.BatchNorm1d(predictor_hidden_dim),
             nn.ReLU(),
-            nn.Linear(pred_hidden_dim, pred_output_dim),
+            nn.Linear(predictor_hidden_dim, predictor_output_dim),
         )
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         x = self.projection(x)
-        return self.projection_head(x)
+        return self.prediction_head(x)

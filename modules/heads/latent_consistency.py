@@ -1,12 +1,10 @@
 from typing import Tuple, Optional, Dict, Any
-from torch import Tensor
+from torch import nn, Tensor
 from .base import BaseHead
 from agents.learner.losses.representations import (
     BaseRepresentation,
     IdentityRepresentation,
 )
-from configs.modules.architecture_config import ArchitectureConfig
-from configs.modules.backbones.base import BackboneConfig
 from modules.blocks.dense import build_dense
 
 
@@ -19,17 +17,17 @@ class LatentConsistencyHead(BaseHead):
 
     def __init__(
         self,
-        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: Optional[BaseRepresentation] = None,
-        neck_config: Optional[BackboneConfig] = None,
+        neck: Optional[nn.Module] = None,
+        noisy_sigma: float = 0.0,
         projection_dim: int = 256,
     ):
         # If representation is None, default to IdentityRepresentation with projection_dim
         if representation is None:
             representation = IdentityRepresentation(num_features=projection_dim)
 
-        super().__init__(arch_config, input_shape, representation, neck_config)
+        super().__init__(input_shape, representation, neck, noisy_sigma)
         self.projection_dim = projection_dim
 
     def forward(

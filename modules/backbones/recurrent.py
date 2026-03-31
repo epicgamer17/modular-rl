@@ -1,15 +1,19 @@
 from typing import Tuple, Optional
 import torch
 from torch import nn
-from configs.modules.backbones.recurrent import RecurrentConfig
 
 
 class RecurrentBackbone(nn.Module):
     """GRU/LSTM backbone implementation."""
 
-    def __init__(self, config: RecurrentConfig, input_shape: Tuple[int, ...]):
+    def __init__(
+        self,
+        input_shape: Tuple[int, ...],
+        rnn_type: str = "gru",
+        hidden_size: int = 256,
+        num_layers: int = 1,
+    ):
         super().__init__()
-        self.config = config
         self.input_shape = input_shape
 
         # Input shape (Seq, Features) or (Features)
@@ -18,22 +22,22 @@ class RecurrentBackbone(nn.Module):
         else:
             input_dim = input_shape[-1]
 
-        if config.rnn_type.lower() == "gru":
+        if rnn_type.lower() == "gru":
             self.rnn = nn.GRU(
                 input_size=input_dim,
-                hidden_size=config.hidden_size,
-                num_layers=config.num_layers,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
                 batch_first=True,
             )
         else:
             self.rnn = nn.LSTM(
                 input_size=input_dim,
-                hidden_size=config.hidden_size,
-                num_layers=config.num_layers,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
                 batch_first=True,
             )
 
-        self.output_shape = (config.hidden_size,)
+        self.output_shape = (hidden_size,)
 
     def forward(
         self, x: torch.Tensor, h: Optional[torch.Tensor] = None

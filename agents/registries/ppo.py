@@ -165,18 +165,27 @@ def build_ppo_network_components(
 
     # 2. Prediction Heads
     val_rep = get_representation(config.value_head.output_strategy)
+    val_neck = None
+    if config.value_head.neck is not None:
+        val_neck = BackboneFactory.create(config.value_head.neck, feat_shape)
+
     value_head = ValueHead(
-        arch_config=config.arch,
         input_shape=feat_shape,
         representation=val_rep,
-        neck_config=config.value_head.neck,
+        neck=val_neck,
+        noisy_sigma=config.arch.noisy_sigma,
     )
+
     pol_rep = get_representation(config.policy_head.output_strategy)
+    pol_neck = None
+    if config.policy_head.neck is not None:
+        pol_neck = BackboneFactory.create(config.policy_head.neck, feat_shape)
+
     policy_head = PolicyHead(
-        arch_config=config.arch,
         input_shape=feat_shape,
         representation=pol_rep,
-        neck_config=config.policy_head.neck,
+        neck=pol_neck,
+        noisy_sigma=config.arch.noisy_sigma,
     )
 
     return {

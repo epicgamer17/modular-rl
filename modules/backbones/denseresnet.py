@@ -2,7 +2,6 @@ from typing import Tuple
 import torch
 from torch import nn
 from modules.blocks.dense import build_dense
-from configs.modules.backbones.denseresnet import DenseResNetConfig
 from modules.utils import build_normalization_layer
 
 
@@ -31,9 +30,15 @@ class DenseResidualBlock(nn.Module):
 class DenseResNetBackbone(nn.Module):
     """DenseResNet backbone implementation (MLP with residual connections)."""
 
-    def __init__(self, config: DenseResNetConfig, input_shape: Tuple[int, ...]):
+    def __init__(
+        self,
+        input_shape: Tuple[int, ...],
+        widths: list[int],
+        activation: nn.Module,
+        norm_type: str = "none",
+        noisy_sigma: float = 0.0,
+    ):
         super().__init__()
-        self.config = config
         self.input_shape = input_shape
 
         # Determine initial width
@@ -45,14 +50,14 @@ class DenseResNetBackbone(nn.Module):
         self.layers = nn.ModuleList()
         current_width = initial_width
 
-        for width in config.widths:
+        for width in widths:
             # If width changes, add a projection layer before blocks
             if width != current_width:
                 self.layers.append(
                     nn.Sequential(
-                        build_dense(current_width, width, sigma=config.noisy_sigma),
-                        build_normalization_layer(config.norm_type, width, dim=1),
-                        config.activation,
+                        build_dense(current_width, width, sigma=noisy_sigma),
+                        build_normalization_layer(norm_type, width, dim=1),
+                        activation,
                     )
                 )
                 current_width = width
@@ -61,9 +66,9 @@ class DenseResNetBackbone(nn.Module):
             self.layers.append(
                 DenseResidualBlock(
                     size=current_width,
-                    activation=config.activation,
-                    norm_type=config.norm_type,
-                    noisy_sigma=config.noisy_sigma,
+                    activation=activation,
+                    norm_type=norm_type,
+                    noisy_sigma=noisy_sigma,
                 )
             )
 

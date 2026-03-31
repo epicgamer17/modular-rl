@@ -349,11 +349,15 @@ def build_muzero_network_components(
     )
 
     tp_rep = get_representation(config.to_play_head.output_strategy)
+    tp_neck = None
+    if config.to_play_head.neck is not None:
+        tp_neck = BackboneFactory.create(config.to_play_head.neck, dynamics.output_shape)
+
     to_play_head = ToPlayHead(
-        arch_config=config.arch,
         input_shape=dynamics.output_shape,
         num_players=config.game.num_players,
-        neck_config=config.to_play_head.neck,
+        neck=tp_neck,
+        noisy_sigma=config.arch.noisy_sigma,
         representation=tp_rep,
     )
 
@@ -384,19 +388,27 @@ def build_muzero_network_components(
     prediction_feat_shape = prediction_backbone.output_shape
 
     val_rep = get_representation(config.value_head.output_strategy)
+    val_neck = None
+    if config.value_head.neck is not None:
+        val_neck = BackboneFactory.create(config.value_head.neck, prediction_feat_shape)
+
     value_head = ValueHead(
-        arch_config=config.arch,
         input_shape=prediction_feat_shape,
         representation=val_rep,
-        neck_config=config.value_head.neck,
+        neck=val_neck,
+        noisy_sigma=config.arch.noisy_sigma,
     )
 
     pol_rep = get_representation(config.policy_head.output_strategy)
+    pol_neck = None
+    if config.policy_head.neck is not None:
+        pol_neck = BackboneFactory.create(config.policy_head.neck, prediction_feat_shape)
+
     policy_head = PolicyHead(
-        arch_config=config.arch,
         input_shape=prediction_feat_shape,
         representation=pol_rep,
-        neck_config=config.policy_head.neck,
+        neck=pol_neck,
+        noisy_sigma=config.arch.noisy_sigma,
     )
 
     components = {
@@ -408,19 +420,26 @@ def build_muzero_network_components(
 
     if stochastic:
         as_val_rep = get_representation(config.afterstate_value_head.output_strategy)
+        as_val_neck = None
+        if config.afterstate_value_head.neck is not None:
+            as_val_neck = BackboneFactory.create(config.afterstate_value_head.neck, shared_backbone.output_shape)
+
         components["afterstate_value_head"] = ValueHead(
-            arch_config=config.arch,
             input_shape=shared_backbone.output_shape,
             representation=as_val_rep,
-            neck_config=config.afterstate_value_head.neck,
+            neck=as_val_neck,
+            noisy_sigma=config.arch.noisy_sigma,
         )
 
     # 4. Auxiliary Component: SIM-SIAM Projector (EfficientZero)
     if getattr(config, "consistency_loss_factor", 0) > 0:
-        flat_hidden_dim = 1
-        for d in hidden_state_shape:
-            flat_hidden_dim *= d
-        components["projector"] = Projector(flat_hidden_dim, config)
+        components["projector"] = Projector(
+            input_dim=flat_hidden_dim,
+            projector_hidden_dim=config.projector_hidden_dim,
+            projector_output_dim=config.projector_output_dim,
+            predictor_hidden_dim=config.predictor_hidden_dim,
+            predictor_output_dim=config.predictor_output_dim,
+        )
 
     return {
         "components": components,

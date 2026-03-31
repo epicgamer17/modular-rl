@@ -1,13 +1,10 @@
 from typing import Tuple, Optional, Dict, Any
-from torch import Tensor
-import torch
+from torch import nn, Tensor
 from .base import BaseHead
 from agents.learner.losses.representations import (
     BaseRepresentation,
     ClassificationRepresentation,
 )
-from configs.modules.architecture_config import ArchitectureConfig
-from configs.modules.backbones.base import BackboneConfig
 
 
 class ToPlayHead(BaseHead):
@@ -17,15 +14,15 @@ class ToPlayHead(BaseHead):
 
     def __init__(
         self,
-        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         num_players: int,
         representation: Optional[BaseRepresentation] = None,
-        neck_config: Optional[BackboneConfig] = None,
+        neck: Optional[nn.Module] = None,
+        noisy_sigma: float = 0.0,
     ):
         if representation is None:
             representation = ClassificationRepresentation(num_classes=num_players)
-        super().__init__(arch_config, input_shape, representation, neck_config)
+        super().__init__(input_shape, representation, neck, noisy_sigma)
 
     def forward(
         self,

@@ -168,24 +168,32 @@ def build_rainbow_network_components(
     # 2. Q Head
     representation = get_representation(config.head.output_strategy)
 
+    neck = None
+    if config.head.neck is not None:
+        neck = BackboneFactory.create(config.head.neck, feat_shape)
+
     if getattr(config, "dueling", False):
         q_head = DuelingQHead(
-            arch_config=config.arch,
             input_shape=feat_shape,
             num_actions=num_actions,
             representation=representation,
             value_hidden_widths=config.head.value_hidden_widths,
             advantage_hidden_widths=config.head.advantage_hidden_widths,
-            neck_config=config.head.neck,
+            neck=neck,
+            noisy_sigma=config.arch.noisy_sigma,
+            activation=config.arch.activation,
+            norm_type=config.arch.norm_type,
         )
     else:
         q_head = QHead(
-            arch_config=config.arch,
             input_shape=feat_shape,
             num_actions=num_actions,
             representation=representation,
             hidden_widths=config.head.hidden_widths,
-            neck_config=config.head.neck,
+            neck=neck,
+            noisy_sigma=config.arch.noisy_sigma,
+            activation=config.arch.activation,
+            norm_type=config.arch.norm_type,
         )
 
     return {

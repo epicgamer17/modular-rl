@@ -2,8 +2,6 @@ from typing import Tuple, Optional, Callable, Dict, Any
 import torch
 from torch import nn, Tensor
 from modules.backbones.factory import BackboneFactory
-from configs.modules.backbones.base import BackboneConfig
-from configs.modules.architecture_config import ArchitectureConfig
 from agents.learner.losses.representations import BaseRepresentation
 from modules.blocks.dense import build_dense
 
@@ -16,19 +14,24 @@ class BaseHead(nn.Module):
 
     def __init__(
         self,
-        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: BaseRepresentation,
-        neck_config: Optional[BackboneConfig] = None,
+        neck: Optional[nn.Module] = None,
+        noisy_sigma: float = 0.0,
     ):
         super().__init__()
-        self.arch_config = arch_config
         self.input_shape = input_shape
         self.representation = representation
 
         # 1. Neck (optional modular backbone associated with the head)
-        self.neck = BackboneFactory.create(neck_config, input_shape)
-        self.output_shape = self.neck.output_shape
+        self.neck = neck if neck is not None else nn.Identity()
+        
+        # If neck has output_shape attribute, use it; otherwise infer it
+        if hasattr(self.neck, "output_shape"):
+            self.output_shape = self.neck.output_shape
+        else:
+            self.output_shape = input_shape
+            
         self.flat_dim = self._get_flat_dim(self.output_shape)
 
         # 2. Final Output Layer
@@ -37,7 +40,7 @@ class BaseHead(nn.Module):
             self.output_layer = build_dense(
                 in_features=self.flat_dim,
                 out_features=self.representation.num_features,
-                sigma=self.arch_config.noisy_sigma,
+                sigma=noisy_sigma,
             )
 
     def _get_flat_dim(self, shape: Tuple[int, ...]) -> int:

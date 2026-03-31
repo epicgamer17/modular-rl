@@ -1,13 +1,10 @@
 from typing import Tuple, Optional, Dict, Any
-from torch import Tensor
-import torch
+from torch import nn, Tensor
 from .base import BaseHead
 from agents.learner.losses.representations import (
     BaseRepresentation,
     ScalarRepresentation,
 )
-from configs.modules.architecture_config import ArchitectureConfig
-from configs.modules.backbones.base import BackboneConfig
 
 
 class ObservationHead(BaseHead):
@@ -20,18 +17,18 @@ class ObservationHead(BaseHead):
 
     def __init__(
         self,
-        arch_config: ArchitectureConfig,
         input_shape: Tuple[int, ...],
         representation: Optional[BaseRepresentation] = None,
-        neck_config: Optional[BackboneConfig] = None,
+        neck: Optional[nn.Module] = None,
+        noisy_sigma: float = 0.0,
         use_output_layer: bool = True,
     ):
         # Pass representation=None to avoid creating the default output layer in BaseHead if not wanted
         super().__init__(
-            arch_config,
             input_shape,
             representation if use_output_layer else None,
-            neck_config,
+            neck,
+            noisy_sigma,
         )
         self.use_output_layer = use_output_layer
 
