@@ -62,7 +62,7 @@ class MuZeroTrainer(BaseTrainer):
         inner_selector = CategoricalSelector()
         self.action_selector = TemperatureSelector(
             inner_selector=inner_selector,
-            config=config,
+            schedule_config=config.temperature_schedule,
         )
 
         # 3. The Facts (Replay Buffer)

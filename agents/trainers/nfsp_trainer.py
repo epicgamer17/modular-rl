@@ -246,8 +246,10 @@ class NFSPTrainer(BaseTrainer):
 
         self.player_ids = list(range(self.num_players))
 
-        rl_config = config.rl_configs[0]
-        sl_config = config.sl_configs[0]
+        self.rl_config = config.rl_configs[0]
+        self.sl_config = config.sl_configs[0]
+        rl_config = self.rl_config
+        sl_config = self.sl_config
 
         # Networks (Best Response + Target, and Average Strategy)
         self.br_agent_network = build_modular_agent_network(
@@ -342,7 +344,6 @@ class NFSPTrainer(BaseTrainer):
         )
 
         self.rl_learner = UniversalLearner(
-            config=rl_config,
             agent_network=self.br_agent_network,
             device=device,
             num_actions=self.num_actions,
@@ -352,7 +353,11 @@ class NFSPTrainer(BaseTrainer):
             loss_pipeline=rl_loss_pipeline,
             optimizer=rl_optimizer,
             lr_scheduler=rl_scheduler,
-            clipnorm=rl_config.clipnorm,
+            clipnorm=getattr(rl_config, "clipnorm", None),
+            gradient_accumulation_steps=getattr(
+                rl_config, "gradient_accumulation_steps", 1
+            ),
+            max_grad_norm=getattr(rl_config, "max_grad_norm", None),
             callbacks=[
                 TargetNetworkSyncCallback(
                     target_network=self.br_target_agent_network,
@@ -400,7 +405,6 @@ class NFSPTrainer(BaseTrainer):
         sl_target_builder = PassThroughTargetBuilder(["target_policies"])
 
         self.sl_learner = UniversalLearner(
-            config=sl_config,
             agent_network=self.avg_agent_network,
             device=device,
             num_actions=self.num_actions,
@@ -410,7 +414,11 @@ class NFSPTrainer(BaseTrainer):
             loss_pipeline=sl_loss_pipeline,
             optimizer=sl_optimizer,
             lr_scheduler=sl_scheduler,
-            clipnorm=sl_config.clipnorm,
+            clipnorm=getattr(sl_config, "clipnorm", None),
+            gradient_accumulation_steps=getattr(
+                sl_config, "gradient_accumulation_steps", 1
+            ),
+            max_grad_norm=getattr(sl_config, "max_grad_norm", None),
             callbacks=[ResetNoiseCallback()],
         )
 
@@ -465,13 +473,13 @@ class NFSPTrainer(BaseTrainer):
 
         for _ in range(self.config.num_minibatches):
             # 1. RL Step
-            if self.rl_buffer.size >= self.rl_learner.config.min_replay_buffer_size:
+            if self.rl_buffer.size >= self.rl_config.min_replay_buffer_size:
                 if self.rl_per_beta_schedule is not None:
                     self.rl_per_beta_schedule.step()
 
                 rl_iter = RepeatSampleIterator(
                     self.rl_buffer,
-                    self.rl_learner.config.training_iterations,
+                    self.rl_config.training_iterations,
                     self.device,
                 )
                 for rl_metrics in self.rl_learner.step(batch_iterator=rl_iter):
@@ -480,10 +488,10 @@ class NFSPTrainer(BaseTrainer):
                     )
 
             # 2. SL Step (supervised/imitation)
-            if self.sl_buffer.size >= self.sl_learner.config.min_replay_buffer_size:
+            if self.sl_buffer.size >= self.sl_config.min_replay_buffer_size:
                 sl_iter = RepeatSampleIterator(
                     self.sl_buffer,
-                    self.sl_learner.config.training_iterations,
+                    self.sl_config.training_iterations,
                     self.device,
                 )
                 for sl_metrics in self.sl_learner.step(batch_iterator=sl_iter):

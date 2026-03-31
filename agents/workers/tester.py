@@ -45,7 +45,7 @@ class NetworkAgent:
 
             search_engine = SearchBackendFactory.create(self.config)
             self.policy_source = SearchPolicySource(
-                search_engine, self.agent_network, self.config
+                search_engine, self.agent_network
             )
         else:
             self.policy_source = NetworkPolicySource(self.agent_network)
@@ -315,7 +315,7 @@ class Tester:
 
             search_engine = SearchBackendFactory.create(config)
             self.policy_source = SearchPolicySource(
-                search_engine, self.agent_network, config
+                search_engine, self.agent_network
             )
         else:
             self.policy_source = NetworkPolicySource(self.agent_network)

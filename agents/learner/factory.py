@@ -224,7 +224,6 @@ def build_universal_learner(
         callbacks.append(WeightBroadcastCallback(weight_broadcast_fn))
 
     return UniversalLearner(
-        config=config,
         agent_network=agent_network,
         device=device,
         num_actions=agent_network.num_actions,
@@ -234,6 +233,8 @@ def build_universal_learner(
         optimizer=optimizers,
         lr_scheduler=lr_schedulers,
         callbacks=callbacks,
-        clipnorm=config.clipnorm,
+        clipnorm=getattr(config, "clipnorm", None),
+        gradient_accumulation_steps=getattr(config, "gradient_accumulation_steps", 1),
+        max_grad_norm=getattr(config, "max_grad_norm", None),
         target_builder=target_builder,
     )

@@ -107,7 +107,6 @@ class ImitationTrainer(BaseTrainer):
         )
 
         self.learner = UniversalLearner(
-            config=config,
             agent_network=self.agent_network,
             device=device,
             num_actions=self.num_actions,
@@ -117,7 +116,9 @@ class ImitationTrainer(BaseTrainer):
             loss_pipeline=loss_pipeline,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
-            clipnorm=config.clipnorm,
+            clipnorm=getattr(config, "clipnorm", None),
+            gradient_accumulation_steps=getattr(config, "gradient_accumulation_steps", 1),
+            max_grad_norm=getattr(config, "max_grad_norm", None),
             callbacks=[ResetNoiseCallback()],
         )
         self.learner.replay_buffer = self.buffer
