@@ -23,9 +23,11 @@ class LossPipeline:
         num_actions: int = 0,
         atom_size: int = 1,
         support_range: Optional[int] = None,
+        representations: Optional[Dict[str, Any]] = None,
     ):
         self.modules = modules or []
         self.priority_computer = priority_computer or NullPriorityComputer()
+        self.representations = representations or {}
         self.shape_validator = ShapeValidator(
             minibatch_size=minibatch_size,
             unroll_steps=unroll_steps,
@@ -72,7 +74,24 @@ class LossPipeline:
         device = self.modules[0].device if self.modules else torch.device("cpu")
         self.shape_validator.validate(predictions, targets)
 
-        # 2. Defaults and Secure Scaling
+        # 2. Prediction & Target Formatting
+        # This is the single point of truth for representation-based formatting.
+        # It ensures losses stay blind to the underlying mathematical representations.
+        formatted_target_keys = set()
+
+        # A. Format Predictions (Expected Values & Distributions)
+        for pred_key, rep in self.representations.items():
+            if pred_key in predictions:
+                if hasattr(rep, "to_expected_value"):
+                    predictions[f"{pred_key}_expected"] = rep.to_expected_value(
+                        predictions[pred_key]
+                    )
+                if hasattr(rep, "to_inference"):
+                    predictions[f"{pred_key}_dist"] = rep.to_inference(
+                        predictions[pred_key]
+                    )
+
+        # 3. Defaults and Secure Scaling
         # We no longer guess B and T. They are anchored by weights and gradient_scales.
         if weights is None:
             weights = targets["weights"]

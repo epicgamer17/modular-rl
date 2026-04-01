@@ -4,6 +4,12 @@ from torch import nn
 from agents.registries.base import register_agent
 from agents.learner.losses import LossPipeline, ImitationLoss
 from modules.utils import create_optimizer, get_lr_scheduler
+from agents.learner.target_builders import (
+    PassThroughTargetBuilder,
+    TargetFormatter,
+    SingleStepFormatter,
+    TargetBuilderPipeline,
+)
 
 
 def build_supervised_loss_pipeline(
@@ -21,7 +27,6 @@ def build_supervised_loss_pipeline(
         modules=[
             ImitationLoss(
                 device=device,
-                representation=pol_rep,
                 loss_fn=policy_loss_function,
                 loss_factor=policy_loss_factor,
             )
@@ -29,6 +34,7 @@ def build_supervised_loss_pipeline(
         minibatch_size=minibatch_size,
         num_actions=num_actions,
         unroll_steps=0,  # SL is single-step
+        representations={"policies": pol_rep},
     )
 
 
@@ -76,10 +82,21 @@ def build_supervised(
     optimizers["default"] = opt
     lr_schedulers["default"] = get_lr_scheduler(opt, config)
 
+    # 3. Target Builder
+    pol_rep = agent_network.components["policy_head"].representation
+    target_builder = TargetBuilderPipeline(
+        [
+            PassThroughTargetBuilder(["policies"]),
+            TargetFormatter({"policies": pol_rep}),
+            SingleStepFormatter(),
+        ]
+    )
+
     return {
         "loss_pipeline": loss_pipeline,
         "optimizers": optimizers,
         "lr_schedulers": lr_schedulers,
+        "target_builder": target_builder,
         "observation_dtype": torch.float32,
     }
 

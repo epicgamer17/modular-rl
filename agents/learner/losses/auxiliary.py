@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Dict, Optional, Tuple
-from agents.learner.losses.base import BaseLoss, LossRepresentation
+from agents.learner.losses.base import BaseLoss
 
 
 class ConsistencyLoss(BaseLoss):
@@ -10,7 +10,6 @@ class ConsistencyLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: LossRepresentation,
         agent_network: Any,
         loss_factor: float,
         optimizer_name: str = "default",
@@ -22,7 +21,6 @@ class ConsistencyLoss(BaseLoss):
             pred_key="consistency_logits",
             target_key="targets_latent",
             mask_key=mask_key,
-            representation=representation,
             loss_fn=F.cross_entropy,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
@@ -36,7 +34,6 @@ class SigmaLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: LossRepresentation,
         loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "sigma_mask",
@@ -47,7 +44,6 @@ class SigmaLoss(BaseLoss):
             pred_key="sigma_logits",
             target_key="sigmas",
             mask_key=mask_key,
-            representation=representation,
             loss_fn=F.cross_entropy,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
@@ -61,7 +57,6 @@ class CommitmentLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: LossRepresentation,
         optimizer_name: str = "default",
         mask_key: str = "commitment_mask",
         name: Optional[str] = None,
@@ -71,7 +66,6 @@ class CommitmentLoss(BaseLoss):
             pred_key="commitment_loss",
             target_key="commitment_loss",
             mask_key=mask_key,
-            representation=representation,
             optimizer_name=optimizer_name,
             name=name,
         )

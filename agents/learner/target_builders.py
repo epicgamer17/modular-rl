@@ -1,8 +1,10 @@
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
 import torch
 import torch.nn as nn
 from torch import Tensor
+if TYPE_CHECKING:
+    from agents.learner.losses.loss_pipeline import LossPipeline
 
 
 class BaseTargetBuilder(ABC):
@@ -444,3 +446,34 @@ class LatentConsistencyBuilder(BaseTargetBuilder):
             batch_size, unroll_len, -1
         ).detach()
         current_targets["consistency_targets"] = consistency_targets
+
+
+
+class TargetFormatter(BaseTargetBuilder):
+    """
+    Explicitly formats target keys using their respective representations.
+    This replaces the implicit, guessing-based formatting in the LossPipeline.
+
+    Usage:
+        TargetFormatter({
+            "values": network.components["value_head"].representation,
+            "policies": network.components["policy_head"].representation,
+        })
+    """
+
+    def __init__(self, target_mapping: Dict[str, Any]):
+        self.target_mapping = target_mapping
+
+    def build_targets(
+        self,
+        batch: Dict[str, Tensor],
+        predictions: Dict[str, Tensor],
+        network: nn.Module,
+        current_targets: Dict[str, Tensor],
+    ) -> None:
+        for key, rep in self.target_mapping.items():
+            if key in current_targets:
+                # Use the representation's native bridge
+                # Note: format_target is expected to be an idempotent operation or
+                # handle correctly if multiple builders target the same key.
+                current_targets[key] = rep.format_target(current_targets, target_key=key)

@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Optional
-from agents.learner.losses.base import BaseLoss, LossRepresentation
+from agents.learner.losses.base import BaseLoss
 
 
 class ToPlayLoss(BaseLoss):
@@ -10,7 +10,6 @@ class ToPlayLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: LossRepresentation,
         loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "to_play_mask",
@@ -21,7 +20,6 @@ class ToPlayLoss(BaseLoss):
             pred_key="to_plays",
             target_key="to_plays",
             mask_key=mask_key,
-            representation=representation,
             loss_fn=F.cross_entropy,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
@@ -39,7 +37,6 @@ class RelativeToPlayLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: LossRepresentation,
         loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "to_play_mask",
@@ -50,7 +47,6 @@ class RelativeToPlayLoss(BaseLoss):
             pred_key="to_plays",
             target_key="to_plays",
             mask_key=mask_key,
-            representation=representation,
             loss_fn=F.cross_entropy,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,

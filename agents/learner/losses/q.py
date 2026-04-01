@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Dict, Optional, Tuple
-from agents.learner.losses.base import BaseLoss, LossRepresentation
+from agents.learner.losses.base import BaseLoss
 
 
 class QBootstrappingLoss(BaseLoss):
@@ -13,7 +13,6 @@ class QBootstrappingLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: LossRepresentation,
         is_categorical: bool = False,
         loss_fn: Any = None,
         optimizer_name: str = "default",
@@ -32,7 +31,6 @@ class QBootstrappingLoss(BaseLoss):
             pred_key=pred_key,
             target_key=target_key,
             mask_key=mask_key,
-            representation=representation,
             loss_fn=loss_fn,
             optimizer_name=optimizer_name,
             name=name,
@@ -58,10 +56,8 @@ class QBootstrappingLoss(BaseLoss):
             torch.arange(B * T, device=self.device), flat_actions
         ]
 
-        # 3. Format Targets through the Representation bridge
-        formatted_target = self.representation.format_target(
-            targets, target_key=self.target_key
-        )
+        # 3. Use pre-formatted Targets
+        formatted_target = targets[self.target_key]
         flat_targets = formatted_target.reshape(B * T, -1)
 
         # 4. Final Squeezing and Matching
@@ -90,7 +86,6 @@ class ChanceQLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: LossRepresentation,
         loss_factor: float,
         optimizer_name: str = "default",
         mask_key: str = "afterstate_value_mask",
@@ -99,9 +94,8 @@ class ChanceQLoss(BaseLoss):
         super().__init__(
             device=device,
             pred_key="chance_q_logits",
-            target_key="values",
+            target_key="chance_values_next",
             mask_key=mask_key,
-            representation=representation,
             loss_fn=F.cross_entropy,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
@@ -118,13 +112,8 @@ class ChanceQLoss(BaseLoss):
                 "ChanceQLoss requires 'chance_values_next' in targets. (MuZero target builders must provide it)"
             )
 
-        # Ingredients for Representation: we overwrite 'values' in local context
-        local_ingredients = targets.copy()
-        local_ingredients["values"] = chance_values_next
-
-        formatted_target = self.representation.format_target(
-            local_ingredients, target_key=self.target_key
-        )
+        # Ingredients for Representation: chance_values_next is already provided and whitelisted
+        formatted_target = targets["chance_values_next"]
 
         pred = predictions[self.pred_key]
         B, T = pred.shape[:2]

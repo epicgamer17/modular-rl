@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Dict, Optional, Tuple
-from agents.learner.losses.base import BaseLoss, LossRepresentation
+from agents.learner.losses.base import BaseLoss
 
 
 class ValueLoss(BaseLoss):
@@ -10,7 +10,6 @@ class ValueLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: LossRepresentation,
         target_key: str = "values",
         optimizer_name: str = "default",
         mask_key: str = "value_mask",
@@ -23,7 +22,6 @@ class ValueLoss(BaseLoss):
             pred_key="values",
             target_key=target_key,
             mask_key=mask_key,
-            representation=representation,
             loss_fn=loss_fn,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
@@ -40,7 +38,6 @@ class ClippedValueLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: LossRepresentation,
         clip_param: float,
         target_key: str = "returns",
         old_values_key: str = "values",
@@ -54,7 +51,6 @@ class ClippedValueLoss(BaseLoss):
             pred_key="values",
             target_key=target_key,
             mask_key=mask_key,
-            representation=representation,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
             name=name,
@@ -73,13 +69,10 @@ class ClippedValueLoss(BaseLoss):
             targets[old_values_key]: [B, T] or [B, T, 1]
         """
         # 1. Extract inputs
-        values = predictions[self.pred_key]
+        # We assume predictions contains the expected scalar value directly
+        values = predictions.get("values_expected", predictions[self.pred_key])
         returns = targets[self.target_key]
         old_values = targets["values"]
-
-        # 2. Representation formatting (usually scalar expectation)
-        if hasattr(self.representation, "to_expected_value"):
-            values = self.representation.to_expected_value(values)
 
         # Ensure shapes match [B, T]
         if values.ndim == 3 and values.shape[-1] == 1:

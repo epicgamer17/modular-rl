@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Dict, Optional, Tuple
-from agents.learner.losses.base import BaseLoss, LossRepresentation
+from agents.learner.losses.base import BaseLoss
 
 
 class PolicyLoss(BaseLoss):
@@ -10,7 +10,6 @@ class PolicyLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: LossRepresentation,
         loss_fn: Any,
         loss_factor: float,
         optimizer_name: str = "default",
@@ -22,7 +21,6 @@ class PolicyLoss(BaseLoss):
             pred_key="policies",
             target_key="policies",
             mask_key=mask_key,
-            representation=representation,
             loss_fn=loss_fn,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
@@ -51,7 +49,6 @@ class ClippedSurrogateLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: LossRepresentation,
         clip_param: float,
         entropy_coefficient: float,
         optimizer_name: str = "default",
@@ -62,7 +59,6 @@ class ClippedSurrogateLoss(BaseLoss):
             pred_key="policies",
             target_key="actions",
             mask_key="policy_mask",
-            representation=representation,
             optimizer_name=optimizer_name,
             name=name,
         )
@@ -85,7 +81,8 @@ class ClippedSurrogateLoss(BaseLoss):
         B, T = old_log_probs.shape[:2]
 
         # 2. Vectorized Distribution math
-        dist = self.representation.to_inference(policy_logits)
+        # We assume predictions contains the distribution directly for PPO
+        dist = predictions["policies_dist"]
 
         # [B, T]
         log_probs = dist.log_prob(actions)
@@ -118,7 +115,6 @@ class ImitationLoss(BaseLoss):
     def __init__(
         self,
         device: torch.device,
-        representation: LossRepresentation,
         loss_fn: Any,
         loss_factor: float = 1.0,
         optimizer_name: str = "default",
@@ -130,7 +126,6 @@ class ImitationLoss(BaseLoss):
             pred_key="policies",
             target_key="policies",
             mask_key=mask_key,
-            representation=representation,
             loss_fn=loss_fn,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,

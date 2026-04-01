@@ -32,7 +32,6 @@ def build_rainbow_loss_pipeline(
 
     td_loss_module = QBootstrappingLoss(
         device=device,
-        representation=representation,
         is_categorical=is_distributional,
         loss_fn=loss_function,
     )
@@ -44,6 +43,9 @@ def build_rainbow_loss_pipeline(
         minibatch_size=minibatch_size,
         atom_size=atom_size,
         unroll_steps=0,  # Rainbow is single-step (TD)
+        representations={td_loss_module.pred_key: representation}
+        if representation
+        else None,
     )
 
 

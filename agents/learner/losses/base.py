@@ -1,25 +1,7 @@
 import torch
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Protocol, runtime_checkable, Tuple
+from typing import Any, Dict, Optional, Tuple
 
-@runtime_checkable
-class LossRepresentation(Protocol):
-    """
-    Contract for mathematical representations of values (scalars, distributions, etc.).
-    """
-    @property
-    def num_features(self) -> int: ...
-    def to_inference(self, logits: torch.Tensor) -> Any: ...
-    def to_expected_value(self, logits: torch.Tensor) -> torch.Tensor: ...
-    def to_representation(self, scalar_targets: torch.Tensor) -> torch.Tensor: ...
-    def format_target(self, targets: Dict[str, torch.Tensor], target_key: str = "values") -> torch.Tensor: ...
-
-@runtime_checkable
-class DistributionalRepresentation(LossRepresentation, Protocol):
-    """
-    Contract for representations that support Bellman projections onto a fixed grid.
-    """
-    def project_onto_grid(self, shifted_support: torch.Tensor, probabilities: torch.Tensor) -> torch.Tensor: ...
 
 class BaseLoss(ABC):
     """
@@ -33,7 +15,6 @@ class BaseLoss(ABC):
         pred_key: str,
         target_key: str,
         mask_key: str,
-        representation: LossRepresentation,  # Mandatory
         loss_fn: Optional[Any] = None,
         optimizer_name: str = "default",
         loss_factor: float = 1.0,
@@ -43,7 +24,6 @@ class BaseLoss(ABC):
         self.pred_key = pred_key
         self.target_key = target_key
         self.mask_key = mask_key
-        self.representation = representation
         self.loss_fn = loss_fn
         self.optimizer_name = optimizer_name
         self.loss_factor = loss_factor
@@ -80,16 +60,8 @@ class BaseLoss(ABC):
         # 1. Extract [B, T, ...] inputs
         pred = predictions[self.pred_key]
 
-        # 2. Format targets through the Representation bridge
-        if hasattr(self.representation, "format_target") and callable(
-            self.representation.format_target
-        ):
-            # Target ingredients are pulled directly from the targets dict!
-            formatted_target = self.representation.format_target(
-                targets, target_key=self.target_key
-            )
-        else:
-            formatted_target = targets[self.target_key]
+        # 2. Extract targets [B, T, ...]
+        formatted_target = targets[self.target_key]
 
         # 3. Apply raw PyTorch loss function
         assert pred.shape == formatted_target.shape, (
@@ -115,10 +87,3 @@ class BaseLoss(ABC):
 
         # Base losses return no extra metrics by default
         return elementwise_loss, {}
-
-    def compute_priority(
-        self,
-        predictions: Dict[str, torch.Tensor],
-        targets: Dict[str, torch.Tensor],
-    ) -> Optional[torch.Tensor]:
-        return None
