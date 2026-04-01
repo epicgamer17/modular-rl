@@ -145,13 +145,18 @@ class NFSPGymActor(_NFSPActorMixin, GymActor):
         best_response_agent_network: ModularAgentNetwork,
         average_agent_network: ModularAgentNetwork,
         replay_buffer,
-        num_players: Optional[int] = None,
-        config: Optional[Any] = None,
-        device: Optional[torch.device] = None,
+        num_players: int,
+        device: torch.device,
         name: str = "agent",
         eta: float = 0.1,
         *,
         worker_id: int = 0,
+        # Explicit compilation/video args
+        compilation_enabled: bool = False,
+        compilation_mode: str = "default",
+        compilation_fullgraph: bool = False,
+        record_video: bool = False,
+        record_video_interval: int = 1000,
     ):
         self.average_agent_network = average_agent_network
 
@@ -170,11 +175,15 @@ class NFSPGymActor(_NFSPActorMixin, GymActor):
             action_selector=selector,
             replay_buffer=replay_buffer,
             num_players=num_players,
-            config=config,
             device=device,
             name=name,
             worker_id=worker_id,
             policy_source=policy_source,
+            compilation_enabled=compilation_enabled,
+            compilation_mode=compilation_mode,
+            compilation_fullgraph=compilation_fullgraph,
+            record_video=record_video,
+            record_video_interval=record_video_interval,
         )
 
 
@@ -185,13 +194,18 @@ class NFSPPettingZooActor(_NFSPActorMixin, PettingZooActor):
         best_response_agent_network: ModularAgentNetwork,
         average_agent_network: ModularAgentNetwork,
         replay_buffer,
-        num_players: Optional[int] = None,
-        config: Optional[Any] = None,
-        device: Optional[torch.device] = None,
+        num_players: int,
+        device: torch.device,
         name: str = "agent",
         eta: float = 0.1,
         *,
         worker_id: int = 0,
+        # Explicit compilation/video args
+        compilation_enabled: bool = False,
+        compilation_mode: str = "default",
+        compilation_fullgraph: bool = False,
+        record_video: bool = False,
+        record_video_interval: int = 1000,
     ):
         self.average_agent_network = average_agent_network
 
@@ -210,11 +224,15 @@ class NFSPPettingZooActor(_NFSPActorMixin, PettingZooActor):
             action_selector=selector,
             replay_buffer=replay_buffer,
             num_players=num_players,
-            config=config,
             device=device,
             name=name,
             worker_id=worker_id,
             policy_source=policy_source,
+            compilation_enabled=compilation_enabled,
+            compilation_mode=compilation_mode,
+            compilation_fullgraph=compilation_fullgraph,
+            record_video=record_video,
+            record_video_interval=record_video_interval,
         )
 
 
@@ -440,12 +458,20 @@ class NFSPTrainer(BaseTrainer):
             self.avg_agent_network,
             None,  # replay buffer (trainer stores transitions)
             self.num_players,
-            rl_config,  # TorchMPExecutor assumes args[5] has compilation config
             device,
             self.name,
             getattr(self.config, "anticipatory_param", 0.1),
         )
-        self.executor.launch(self.actor_cls, worker_args, self.config.num_workers)
+        worker_kwargs = {
+            "compilation_enabled": rl_config.compilation.enabled,
+            "compilation_mode": rl_config.compilation.mode,
+            "compilation_fullgraph": rl_config.compilation.fullgraph,
+            "record_video": getattr(self.config, "record_video", False),
+            "record_video_interval": getattr(self.config, "record_video_interval", 1000),
+        }
+        self.executor.launch(
+            self.actor_cls, worker_args, self.config.num_workers, **worker_kwargs
+        )
 
         # BaseTrainer expects a single agent_network/action_selector for tester wiring.
         self.agent_network = self.br_agent_network

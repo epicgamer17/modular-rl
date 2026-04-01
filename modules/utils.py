@@ -50,7 +50,7 @@ class ScheduleLRScheduler(optim.lr_scheduler.LRScheduler):
 
     def __init__(self, optimizer: optim.Optimizer, schedule: Schedule):
         self.schedule = schedule
-        self._initial_lr = schedule.config.initial
+        self._initial_lr = schedule.initial_value
         super().__init__(optimizer)
 
     def get_lr(self):

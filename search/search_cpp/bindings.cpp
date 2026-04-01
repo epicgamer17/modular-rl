@@ -305,22 +305,36 @@ PYBIND11_MODULE(search_cpp, m) {
         return node_to_dict(arena.node(node_index));
       });
 
-  py::class_<ModularSearch>(m, "ModularSearch", py::dynamic_attr())
-      .def(py::init([](py::object config, py::object device, int num_actions) {
+   py::class_<ModularSearch>(m, "ModularSearch", py::dynamic_attr())
+      .def(py::init([](py::object device, 
+                       int num_actions,
+                       int num_simulations,
+                       double discount_factor,
+                       double pb_c_init,
+                       double pb_c_base,
+                       bool gumbel,
+                       std::string bootstrap_method,
+                       std::string backprop_method,
+                       bool stochastic,
+                       std::optional<std::vector<double>> known_bounds,
+                       double min_max_epsilon,
+                       int num_players) {
         SearchConfig sc;
         sc.num_actions = num_actions;
-        sc.num_simulations = py::getattr(config, "num_simulations").cast<int>();
-        sc.discount_factor = py::getattr(config, "discount_factor").cast<double>();
-        sc.stochastic = py::getattr(config, "stochastic", py::cast(false)).cast<bool>();
+        sc.num_simulations = num_simulations;
+        sc.discount_factor = discount_factor;
+        sc.stochastic = stochastic;
+        sc.min_max_epsilon = min_max_epsilon;
+        sc.num_players = num_players;
         
-        // Extract bounds
-        if (py::hasattr(config, "known_bounds") && !py::getattr(config, "known_bounds").is_none()) {
-            sc.known_bounds = py::getattr(config, "known_bounds").cast<std::vector<double>>();
+        if (known_bounds.has_value()) {
+            sc.known_bounds = *known_bounds;
         }
 
         ScoringConfig scoring_cfg;
-        scoring_cfg.pb_c_init = py::getattr(config, "pb_c_init").cast<double>();
-        scoring_cfg.pb_c_base = py::getattr(config, "pb_c_base").cast<double>();
+        scoring_cfg.pb_c_init = pb_c_init;
+        scoring_cfg.pb_c_base = pb_c_base;
+        scoring_cfg.unvisited_value_bootstrap = (bootstrap_method == "parent_value") ? 0.0 : 0.0; // Placeholder logic
 
         SelectionConfig root_selection_cfg;
         root_selection_cfg.temperature = 1.0;
@@ -333,26 +347,35 @@ PYBIND11_MODULE(search_cpp, m) {
 
         BackpropConfig backprop_cfg;
         backprop_cfg.discount_factor = sc.discount_factor;
+        backprop_cfg.num_players = num_players;
 
-        ScoringMethodType root_scoring = ScoringMethodType::kUcb;
-        ScoringMethodType decision_scoring = ScoringMethodType::kUcb;
+        ScoringMethodType root_scoring = gumbel ? ScoringMethodType::kGumbel : ScoringMethodType::kUcb;
+        ScoringMethodType decision_scoring = gumbel ? ScoringMethodType::kGumbel : ScoringMethodType::kUcb;
         
-        if (py::getattr(config, "gumbel", py::cast(false)).cast<bool>()) {
-            root_scoring = ScoringMethodType::kGumbel;
-            decision_scoring = ScoringMethodType::kGumbel;
-        }
+        BackpropMethodType backprop_type = (backprop_method == "minimax") ? BackpropMethodType::kMinimax : BackpropMethodType::kAverageDiscountedReturn;
 
         auto self = std::make_unique<ModularSearch>(
             sc, scoring_cfg, root_selection_cfg, decision_selection_cfg,
             chance_selection_cfg, backprop_cfg, root_scoring, decision_scoring,
             SelectionMethodType::kTopScore, SelectionMethodType::kTopScore,
             SelectionMethodType::kProbabilitySample,
-            BackpropMethodType::kAverageDiscountedReturn);
+            backprop_type);
         
-        // Use set_attr on the Python wrapper to store these
-        // Note: 'self' is the pointer, pybind11 will handle the wrapping.
         return self;
-      }))
+      }), 
+      py::arg("device"),
+      py::arg("num_actions"),
+      py::arg("num_simulations") = 50,
+      py::arg("discount_factor") = 1.0,
+      py::arg("pb_c_init") = 1.25,
+      py::arg("pb_c_base") = 19652.0,
+      py::arg("gumbel") = false,
+      py::arg("bootstrap_method") = "parent_value",
+      py::arg("backprop_method") = "average",
+      py::arg("stochastic") = false,
+      py::arg("known_bounds") = py::none(),
+      py::arg("min_max_epsilon") = 1e-8,
+      py::arg("num_players") = 1)
       .def(py::init<const SearchConfig &, const ScoringConfig &,
                     const SelectionConfig &, const SelectionConfig &,
                     const SelectionConfig &, const BackpropConfig &,

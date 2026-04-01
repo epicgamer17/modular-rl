@@ -151,13 +151,24 @@ class RainbowTrainer(BaseTrainer):
             self.action_selector,
             self.buffer,
             config.game.num_players,
-            config,
             device,
             self.name,
         )
-        self.actor_cls = get_actor_class(env, config)
+        worker_kwargs = {
+            "record_video": getattr(config, "record_video", False),
+            "record_video_interval": getattr(config, "record_video_interval", 1000),
+            "compilation_enabled": config.compilation.enabled,
+            "compilation_mode": config.compilation.mode,
+            "compilation_fullgraph": config.compilation.fullgraph,
+        }
+        if config.num_envs_per_worker > 1:
+            worker_kwargs["num_envs"] = config.num_envs_per_worker
+            worker_kwargs["num_puffer_workers"] = getattr(
+                config, "num_puffer_workers", 2
+            )
 
-        self.executor.launch(self.actor_cls, worker_args, num_workers)
+        self.actor_cls = get_actor_class(env, config.num_envs_per_worker)
+        self.executor.launch(self.actor_cls, worker_args, num_workers, **worker_kwargs)
 
         # 6. Compile networks for the learner (main process)
         if config.compilation.enabled:

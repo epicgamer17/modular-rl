@@ -11,9 +11,10 @@ class LocalExecutor(BaseExecutor):
         super().__init__()
         self.worker_signals = {}
 
-    def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int):
+    def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int, **kwargs):
         new_workers = [
-            (worker_cls, worker_cls(*args, worker_id=i)) for i in range(num_workers)
+            (worker_cls, worker_cls(*args, **kwargs, worker_id=i))
+            for i in range(num_workers)
         ]
         for _, worker in new_workers:
             worker.setup()

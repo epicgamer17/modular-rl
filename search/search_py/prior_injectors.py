@@ -14,7 +14,6 @@ class PriorInjector(ABC):
         self,
         policy: torch.Tensor,
         legal_moves: List[int],
-        config: Any,
         trajectory_action: Optional[int] = None,
         policy_dist: Optional[Any] = None,
         exploration: bool = True,
@@ -24,21 +23,25 @@ class PriorInjector(ABC):
 
 
 class DirichletInjector(PriorInjector):
+    def __init__(self, use_dirichlet: bool, dirichlet_alpha: float, dirichlet_fraction: float):
+        self.use_dirichlet = use_dirichlet
+        self.dirichlet_alpha = dirichlet_alpha
+        self.dirichlet_fraction = dirichlet_fraction
+
     def inject(
         self,
         policy: torch.Tensor,
         legal_moves: List[int],
-        config: Any,
         trajectory_action: Optional[int] = None,
         policy_dist: Optional[Any] = None,
         exploration: bool = True,
     ) -> torch.Tensor:
-        if not exploration or not config.use_dirichlet:
+        if not exploration or not self.use_dirichlet:
             return policy
 
-        alpha = config.dirichlet_alpha
+        alpha = self.dirichlet_alpha
         noise = np.random.dirichlet([alpha] * len(legal_moves))
-        frac = config.dirichlet_fraction
+        frac = self.dirichlet_fraction
 
         # Map noise back to the full policy tensor (or just relevant indices)
         # Note: We operate on the policy probabilities
@@ -55,11 +58,13 @@ class ActionTargetInjector(PriorInjector):
     Boosts the prior of the trajectory_action.
     """
 
+    def __init__(self, injection_frac: float):
+        self.injection_frac = injection_frac
+
     def inject(
         self,
         policy: torch.Tensor,
         legal_moves: List[int],
-        config: Any,
         trajectory_action: Optional[int] = None,
         policy_dist: Optional[Any] = None,
         exploration: bool = True,
@@ -73,7 +78,7 @@ class ActionTargetInjector(PriorInjector):
         # Ideally, this injector runs after a selector that ensures the action is present,
         # but here we modify priors before selection to ensure it gets picked if using TopK.
 
-        inject_frac = config.injection_frac
+        inject_frac = self.injection_frac
 
         # Calculate total mass to normalize existing priors
         # We sum over legal moves or all moves depending on how policy is masked.
@@ -97,7 +102,6 @@ class GumbelInjector(PriorInjector):
         self,
         policy: torch.Tensor,
         legal_moves: List[int],
-        config: Any,
         trajectory_action: Optional[int] = None,
         policy_dist: Optional[Any] = None,
         exploration: bool = True,

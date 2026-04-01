@@ -16,7 +16,7 @@ class BaseExecutor(ABC):
         self.result_buffer = {}
 
     @abstractmethod
-    def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int):
+    def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int, **kwargs):
         """Internal method to start worker instances/processes."""
         pass  # pragma: no cover
 
@@ -40,9 +40,9 @@ class BaseExecutor(ABC):
         """
         pass  # pragma: no cover
 
-    def launch(self, worker_cls: Type, args: Tuple, num_workers: int):
+    def launch(self, worker_cls: Type, args: Tuple, num_workers: int, **kwargs):
         """Initializes and starts a group of workers. Appends to existing workers."""
-        self._launch_workers(worker_cls, args, num_workers)
+        self._launch_workers(worker_cls, args, num_workers, **kwargs)
 
     def collect_data(
         self, min_samples: Optional[int] = None, worker_type: Optional[Type] = None

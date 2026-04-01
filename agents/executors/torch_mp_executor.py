@@ -25,7 +25,7 @@ class TorchMPExecutor(BaseExecutor):
         self.param_queue = mp.Queue()
         self.worker_events = {}  # {worker_type_name: mp.Event}
 
-    def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int):
+    def _launch_workers(self, worker_cls: Type, args: Tuple, num_workers: int, **kwargs):
         self.stop_flag.value = 0
         self.workers = []
 
@@ -42,6 +42,7 @@ class TorchMPExecutor(BaseExecutor):
                 args=(
                     worker_cls,
                     args,
+                    kwargs,
                     i,  # Pass worker_id
                     self.stop_flag,
                     self.result_queue,
@@ -57,6 +58,7 @@ class TorchMPExecutor(BaseExecutor):
     def _worker_loop(
         worker_cls,
         args,
+        kwargs,
         worker_id,
         stop_flag,
         result_queue,
@@ -73,14 +75,13 @@ class TorchMPExecutor(BaseExecutor):
         torch.set_num_threads(1)
 
         # Stagger start times to avoid overwhelming the compiler (and avoid race conditions in Triton cache)
-        config = args[5]
-        if config.compilation.enabled:
+        if kwargs.get("compilation_enabled", False):
             time.sleep(worker_id * 1.0)
         elif worker_id > 0:
             time.sleep(worker_id * 0.1)
 
         try:
-            worker = worker_cls(*args, worker_id=worker_id)
+            worker = worker_cls(*args, **kwargs, worker_id=worker_id)
             worker.setup()
 
             # Determine if we should use signaling based on the worker type

@@ -57,12 +57,20 @@ class BasePufferActor(BaseActor):
         action_selector: BaseActionSelector,
         replay_buffer: ModularReplayBuffer,
         num_players: int,
-        config: Any,
-        device: Optional[torch.device] = None,
+        device: torch.device,
         name: str = "puffer_actor",
         *,
+        num_envs: int = 1,
+        num_puffer_workers: int = 2,
         worker_id: int = 0,
         policy_source: Optional[BasePolicySource] = None,
+        # Explicit search/compilation/video args
+        search_engine: Optional[Any] = None,
+        record_video: bool = False,
+        record_video_interval: int = 1000,
+        compilation_enabled: bool = False,
+        compilation_mode: str = "default",
+        compilation_fullgraph: bool = False,
     ):
         super().__init__(
             env_factory=env_factory,
@@ -70,16 +78,22 @@ class BasePufferActor(BaseActor):
             action_selector=action_selector,
             replay_buffer=replay_buffer,
             num_players=num_players,
-            config=config,
             device=device,
             name=name,
             worker_id=worker_id,
             policy_source=policy_source,
+            search_engine=search_engine,
+            record_video=record_video,
+            record_video_interval=record_video_interval,
+            compilation_enabled=compilation_enabled,
+            compilation_mode=compilation_mode,
+            compilation_fullgraph=compilation_fullgraph,
         )
 
         print("PufferActor initialized", worker_id)
 
-        self.num_envs = config.num_envs_per_worker
+        self.num_envs = num_envs
+        self.num_puffer_workers = num_puffer_workers
         self.vec_env = None
         self.active_sequences = None
         self._initialized = False
@@ -104,13 +118,12 @@ class BasePufferActor(BaseActor):
     def _reset_env(self) -> Tuple[Any, Dict[str, Any]]:
         """Initializes the vectorized environment on the first call."""
         if not self._initialized:
-            num_workers = getattr(self.config, "num_puffer_workers", 2)
             self.vec_env = pufferlib.vector.Multiprocessing(
                 env_creators=[_make_puffer_env] * self.num_envs,
                 env_args=[(self.env_factory,)] * self.num_envs,
                 env_kwargs=[{}] * self.num_envs,
                 num_envs=self.num_envs,
-                num_workers=num_workers,
+                num_workers=self.num_puffer_workers,
             )
             self.active_sequences = [
                 Sequence(self.num_players) for _ in range(self.num_envs)

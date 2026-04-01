@@ -11,8 +11,7 @@ from search.scoring_methods import QValueScoring
 
 
 class RootPolicyStrategy(ABC):
-    def __init__(self, config, device, num_actions):
-        self.config = config
+    def __init__(self, device: torch.device, num_actions: int):
         self.device = device
         self.num_actions = num_actions
 
@@ -50,8 +49,17 @@ class CompletedQValuesRootPolicy(RootPolicyStrategy):
     This is distinct from visit counts and is the mathematically correct policy target for Gumbel MuZero.
     """
 
+    def __init__(
+        self, device: torch.device, num_actions: int, gumbel_cvisit: int, gumbel_cscale: float
+    ):
+        super().__init__(device, num_actions)
+        self.gumbel_cvisit = gumbel_cvisit
+        self.gumbel_cscale = gumbel_cscale
+
     def get_policy(self, root, min_max_stats):
-        return get_completed_q_improved_policy(self.config, root, min_max_stats)
+        return get_completed_q_improved_policy(
+            self.gumbel_cvisit, self.gumbel_cscale, root, min_max_stats
+        )
 
 
 class BestActionRootPolicy(RootPolicyStrategy):

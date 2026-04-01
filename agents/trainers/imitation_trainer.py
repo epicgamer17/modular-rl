@@ -127,18 +127,30 @@ class ImitationTrainer(BaseTrainer):
         from agents.executors.factory import create_executor
 
         self.executor = create_executor(config)
-        self.actor_cls = get_actor_class(env, config)
+        self.actor_cls = get_actor_class(env, config.num_envs_per_worker)
         worker_args = (
             config.game.env_factory,
             self.agent_network,
             self.action_selector,
             self.buffer,
             config.game.num_players,
-            config,
             device,
             self.name,
         )
-        self.executor.launch(self.actor_cls, worker_args, config.num_workers)
+        worker_kwargs = {
+            "record_video": getattr(config, "record_video", False),
+            "record_video_interval": getattr(config, "record_video_interval", 1000),
+            "compilation_enabled": config.compilation.enabled,
+            "compilation_mode": config.compilation.mode,
+            "compilation_fullgraph": config.compilation.fullgraph,
+        }
+        if config.num_envs_per_worker > 1:
+            worker_kwargs["num_envs"] = config.num_envs_per_worker
+            worker_kwargs["num_puffer_workers"] = getattr(
+                config, "num_puffer_workers", 2
+            )
+
+        self.executor.launch(self.actor_cls, worker_args, config.num_workers, **worker_kwargs)
 
     def train_step(self) -> None:
         # 1) Broadcast weights

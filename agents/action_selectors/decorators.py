@@ -60,21 +60,22 @@ class TemperatureSelector(BaseActionSelector):
     """
     Decorator that applies temperature scaling to action logits before selection.
 
-    Supports both episode-step-based (local) and training-step-based (global) schedules,
-    controlled by schedule_config.with_training_steps.
+    Supports both episode-step-based (local) and training-step-based (global) schedules.
 
     Temperature = 0.0 collapses to argmax (greedy). Temperature = 1.0 is identity.
     Exploration=False forces temperature to 0.0 regardless of schedule.
     """
 
     def __init__(
-        self, inner_selector: BaseActionSelector, schedule_config: ScheduleConfig
+        self,
+        inner_selector: BaseActionSelector,
+        schedule: Schedule,
+        use_training_steps: bool = False,
     ):
         super().__init__()
         self.inner_selector = inner_selector
-        self.schedule_config = schedule_config
-        self.schedule: Schedule = create_schedule(self.schedule_config)
-        self.use_training_steps: bool = self.schedule_config.with_training_steps
+        self.schedule = schedule
+        self.use_training_steps = use_training_steps
         self._last_step: int = -1
 
     def _get_temperature(self, current_step: int, exploration: Optional[bool]) -> float:
@@ -87,7 +88,7 @@ class TemperatureSelector(BaseActionSelector):
             self._last_step = current_step
         elif current_step < self._last_step:
             # Reset on new episode or training step rollback
-            self.schedule = create_schedule(self.schedule_config)
+            self.schedule.reset()
             self.schedule.step(current_step)
             self._last_step = current_step
 

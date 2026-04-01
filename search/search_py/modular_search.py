@@ -40,34 +40,85 @@ from .utils import _safe_log_probs
 
 
 class ModularSearch:
-    def __init__(self, config, device: torch.device, num_actions: int):
+    def __init__(
+        self,
+        device: torch.device,
+        num_actions: int,
+        gumbel: bool = False,
+        bootstrap_method: str = "parent_value",
+        policy_extraction: str = "visit",
+        backprop_method: str = "average",
+        gumbel_m: int = 8,
+        known_bounds: Optional[List[float]] = None,
+        min_max_epsilon: float = 1e-8,
+        search_batch_size: int = 0,
+        num_simulations: int = 50,
+        gumbel_cvisit: int = 50,
+        gumbel_cscale: float = 1.0,
+        discount_factor: float = 1.0,
+        pb_c_init: float = 1.25,
+        pb_c_base: float = 19652,
+        stochastic: bool = False,
+        max_search_depth: Optional[int] = None,
+        use_virtual_mean: bool = False,
+        virtual_loss: float = 0.0,
+        support_range: Optional[List[float]] = None,
+        use_dirichlet: bool = False,
+        dirichlet_alpha: float = 0.3,
+        dirichlet_fraction: float = 0.25,
+        injection_frac: float = 0.0,
+        num_players: int = 1,
+    ):
         """Initialise the Python MCTS backend.
 
-        All strategy objects are derived from ``config`` automatically.
-        The active strategy set is selected by ``config.gumbel``.
+        All strategy objects are derived from explicit parameters.
+        The active strategy set is selected by the ``self.gumbel`` flag.
         """
-        self.config = config
         self.device = device
         self.num_actions = num_actions
+        self.gumbel = gumbel
+        self.bootstrap_method = bootstrap_method
+        self.policy_extraction = policy_extraction
+        self.backprop_method = backprop_method
+        self.gumbel_m = gumbel_m
+        self.known_bounds = known_bounds
+        self.min_max_epsilon = min_max_epsilon
+        self.search_batch_size = search_batch_size
+        self.num_simulations = num_simulations
+        self.gumbel_cvisit = gumbel_cvisit
+        self.gumbel_cscale = gumbel_cscale
+        self.discount_factor = discount_factor
+        self.pb_c_init = pb_c_init
+        self.pb_c_base = pb_c_base
+        self.stochastic = stochastic
+        self.max_search_depth = max_search_depth
+        
+        
+        
+        self.use_dirichlet = use_dirichlet
+        self.dirichlet_alpha = dirichlet_alpha
+        self.dirichlet_fraction = dirichlet_fraction
+        self.injection_frac = injection_frac
+        self.num_players = num_players
 
-        if config.gumbel:
+        if self.gumbel:
             self.root_selection_strategy: SelectionStrategy = TopScoreSelection(
                 LeastVisitedScoring()
             )
             self.decision_selection_strategy: SelectionStrategy = TopScoreSelection(
-                GumbelScoring(config)
+                GumbelScoring(self.gumbel_cvisit, self.gumbel_cscale)
             )
             self.chance_selection_strategy: SelectionStrategy = TopScoreSelection(
                 DeterministicChanceScoring()
             )
             self.root_target_policy: RootPolicyStrategy = CompletedQValuesRootPolicy(
-                config, device, num_actions
+                device, num_actions, self.gumbel_cvisit, self.gumbel_cscale
             )
             self.root_exploratory_policy: RootPolicyStrategy = VisitFrequencyPolicy(
-                config, device, num_actions
+                device, num_actions
             )
             self.prior_injectors: List[PriorInjector] = [
-                ActionTargetInjector(),
+                ActionTargetInjector(injection_frac),
                 GumbelInjector(),
             ]
             self.root_searchset: SearchSet = SelectTopK()
@@ -75,15 +126,14 @@ class ModularSearch:
             self.pruning_method: PruningMethod = SequentialHalvingPruning()
             self.internal_pruning_method: PruningMethod = NoPruning()
             self.backpropagator: Backpropagator = (
-                AverageDiscountedReturnBackpropagator()
+                AverageDiscountedReturnBackpropagator(num_players, self.discount_factor)
             )
         else:
-            _bootstrap = config.bootstrap_method
             self.root_selection_strategy: SelectionStrategy = TopScoreSelection(
-                UCBScoring(bootstrap_method=_bootstrap)
+                UCBScoring(self.bootstrap_method)
             )
             self.decision_selection_strategy: SelectionStrategy = TopScoreSelection(
-                UCBScoring(bootstrap_method=_bootstrap)
+                UCBScoring(self.bootstrap_method)
             )
             self.chance_selection_strategy: SelectionStrategy = TopScoreSelection(
                 DeterministicChanceScoring()
@@ -94,24 +144,24 @@ class ModularSearch:
                 VisitFrequencyPolicy,
             )
 
-            if self.config.policy_extraction == "minimax":
+            if self.policy_extraction == "minimax":
                 self.root_target_policy: RootPolicyStrategy = BestActionRootPolicy(
-                    config, device, num_actions
+                    device, num_actions
                 )
                 self.root_exploratory_policy: RootPolicyStrategy = BestActionRootPolicy(
-                    config, device, num_actions
+                    device, num_actions
                 )
             else:
                 self.root_target_policy: RootPolicyStrategy = VisitFrequencyPolicy(
-                    config, device, num_actions
+                    device, num_actions
                 )
                 self.root_exploratory_policy: RootPolicyStrategy = VisitFrequencyPolicy(
-                    config, device, num_actions
+                    device, num_actions
                 )
 
             self.prior_injectors: List[PriorInjector] = [
-                ActionTargetInjector(),
-                DirichletInjector(),
+                ActionTargetInjector(injection_frac),
+                DirichletInjector(use_dirichlet, dirichlet_alpha, dirichlet_fraction),
             ]
             self.root_searchset: SearchSet = SelectAll()
             self.internal_searchset: SearchSet = SelectAll()
@@ -123,14 +173,11 @@ class ModularSearch:
                 AverageDiscountedReturnBackpropagator,
             )
 
-            if (
-                hasattr(self.config, "backprop_method")
-                and self.config.backprop_method == "minimax"
-            ):
+            if self.backprop_method == "minimax":
                 self.backpropagator: Backpropagator = MinimaxBackpropagator()
             else:
                 self.backpropagator: Backpropagator = (
-                    AverageDiscountedReturnBackpropagator()
+                    AverageDiscountedReturnBackpropagator(num_players, self.discount_factor)
                 )
 
     def _dist_for_batch_index(self, policy_dist, index: int):
@@ -240,7 +287,6 @@ class ModularSearch:
             policy = injector.inject(
                 policy,
                 legal_moves,
-                self.config,
                 trajectory_action,
                 policy_dist=policy_dist_for_injectors,
                 exploration=exploration,
@@ -249,7 +295,7 @@ class ModularSearch:
             policy_dist_for_injectors = Categorical(probs=policy)
 
         # 6. Select Actions
-        selection_count = self.config.gumbel_m
+        selection_count = self.gumbel_m
         selected_actions = self.root_searchset.create_initial_searchset(
             policy, legal_moves, selection_count, trajectory_action
         )
@@ -270,31 +316,30 @@ class ModularSearch:
         )
 
         min_max_stats = MinMaxStats(
-            self.config.known_bounds,
-            epsilon=self.config.min_max_epsilon,
+            self.known_bounds,
+            epsilon=self.min_max_epsilon,
         )
 
         # Initialize pruning state (e.g. Sequential Halving budget)
-        # pruning_state = self.pruning_method.initialize(root, self.config)
+        # pruning_state = self.pruning_method.initialize(root, self)
         pruning_context = {
-            "root": self.pruning_method.initialize(root, self.config),
+            "root": self.pruning_method.initialize(root),
             "internal": {},  # Map node -> state
         }
         # --- Main Simulation Loop ---
-        search_batch_size = self.config.search_batch_size
-        if search_batch_size > 0:
-            num_batches = math.ceil(self.config.num_simulations / search_batch_size)
+        if self.search_batch_size > 0:
+            num_batches = math.ceil(self.num_simulations / self.search_batch_size)
             for i in range(num_batches):
                 self._run_batched_simulations(
                     root,
                     min_max_stats,
                     agent_network,
-                    search_batch_size,
-                    current_sim_idx=i * search_batch_size,
+                    self.search_batch_size,
+                    current_sim_idx=i * self.search_batch_size,
                     pruning_context=pruning_context,
                 )
         else:
-            for i in range(self.config.num_simulations):
+            for i in range(self.num_simulations):
                 # Pruning method determines which actions are allowed for this simulation step
                 # allowed_actions, pruning_state = self.pruning_method.step(
                 #     root, pruning_state, self.config, min_max_stats, i
@@ -319,7 +364,7 @@ class ModularSearch:
         # A_{n+1} = g + σ(completedQ), where g is the injected Gumbel noise
         # already baked into root.child_priors by the GumbelInjector.
         # Non-Gumbel searches use argmax of the clean target policy.
-        if self.config.gumbel:
+        if self.gumbel:
             from search.search_py.utils import (
                 get_completed_q,
                 calculate_gumbel_sigma,
@@ -327,8 +372,8 @@ class ModularSearch:
 
             completedQ = get_completed_q(root, min_max_stats)
             sigma = calculate_gumbel_sigma(
-                self.config.gumbel_cvisit,
-                self.config.gumbel_cscale,
+                self.gumbel_cvisit,
+                self.gumbel_cscale,
                 root,
                 completedQ,
             )
@@ -470,14 +515,13 @@ class ModularSearch:
                 policy = injector.inject(
                     policy,
                     legal_moves,
-                    self.config,
                     trajectory_actions[b],
                     policy_dist=policy_dist_for_injectors,
                     exploration=exploration,
                 )
                 policy_dist_for_injectors = Categorical(probs=policy)
 
-            selection_count = self.config.gumbel_m
+            selection_count = self.gumbel_m
             selected_actions = self.root_searchset.create_initial_searchset(
                 policy, legal_moves, selection_count, trajectory_actions[b]
             )
@@ -497,28 +541,28 @@ class ModularSearch:
             )
 
             min_max_stats = MinMaxStats(
-                self.config.known_bounds,
-                epsilon=self.config.min_max_epsilon,
+                self.known_bounds,
+                epsilon=self.min_max_epsilon,
             )
             min_max_stats_list.append(min_max_stats)
 
             pruning_context = {
-                "root": self.pruning_method.initialize(root, self.config),
+                "root": self.pruning_method.initialize(root),
                 "internal": {},
             }
             pruning_contexts_list.append(pruning_context)
 
         # 3. Main Simulation Loop
-        search_batch_size = max(1, self.config.search_batch_size)
-        num_batches = math.ceil(self.config.num_simulations / search_batch_size)
+        self.search_batch_size = max(1, self.search_batch_size)
+        num_batches = math.ceil(self.num_simulations / self.search_batch_size)
 
         for i in range(num_batches):
             self._run_batched_vectorized_simulations(
                 roots,
                 min_max_stats_list,
                 agent_network,
-                search_batch_size,
-                current_sim_idx=i * search_batch_size,
+                self.search_batch_size,
+                current_sim_idx=i * self.search_batch_size,
                 pruning_contexts_list=pruning_contexts_list,
             )
 
@@ -543,7 +587,7 @@ class ModularSearch:
             target_policies.append(target_policy)
             # Gumbel MuZero: play argmax(g + σ) — Paper Alg. 2.
             # Non-Gumbel: play argmax of the clean target policy.
-            if self.config.gumbel:
+            if self.gumbel:
                 from search.search_py.utils import (
                     get_completed_q,
                     calculate_gumbel_sigma,
@@ -551,8 +595,8 @@ class ModularSearch:
 
                 completedQ_b = get_completed_q(root, min_max_stats)
                 sigma_b = calculate_gumbel_sigma(
-                    self.config.gumbel_cvisit,
-                    self.config.gumbel_cscale,
+                    self.gumbel_cvisit,
+                    self.gumbel_cscale,
                     root,
                     completedQ_b,
                 )
@@ -583,17 +627,16 @@ class ModularSearch:
         )
 
     def _set_node_configs(self):
-        ChanceNode.bootstrap_method = self.config.bootstrap_method
-        ChanceNode.discount = self.config.discount_factor
-        ChanceNode.discount = self.config.discount_factor
-        DecisionNode.bootstrap_method = self.config.bootstrap_method
-        DecisionNode.discount = self.config.discount_factor
-        DecisionNode.pb_c_init = self.config.pb_c_init
-        DecisionNode.pb_c_base = self.config.pb_c_base
-        DecisionNode.gumbel = self.config.gumbel
-        DecisionNode.cvisit = self.config.gumbel_cvisit
-        DecisionNode.cscale = self.config.gumbel_cscale
-        DecisionNode.stochastic = self.config.stochastic
+        ChanceNode.bootstrap_method = self.bootstrap_method
+        ChanceNode.discount = self.discount_factor
+        DecisionNode.bootstrap_method = self.bootstrap_method
+        DecisionNode.discount = self.discount_factor
+        DecisionNode.pb_c_init = self.pb_c_init
+        DecisionNode.pb_c_base = self.pb_c_base
+        DecisionNode.gumbel = self.gumbel
+        DecisionNode.cvisit = self.gumbel_cvisit
+        DecisionNode.cscale = self.gumbel_cscale
+        DecisionNode.stochastic = self.stochastic
 
     def _run_single_simulation(
         self,
@@ -614,9 +657,9 @@ class ModularSearch:
         #         min_max_stats=min_max_stats,
         #         pruned_searchset=pruned_searchset,
         #     )
-        #     # old_to_play = (old_to_play + 1) % self.config.game.num_players
+        #     # old_to_play = (old_to_play + 1) % game.num_players
         #     search_path.append(node)
-        #     horizon_index = (horizon_index + 1) % self.config.lstm_horizon_len
+        #     horizon_index = (horizon_index + 1) % lstm_horizon_len
         # ---------------------------------------------------------------------
         # 1. SELECTION PHASE
         # ---------------------------------------------------------------------
@@ -652,7 +695,7 @@ class ModularSearch:
 
             # If we've reached the maximum search depth, stop descending.
             # search_path already contains the root at index 0, so len(search_path) - 1 is the current depth.
-            if (len(search_path) - 1) >= self.config.max_search_depth:
+            if self.max_search_depth is not None and (len(search_path) - 1) >= self.max_search_depth:
                 break
                 # Decision -> Select Action -> ChanceNode
 
@@ -661,7 +704,6 @@ class ModularSearch:
                 pruned_searchset, next_state = self.pruning_method.step(
                     node,
                     pruning_context["root"],
-                    self.config,
                     min_max_stats,
                     current_sim_idx,
                 )
@@ -679,13 +721,12 @@ class ModularSearch:
                 if node.is_decision:
                     if node not in pruning_context["internal"]:
                         pruning_context["internal"][node] = (
-                            self.internal_pruning_method.initialize(node, self.config)
+                            self.internal_pruning_method.initialize(node)
                         )
 
                     pruned_searchset, next_state = self.internal_pruning_method.step(
                         node,
                         pruning_context["internal"][node],
-                        self.config,
                         min_max_stats,
                         current_sim_idx,
                     )
@@ -746,7 +787,7 @@ class ModularSearch:
                 actions_to_expand = self.internal_searchset.create_initial_searchset(
                     policy[0],
                     list(range(self.num_actions)),
-                    self.config.gumbel_m,
+                    self.gumbel_m,
                     trajectory_action=None,
                 )
 
@@ -792,7 +833,7 @@ class ModularSearch:
                 actions_to_expand = self.internal_searchset.create_initial_searchset(
                     policy[0],
                     list(range(self.num_actions)),
-                    self.config.gumbel_m,
+                    self.gumbel_m,
                     trajectory_action=None,
                 )
 
@@ -838,7 +879,7 @@ class ModularSearch:
 
     def _backpropagate(self, search_path, action_path, value, to_play, min_max_stats):
         self.backpropagator.backpropagate(
-            search_path, action_path, value, to_play, min_max_stats, self.config
+            search_path, action_path, value, to_play, min_max_stats
         )
 
     def _run_batched_simulations(
@@ -850,8 +891,8 @@ class ModularSearch:
         current_sim_idx=0,
         pruning_context=None,
     ):
-        use_virtual_mean = self.config.use_virtual_mean
-        virtual_loss = self.config.virtual_loss
+        
+        
 
         sim_data = []
 
@@ -874,8 +915,8 @@ class ModularSearch:
                     break
 
                 if (
-                    self.config.max_search_depth is not None
-                    and (len(search_path) - 1) >= self.config.max_search_depth
+                    self.max_search_depth is not None
+                    and (len(search_path) - 1) >= self.max_search_depth
                 ):
                     break
 
@@ -886,7 +927,6 @@ class ModularSearch:
                     pruned_searchset, next_state = self.pruning_method.step(
                         node,
                         pruning_context["root"],
-                        self.config,
                         min_max_stats,
                         current_sim_idx + b,
                     )
@@ -894,7 +934,7 @@ class ModularSearch:
                     if pruned_searchset is not None and len(pruned_searchset) == 0:
                         # Revert virtual update for this failed path
                         # existing nodes in search_path (including root) have been updated
-                        if use_virtual_mean:
+                        if self.use_virtual_mean:
                             for n, v in zip(search_path, path_virtual_values):
                                 n.visits -= 1
                                 n.value_sum -= v
@@ -903,7 +943,7 @@ class ModularSearch:
                             # Revert standard VL
                             for n in search_path:
                                 n.visits -= 1
-                                n.value_sum += virtual_loss
+                                n.value_sum += self.virtual_loss
                                 n._v_mix = None
 
                         for i in range(len(action_path)):
@@ -923,16 +963,13 @@ class ModularSearch:
                     if node.is_decision:
                         if node not in pruning_context["internal"]:
                             pruning_context["internal"][node] = (
-                                self.internal_pruning_method.initialize(
-                                    node, self.config
-                                )
+                                self.internal_pruning_method.initialize(node)
                             )
 
                         pruned_searchset, next_state = (
                             self.internal_pruning_method.step(
                                 node,
                                 pruning_context["internal"][node],
-                                self.config,
                                 min_max_stats,
                                 current_sim_idx + b,
                             )
@@ -940,7 +977,7 @@ class ModularSearch:
                         pruning_context["internal"][node] = next_state
 
                         if pruned_searchset is not None and len(pruned_searchset) == 0:
-                            if use_virtual_mean:
+                            if self.use_virtual_mean:
                                 for n, v in zip(search_path, path_virtual_values):
                                     n.visits -= 1
                                     n.value_sum -= v
@@ -948,7 +985,7 @@ class ModularSearch:
                             else:
                                 for n in search_path:
                                     n.visits -= 1
-                                    n.value_sum += virtual_loss
+                                    n.value_sum += self.virtual_loss
                                     n._v_mix = None
 
                             # Fix: Revert child_visits
@@ -987,7 +1024,7 @@ class ModularSearch:
 
                 parent_node.child_visits[act_idx] += 1
 
-                if use_virtual_mean:
+                if self.use_virtual_mean:
                     v_val = parent_node.value()
                     parent_node.visits += 1
                     parent_node.value_sum += v_val
@@ -999,7 +1036,7 @@ class ModularSearch:
                     )  # Note: path_virtual_values will match search_path indices
                 else:
                     parent_node.visits += 1
-                    parent_node.value_sum -= virtual_loss
+                    parent_node.value_sum -= self.virtual_loss
                     # Invalidate v_mix
                     parent_node._v_mix = None
 
@@ -1010,7 +1047,7 @@ class ModularSearch:
                 continue
 
             # Leaf Node Update (since loop only updates parents)
-            if use_virtual_mean:
+            if self.use_virtual_mean:
                 v_val = node.value()  # Bootstrap
                 node.visits += 1
                 node.value_sum += v_val
@@ -1018,7 +1055,7 @@ class ModularSearch:
                 path_virtual_values.append(v_val)
             else:
                 node.visits += 1
-                node.value_sum -= virtual_loss
+                node.value_sum -= self.virtual_loss
                 node._v_mix = None
 
             # Leaf already updated in the loop (added to search_path and updated)
@@ -1077,7 +1114,7 @@ class ModularSearch:
                     "node": node,
                     "parent": search_path[-2],
                     "action": action_or_code,
-                    "virtual_values": path_virtual_values if use_virtual_mean else None,
+                    "virtual_values": path_virtual_values if self.use_virtual_mean else None,
                 }
             )
 
@@ -1223,7 +1260,7 @@ class ModularSearch:
                 # Virtual Loss Reversion (Constant)
                 for node in path:
                     node.visits -= 1
-                    node.value_sum += virtual_loss
+                    node.value_sum += self.virtual_loss
                     node._v_mix = None
 
             # CRITICAL FIX: Revert child_visits tensor
@@ -1249,16 +1286,16 @@ class ModularSearch:
                 value = res["value"]
 
                 # Check for distributional support range
-                if self.config.support_range is not None:
+                if self.support_range is not None:
                     if reward.numel() > 1:
                         reward = support_to_scalar(
-                            reward, self.config.support_range
+                            reward, self.support_range
                         ).item()
                     else:
                         reward = reward.item()
                     if value.numel() > 1:
                         value = support_to_scalar(
-                            value, self.config.support_range
+                            value, self.support_range
                         ).item()
                     else:
                         value = value.item()
@@ -1273,7 +1310,7 @@ class ModularSearch:
                 actions_to_expand = self.internal_searchset.create_initial_searchset(
                     policy,
                     list(range(self.num_actions)),
-                    self.config.gumbel_m,
+                    self.gumbel_m,
                     trajectory_action=None,
                 )
 
@@ -1290,10 +1327,10 @@ class ModularSearch:
 
             elif node.is_chance:
                 value = res["value"]
-                if self.config.support_range:
+                if self.support_range:
                     if value.numel() > 1:
                         value = support_to_scalar(
-                            value, self.config.support_range
+                            value, self.support_range
                         ).item()
                     else:
                         value = value.item()
@@ -1315,7 +1352,6 @@ class ModularSearch:
                 value,
                 to_play_for_backprop,
                 min_max_stats,
-                self.config,
             )
 
     def _run_batched_vectorized_simulations(
@@ -1327,8 +1363,8 @@ class ModularSearch:
         current_sim_idx=0,
         pruning_contexts_list=None,
     ):
-        use_virtual_mean = self.config.use_virtual_mean
-        virtual_loss = self.config.virtual_loss
+        
+        
 
         sim_data = []
         B = len(roots)
@@ -1339,7 +1375,7 @@ class ModularSearch:
             min_max_stats = min_max_stats_list[b]
             pruning_context = pruning_contexts_list[b]
 
-            for path_idx in range(search_batch_size):
+            for path_idx in range(self.search_batch_size):
                 node = root
                 search_path = [node]
                 action_path = []
@@ -1356,13 +1392,12 @@ class ModularSearch:
                         pruned_searchset, next_state = self.pruning_method.step(
                             node,
                             pruning_context["root"],
-                            self.config,
                             min_max_stats,
                             current_sim_idx + path_idx,
                         )
                         pruning_context["root"] = next_state
                         if pruned_searchset is not None and len(pruned_searchset) == 0:
-                            if use_virtual_mean:
+                            if self.use_virtual_mean:
                                 for n, v in zip(search_path, path_virtual_values):
                                     n.visits -= 1
                                     n.value_sum -= v
@@ -1370,7 +1405,7 @@ class ModularSearch:
                             else:
                                 for n in search_path:
                                     n.visits -= 1
-                                    n.value_sum += virtual_loss
+                                    n.value_sum += self.virtual_loss
                                     n._v_mix = None
                             for j in range(len(action_path)):
                                 p_node = search_path[j]
@@ -1391,14 +1426,13 @@ class ModularSearch:
                             if node not in pruning_context["internal"]:
                                 pruning_context["internal"][node] = (
                                     self.internal_pruning_method.initialize(
-                                        node, self.config
+                                        node
                                     )
                                 )
                             pruned_searchset, next_state = (
                                 self.internal_pruning_method.step(
                                     node,
                                     pruning_context["internal"][node],
-                                    self.config,
                                     min_max_stats,
                                     current_sim_idx + path_idx,
                                 )
@@ -1408,7 +1442,7 @@ class ModularSearch:
                                 pruned_searchset is not None
                                 and len(pruned_searchset) == 0
                             ):
-                                if use_virtual_mean:
+                                if self.use_virtual_mean:
                                     for n, v in zip(search_path, path_virtual_values):
                                         n.visits -= 1
                                         n.value_sum -= v
@@ -1416,7 +1450,7 @@ class ModularSearch:
                                 else:
                                     for n in search_path:
                                         n.visits -= 1
-                                        n.value_sum += virtual_loss
+                                        n.value_sum += self.virtual_loss
                                         n._v_mix = None
                                 for j in range(len(action_path)):
                                     p_node = search_path[j]
@@ -1443,7 +1477,7 @@ class ModularSearch:
                     act_idx = int(action_or_code)
                     parent_node.child_visits[act_idx] += 1
 
-                    if use_virtual_mean:
+                    if self.use_virtual_mean:
                         v_val = parent_node.value()
                         parent_node.visits += 1
                         parent_node.value_sum += v_val
@@ -1451,7 +1485,7 @@ class ModularSearch:
                         path_virtual_values.append(v_val)
                     else:
                         parent_node.visits += 1
-                        parent_node.value_sum -= virtual_loss
+                        parent_node.value_sum -= self.virtual_loss
                         parent_node._v_mix = None
 
                     search_path.append(node)
@@ -1460,7 +1494,7 @@ class ModularSearch:
                 if node is None:
                     continue
 
-                if use_virtual_mean:
+                if self.use_virtual_mean:
                     v_val = node.value()
                     node.visits += 1
                     node.value_sum += v_val
@@ -1468,7 +1502,7 @@ class ModularSearch:
                     path_virtual_values.append(v_val)
                 else:
                     node.visits += 1
-                    node.value_sum -= virtual_loss
+                    node.value_sum -= self.virtual_loss
                     node._v_mix = None
 
                 sim_data.append(
@@ -1480,7 +1514,7 @@ class ModularSearch:
                         "parent": search_path[-2],
                         "action": action_or_code,
                         "virtual_values": (
-                            path_virtual_values if use_virtual_mean else None
+                            path_virtual_values if self.use_virtual_mean else None
                         ),
                     }
                 )
@@ -1588,7 +1622,7 @@ class ModularSearch:
             else:
                 for node in path:
                     node.visits -= 1
-                    node.value_sum += virtual_loss
+                    node.value_sum += self.virtual_loss
                     node._v_mix = None
 
             for i in range(len(d["action_path"])):
@@ -1613,16 +1647,16 @@ class ModularSearch:
                 reward = res["reward"]
                 value = res["value"]
 
-                if self.config.support_range is not None:
+                if self.support_range is not None:
                     if reward.numel() > 1:
                         reward = support_to_scalar(
-                            reward, self.config.support_range
+                            reward, self.support_range
                         ).item()
                     else:
                         reward = reward.item()
                     if value.numel() > 1:
                         value = support_to_scalar(
-                            value, self.config.support_range
+                            value, self.support_range
                         ).item()
                     else:
                         value = value.item()
@@ -1637,7 +1671,7 @@ class ModularSearch:
                 actions_to_expand = self.internal_searchset.create_initial_searchset(
                     policy,
                     list(range(self.num_actions)),
-                    self.config.gumbel_m,
+                    self.gumbel_m,
                     trajectory_action=None,
                 )
 
@@ -1654,10 +1688,10 @@ class ModularSearch:
 
             elif node.is_chance:
                 value = res["value"]
-                if self.config.support_range is not None:
+                if self.support_range is not None:
                     if value.numel() > 1:
                         value = support_to_scalar(
-                            value, self.config.support_range
+                            value, self.support_range
                         ).item()
                     else:
                         value = value.item()
@@ -1683,5 +1717,4 @@ class ModularSearch:
                 value,
                 to_play_for_backprop,
                 min_max_stats,
-                self.config,
             )

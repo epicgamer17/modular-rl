@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.distributions import Categorical
 import time
 import numpy as np
-from search import set_backend, ModularSearch, get_backend_name
+from search import set_backend, get_backend_name, SearchBackendFactory
 from modules.models.inference_output import InferenceOutput
 
 # Fallback for benchmark fixture if pytest-benchmark is not installed
@@ -135,7 +135,7 @@ def test_non_vectorized_backend_throughput(perf_benchmark, backend, benchmark_co
         pytest.skip(f"Backend {backend} not available or failed to load")
     num_actions = benchmark_config.game.num_actions
     agent = MockAgentNetwork(num_actions=num_actions)
-    search = ModularSearch(benchmark_config, device=torch.device("cpu"), num_actions=num_actions)
+    search = SearchBackendFactory.create(benchmark_config, device=torch.device("cpu"), num_actions=num_actions)
     obs = torch.zeros(1, 3, 3) 
     info = {"player": 0, "legal_moves": [list(range(num_actions))]}
     for _ in range(3): search.run(obs, info, agent)
@@ -151,7 +151,7 @@ def test_vectorized_backend_throughput(perf_benchmark, backend, batch_size, benc
         pytest.skip(f"Backend {backend} not available or failed to load")
     num_actions = benchmark_config.game.num_actions
     agent = MockAgentNetwork(num_actions=num_actions)
-    search = ModularSearch(benchmark_config, device=torch.device("cpu"), num_actions=num_actions)
+    search = SearchBackendFactory.create(benchmark_config, device=torch.device("cpu"), num_actions=num_actions)
     batched_obs = torch.zeros(batch_size, 3, 3)
     batched_info = {"player": torch.zeros(batch_size, dtype=torch.long), "legal_moves": [list(range(num_actions))] * batch_size}
     for _ in range(3): search.run_vectorized(batched_obs, batched_info, agent)
@@ -167,7 +167,7 @@ def test_search_throughput_scaling_with_nn_latency(perf_benchmark, backend, late
         pytest.skip(f"Backend {backend} not available or failed to load")
     num_actions = benchmark_config.game.num_actions
     agent = MockAgentNetwork(num_actions=num_actions, latency=latency)
-    search = ModularSearch(benchmark_config, device=torch.device("cpu"), num_actions=num_actions)
+    search = SearchBackendFactory.create(benchmark_config, device=torch.device("cpu"), num_actions=num_actions)
     batch_size = 4
     batched_obs = torch.zeros(batch_size, 3, 3)
     batched_info = {"player": torch.zeros(batch_size, dtype=torch.long), "legal_moves": [list(range(num_actions))] * batch_size}
@@ -185,7 +185,7 @@ def test_multiprocess_vs_vectorized_comparison(perf_benchmark, backend, benchmar
     agent = MockAgentNetwork(num_actions=num_actions)
     batched_obs = torch.zeros(num_workers, 3, 3)
     batched_info = {"player": torch.zeros(num_workers, dtype=torch.long), "legal_moves": [list(range(num_actions))] * num_workers}
-    search = ModularSearch(benchmark_config, device=torch.device("cpu"), num_actions=num_actions)
+    search = SearchBackendFactory.create(benchmark_config, device=torch.device("cpu"), num_actions=num_actions)
 
     def run_vectorized_batch(): search.run_vectorized(batched_obs, batched_info, agent)
     print(f"\nBenchmarking {backend} backend:")

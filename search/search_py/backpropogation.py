@@ -13,7 +13,6 @@ class Backpropagator(ABC):
         leaf_value,
         leaf_to_play,
         min_max_stats,
-        config,
     ):
         """
         Backpropagates the leaf value up the search path to update node values.
@@ -22,6 +21,10 @@ class Backpropagator(ABC):
 
 
 class AverageDiscountedReturnBackpropagator(Backpropagator):
+    def __init__(self, num_players: int, discount_factor: float):
+        self.num_players = num_players
+        self.discount_factor = discount_factor
+
     def backpropagate(
         self,
         search_path,
@@ -29,7 +32,6 @@ class AverageDiscountedReturnBackpropagator(Backpropagator):
         leaf_value,
         leaf_to_play,
         min_max_stats,
-        config,
     ):
         n = len(search_path)
         if n == 0:
@@ -46,8 +48,8 @@ class AverageDiscountedReturnBackpropagator(Backpropagator):
 
         # Initialize acc for i = n-1 (base: discounted exponent 0 for leaf value)
         # acc is a Python list of floats length num_players
-        acc = [0.0] * config.game.num_players
-        for p in range(config.game.num_players):
+        acc = [0.0] * self.num_players
+        for p in range(self.num_players):
             acc[p] = leaf_value if leaf_to_play == p else -leaf_value
 
         # totals[i] will hold Acc_{node_player}(i)
@@ -83,11 +85,11 @@ class AverageDiscountedReturnBackpropagator(Backpropagator):
                     # Acc_p(i-1) = sign(p, i) * r_i + discount * Acc_p(i)
                     # sign(p, i) = +1 if acting_player == p else -1
                     # We overwrite acc[p] in-place to be Acc_p(i-1)
-                    for p in range(config.game.num_players):
+                    for p in range(self.num_players):
                         sign = 1.0 if acting_player == p else -1.0
-                        acc[p] = sign * r_i + config.discount_factor * acc[p]
+                        acc[p] = sign * r_i + self.discount_factor * acc[p]
                 elif isinstance(node, ChanceNode):
-                    for p in range(config.game.num_players):
+                    for p in range(self.num_players):
                         # chance nodes can be thought to have 0 reward, and no discounting (as its like the roll after the action, or another way of thinking of it is that only on decision nodes do we discount expected reward, a chance node is not a decision point)
                         acc[p] = acc[p]
 
@@ -139,7 +141,6 @@ class MinimaxBackpropagator(Backpropagator):
         leaf_value,
         leaf_to_play,
         min_max_stats,
-        config,
     ):
         n = len(search_path)
         if n == 0:

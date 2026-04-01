@@ -111,7 +111,6 @@ class MCTSPipeline:
 
     def __init__(
         self,
-        config: Any,
         device: torch.device,
         num_actions: int,
         backprop_fn: BackpropFn,
@@ -137,8 +136,12 @@ class MCTSPipeline:
         num_players: int,
         use_sequential_halving: bool,
         gumbel_m: int,
+        known_bounds: Optional[List[float]] = None,
+        min_max_epsilon: float = 1e-8,
+        internal_decision_modifier: str = "none",
+        internal_chance_modifier: str = "none",
     ):
-        self.config = config
+        self.device = device
         self.device = device
         self.num_actions = num_actions
         self.backprop_fn = backprop_fn
@@ -164,6 +167,10 @@ class MCTSPipeline:
         self.num_players = num_players
         self.use_sequential_halving = use_sequential_halving
         self.gumbel_m = gumbel_m
+        self.known_bounds = known_bounds
+        self.min_max_epsilon = min_max_epsilon
+        self.internal_decision_modifier_key = internal_decision_modifier
+        self.internal_chance_modifier_key = internal_chance_modifier
 
     def __call__(
         self,
@@ -315,12 +322,11 @@ class MCTSPipeline:
         # ------------------------------------------------------------------
         # 4. Initialise global min-max stats
         # ------------------------------------------------------------------
-        known_bounds = self.config.known_bounds
         min_max_stats = VectorizedMinMaxStats.allocate(
             B,
             self.device,
-            known_bounds=known_bounds,
-            epsilon=self.config.min_max_epsilon,
+            known_bounds=self.known_bounds,
+            epsilon=self.min_max_epsilon,
         )
 
         # ------------------------------------------------------------------
@@ -346,12 +352,12 @@ class MCTSPipeline:
 
                 # Internal modifiers
                 internal_decision_modifier = None
-                if self.config.internal_decision_modifier != "none":
+                if self.internal_decision_modifier_key != "none":
                     # Logic here to resolve string to function if needed
                     pass
 
                 internal_chance_modifier = None
-                if self.config.internal_chance_modifier != "none":
+                if self.internal_chance_modifier_key != "none":
                     # Logic here to resolve string to function if needed
                     pass
 
@@ -409,42 +415,60 @@ class MCTSPipeline:
 
 
 def build_search_pipeline(
-    config,
     device: torch.device,
     num_actions: int,
+    num_simulations: int,
+    max_search_depth: int,
+    max_nodes: int,
+    pb_c_init: float,
+    pb_c_base: float,
+    discount_factor: float,
+    use_dirichlet: bool,
+    dirichlet_alpha: float,
+    dirichlet_fraction: float,
+    backprop_method: str = "average",
+    policy_extraction: str = "visit_count",
+    scoring_method: str = "ucb",
+    search_batch_size: int = 1,
+    num_codes: int = 0,
+    gumbel_cvisit: float = 50.0,
+    gumbel_cscale: float = 1.0,
+    use_virtual_mean: bool = False,
+    virtual_loss: float = 0.0,
+    bootstrap_method: str = "parent_value",
+    num_players: int = 1,
+    use_sequential_halving: bool = False,
+    gumbel_m: int = 8,
+    known_bounds: Optional[List[float]] = None,
+    min_max_epsilon: float = 1e-8,
+    internal_decision_modifier: str = "none",
+    internal_chance_modifier: str = "none",
 ) -> MCTSPipeline:
     """Build a functional MCTS pipeline from the given config.
 
     Selects pure functions for:
-      * **Modifier** — Dirichlet noise (``config.use_dirichlet``).
-      * **Backprop** — via ``config.backprop_method`` (``"average"`` /
+      * **Modifier** — Dirichlet noise (``use_dirichlet``).
+      * **Backprop** — via ``backprop_method`` (``"average"`` /
         ``"minimax"``; defaults to ``"average"``).
-      * **Policy extraction** — via ``config.policy_extraction`` (``"visit_count"``,
+      * **Policy extraction** — via ``policy_extraction`` (``"visit_count"``,
         ``"gumbel" / "completed_q"``, ``"minimax" / "best_action"``; defaults
         to ``"visit_count"``).
 
     No OOP strategy class is instantiated.
 
     Args:
-        config: Agent/search configuration object.  Expected attributes:
-
-            * ``num_simulations`` — int
-            * ``max_search_depth`` — int (tree depth per simulation)
-            * ``max_nodes`` — int (FlatTree pre-allocation budget)
-            * ``pb_c_init`` — float
-            * ``pb_c_base`` — float
-            * ``discount_factor`` — float (γ)
-            * ``use_dirichlet`` — bool
-            * ... (see implementation below for full list)
-
         device: Torch device to allocate tensors on.
         num_actions: Number of discrete actions (``max_edges`` in the tree).
+        num_simulations: Total number of simulations to run.
+        max_search_depth: Maximum depth of the search tree.
+        max_nodes: Maximum number of nodes in the flat tree buffer.
+        ... (see implementation below for full list of hyperparameters)
 
     Returns:
         An :class:`MCTSPipeline` instance (callable) that handles the full MCTS lifecycle.
     """
     # ---- Select backprop function ------------------------------------------
-    backprop_key = config.backprop_method.lower()
+    backprop_key = backprop_method.lower()
     assert backprop_key in _BACKPROP_REGISTRY, (
         f"Unknown backprop_method '{backprop_key}'. "
         f"Valid options: {list(_BACKPROP_REGISTRY)}"
@@ -452,41 +476,43 @@ def build_search_pipeline(
     backprop_fn: BackpropFn = _BACKPROP_REGISTRY[backprop_key]
 
     # ---- Select policy extraction function ---------------------------------
-    policy_key = _POLICY_REGISTRY.get(config.policy_extraction.lower(), "visit_count")
+    policy_key = _POLICY_REGISTRY.get(policy_extraction.lower(), "visit_count")
 
     # ---- Select scoring function -------------------------------------------
-    scoring_key: str = config.scoring_method.lower()
+    scoring_key: str = scoring_method.lower()
 
     # ---- Hyperparameters ---------------------------------------------------
-    search_batch_size: int = config.search_batch_size
     if search_batch_size == 0:
         search_batch_size = 1
 
     return MCTSPipeline(
-        config=config,
         device=device,
         num_actions=num_actions,
         backprop_fn=backprop_fn,
         policy_key=policy_key,
         scoring_key=scoring_key,
-        pb_c_init=config.pb_c_init,
-        pb_c_base=config.pb_c_base,
-        discount=config.discount_factor,
-        num_simulations=config.num_simulations,
-        max_depth=config.max_search_depth,
-        max_nodes=config.max_nodes,
-        num_codes=config.num_codes,
-        use_dirichlet=config.use_dirichlet,
-        dirichlet_alpha=config.dirichlet_alpha,
-        dirichlet_fraction=config.dirichlet_fraction,
-        gumbel_cvisit=config.gumbel_cvisit,
-        gumbel_cscale=config.gumbel_cscale,
+        pb_c_init=pb_c_init,
+        pb_c_base=pb_c_base,
+        discount=discount_factor,
+        num_simulations=num_simulations,
+        max_depth=max_search_depth,
+        max_nodes=max_nodes,
+        num_codes=num_codes,
+        use_dirichlet=use_dirichlet,
+        dirichlet_alpha=dirichlet_alpha,
+        dirichlet_fraction=dirichlet_fraction,
+        gumbel_cvisit=gumbel_cvisit,
+        gumbel_cscale=gumbel_cscale,
         search_batch_size=search_batch_size,
         virtual_loss_visits=1.0,
-        virtual_loss_value=-config.virtual_loss,
-        penalty_type="virtual_mean" if config.use_virtual_mean else "virtual_loss",
-        bootstrap_method=config.bootstrap_method,
-        num_players=config.game.num_players,
-        use_sequential_halving=config.use_sequential_halving,
-        gumbel_m=config.gumbel_m,
+        virtual_loss_value=-virtual_loss,
+        penalty_type="virtual_mean" if use_virtual_mean else "virtual_loss",
+        bootstrap_method=bootstrap_method,
+        num_players=num_players,
+        use_sequential_halving=use_sequential_halving,
+        gumbel_m=gumbel_m,
+        known_bounds=known_bounds,
+        min_max_epsilon=min_max_epsilon,
+        internal_decision_modifier=internal_decision_modifier,
+        internal_chance_modifier=internal_chance_modifier,
     )

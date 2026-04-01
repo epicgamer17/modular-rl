@@ -104,8 +104,9 @@ class UCBScoring(ScoringMethod):
 
 
 class GumbelScoring(ScoringMethod):
-    def __init__(self, config):
-        self.config = config
+    def __init__(self, gumbel_cvisit: int, gumbel_cscale: float):
+        self.gumbel_cvisit = gumbel_cvisit
+        self.gumbel_cscale = gumbel_cscale
 
     def score(self, node, child, min_max_stats) -> float:
         raise NotImplementedError(
@@ -114,7 +115,9 @@ class GumbelScoring(ScoringMethod):
 
     def get_scores(self, node, min_max_stats) -> torch.Tensor:
         # Vectorized Gumbel
-        pi0 = get_completed_q_improved_policy(self.config, node, min_max_stats)
+        pi0 = get_completed_q_improved_policy(
+            self.gumbel_cvisit, self.gumbel_cscale, node, min_max_stats
+        )
 
         visits = node.child_visits
         sum_N = visits.sum()

@@ -2,7 +2,7 @@ import torch
 import time
 import numpy as np
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Union, Tuple
+from typing import Any, Dict, List, Optional, Union, Tuple, Callable
 
 from modules.agent_nets.modular import ModularAgentNetwork
 from agents.action_selectors.selectors import BaseActionSelector
@@ -12,7 +12,6 @@ from agents.action_selectors.policy_sources import (
     NetworkPolicySource,
     SearchPolicySource,
 )
-from configs.base import Config
 from replay_buffers.modular_buffer import ModularReplayBuffer
 
 
@@ -25,28 +24,17 @@ class NetworkAgent:
         agent_network: ModularAgentNetwork,
         action_selector: BaseActionSelector,
         device: torch.device,
+        search_engine: Optional[Any] = None,
     ):
         self.name = name
         self.agent_network = agent_network
         self.action_selector = action_selector
         self.device = device
         self.actor_state = None
-        self.config = getattr(
-            action_selector, "config", None
-        )  # Fallback if config is not passed directly
 
         # Initialize PolicySource
-        use_search = hasattr(self.config, "search_backend") and getattr(
-            self.config, "search_enabled", False
-        )
-
-        if use_search:
-            from search.factory import SearchBackendFactory
-
-            search_engine = SearchBackendFactory.create(self.config)
-            self.policy_source = SearchPolicySource(
-                search_engine, self.agent_network
-            )
+        if search_engine is not None:
+            self.policy_source = SearchPolicySource(search_engine, self.agent_network)
         else:
             self.policy_source = NetworkPolicySource(self.agent_network)
 
@@ -276,23 +264,27 @@ class Tester:
 
     def __init__(
         self,
-        env_factory,
+        env_factory: Callable[[], Any],
         agent_network: ModularAgentNetwork,
         action_selector: BaseActionSelector,
-        replay_buffer: ModularReplayBuffer,
-        num_players: int,  # For compatibility with standard actor launch args
-        config: Config,
+        replay_buffer: Optional[ModularReplayBuffer],
+        num_players: int,
         device: torch.device,
-        name: str,
+        name: str = "tester",
         test_types: Optional[List[BaseTestType]] = None,
+        *,
         worker_id: int = 0,
+        # Explicit search/compilation args
+        search_engine: Optional[Any] = None,
+        compilation_enabled: bool = False,
+        compilation_mode: str = "default",
+        compilation_fullgraph: bool = False,
     ):
         self.env_factory = env_factory
         self.agent_network = agent_network
         self.action_selector = action_selector
         self.replay_buffer = replay_buffer
         self.num_players = num_players
-        self.config = config
         self.device = device
         self.name = name
         self.worker_id = worker_id
@@ -305,18 +297,13 @@ class Tester:
         self.env = env_factory()
         self.actor_state = None  # For RNN/MCTS states
 
+        self.compilation_enabled = compilation_enabled
+        self.compilation_mode = compilation_mode
+        self.compilation_fullgraph = compilation_fullgraph
+
         # Initialize PolicySource
-        use_search = hasattr(config, "search_backend") and getattr(
-            config, "search_enabled", False
-        )
-
-        if use_search:
-            from search.factory import SearchBackendFactory
-
-            search_engine = SearchBackendFactory.create(config)
-            self.policy_source = SearchPolicySource(
-                search_engine, self.agent_network
-            )
+        if search_engine is not None:
+            self.policy_source = SearchPolicySource(search_engine, self.agent_network)
         else:
             self.policy_source = NetworkPolicySource(self.agent_network)
 
@@ -326,10 +313,10 @@ class Tester:
         self.actor_state = None
         self.agent_network.eval()
 
-        if self.config.compilation.enabled:
+        if self.compilation_enabled:
             self.agent_network.compile(
-                mode=self.config.compilation.mode,
-                fullgraph=self.config.compilation.fullgraph,
+                mode=self.compilation_mode,
+                fullgraph=self.compilation_fullgraph,
             )
 
     def update_parameters(self, params: Dict[str, Any]) -> None:
@@ -403,7 +390,9 @@ class Tester:
         """
         # Ensure we have test types
         if not self.test_types:
-            self.test_types = TestFactory.create_default_test_types(self.config)
+            # We don't have enough info here to create default test types anymore without config
+            # But they should have been provided in __init__ by TestFactory.get_launch_args
+            pass
 
         return self.run_tests()
 
@@ -433,34 +422,33 @@ class TestFactory:
 
     @staticmethod
     def create_default_test_types(
-        config: Config, num_trials: Optional[int] = None
+        test_trials: int, multi_agent: bool
     ) -> List[BaseTestType]:
-        """Creates standard test types based on game configuration."""
+        """Creates standard test types."""
         test_types = []
-        trials = num_trials if num_trials is not None else config.test_trials
-        if config.game.multi_agent:
-            test_types.append(SelfPlayTest("self_play", trials))
+        if multi_agent:
+            test_types.append(SelfPlayTest("self_play", test_trials))
         else:
-            test_types.append(StandardGymTest("standard", trials))
+            test_types.append(StandardGymTest("standard", test_trials))
         return test_types
 
     @staticmethod
     def get_launch_args(
-        config: Config,
+        env_factory: Callable[[], Any],
         agent_network: ModularAgentNetwork,
         action_selector: BaseActionSelector,
+        num_players: int,
         device: torch.device,
         name: str = "tester",
         test_types: Optional[List[BaseTestType]] = None,
     ) -> Tuple:
         """Returns the positional arguments expected by Tester.__init__."""
         return (
-            config.game.env_factory,
+            env_factory,
             agent_network,
             action_selector,
             None,  # replay_buffer (Tester doesn't use it)
-            config.game.num_players,
-            config,
+            num_players,
             device,
             name,
             test_types,

@@ -76,7 +76,8 @@ class BaseTrainer:
 
         # 2. Prepare test types
         test_types = TestFactory.create_default_test_types(
-            self.config, num_trials=self.test_trials
+            test_trials=self.test_trials,
+            multi_agent=self.config.game.multi_agent,
         )
         from agents.workers.tester import VsAgentTest
 
@@ -96,15 +97,30 @@ class BaseTrainer:
         uncompiled_network = get_uncompiled_model(self.agent_network)
 
         # 2. Launch Tester
+        search_engine = None
+        if getattr(self.config, "search_enabled", False):
+            from search.factory import SearchBackendFactory
+
+            search_engine = SearchBackendFactory.create(
+                self.config, device=torch.device("cpu"), num_actions=self.num_actions
+            )
+
         launch_args = TestFactory.get_launch_args(
-            config=self.config,
+            env_factory=self.config.game.env_factory,
             agent_network=uncompiled_network,  # Pass the uncompiled version!
             action_selector=self.action_selector,
+            num_players=self.num_players,
             device=torch.device("cpu"),
             name=f"{self.name}_tester",
             test_types=test_types,
         )
-        self.executor.launch(Tester, launch_args, num_workers=1)
+        launch_kwargs = {
+            "search_engine": search_engine,
+            "compilation_enabled": self.config.compilation.enabled,
+            "compilation_mode": self.config.compilation.mode,
+            "compilation_fullgraph": self.config.compilation.fullgraph,
+        }
+        self.executor.launch(Tester, launch_args, num_workers=1, **launch_kwargs)
 
     def trigger_test(self, state_dict: Dict[str, Any], step: int):
         """

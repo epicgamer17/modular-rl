@@ -10,6 +10,8 @@ from agents.action_selectors.decorators import TemperatureSelector
 from agents.workers.actors import get_actor_class
 from modules.agent_nets.factory import build_modular_agent_network
 from stats.stats import StatTracker, PlotType
+from utils.schedule import create_schedule
+
 
 
 class MuZeroTrainer(BaseTrainer):
@@ -58,11 +60,19 @@ class MuZeroTrainer(BaseTrainer):
         if config.multi_process:
             self.agent_network.share_memory()
 
-        # 2. Initialize Action Selector (MCTS)
+        # 2. Initialize Action Selector
         inner_selector = CategoricalSelector()
         self.action_selector = TemperatureSelector(
             inner_selector=inner_selector,
-            schedule_config=config.temperature_schedule,
+            schedule=create_schedule(config.temperature_schedule),
+            use_training_steps=config.temperature_schedule.with_training_steps,
+        )
+
+        # 3. Initialize Search Engine
+        from search.factory import SearchBackendFactory
+
+        self.search_engine = SearchBackendFactory.create(
+            config, device=device, num_actions=self.num_actions
         )
 
         # 3. The Facts (Replay Buffer)
@@ -114,12 +124,25 @@ class MuZeroTrainer(BaseTrainer):
             self.action_selector,
             self.buffer,
             config.game.num_players,
-            config,
             device,
             self.name,
         )
-        self.actor_cls = get_actor_class(env, config)
-        self.executor.launch(self.actor_cls, worker_args, num_workers)
+        worker_kwargs = {
+            "search_engine": self.search_engine,
+            "record_video": config.record_video,
+            "record_video_interval": config.record_video_interval,
+            "compilation_enabled": config.compilation.enabled,
+            "compilation_mode": config.compilation.mode,
+            "compilation_fullgraph": config.compilation.fullgraph,
+        }
+        if config.num_envs_per_worker > 1:
+            worker_kwargs["num_envs"] = config.num_envs_per_worker
+            worker_kwargs["num_puffer_workers"] = getattr(
+                config, "num_puffer_workers", 2
+            )
+
+        self.actor_cls = get_actor_class(env, config.num_envs_per_worker)
+        self.executor.launch(self.actor_cls, worker_args, num_workers, **worker_kwargs)
 
         # 6. Compile network for the learner (main process)
         if config.compilation.enabled:

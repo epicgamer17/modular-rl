@@ -7,7 +7,7 @@ from search.min_max_stats import MinMaxStats
 
 class PruningMethod(ABC):
     @abstractmethod
-    def initialize(self, root: Any, config: Any) -> Any:
+    def initialize(self, root: Any) -> Any:
         """
         Initializes the pruning state at the beginning of a search.
         Returns the initial state object.
@@ -19,7 +19,6 @@ class PruningMethod(ABC):
         self,
         root: Any,
         state: Any,
-        config: Any,
         min_max_stats: MinMaxStats,
         current_sim_idx: int,
     ) -> Tuple[Optional[List[int]], Any]:
@@ -40,14 +39,13 @@ class NoPruning(PruningMethod):
     Does not prune any children; allows all actions at every step.
     """
 
-    def initialize(self, root: Any, config: Any) -> Any:
+    def initialize(self, root: Any) -> Any:
         return None
 
     def step(
         self,
         root: Any,
         state: Any,
-        config: Any,
         min_max_stats: MinMaxStats,
         current_sim_idx: int,
     ) -> Tuple[Optional[List[int]], Any]:
@@ -61,7 +59,12 @@ class SequentialHalvingPruning(PruningMethod):
     Only allows the 'surviving' candidates to be selected during simulations.
     """
 
-    def initialize(self, node: Any, config: Any) -> Any:
+    def __init__(self, num_simulations: int, gumbel_cvisit: int, gumbel_cscale: float):
+        self.num_simulations = num_simulations
+        self.gumbel_cvisit = gumbel_cvisit
+        self.gumbel_cscale = gumbel_cscale
+
+    def initialize(self, node: Any) -> Any:
         if getattr(node, "child_priors", None) is not None:
             candidates = torch.nonzero(node.child_priors > 0).flatten().tolist()
         else:
@@ -72,7 +75,7 @@ class SequentialHalvingPruning(PruningMethod):
 
         # Calculate first round budget
         sims_this_round = self._calc_sims_this_round(
-            m, len(candidates), config.num_simulations, 0
+            m, len(candidates), self.num_simulations, 0
         )
 
         return {
@@ -85,7 +88,6 @@ class SequentialHalvingPruning(PruningMethod):
         self,
         node: Any,
         state: Any,
-        config: Any,
         min_max_stats: MinMaxStats,
         current_sim_idx: int,
     ) -> Tuple[Optional[List[int]], Any]:
@@ -97,14 +99,14 @@ class SequentialHalvingPruning(PruningMethod):
         # If budget for the previous round is exhausted, we prune
         if sims_left <= 0:
             # Phase complete, eliminate
-            survivors = self._eliminate(node, survivors, config, min_max_stats)
+            survivors = self._eliminate(node, survivors, min_max_stats)
 
             # Calculate next budget
             sims_used_so_far = (
                 current_sim_idx  # we are about to run this simulation index
             )
             sims_this_round = self._calc_sims_this_round(
-                m_initial, len(survivors), config.num_simulations, sims_used_so_far
+                m_initial, len(survivors), self.num_simulations, sims_used_so_far
             )
             sims_left = sims_this_round
 
@@ -138,7 +140,7 @@ class SequentialHalvingPruning(PruningMethod):
 
         return int(sims_this_round)
 
-    def _eliminate(self, node, survivors, config, min_max_stats):
+    def _eliminate(self, node, survivors, min_max_stats):
         # Sort and pick top half
         def sort_by_score(action):
             child = node.get_child(action)
@@ -152,7 +154,7 @@ class SequentialHalvingPruning(PruningMethod):
 
             # Replicate sigma logic
             # sigma = (cvisit + max_visits) * cscale * q
-            sigma = (config.gumbel_cvisit + max_visits) * config.gumbel_cscale * q_value
+            sigma = (self.gumbel_cvisit + max_visits) * self.gumbel_cscale * q_value
 
             # score = log(prior) + sigma
             # Ensure prior > 0
@@ -188,7 +190,7 @@ class AlphaBetaPruning(PruningMethod):
     Assumes Negamax value structure (values flip sign between layers).
     """
 
-    def initialize(self, root: Any, config: Any) -> Any:
+    def initialize(self, root: Any) -> Any:
         # Initial bounds: (-inf, +inf)
         return {"alpha": -float("inf"), "beta": float("inf")}
 
@@ -196,7 +198,6 @@ class AlphaBetaPruning(PruningMethod):
         self,
         node: Any,
         state: Any,
-        config: Any,
         min_max_stats: MinMaxStats,
         current_sim_idx: int,
     ) -> Tuple[Optional[List[int]], Any]:

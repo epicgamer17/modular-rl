@@ -11,7 +11,6 @@ from agents.action_selectors.policy_sources import (
     NetworkPolicySource,
     SearchPolicySource,
 )
-from configs.base import Config
 from replay_buffers.modular_buffer import ModularReplayBuffer
 from modules.agent_nets.modular import ModularAgentNetwork
 from utils.wrappers import wrap_recording
@@ -29,14 +28,20 @@ class BaseActor(ABC):
         env_factory: Callable[[], Any],
         agent_network: ModularAgentNetwork,
         action_selector: BaseActionSelector,
-        replay_buffer: ModularReplayBuffer,
-        num_players: Optional[int] = None,
-        config: Optional[Any] = None,
-        device: Optional[torch.device] = None,
+        replay_buffer: Optional[ModularReplayBuffer],
+        num_players: int,
+        device: torch.device,
         name: str = "agent",
         *,
         worker_id: int = 0,
         policy_source: Optional[BasePolicySource] = None,
+        # Explicit search/compilation/video args
+        search_engine: Optional[Any] = None,
+        record_video: bool = False,
+        record_video_interval: int = 1000,
+        compilation_enabled: bool = False,
+        compilation_mode: str = "default",
+        compilation_fullgraph: bool = False,
     ):
         """
         Initializes the BaseActor.
@@ -51,35 +56,29 @@ class BaseActor(ABC):
         self.agent_network = agent_network
         self.selector = action_selector
         self.replay_buffer = replay_buffer
-        self.config = config
         self.device = device or torch.device("cpu")
         self.name = name
         self.worker_id = worker_id
         self.env = env_factory()
+        self.num_players = num_players
+
+        # Specific attributes
+        self.record_video = record_video
+        self.record_video_interval = record_video_interval
+        self.compilation_enabled = compilation_enabled
+        self.compilation_mode = compilation_mode
+        self.compilation_fullgraph = compilation_fullgraph
 
         # Initialize PolicySource
         if policy_source is not None:
             self.policy_source = policy_source
         else:
-            use_search = hasattr(config, "search_backend") and getattr(
-                config, "search_enabled", False
-            )
-
-            if use_search:
-                from search.factory import SearchBackendFactory
-
-                search_engine = SearchBackendFactory.create(config)
+            if search_engine is not None:
                 self.policy_source = SearchPolicySource(
                     search_engine, self.agent_network
                 )
             else:
                 self.policy_source = NetworkPolicySource(self.agent_network)
-
-        # Determine num_players if not provided
-        if num_players is not None:
-            self.num_players = num_players
-        else:
-            self.num_players = self._detect_num_players()
 
         # State for step-level collection
         self._state = None
@@ -112,24 +111,18 @@ class BaseActor(ABC):
         """Re-initializes the environment."""
         self.env = self.env_factory()
 
-        # Wrap with RecordVideo if enabled in config and we are the first worker
-        if (
-            self.config is not None
-            and hasattr(self.config, "record_video")
-            and self.config.record_video
-            and self.worker_id == 0
-        ):
-            interval = getattr(self.config, "record_video_interval", 1000)
+        # Wrap with RecordVideo if enabled and we are the first worker
+        if self.record_video and self.worker_id == 0:
             self.env = wrap_recording(
                 self.env,
                 video_folder=f"videos/{self.name}",
-                episode_trigger=lambda ep_id: ep_id % interval == 0,
+                episode_trigger=lambda ep_id: ep_id % self.record_video_interval == 0,
             )
 
-        if self.config.compilation.enabled:
+        if self.compilation_enabled:
             self.agent_network.compile(
-                mode=self.config.compilation.mode,
-                fullgraph=self.config.compilation.fullgraph,
+                mode=self.compilation_mode,
+                fullgraph=self.compilation_fullgraph,
             )
 
         self._done = True
@@ -400,19 +393,19 @@ class BaseActor(ABC):
         self.selector.update_parameters(params_dict)
 
 
-def get_actor_class(env: Any, config: Optional[Any] = None) -> type[BaseActor]:
+def get_actor_class(env: Any, num_envs_per_worker: int = 1) -> type[BaseActor]:
     """
     Determines the appropriate actor class for a given environment instance.
 
     Args:
         env: An environment instance.
-        config: Optional configuration object to detect vectorized execution.
+        num_envs_per_worker: Number of environments per worker (detects vectorized execution).
 
     Returns:
         The actor class (GymPufferActor, PettingZooPufferActor, GymActor, or PettingZooActor).
     """
     # 1. Check for Vectorized Execution (Fat Workers)
-    if config.num_envs_per_worker > 1:
+    if num_envs_per_worker > 1:
         from agents.workers.puffer_actor import GymPufferActor, PettingZooPufferActor
 
         # Detect PettingZoo for Puffer
