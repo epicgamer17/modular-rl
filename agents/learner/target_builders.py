@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Any, TYPE_CHECKING
 import torch
 import torch.nn as nn
 from torch import Tensor
+
 if TYPE_CHECKING:
     from agents.learner.losses.loss_pipeline import LossPipeline
 
@@ -346,26 +347,21 @@ class SequenceMaskBuilder(BaseTargetBuilder):
         B, T = current_targets["actions"].shape[:2]
         device = current_targets["actions"].device
 
-        base_mask = batch.get(
-            "is_same_game", torch.ones((B, T), device=device, dtype=torch.bool)
-        )
-
-        current_targets["value_mask"] = base_mask.clone()
-        current_targets["masks"] = base_mask.clone()
-        current_targets["policy_mask"] = batch.get(
-            "has_valid_obs_mask", base_mask
-        ).clone()
+        current_targets["value_mask"] = batch["is_same_game"].clone()
+        current_targets["masks"] = batch["is_same_game"].clone()
+        current_targets["policy_mask"] = batch["has_valid_obs_mask"].clone()
+        # no policy loss on terminal states
+        current_targets["policy_mask"] &= ~batch["dones"]
 
         # Rewards are transitions; root (t=0) does not get a reward prediction
-        reward_mask = base_mask.clone()
-        reward_mask[:, 0] = False
-        current_targets["reward_mask"] = reward_mask
+        current_targets["reward_mask"] = batch["is_same_game"].clone()
+        current_targets["reward_mask"][:, 0] = False
 
-        # To-Play is state-aligned, but we might not want loss on the root if the representation doesn't predict it
-        to_play_mask = batch.get("has_valid_obs_mask", base_mask).clone()
-        to_play_mask[:, 0] = False
-        to_play_mask &= reward_mask  # Cap at terminal states
-        current_targets["to_play_mask"] = to_play_mask
+        # To-Play is state-aligned, but we might not want loss on the root
+        # Prediction and loss is valid on terminal observations (whose turn it ended/was)
+        # But masked out post-terminal
+        current_targets["to_play_mask"] = batch["is_same_game"].clone()
+        current_targets["to_play_mask"][:, 0] = False
 
 
 class SequenceInfrastructureBuilder(BaseTargetBuilder):
@@ -448,7 +444,6 @@ class LatentConsistencyBuilder(BaseTargetBuilder):
         current_targets["consistency_targets"] = consistency_targets
 
 
-
 class TargetFormatter(BaseTargetBuilder):
     """
     Explicitly formats target keys using their respective representations.
@@ -476,4 +471,6 @@ class TargetFormatter(BaseTargetBuilder):
                 # Use the representation's native bridge
                 # Note: format_target is expected to be an idempotent operation or
                 # handle correctly if multiple builders target the same key.
-                current_targets[key] = rep.format_target(current_targets, target_key=key)
+                current_targets[key] = rep.format_target(
+                    current_targets, target_key=key
+                )
