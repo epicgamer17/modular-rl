@@ -78,6 +78,7 @@ class UniversalLearner:
         clipnorm: Optional[float] = None,
         gradient_accumulation_steps: int = 1,
         max_grad_norm: Optional[float] = None,
+        shape_validator: Optional[ShapeValidator] = None,
     ):
         self.agent_network = agent_network
         self.device = device
@@ -90,6 +91,7 @@ class UniversalLearner:
         self.clipnorm = clipnorm
         self.gradient_accumulation_steps = gradient_accumulation_steps
         self.max_grad_norm = max_grad_norm
+        self.shape_validator = shape_validator
 
         # Normalize optimizers and schedulers into dictionaries
         if isinstance(optimizer, dict):
@@ -226,7 +228,9 @@ class UniversalLearner:
         4. Priories
         """
         # 1. Predictions
-        predictions = self.agent_network.learner_inference(batch)
+        predictions = self.agent_network.learner_inference(
+            batch, shape_validator=self.shape_validator
+        )
 
         # 2. Targets (Strict Delegation)
         # The TargetBuilder is the ONLY source of truth for the LossPipeline.

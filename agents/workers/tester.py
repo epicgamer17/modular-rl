@@ -24,19 +24,27 @@ class NetworkAgent:
         agent_network: ModularAgentNetwork,
         action_selector: BaseActionSelector,
         device: torch.device,
+        input_shape: Tuple[int, ...],
+        num_actions: int,
         search_engine: Optional[Any] = None,
     ):
         self.name = name
         self.agent_network = agent_network
         self.action_selector = action_selector
         self.device = device
+        self.input_shape = input_shape
+        self.num_actions = num_actions
         self.actor_state = None
 
         # Initialize PolicySource
         if search_engine is not None:
-            self.policy_source = SearchPolicySource(search_engine, self.agent_network)
+            self.policy_source = SearchPolicySource(
+                search_engine, self.agent_network, self.input_shape, self.num_actions
+            )
         else:
-            self.policy_source = NetworkPolicySource(self.agent_network)
+            self.policy_source = NetworkPolicySource(
+                self.agent_network, self.input_shape
+            )
 
     def predict(self, observation, info, *args, **kwargs):
         """Returns the observation unchanged, to be processed by select_actions."""
@@ -49,7 +57,7 @@ class NetworkAgent:
             obs_tensor = torch.as_tensor(
                 prediction, dtype=torch.float32, device=self.device
             )
-            if obs_tensor.dim() == 1:
+            if obs_tensor.dim() == len(self.input_shape):
                 obs_tensor = obs_tensor.unsqueeze(0)
 
             # Perform inference via PolicySource
@@ -270,6 +278,8 @@ class Tester:
         replay_buffer: Optional[ModularReplayBuffer],
         num_players: int,
         device: torch.device,
+        input_shape: Tuple[int, ...],
+        num_actions: int,
         name: str = "tester",
         test_types: Optional[List[BaseTestType]] = None,
         *,
@@ -286,6 +296,8 @@ class Tester:
         self.replay_buffer = replay_buffer
         self.num_players = num_players
         self.device = device
+        self.input_shape = input_shape
+        self.num_actions = num_actions
         self.name = name
         self.worker_id = worker_id
 
@@ -303,9 +315,11 @@ class Tester:
 
         # Initialize PolicySource
         if search_engine is not None:
-            self.policy_source = SearchPolicySource(search_engine, self.agent_network)
+            self.policy_source = SearchPolicySource(
+                search_engine, self.agent_network, self.input_shape, self.num_actions
+            )
         else:
-            self.policy_source = NetworkPolicySource(self.agent_network)
+            self.policy_source = NetworkPolicySource(self.agent_network, self.input_shape)
 
     def setup(self):
         """Initializes/resets the environment."""
@@ -439,6 +453,8 @@ class TestFactory:
         action_selector: BaseActionSelector,
         num_players: int,
         device: torch.device,
+        input_shape: Tuple[int, ...],
+        num_actions: int,
         name: str = "tester",
         test_types: Optional[List[BaseTestType]] = None,
     ) -> Tuple:
@@ -450,6 +466,8 @@ class TestFactory:
             None,  # replay_buffer (Tester doesn't use it)
             num_players,
             device,
+            input_shape,
+            num_actions,
             name,
             test_types,
         )

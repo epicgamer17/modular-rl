@@ -31,6 +31,8 @@ class BaseActor(ABC):
         replay_buffer: Optional[ModularReplayBuffer],
         num_players: int,
         device: torch.device,
+        input_shape: Tuple[int, ...],
+        num_actions: int,
         name: str = "agent",
         *,
         worker_id: int = 0,
@@ -61,6 +63,8 @@ class BaseActor(ABC):
         self.worker_id = worker_id
         self.env = env_factory()
         self.num_players = num_players
+        self.input_shape = input_shape
+        self.num_actions = num_actions
 
         # Specific attributes
         self.record_video = record_video
@@ -75,10 +79,10 @@ class BaseActor(ABC):
         else:
             if search_engine is not None:
                 self.policy_source = SearchPolicySource(
-                    search_engine, self.agent_network
+                    search_engine, self.agent_network, self.input_shape, self.num_actions
                 )
             else:
-                self.policy_source = NetworkPolicySource(self.agent_network)
+                self.policy_source = NetworkPolicySource(self.agent_network, self.input_shape)
 
         # State for step-level collection
         self._state = None
@@ -158,7 +162,7 @@ class BaseActor(ABC):
         )
 
         # Vectorize legal moves: 1D boolean tensor [num_actions]
-        num_actions = self.agent_network.num_actions
+        num_actions = self.num_actions
         mask = torch.zeros(num_actions, dtype=torch.bool, device=self.device)
 
         legal = info.get("legal_moves", [])
@@ -205,8 +209,7 @@ class BaseActor(ABC):
             )
 
             # Determine expected input shape
-            expected_shape = self.agent_network.input_shape
-            if obs_tensor.dim() == len(expected_shape):
+            if obs_tensor.dim() == len(self.input_shape):
                 obs_tensor = obs_tensor.unsqueeze(0)
 
             # Perform inference via PolicySource

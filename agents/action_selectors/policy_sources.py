@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Union, List
+from typing import Any, Dict, Optional, Union, List, Tuple
 import torch
 import time
 import numpy as np
@@ -30,8 +30,9 @@ class NetworkPolicySource(BasePolicySource):
     Policy source that performs a pure forward pass on a neural network.
     """
 
-    def __init__(self, agent_network: BaseAgentNetwork):
+    def __init__(self, agent_network: BaseAgentNetwork, input_shape: Tuple[int, ...]):
         self.agent_network = agent_network
+        self.input_shape = input_shape
 
     def get_inference(
         self, obs: torch.Tensor, info: Dict[str, Any], **kwargs
@@ -39,6 +40,10 @@ class NetworkPolicySource(BasePolicySource):
         """
         Runs obs_inference on the network and converts the result to an InferenceResult.
         """
+        # Ensure batch dimension
+        if obs.dim() == len(self.input_shape):
+            obs = obs.unsqueeze(0)
+            
         output = self.agent_network.obs_inference(obs)
         return InferenceResult.from_inference_output(output)
 
@@ -56,9 +61,13 @@ class SearchPolicySource(BasePolicySource):
         self,
         search_engine: Any,
         agent_network: Optional[BaseAgentNetwork],
+        input_shape: Tuple[int, ...],
+        num_actions: int,
     ):
         self.search = search_engine
         self.agent_network = agent_network
+        self.input_shape = input_shape
+        self.num_actions = num_actions
 
     def get_inference(
         self, obs: torch.Tensor, info: Dict[str, Any], **kwargs
@@ -82,7 +91,7 @@ class SearchPolicySource(BasePolicySource):
         ), "info must contain 'player', or pass to_play as a kwarg"
 
         # MCTSDecorator logic uses run_vectorized if B > 1
-        is_batched = obs.dim() > len(agent_network.input_shape) and obs.shape[0] > 1
+        is_batched = obs.dim() > len(self.input_shape) and obs.shape[0] > 1
 
         start_time = time.time()
 
@@ -152,7 +161,7 @@ class SearchPolicySource(BasePolicySource):
             value = torch.tensor([root_value], device=obs.device, dtype=torch.float32)
 
             # If the input was unsqueezed [1, ...], the output should be [1, A]
-            if obs.dim() > len(agent_network.input_shape):
+            if obs.dim() > len(self.input_shape):
                 probs = probs.unsqueeze(0)
                 # value is already [1] which matches [B]
                 target_policies_out = target_policy.unsqueeze(0).to(obs.device)

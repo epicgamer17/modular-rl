@@ -19,6 +19,7 @@ def build_supervised_loss_pipeline(
     num_actions: int,
     policy_loss_function: Any,
     policy_loss_factor: float = 1.0,
+    shape_validator: Optional[Any] = None,
 ):
     # Extract representation from policy head
     pol_rep = agent_network.components["policy_head"].representation
@@ -35,6 +36,7 @@ def build_supervised_loss_pipeline(
         num_actions=num_actions,
         unroll_steps=0,  # SL is single-step
         representations={"policies": pol_rep},
+        shape_validator=shape_validator,
     )
 
 

@@ -111,6 +111,8 @@ class BaseTrainer:
             action_selector=self.action_selector,
             num_players=self.num_players,
             device=torch.device("cpu"),
+            input_shape=self.obs_dim,
+            num_actions=self.num_actions,
             name=f"{self.name}_tester",
             test_types=test_types,
         )

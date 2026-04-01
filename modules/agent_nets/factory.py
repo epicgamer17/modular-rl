@@ -42,8 +42,6 @@ def build_modular_agent_network(
 
     # 2. Instantiate the lean ModularAgentNetwork container
     return ModularAgentNetwork(
-        input_shape=input_shape,
-        num_actions=num_actions,
         components=components,
         **metadata,
         **kwargs,

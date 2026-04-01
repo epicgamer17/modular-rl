@@ -361,6 +361,15 @@ class NFSPTrainer(BaseTrainer):
             unroll_steps=0,  # NFSP RL is DQ(N)
         )
 
+        from agents.learner.losses.shape_validator import ShapeValidator
+
+        rl_shape_validator = ShapeValidator(
+            minibatch_size=rl_config.minibatch_size,
+            num_actions=self.num_actions,
+            unroll_steps=0,
+            atom_size=getattr(rl_config, "atom_size", 1),
+        )
+
         self.rl_learner = UniversalLearner(
             agent_network=self.br_agent_network,
             device=device,
@@ -371,6 +380,7 @@ class NFSPTrainer(BaseTrainer):
             loss_pipeline=rl_loss_pipeline,
             optimizer=rl_optimizer,
             lr_scheduler=rl_scheduler,
+            shape_validator=rl_shape_validator,
             clipnorm=getattr(rl_config, "clipnorm", None),
             gradient_accumulation_steps=getattr(
                 rl_config, "gradient_accumulation_steps", 1
@@ -418,6 +428,12 @@ class NFSPTrainer(BaseTrainer):
             unroll_steps=0,
         )
 
+        sl_shape_validator = ShapeValidator(
+            minibatch_size=sl_config.minibatch_size,
+            num_actions=self.num_actions,
+            unroll_steps=0,
+        )
+
         # SL uses PassThroughTargetBuilder for target_policies -> policies mapping if needed,
         # or just keeping target_policies
         sl_target_builder = PassThroughTargetBuilder(["target_policies"])
@@ -432,6 +448,7 @@ class NFSPTrainer(BaseTrainer):
             loss_pipeline=sl_loss_pipeline,
             optimizer=sl_optimizer,
             lr_scheduler=sl_scheduler,
+            shape_validator=sl_shape_validator,
             clipnorm=getattr(sl_config, "clipnorm", None),
             gradient_accumulation_steps=getattr(
                 sl_config, "gradient_accumulation_steps", 1
@@ -459,6 +476,8 @@ class NFSPTrainer(BaseTrainer):
             None,  # replay buffer (trainer stores transitions)
             self.num_players,
             device,
+            self.obs_dim,
+            self.num_actions,
             self.name,
             getattr(self.config, "anticipatory_param", 0.1),
         )

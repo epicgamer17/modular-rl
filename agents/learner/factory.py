@@ -32,7 +32,10 @@ if TYPE_CHECKING:
 
 
 def build_loss_pipeline(
-    config: Any, agent_network: ModularAgentNetwork, device: torch.device
+    config: Any,
+    agent_network: ModularAgentNetwork,
+    device: torch.device,
+    shape_validator: Optional[ShapeValidator] = None,
 ) -> LossPipeline:
     """
     Configures the loss pipeline based on the agent configuration.
@@ -58,6 +61,7 @@ def build_loss_pipeline(
             minibatch_size=config.minibatch_size,
             num_actions=agent_network.num_actions,
             atom_size=getattr(config, "atom_size", 1),
+            shape_validator=shape_validator,
         )
 
     elif agent_type == "supervised":
@@ -68,6 +72,7 @@ def build_loss_pipeline(
             device=device,
             minibatch_size=config.minibatch_size,
             num_actions=agent_network.num_actions,
+            shape_validator=shape_validator,
         )
 
     raise ValueError(f"Unknown agent type: {agent_type}")
@@ -100,6 +105,16 @@ def build_universal_learner(
     Returns:
         Constructed UniversalLearner instance.
     """
+    from agents.learner.losses.shape_validator import ShapeValidator
+
+    # 0. Instantiate ShapeValidator externally
+    shape_validator = ShapeValidator(
+        minibatch_size=config.minibatch_size,
+        num_actions=agent_network.num_actions,
+        unroll_steps=getattr(config, "unroll_steps", 0),
+        atom_size=getattr(config, "atom_size", 1),
+        support_range=getattr(config, "support_range", None),
+    )
 
     callbacks = []
     optimizers = {}
@@ -174,10 +189,13 @@ def build_universal_learner(
         num_actions=agent_network.num_actions,
         observation_dimensions=agent_network.input_shape,
         observation_dtype=observation_dtype,
-        loss_pipeline=build_loss_pipeline(config, agent_network, device),
+        loss_pipeline=build_loss_pipeline(
+            config, agent_network, device, shape_validator=shape_validator
+        ),
         optimizer=optimizers,
         lr_scheduler=lr_schedulers,
         callbacks=callbacks,
+        shape_validator=shape_validator,
         clipnorm=getattr(config, "clipnorm", None),
         gradient_accumulation_steps=getattr(config, "gradient_accumulation_steps", 1),
         max_grad_norm=getattr(config, "max_grad_norm", None),

@@ -24,17 +24,21 @@ class LossPipeline:
         atom_size: int = 1,
         support_range: Optional[int] = None,
         representations: Optional[Dict[str, Any]] = None,
+        shape_validator: Optional[ShapeValidator] = None,
     ):
         self.modules = modules or []
         self.priority_computer = priority_computer or NullPriorityComputer()
         self.representations = representations or {}
-        self.shape_validator = ShapeValidator(
-            minibatch_size=minibatch_size,
-            unroll_steps=unroll_steps,
-            num_actions=num_actions,
-            atom_size=atom_size,
-            support_range=support_range,
-        )
+        if shape_validator is not None:
+            self.shape_validator = shape_validator
+        else:
+            self.shape_validator = ShapeValidator(
+                minibatch_size=minibatch_size,
+                unroll_steps=unroll_steps,
+                num_actions=num_actions,
+                atom_size=atom_size,
+                support_range=support_range,
+            )
 
     def validate_dependencies(
         self, network_output_keys: set[str], target_keys: set[str]

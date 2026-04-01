@@ -19,6 +19,7 @@ def build_rainbow_loss_pipeline(
     minibatch_size: int,
     atom_size: int = 1,
     loss_function: Any = None,
+    shape_validator: Optional[Any] = None,
 ):
     representation = None
     if (
@@ -46,6 +47,7 @@ def build_rainbow_loss_pipeline(
         representations={td_loss_module.pred_key: representation}
         if representation
         else None,
+        shape_validator=shape_validator,
     )
 
 

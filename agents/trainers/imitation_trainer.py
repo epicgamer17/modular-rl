@@ -95,11 +95,20 @@ class ImitationTrainer(BaseTrainer):
             loss_fn=config.policy_loss_function,
             loss_factor=getattr(config, "policy_loss_factor", 1.0),
         )
+        from agents.learner.losses.shape_validator import ShapeValidator
+
+        shape_validator = ShapeValidator(
+            minibatch_size=config.minibatch_size,
+            num_actions=self.num_actions,
+            unroll_steps=0,
+        )
+
         loss_pipeline = LossPipeline(
             modules=[loss_module],
             minibatch_size=config.minibatch_size,
             num_actions=self.num_actions,
             unroll_steps=0,
+            shape_validator=shape_validator,
         )
         loss_pipeline.validate_dependencies(
             network_output_keys={"policies"},
@@ -116,6 +125,7 @@ class ImitationTrainer(BaseTrainer):
             loss_pipeline=loss_pipeline,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
+            shape_validator=shape_validator,
             clipnorm=getattr(config, "clipnorm", None),
             gradient_accumulation_steps=getattr(config, "gradient_accumulation_steps", 1),
             max_grad_norm=getattr(config, "max_grad_norm", None),
@@ -136,6 +146,8 @@ class ImitationTrainer(BaseTrainer):
             config.game.num_players,
             device,
             self.name,
+            self.obs_dim,
+            self.num_actions,
         )
         worker_kwargs = {
             "record_video": getattr(config, "record_video", False),

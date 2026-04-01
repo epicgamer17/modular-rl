@@ -15,9 +15,9 @@ class BaseAgentNetwork(nn.Module, ABC):
 
     def __init__(self):
         super().__init__()
-        # These will be set by subclasses
-        self.input_shape: Optional[Tuple[int, ...]] = None
-        self.num_actions: Optional[int] = None
+        # Note: input_shape and num_actions are no longer stored here to encourage
+        # modularity. Components (Heads, Backbones) should manage their own shapes.
+        # Callers (ActionSelectors, Actors) should manage batching.
 
     def initialize(
         self, initializer: Optional[Union[Callable[[Tensor], None], str, Dict[str, float]]] = None
@@ -112,6 +112,8 @@ class BaseAgentNetwork(nn.Module, ABC):
     def compile(self, mode: str = "default", fullgraph: bool = False) -> None:
         """Compiles the inference methods for performance gains on supported platforms."""
         # Check if MPS (Mac) is active. MPS currently doesn't support torch.compile.
+        # Contract: obs is ALWAYS expected to be batched [B, ...]
+        # Validation and unsqueezing now happen in the ActionSelector or Actor.
         if self.device.type == "mps":
             print("Skipping torch.compile on Apple Silicon (MPS).")
             return

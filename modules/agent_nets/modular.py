@@ -29,25 +29,18 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
     def __init__(
         self,
-        input_shape: Tuple[int, ...],
-        num_actions: int,
         components: Dict[str, nn.Module],
-        stochastic: bool = False,
-        unroll_steps: int = 0,
-        minibatch_size: int = 1,
-        atom_size: int = 1,
-        support_range: Optional[int] = None,
-        **kwargs,
+        **kwargs: Any,
     ):
+        """
+        Initializes the ModularAgentNetwork.
+
+        Args:
+            components: Dictionary of sub-modules (e.g., 'backbone', 'policy_head').
+            **kwargs: Additional metadata (ignored if no longer needed).
+        """
         super().__init__()
-        self.input_shape = input_shape
-        self.num_actions = num_actions
         self.components = nn.ModuleDict(components)
-        self.stochastic = stochastic
-        self.unroll_steps = unroll_steps
-        self.minibatch_size = minibatch_size
-        self.atom_size = atom_size
-        self.support_range = support_range
 
     @property
     def device(self) -> torch.device:
@@ -70,9 +63,6 @@ class ModularAgentNetwork(BaseAgentNetwork):
         """
         if not torch.is_tensor(obs):
             obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-
-        if obs.dim() == len(self.input_shape):
-            obs = obs.unsqueeze(0)
 
         # ----------------------------------------
         # MuZero Logic
@@ -146,7 +136,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 "Network components don't match any known inference pipeline."
             )
 
-    def learner_inference(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+    def learner_inference(
+        self, batch: Dict[str, Any], shape_validator: Optional[ShapeValidator] = None
+    ) -> Dict[str, Any]:
         """
         Universal Learner API: routes batch data appropriately based on components.
         """
@@ -170,7 +162,8 @@ class ModularAgentNetwork(BaseAgentNetwork):
             head_state = wm_output.head_state
 
             encoder_inputs = None
-            if self.stochastic and target_observations is not None:
+            stochastic = getattr(self.components["world_model"], "stochastic", False)
+            if stochastic and target_observations is not None:
                 encoder_inputs = torch.cat(
                     [target_observations[:, :-1], target_observations[:, 1:]], dim=2
                 )
@@ -192,6 +185,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
             pred_features = self.components["prediction_backbone"](flat_latents)
             raw_values, _, _ = self.components["value_head"](pred_features)
+            raw_policies, _, _ = self.components["policy_head"](raw_values if "prediction_backbone" not in self.components else pred_features)
+            # Note: The above logic for policy_head input depends on the architecture. 
+            # In MuZero, policy and value heads often share the same backbone features.
             raw_policies, _, _ = self.components["policy_head"](pred_features)
 
             raw_values = raw_values.view(B, T_plus_1, -1)
@@ -203,18 +199,14 @@ class ModularAgentNetwork(BaseAgentNetwork):
             chance_encoder_embeddings = None
 
             # --- PAD TRANSITION OUTPUTS (Rewards/Chance) ---
-            # MuZero predicts rewards for transitions (k=1..K).
-            # We pad index 0 with zeros to satisfy the Universal [B, K+1, ...] contract.
             dummy_reward = torch.zeros(
-                B,
-                1,
-                *physics_output.rewards.shape[2:],
+                B, 1, *physics_output.rewards.shape[2:],
                 device=self.device,
                 dtype=physics_output.rewards.dtype,
             )
             padded_rewards = torch.cat([dummy_reward, physics_output.rewards], dim=1)
 
-            if self.stochastic and physics_output.latents_afterstates is not None:
+            if stochastic and physics_output.latents_afterstates is not None:
                 latents_afterstates = physics_output.latents_afterstates
                 stacked_backbone_features = physics_output.afterstate_backbone_features
                 B_as, T_as = stacked_backbone_features.shape[:2]  # T_as is K
@@ -225,12 +217,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 raw_chance_values, _, _ = self.components["afterstate_value_head"](
                     flat_backbone
                 )
-                # Stochastic Values: [B, K, atoms] -> [B, K+1, atoms]
                 stochastic_chance_values = raw_chance_values.view(B_as, T_as, -1)
                 dummy_chance_values = torch.zeros(
-                    B_as,
-                    1,
-                    *stochastic_chance_values.shape[2:],
+                    B_as, 1, *stochastic_chance_values.shape[2:],
                     device=self.device,
                     dtype=stochastic_chance_values.dtype,
                 )
@@ -238,12 +227,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
                     [dummy_chance_values, stochastic_chance_values], dim=1
                 )
 
-                # Stochastic Chance Logits: [B, K, num_chance] -> [B, K+1, num_chance]
                 stochastic_chance_logits = physics_output.chance_logits
                 dummy_chance_logits = torch.zeros(
-                    B_as,
-                    1,
-                    *stochastic_chance_logits.shape[2:],
+                    B_as, 1, *stochastic_chance_logits.shape[2:],
                     device=self.device,
                     dtype=stochastic_chance_logits.dtype,
                 )
@@ -251,12 +237,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
                     [dummy_chance_logits, stochastic_chance_logits], dim=1
                 )
 
-                # Stochastic Chance Encoder Embeddings: [B, K, dim] -> [B, K+1, dim]
                 chance_encoder_embeddings = physics_output.chance_encoder_embeddings
                 dummy_chance_embeddings = torch.zeros(
-                    B_as,
-                    1,
-                    *chance_encoder_embeddings.shape[2:],
+                    B_as, 1, *chance_encoder_embeddings.shape[2:],
                     device=self.device,
                     dtype=chance_encoder_embeddings.dtype,
                 )
@@ -272,31 +255,15 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 "latents": stacked_latents,
             }
 
-            if self.stochastic and latents_afterstates is not None:
+            if stochastic and latents_afterstates is not None:
                 output["latents_afterstates"] = latents_afterstates
                 output["chance_logits"] = stochastic_chance_logits
                 output["chance_values"] = stochastic_chance_values
                 output["chance_encoder_embeddings"] = chance_encoder_embeddings
 
-            # --- SHAPE VALIDATION ---
-            # MuZero unrolls k steps, so T = k + 1
-            expected_T = self.unroll_steps + 1
-            assert (
-                output["values"].ndim >= 2 and output["values"].shape[1] == expected_T
-            ), f"MuZero values shape mismatch: {output['values'].shape}"
-            assert (
-                output["policies"].ndim >= 3
-                and output["policies"].shape[1] == expected_T
-            ), f"MuZero policies shape mismatch: {output['policies'].shape}"
-
-            # --- STRICT SYSTEM-WIDE VALIDATION ---
-            ShapeValidator(
-                minibatch_size=self.minibatch_size,
-                unroll_steps=self.unroll_steps,
-                num_actions=self.num_actions,
-                atom_size=self.atom_size,
-                support_range=self.support_range,
-            ).validate_predictions(output)
+            # --- VALIDATION ---
+            if shape_validator is not None:
+                shape_validator.validate_predictions(output)
 
             return output
 
@@ -318,25 +285,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 "policies": policy_logits.unsqueeze(1),
             }
 
-            # --- SHAPE VALIDATION ---
-            # PPO is single-step by default in learner_inference
-            assert (
-                output["values"].ndim == 3
-                and output["values"].shape[1] == 1
-                and output["values"].shape[2] == 1
-            )
-            assert (
-                output["policies"].ndim == 3 and output["policies"].shape[1] == 1
-            ), f"PPO policies shape mismatch: {output['policies'].shape}"
-
-            # --- STRICT SYSTEM-WIDE VALIDATION ---
-            ShapeValidator(
-                minibatch_size=self.minibatch_size,
-                unroll_steps=self.unroll_steps,
-                num_actions=self.num_actions,
-                atom_size=self.atom_size,
-                support_range=self.support_range,
-            ).validate_predictions(output)
+            # --- VALIDATION ---
+            if shape_validator is not None:
+                shape_validator.validate_predictions(output)
 
             return output
 
@@ -344,7 +295,6 @@ class ModularAgentNetwork(BaseAgentNetwork):
         # Rainbow DQN Logic
         # ----------------------------------------
         elif "q_head" in self.components:
-            # 1. Online Inference at s_t
             x = self.components["feature_block"](initial_observation)
             Q_logits, _, _ = self.components["q_head"](x)
             q_vals = self.components["q_head"].representation.to_expected_value(
@@ -356,49 +306,25 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 "q_logits": Q_logits.unsqueeze(1),
             }
 
-            # --- SHAPE VALIDATION ---
-            assert (
-                output["q_values"].ndim == 3 and output["q_values"].shape[1] == 1
-            ), f"Rainbow q_values shape mismatch: {output['q_values'].shape}"
-            assert (
-                output["q_logits"].ndim >= 3 and output["q_logits"].shape[1] == 1
-            ), f"Rainbow q_logits shape mismatch: {output['q_logits'].shape}"
-
-            # --- STRICT SYSTEM-WIDE VALIDATION ---
-            ShapeValidator(
-                minibatch_size=self.minibatch_size,
-                unroll_steps=self.unroll_steps,
-                num_actions=self.num_actions,
-                atom_size=self.atom_size,
-                support_range=self.support_range,
-            ).validate_predictions(output)
+            # --- VALIDATION ---
+            if shape_validator is not None:
+                shape_validator.validate_predictions(output)
 
             return output
 
         # ----------------------------------------
         # Supervised/Imitation Logic
         # ----------------------------------------
-        elif "policy_head" in self.components and "value_head" not in self.components:
-            # SL path
+        elif "policy_head" in self.components:
             x = initial_observation
             if "feature_block" in self.components:
                 x = self.components["feature_block"](initial_observation)
             logits, _, _ = self.components["policy_head"](x)
             output = {"policies": logits.unsqueeze(1)}
 
-            # --- SHAPE VALIDATION ---
-            assert (
-                output["policies"].ndim == 3 and output["policies"].shape[1] == 1
-            ), f"Imitation policies shape mismatch: {output['policies'].shape}"
-
-            # --- STRICT SYSTEM-WIDE VALIDATION ---
-            ShapeValidator(
-                minibatch_size=self.minibatch_size,
-                unroll_steps=self.unroll_steps,
-                num_actions=self.num_actions,
-                atom_size=self.atom_size,
-                support_range=self.support_range,
-            ).validate_predictions(output)
+            # --- VALIDATION ---
+            if shape_validator is not None:
+                shape_validator.validate_predictions(output)
 
             return output
 

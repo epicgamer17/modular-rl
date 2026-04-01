@@ -152,6 +152,8 @@ class RainbowTrainer(BaseTrainer):
             self.buffer,
             config.game.num_players,
             device,
+            self.obs_dim,
+            self.num_actions,
             self.name,
         )
         worker_kwargs = {

@@ -63,6 +63,8 @@ class BasePufferActor(BaseActor):
         num_envs: int = 1,
         num_puffer_workers: int = 2,
         worker_id: int = 0,
+        input_shape: Tuple[int, ...] = (0,),
+        num_actions: int = 0,
         policy_source: Optional[BasePolicySource] = None,
         # Explicit search/compilation/video args
         search_engine: Optional[Any] = None,
@@ -80,6 +82,8 @@ class BasePufferActor(BaseActor):
             num_players=num_players,
             device=device,
             name=name,
+            input_shape=input_shape,
+            num_actions=num_actions,
             worker_id=worker_id,
             policy_source=policy_source,
             search_engine=search_engine,
@@ -166,7 +170,7 @@ class BasePufferActor(BaseActor):
                 self._obs, dtype=torch.float32, device=self.device
             )
             # Ensure batch dimension
-            if obs_tensor.dim() == len(self.agent_network.input_shape):
+            if obs_tensor.dim() == len(self.input_shape):
                 obs_tensor = obs_tensor.unsqueeze(0)
 
             # Perform batched inference via PolicySource
@@ -345,7 +349,7 @@ class GymPufferActor(BasePufferActor):
 
     def _extract_batched_info(self, infos: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Ready-to-use vectorized tensors for Gymnasium environments."""
-        num_actions = self.agent_network.num_actions
+        num_actions = self.num_actions
 
         # 1. Vectorize Legal Moves and Players
         mask = torch.zeros(
@@ -403,7 +407,7 @@ class PettingZooPufferActor(BasePufferActor):
 
     def _extract_batched_info(self, infos: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Ready-to-use vectorized tensors for PettingZoo environments."""
-        num_actions = self.agent_network.num_actions
+        num_actions = self.num_actions
 
         mask = torch.zeros(
             (self.num_envs, num_actions), dtype=torch.bool, device=self.device
