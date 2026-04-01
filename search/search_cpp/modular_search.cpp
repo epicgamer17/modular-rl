@@ -149,10 +149,46 @@ int ModularSearch::initialize_root(
     root.set_visits(1);
     root.set_value_sum(root_value);
 
+    std::vector<double> root_priors = policy_priors;
+    if (search_config_.use_dirichlet) {
+        // Sample Dirichlet noise using Gamma distributions.
+        std::gamma_distribution<double> gamma(search_config_.dirichlet_alpha, 1.0);
+        
+        // We only add noise to allowed actions if specified, or all actions otherwise.
+        if (!allowed_actions.empty()) {
+            std::vector<double> noise(allowed_actions.size());
+            double noise_sum = 0.0;
+            for (std::size_t i = 0; i < allowed_actions.size(); ++i) {
+                noise[i] = gamma(rng_);
+                noise_sum += noise[i];
+            }
+            if (noise_sum > 1e-10) {
+                const double frac = search_config_.dirichlet_fraction;
+                for (std::size_t i = 0; i < allowed_actions.size(); ++i) {
+                    const int action = allowed_actions[i];
+                    root_priors[action] = (1.0 - frac) * root_priors[action] + frac * (noise[i] / noise_sum);
+                }
+            }
+        } else {
+            std::vector<double> noise(root_priors.size());
+            double noise_sum = 0.0;
+            for (std::size_t i = 0; i < root_priors.size(); ++i) {
+                noise[i] = gamma(rng_);
+                noise_sum += noise[i];
+            }
+            if (noise_sum > 1e-10) {
+                const double frac = search_config_.dirichlet_fraction;
+                for (std::size_t i = 0; i < root_priors.size(); ++i) {
+                    root_priors[i] = (1.0 - frac) * root_priors[i] + frac * (noise[i] / noise_sum);
+                }
+            }
+        }
+    }
+
     root.expand(
         to_play,
         policy_priors,
-        policy_priors,
+        root_priors,
         allowed_actions,
         0.0,
         root_value);

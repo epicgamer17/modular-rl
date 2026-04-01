@@ -92,9 +92,9 @@ class ModularSearch:
         self.pb_c_base = pb_c_base
         self.stochastic = stochastic
         self.max_search_depth = max_search_depth
-        
-        
-        
+        self.use_virtual_mean = use_virtual_mean
+        self.virtual_loss = virtual_loss
+        self.support_range = support_range
         self.use_dirichlet = use_dirichlet
         self.dirichlet_alpha = dirichlet_alpha
         self.dirichlet_fraction = dirichlet_fraction

@@ -45,7 +45,13 @@ public:
     void set_state_handle(int64_t state_handle);
 
     double value(double bootstrap = 0.0) const;
+    virtual double get_v_mix() = 0;
     bool expanded() const;
+
+    bool has_v_mix_cache() const;
+    double v_mix_cache() const;
+    void set_v_mix_cache(double v_mix_cache);
+    void clear_v_mix_cache();
 
     void set_child_stats_size(std::size_t size);
     const std::vector<double>& child_priors() const;
@@ -76,6 +82,8 @@ private:
     std::vector<double> child_priors_;
     std::vector<double> child_values_;
     std::vector<double> child_visits_;
+    bool has_v_mix_cache_;
+    double v_mix_cache_;
 };
 
 class DecisionNode final : public Node {
@@ -105,18 +113,13 @@ public:
     bool stochastic() const;
     void set_stochastic(bool stochastic);
 
-    bool has_v_mix_cache() const;
-    double v_mix_cache() const;
-    void set_v_mix_cache(double v_mix_cache);
-    void clear_v_mix_cache();
+    double get_v_mix() override;
 
 private:
     std::vector<double> network_policy_;
     double reward_;
     double network_value_;
     bool stochastic_;
-    bool has_v_mix_cache_;
-    double v_mix_cache_;
 };
 
 class ChanceNode final : public Node {
@@ -140,6 +143,8 @@ public:
     double code_probability(int code) const;
     void set_code_probability(int code, double prob);
     void clear_code_probabilities();
+
+    double get_v_mix() override;
 
 private:
     double network_value_;

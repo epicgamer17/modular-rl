@@ -31,6 +31,10 @@ struct SearchConfig {
     double discount_factor = 1.0;
     bool alternating_minimax = false;
     int perspective_player = -1;
+
+    bool use_dirichlet = false;
+    double dirichlet_alpha = 0.3;
+    double dirichlet_fraction = 0.25;
 };
 
 struct LeafBatchRequest {
@@ -141,6 +145,13 @@ public:
     MinMaxStats& mutable_min_max_stats();
     const NodeArena& arena() const;
     NodeArena& mutable_arena();
+
+    bool use_dirichlet() const { return search_config_.use_dirichlet; }
+    void set_use_dirichlet(bool use) { search_config_.use_dirichlet = use; }
+    double dirichlet_alpha() const { return search_config_.dirichlet_alpha; }
+    void set_dirichlet_alpha(double alpha) { search_config_.dirichlet_alpha = alpha; }
+    double dirichlet_fraction() const { return search_config_.dirichlet_fraction; }
+    void set_dirichlet_fraction(double fraction) { search_config_.dirichlet_fraction = fraction; }
 
 private:
     struct UpdateTask {

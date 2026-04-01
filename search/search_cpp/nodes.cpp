@@ -14,7 +14,9 @@ Node::Node(const NodeType node_type, const double prior, const int parent_index)
       to_play_(-1),
       state_handle_(-1),
       prior_(prior),
-      value_sum_(0.0) {}
+      value_sum_(0.0),
+      has_v_mix_cache_(false),
+      v_mix_cache_(0.0) {}
 
 NodeType Node::node_type() const {
     return node_type_;
@@ -103,6 +105,24 @@ bool Node::expanded() const {
     return !child_priors_.empty();
 }
 
+bool Node::has_v_mix_cache() const {
+    return has_v_mix_cache_;
+}
+
+double Node::v_mix_cache() const {
+    return v_mix_cache_;
+}
+
+void Node::set_v_mix_cache(const double v_mix_cache) {
+    v_mix_cache_ = v_mix_cache;
+    has_v_mix_cache_ = true;
+}
+
+void Node::clear_v_mix_cache() {
+    has_v_mix_cache_ = false;
+    v_mix_cache_ = 0.0;
+}
+
 void Node::set_child_stats_size(const std::size_t size) {
     child_priors_.assign(size, 0.0);
     child_values_.assign(size, 0.0);
@@ -174,9 +194,7 @@ DecisionNode::DecisionNode(const double prior, const int parent_index)
     : Node(NodeType::kDecision, prior, parent_index),
       reward_(0.0),
       network_value_(0.0),
-      stochastic_(false),
-      has_v_mix_cache_(false),
-      v_mix_cache_(0.0) {}
+      stochastic_(false) {}
 
 void DecisionNode::expand(
     const int to_play,
@@ -276,22 +294,39 @@ void DecisionNode::set_stochastic(const bool stochastic) {
     stochastic_ = stochastic;
 }
 
-bool DecisionNode::has_v_mix_cache() const {
-    return has_v_mix_cache_;
-}
+double DecisionNode::get_v_mix() {
+    if (has_v_mix_cache()) {
+        return v_mix_cache();
+    }
 
-double DecisionNode::v_mix_cache() const {
-    return v_mix_cache_;
-}
+    const auto& visits = child_visits();
+    double sum_N = std::accumulate(visits.begin(), visits.end(), 0.0);
 
-void DecisionNode::set_v_mix_cache(const double v_mix_cache) {
-    v_mix_cache_ = v_mix_cache;
-    has_v_mix_cache_ = true;
-}
+    double term = 0.0;
+    if (sum_N > 0.0) {
+        const auto& vals = child_values();
+        const auto& priors = network_policy_.empty() ? child_priors() : network_policy_;
+        
+        double p_vis_sum = 0.0;
+        double expected_q_vis = 0.0;
+        
+        for (std::size_t i = 0; i < visits.size(); ++i) {
+            if (visits[i] > 0.0) {
+                p_vis_sum += priors[i];
+                expected_q_vis += priors[i] * vals[i];
+            }
+        }
+        
+        if (p_vis_sum > 0.0) {
+            term = sum_N * (expected_q_vis / p_vis_sum);
+        }
+    }
 
-void DecisionNode::clear_v_mix_cache() {
-    has_v_mix_cache_ = false;
-    v_mix_cache_ = 0.0;
+    // Anchor to raw network value
+    double v_net = network_value_; // Node::value() fallback removed to match current Python philosophy
+    double v_mix = (v_net + term) / (1.0 + sum_N);
+    set_v_mix_cache(v_mix);
+    return v_mix;
 }
 
 ChanceNode::ChanceNode(const double prior, const int parent_index)
@@ -304,6 +339,7 @@ void ChanceNode::expand(
     set_to_play(to_play);
     set_network_value(network_value);
     clear_code_probabilities();
+    clear_v_mix_cache();
 
     set_child_stats_size(code_probs.size());
     mutable_child_priors() = code_probs;
@@ -327,6 +363,7 @@ void ChanceNode::expand_dense(
     set_to_play(to_play);
     set_network_value(network_value);
     clear_code_probabilities();
+    clear_v_mix_cache();
 
     set_child_stats_size(static_cast<std::size_t>(num_codes));
     mutable_child_priors().assign(code_probs, code_probs + num_codes);
@@ -361,6 +398,40 @@ void ChanceNode::set_code_probability(const int code, const double prob) {
 
 void ChanceNode::clear_code_probabilities() {
     code_probs_.clear();
+}
+
+double ChanceNode::get_v_mix() {
+    if (has_v_mix_cache()) {
+        return v_mix_cache();
+    }
+
+    const auto& visits = child_visits();
+    double sum_N = std::accumulate(visits.begin(), visits.end(), 0.0);
+
+    double term = 0.0;
+    if (sum_N > 0.0) {
+        const auto& vals = child_values();
+        const auto& priors = child_priors();
+        
+        double p_vis_sum = 0.0;
+        double expected_q_vis = 0.0;
+        
+        for (std::size_t i = 0; i < visits.size(); ++i) {
+            if (visits[i] > 0.0) {
+                p_vis_sum += priors[i];
+                expected_q_vis += priors[i] * vals[i];
+            }
+        }
+        
+        if (p_vis_sum > 0.0) {
+            term = sum_N * (expected_q_vis / p_vis_sum);
+        }
+    }
+
+    double v_net = network_value_; 
+    double v_mix = (v_net + term) / (1.0 + sum_N);
+    set_v_mix_cache(v_mix);
+    return v_mix;
 }
 
 int NodeArena::create_decision(const double prior, const int parent_index) {

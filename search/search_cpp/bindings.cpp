@@ -110,7 +110,10 @@ PYBIND11_MODULE(search_cpp, m) {
       .def_readwrite("min_max_epsilon", &SearchConfig::min_max_epsilon)
       .def_readwrite("discount_factor", &SearchConfig::discount_factor)
       .def_readwrite("alternating_minimax", &SearchConfig::alternating_minimax)
-      .def_readwrite("perspective_player", &SearchConfig::perspective_player);
+      .def_readwrite("perspective_player", &SearchConfig::perspective_player)
+      .def_readwrite("use_dirichlet", &SearchConfig::use_dirichlet)
+      .def_readwrite("dirichlet_alpha", &SearchConfig::dirichlet_alpha)
+      .def_readwrite("dirichlet_fraction", &SearchConfig::dirichlet_fraction);
 
   py::class_<ScoringConfig>(m, "ScoringConfig")
       .def(py::init<>())
@@ -221,7 +224,12 @@ PYBIND11_MODULE(search_cpp, m) {
       .def_property_readonly("is_decision", &Node::is_decision)
       .def_property_readonly("is_chance", &Node::is_chance)
       .def("value", &Node::value, py::arg("bootstrap") = 0.0)
+      .def("get_v_mix", &Node::get_v_mix)
       .def("expanded", &Node::expanded)
+      .def("has_v_mix_cache", &Node::has_v_mix_cache)
+      .def("v_mix_cache", &Node::v_mix_cache)
+      .def("set_v_mix_cache", &Node::set_v_mix_cache, py::arg("value"))
+      .def("clear_v_mix_cache", &Node::clear_v_mix_cache)
       .def("set_child_stats_size", &Node::set_child_stats_size, py::arg("size"))
       .def("has_child", &Node::has_child, py::arg("key"))
       .def("child_index", &Node::child_index, py::arg("key"))
@@ -234,6 +242,9 @@ PYBIND11_MODULE(search_cpp, m) {
       .def_property_readonly("child_priors", &Node::child_priors)
       .def_property_readonly("child_values", &Node::child_values)
       .def_property_readonly("child_visits", &Node::child_visits)
+      .def_property("mutable_child_priors", &Node::child_priors, [](Node& n, const std::vector<double>& v){ n.mutable_child_priors() = v; })
+      .def_property("mutable_child_values", &Node::child_values, [](Node& n, const std::vector<double>& v){ n.mutable_child_values() = v; })
+      .def_property("mutable_child_visits", &Node::child_visits, [](Node& n, const std::vector<double>& v){ n.mutable_child_visits() = v; })
       .def("__repr__", [](const Node &node) {
         return "<Node index=" + std::to_string(node.index()) + " type=" +
                (node.is_decision() ? std::string("decision")
@@ -252,11 +263,7 @@ PYBIND11_MODULE(search_cpp, m) {
       .def_property("network_value", &DecisionNode::network_value,
                     &DecisionNode::set_network_value)
       .def_property("stochastic", &DecisionNode::stochastic,
-                    &DecisionNode::set_stochastic)
-      .def("has_v_mix_cache", &DecisionNode::has_v_mix_cache)
-      .def("v_mix_cache", &DecisionNode::v_mix_cache)
-      .def("set_v_mix_cache", &DecisionNode::set_v_mix_cache, py::arg("value"))
-      .def("clear_v_mix_cache", &DecisionNode::clear_v_mix_cache);
+                    &DecisionNode::set_stochastic);
 
   py::class_<ChanceNode, Node>(m, "ChanceNode")
       .def(py::init<double, int>(), py::arg("prior") = 0.0,
@@ -807,7 +814,13 @@ PYBIND11_MODULE(search_cpp, m) {
       .def("root_child_values", &ModularSearch::root_child_values)
       .def("root_child_visits", &ModularSearch::root_child_visits)
       .def("select_root_action", &ModularSearch::select_root_action,
-           py::arg("method") = SelectionMethodType::kMaxVisit);
+           py::arg("method") = SelectionMethodType::kMaxVisit)
+      .def_property("use_dirichlet", &ModularSearch::use_dirichlet,
+                    &ModularSearch::set_use_dirichlet)
+      .def_property("dirichlet_alpha", &ModularSearch::dirichlet_alpha,
+                    &ModularSearch::set_dirichlet_alpha)
+      .def_property("dirichlet_fraction", &ModularSearch::dirichlet_fraction,
+                    &ModularSearch::set_dirichlet_fraction);
 
   py::class_<AverageDiscountedReturnBackpropagator>(
       m, "AverageDiscountedReturnBackpropagator")
