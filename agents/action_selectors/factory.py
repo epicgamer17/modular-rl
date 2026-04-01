@@ -5,7 +5,7 @@ from agents.action_selectors.selectors import (
     ArgmaxSelector,
     BaseActionSelector,
 )
-from agents.action_selectors.decorators import PPODecorator, TemperatureSelector
+from agents.action_selectors.decorators import PPODecorator
 
 
 class SelectorFactory:
@@ -18,7 +18,6 @@ class SelectorFactory:
         "argmax": ArgmaxSelector,
         # Decorators
         "ppo_injector": PPODecorator,
-        "temperature": TemperatureSelector,
     }
 
     @classmethod
@@ -75,33 +74,7 @@ class SelectorFactory:
 
             if dec_type == "ppo_injector":
                 selector = PPODecorator(inner_selector=selector)
-            elif dec_type == "temperature":
-                # TemperatureSelector requires a Schedule object
-                schedule_config = None
-                if hasattr(dec_cfg, "temperature_schedule"):
-                    schedule_config = dec_cfg.temperature_schedule
-                elif isinstance(dec_cfg, dict):
-                    schedule_config = dec_cfg.get("temperature_schedule")
-                
-                if schedule_config is None:
-                    schedule_config = dec_kwargs.get("temperature_schedule")
-                
-                if schedule_config is None:
-                     raise ValueError("TemperatureSelector requires 'temperature_schedule' in config.")
-                
-                # Convert dict to ScheduleConfig if necessary
-                from utils.schedule import ScheduleConfig, create_schedule
-                if isinstance(schedule_config, dict):
-                    schedule_config = ScheduleConfig.from_dict(schedule_config)
 
-                # Create the schedule object
-                schedule = create_schedule(schedule_config)
-                
-                selector = TemperatureSelector(
-                    inner_selector=selector,
-                    schedule=schedule,
-                    use_training_steps=schedule_config.with_training_steps
-                )
             else:
                 selector = cls.REGISTRY[dec_type](inner_selector=selector, **dec_kwargs)
 

@@ -28,12 +28,6 @@ class GaussianConfig(OutputStrategyConfig):
         self.max_log_std = d.get("max_log_std", 2.0)
 
 
-class MuZeroSupportConfig(OutputStrategyConfig):
-    def __init__(self, config_dict: dict):
-        super().__init__(config_dict)
-        self.support_range: int = self.parse_field("support_range", 10)
-        self.eps: float = self.parse_field("eps", 0.001)
-
 
 class C51SupportConfig(OutputStrategyConfig):
     def __init__(self, config_dict: dict):
@@ -57,8 +51,6 @@ class OutputStrategyConfigFactory:
             return CategoricalConfig(config_dict)
         elif strategy_type == "gaussian" or strategy_type == "continuous":
             return GaussianConfig(config_dict)
-        elif strategy_type == "muzero":
-            return MuZeroSupportConfig(config_dict)
         elif strategy_type == "c51":
             return C51SupportConfig(config_dict)
         else:

@@ -83,7 +83,6 @@ try:
 
     from modules.models.agent_network import AgentNetwork
     from configs.agents.ppo import PPOConfig
-    from configs.agents.muzero import MuZeroConfig
     from configs.agents.rainbow_dqn import RainbowConfig
 except ImportError as e:
     print(
@@ -93,7 +92,6 @@ except ImportError as e:
 
 AGENT_MAPPING = {
     "ppo": {"config": PPOConfig, "network": AgentNetwork},
-    "muzero": {"config": MuZeroConfig, "network": AgentNetwork},
     "dqn": {"config": RainbowConfig, "network": AgentNetwork},
     "rainbow": {"config": RainbowConfig, "network": AgentNetwork},
 }
@@ -179,8 +177,7 @@ def main():
             name_lower = str(cp_path).lower()
             if "ppo" in name_lower:
                 agent_type = "ppo"
-            elif "muzero" in name_lower:
-                agent_type = "muzero"
+
             elif "dqn" in name_lower or "rainbow" in name_lower:
                 agent_type = "rainbow"
 
@@ -274,7 +271,7 @@ def main():
         dummy_input = torch.randn(1, *args.input_shape)
     else:
         dummy_input = (
-            torch.randn(1, 4) if agent_type != "muzero" else torch.randn(1, 3, 64, 64)
+            torch.randn(1, 4)
         )
 
     try:

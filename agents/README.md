@@ -15,9 +15,6 @@ pip install -e .
 | Agent | File | Type | Status |
 |-------|------|------|--------|
 | Rainbow DQN | `rainbow_dqn.py` | Value-based | ✅ |
-| MuZero | `muzero.py` | Model-based | ✅ |
-| MuZero Actor | `muzero_actor.py` | Distributed | ✅ |
-| MuZero Learner | `muzero_learner.py` | Distributed | ✅ |
 | NFSP | `nfsp.py` | Fictitious self-play | ✅ |
 | PPO | `ppo.py` | Policy gradient | ✅ |
 | Policy Imitation | `policy_imitation.py` | Behavioral cloning | ✅ |
@@ -52,11 +49,10 @@ class BaseAgent:
 
 ## Agent Selection Guide
 
-**Single-player, perfect information**: Rainbow DQN, PPO, MuZero
-**Multi-player, perfect information**: AlphaZero, MuZero with multi-agent wrapper
+**Single-player, perfect information**: Rainbow DQN, PPO
+**Multi-player, perfect information**: AlphaZero (using MCTS wrapper)
 **Imperfect information**: NFSP
 **Continuous control**: PPO
-**Sample efficiency matters**: MuZero (learns model)
 **Training speed matters**: Rainbow DQN (simplest)
 
 ## Usage Examples
@@ -71,16 +67,6 @@ agent = RainbowDQN(RainbowConfig(), CartPoleConfig())
 agent.train(episodes=1000)
 ```
 
-### MuZero
-```python
-from agents.muzero import MuZero
-from configs.base import MuZeroConfig
-from configs.games.tictactoe_config import TicTacToeConfig
-
-agent = MuZero(MuZeroConfig(), TicTacToeConfig())
-agent.train(episodes=500)
-```
-
 ### NFSP (Multi-agent)
 ```python
 from agents.nfsp import NFSP
@@ -90,25 +76,9 @@ agent = NFSP(NFSPConfig(), game_config)
 agent.train(episodes=10000)  # Learns against itself
 ```
 
-## Distributed Training
-
-MuZero supports distributed training via separate actor and learner processes:
-
-```python
-# Actor process
-from agents.muzero_actor import MuZeroActor
-actor = MuZeroActor(config, game_config, replay_buffer)
-actor.run()
-
-# Learner process
-from agents.muzero_learner import MuZeroLearner
-learner = MuZeroLearner(config, replay_buffer)
-learner.train()
-```
 
 ## Implementation Notes
 
 - Agents handle their own network architectures through `modules/`
 - Experience replay is managed by agents using `replay_buffers/`
-- MuZero uses `search/` for MCTS planning
 - Checkpoints include model weights, optimizer state, and training statistics

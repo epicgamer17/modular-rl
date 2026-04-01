@@ -49,32 +49,7 @@ def build_loss_pipeline(
     if agent_type is None:
         raise ValueError("config.agent_type must be explicitly defined.")
 
-    if agent_type == "muzero":
-        from agents.registries.muzero import build_muzero_loss_pipeline
-
-        return build_muzero_loss_pipeline(
-            agent_network=agent_network,
-            device=device,
-            minibatch_size=config.minibatch_size,
-            unroll_steps=config.unroll_steps,
-            num_actions=agent_network.num_actions,
-            atom_size=getattr(config, "atom_size", 1),
-            value_loss_function=config.value_loss_function,
-            value_loss_factor=config.value_loss_factor,
-            policy_loss_function=config.policy_loss_function,
-            policy_loss_factor=config.policy_loss_factor,
-            reward_loss_function=config.reward_loss_function,
-            reward_loss_factor=config.reward_loss_factor,
-            num_players=config.game.num_players,
-            to_play_loss_factor=config.to_play_loss_factor,
-            consistency_loss_factor=config.consistency_loss_factor,
-            stochastic=config.stochastic,
-            chance_q_loss_factor=getattr(config, "chance_q_loss_factor", 0.0),
-            sigma_loss_factor=getattr(config, "sigma_loss_factor", 0.0),
-        )
-
-
-    elif agent_type == "rainbow":
+    if agent_type == "rainbow":
         from agents.registries.rainbow import build_rainbow_loss_pipeline
 
         return build_rainbow_loss_pipeline(
@@ -159,17 +134,7 @@ def build_universal_learner(
     target_builder = None
     observation_dtype = torch.float32
 
-    # 1. Delegate core component creation to registries
-    if agent_type == "muzero":
-        from agents.registries.muzero import build_muzero
-
-        muzero_components = build_muzero(config, agent_network, device)
-        optimizers = muzero_components["optimizers"]
-        lr_schedulers = muzero_components["lr_schedulers"]
-        callbacks.extend(muzero_components["callbacks"])
-        target_builder = muzero_components["target_builder"]
-        observation_dtype = muzero_components.get("observation_dtype", torch.float32)
-    elif agent_type == "rainbow":
+    if agent_type == "rainbow":
         from agents.registries.rainbow import build_rainbow
 
         rainbow_components = build_rainbow(

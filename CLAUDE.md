@@ -62,7 +62,7 @@ This framework is built on **Strict Separation of Concerns and Perfect Polymorph
 
 ### `ModularAgentNetwork` — The 2 Public Inference APIs
 
-`ModularAgentNetwork` (in `modules/agent_nets/modular.py`) is the switchboard between RL system and PyTorch sub-modules. It dynamically initialises components based on config type (MuZero, PPO, Rainbow, Supervised).
+`ModularAgentNetwork` (in `modules/agent_nets/modular.py`) is the switchboard between RL system and PyTorch sub-modules. It dynamically initialises components based on config type (PPO, Rainbow, Supervised).
 
 - **`obs_inference(obs) -> InferenceOutput`** — Used by Actor/MCTS for real-world root states. Returns semantic objects (expected values, `Distribution` objects). **Never raw logits.**
 - **`learner_inference(batch) -> LearningOutput`** — Used by the Learner for batched/sequential inference. Returns purely mathematical objects (raw logits, C51 atoms) for stable cross-entropy loss.
@@ -150,7 +150,7 @@ class StepResult:
 ```
 Cannot loop over network modules. Calls `learner_inference(batch)`, unpacks `LearningOutput`, routes raw tensors to `LossPipeline`.
 
-Algorithm-specific learners/wrappers: `MuZeroLearner`, `PPOLearner`. DQN-style and supervised learning are now assembled by trainers using `UniversalLearner` + `TargetBuilder` + `LossPipeline` + callbacks (e.g. `TargetNetworkSyncCallback`).
+Algorithm-specific learners/wrappers: `PPOLearner`. DQN-style and supervised learning are now assembled by trainers using `UniversalLearner` + `TargetBuilder` + `LossPipeline` + callbacks (e.g. `TargetNetworkSyncCallback`).
 
 ### `LossPipeline`
 ```python
@@ -216,7 +216,6 @@ All configs live in `configs/`. The hierarchy is:
 ConfigBase (YAML I/O, parse_field, parse_schedule_config)
 └── AgentConfig (+ OptimizationConfig, ReplayConfig, RecordConfig, ExecutionConfig mixins)
     ├── RainbowConfig   (+ DistributionalConfig, NoisyConfig, EpsilonGreedyConfig)
-    ├── MuZeroConfig    (+ SearchConfig, ValuePrefixConfig, ConsistencyConfig, DistributionalConfig)
     ├── PPOConfig
     └── NFSPConfig
 ```
@@ -294,7 +293,7 @@ Key mixin fields (partial list):
 | InputProcessor | `InputProcessor` subclass | Processes data **before** writing (e.g., compressing observations, accumulating sequences). Returns `None` if still accumulating. |
 | OutputProcessor | `OutputProcessor` subclass | Processes raw buffer indices into the final training batch (e.g., N-step returns, GAE). Must be vectorized. |
 
-Use `buffer_factories.py` (`create_dqn_buffer`, `create_muzero_buffer`, etc.) to construct algorithm-specific buffers.
+Use `buffer_factories.py` (`create_dqn_buffer`, etc.) to construct algorithm-specific buffers.
 
 `BufferConfig` declares each stored field: `name`, `shape`, `dtype`, `is_shared`, `fill_value`.
 
@@ -310,7 +309,7 @@ Three MCTS backends selectable via `config.search_backend`:
 | `"aos"` | `search/aos_search/` | Array-of-structures batched MCTS with dynamic masking. |
 | `"cpp"` | C++ extension (built via `setup.py`) | Compiled from `search/search_cpp/*.cpp` via pybind11. |
 
-MCTS always lives on CPU. `search/factory.py` is the top-level router; it delegates to the backend-specific `search_factories.py` based on `config.search_backend`.
+MCTS always lives on CPU.
 
 ---
 
@@ -352,8 +351,7 @@ pytestmark = pytest.mark.<unit|integration|slow|regression>
 ### Configuration
 - Never define inline `config = {"batch_size": 2}` dicts in tests.
 - Use real config objects/fixtures from `tests/conftest.py`.
-- Factory fixtures: `make_ppo_config_dict(...)`, `make_muzero_config_dict(batch_size=1, num_simulations=5)`, `make_rainbow_config_dict(...)`.
-- Real config instances: `CartPoleConfig`, `PPOConfig`, `MuZeroConfig`, `RainbowConfig`.
+- Real config instances: `CartPoleConfig`, `PPOConfig`, `RainbowConfig`.
 
 ### Structure
 ```

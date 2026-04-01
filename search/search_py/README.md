@@ -54,7 +54,6 @@ action = root.best_action()
 ### Node Types
 
 - `Node` - Standard MCTS node with visit count, value sum
-- `MuZeroNode` - Extends Node with latent state and reward
 - `StochasticNode` - Handles chance nodes for stochastic games
 
 ### Action Selectors
@@ -67,7 +66,6 @@ action = root.best_action()
 
 - **QValueScorer** - Mean action value
 - **VisitCountScorer** - Visit count for temperature-based selection
-- **MuZeroScorer** - MuZero-specific scoring with min-max scaling
 
 ## Usage Examples
 
@@ -85,19 +83,6 @@ search = AlphaZeroSearch(
 policy, value = search.run(model, board_state)
 ```
 
-### MuZero Search
-```python
-from search import MuZeroSearch
-
-search = MuZeroSearch(
-    num_simulations=50,
-    max_depth=10,
-    discount=0.997
-)
-
-root = search.run(representation_model, dynamics_model, prediction_model, obs)
-action = select_action(root.visit_counts, temperature=1.0)
-```
 
 ### Gumbel MuZero
 ```python
@@ -150,9 +135,9 @@ pruner.prune(root)
 Create pre-configured search algorithms:
 
 ```python
-from search.search_factories import create_muzero_search
+from search.search_py.search_factories import create_mcts
 
-search = create_muzero_search(
+search = create_mcts(
     config={'num_simulations': 50, 'use_gumbel': True}
 )
 ```
