@@ -4,7 +4,7 @@ from torch import nn
 import torch
 from .base import BaseHead
 from agents.learner.losses.representations import BaseRepresentation
-from modules.blocks.linear import build_linear_block
+from modules.layers.noisy_linear import build_linear_layer
 
 
 class RewardHead(BaseHead):
@@ -67,7 +67,7 @@ class ValuePrefixRewardHead(RewardHead):
         )
 
         # Output layer needs to map from LSTM hidden size to representation features
-        self.output_layer = build_linear_block(
+        self.output_layer = build_linear_layer(
             in_features=self.lstm_hidden_size,
             out_features=self.representation.num_features,
             sigma=noisy_sigma,

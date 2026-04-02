@@ -5,7 +5,6 @@ from agents.learner.losses.representations import (
     BaseRepresentation,
     IdentityRepresentation,
 )
-from modules.blocks.linear import build_linear_block
 
 
 class LatentConsistencyHead(BaseHead):
