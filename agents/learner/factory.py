@@ -49,22 +49,7 @@ def build_loss_pipeline(
         A LossPipeline containing the appropriate loss modules.
     """
     agent_type = getattr(config, "agent_type", None)
-    if agent_type is None:
-        raise ValueError("config.agent_type must be explicitly defined.")
-
-    if agent_type == "rainbow":
-        from agents.registries.rainbow import build_rainbow_loss_pipeline
-
-        return build_rainbow_loss_pipeline(
-            agent_network=agent_network,
-            device=device,
-            minibatch_size=config.minibatch_size,
-            num_actions=agent_network.num_actions,
-            atom_size=getattr(config, "atom_size", 1),
-            shape_validator=shape_validator,
-        )
-
-    elif agent_type == "supervised":
+    if agent_type == "supervised":
         from agents.registries.supervised import build_supervised_loss_pipeline
 
         return build_supervised_loss_pipeline(
@@ -149,18 +134,7 @@ def build_universal_learner(
     target_builder = None
     observation_dtype = torch.float32
 
-    if agent_type == "rainbow":
-        from agents.registries.rainbow import build_rainbow
-
-        rainbow_components = build_rainbow(
-            config, agent_network, device, target_agent_network=target_agent_network
-        )
-        optimizers = rainbow_components["optimizers"]
-        lr_schedulers = rainbow_components["lr_schedulers"]
-        callbacks.extend(rainbow_components.get("callbacks", []))
-        target_builder = rainbow_components["target_builder"]
-        observation_dtype = rainbow_components.get("observation_dtype", torch.uint8)
-    elif agent_type == "supervised":
+    if agent_type == "supervised":
         from agents.registries.supervised import build_supervised
 
         supervised_components = build_supervised(config, agent_network, device)

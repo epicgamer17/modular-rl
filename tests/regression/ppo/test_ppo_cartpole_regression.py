@@ -108,7 +108,7 @@ def test_ppo_cartpole_full_training():
     VALUE_COEF = 0.5
     LEARNING_RATE = 2.5e-4
     TARGET_KL = 0.02
-    TOTAL_STEPS = 256000  # Enough to reach high average reliably (450+)
+    TOTAL_STEPS = 512000  # Enough to reach high average reliably (450+)
 
     # --- Setup Environment ---
     env = gym.make(ENV_ID)

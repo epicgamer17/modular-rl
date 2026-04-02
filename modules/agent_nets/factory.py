@@ -2,7 +2,6 @@ import torch
 from typing import Any, Dict, Tuple, Optional
 from modules.agent_nets.modular import ModularAgentNetwork
 
-from agents.registries.rainbow import build_rainbow_network_components
 from agents.registries.supervised import build_supervised_network_components
 
 
@@ -18,19 +17,14 @@ def build_modular_agent_network(
     """
     agent_type = getattr(config, "agent_type", None)
 
-    if agent_type == "rainbow":
-        build_fn = build_rainbow_network_components
-    elif agent_type == "supervised":
+    if agent_type == "supervised":
         build_fn = build_supervised_network_components
     else:
         # Fallback to checking config class type if agent_type is missing
 
-        from configs.agents.rainbow_dqn import RainbowConfig
         from configs.agents.supervised import SupervisedConfig
 
-        if isinstance(config, RainbowConfig):
-            build_fn = build_rainbow_network_components
-        elif isinstance(config, SupervisedConfig):
+        if isinstance(config, SupervisedConfig):
             build_fn = build_supervised_network_components
         else:
             raise ValueError(f"Unsupported config type: {type(config)}")
