@@ -4,7 +4,6 @@ import torch
 import gymnasium as gym
 import pytest
 
-# Module-level marker for regression tests
 pytestmark = pytest.mark.regression
 
 import time
@@ -89,7 +88,7 @@ def test_rainbow_cartpole_full_training():
     # TODO: CURT PARK PARITY
     LEARNING_RATE = 0.001
     ADAM_EPSILON = 1e-8
-    TRAINING_STEPS = 3000
+    TRAINING_STEPS = 10000
     MINIBATCH_SIZE = 128
     TRANSFER_INTERVAL = 100
     REPLAY_INTERVAL = 4
@@ -345,7 +344,7 @@ def test_rainbow_cartpole_full_training():
                 break
 
     # --- Final Evaluation ---
-    test_scores = evaluate_agent(env, agent_network, DEVICE, num_episodes=5)
+    test_scores = evaluate_agent(env, agent_network, DEVICE, num_episodes=100)
     avg_test_score = np.mean(test_scores)
     print(f"Final Test Scores: {test_scores} | Avg: {avg_test_score:.2f}")
 

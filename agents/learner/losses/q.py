@@ -61,20 +61,21 @@ class QBootstrappingLoss(BaseLoss):
         flat_targets = formatted_target.reshape(B * T, -1)
 
         # 4. Final Squeezing and Matching
-        if selected_preds.shape[-1] == 1:
+        # We ensure they are both [B*T] for standard MSE or [B*T, Atoms] for C51
+        if selected_preds.ndim > 1 and selected_preds.shape[-1] == 1:
+            # Bring B*T, 1 -> B*T
             selected_preds = selected_preds.squeeze(-1)
-        if flat_targets.shape[-1] == 1:
+        if flat_targets.ndim > 1 and flat_targets.shape[-1] == 1:
+            # Bring B*T, 1 -> B*T
             flat_targets = flat_targets.squeeze(-1)
 
         # 5. Apply Loss Function
-        if selected_preds.shape[-1] > 1:
+        if self.pred_key == "q_logits":
             # Multi-atom categorical cross-entropy
             log_probs = F.log_softmax(selected_preds, dim=-1)
             raw_loss = -(flat_targets * log_probs).sum(dim=-1)
         else:
             # Standard scalar regression (MSE)
-            selected_preds = selected_preds.squeeze(-1)
-            flat_targets = flat_targets.squeeze(-1)
             raw_loss = self.loss_fn(selected_preds, flat_targets, reduction="none")
 
         return raw_loss.reshape(B, T), {}
