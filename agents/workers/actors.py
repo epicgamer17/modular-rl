@@ -13,7 +13,7 @@ from agents.action_selectors.policy_sources import (
 )
 from replay_buffers.modular_buffer import ModularReplayBuffer
 from modules.agent_nets.modular import ModularAgentNetwork
-from utils.wrappers import wrap_recording
+from env_factories.wrappers import wrap_recording
 import numpy as np
 
 
@@ -79,10 +79,15 @@ class BaseActor(ABC):
         else:
             if search_engine is not None:
                 self.policy_source = SearchPolicySource(
-                    search_engine, self.agent_network, self.input_shape, self.num_actions
+                    search_engine,
+                    self.agent_network,
+                    self.input_shape,
+                    self.num_actions,
                 )
             else:
-                self.policy_source = NetworkPolicySource(self.agent_network, self.input_shape)
+                self.policy_source = NetworkPolicySource(
+                    self.agent_network, self.input_shape
+                )
 
         # State for step-level collection
         self._state = None
