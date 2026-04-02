@@ -1,7 +1,7 @@
 from typing import Tuple
 import torch
 from torch import nn
-from modules.blocks.linear import build_linear_block
+from modules.layers.noisy_linear import build_linear_layer
 from modules.utils import build_normalization_layer
 
 
@@ -13,7 +13,7 @@ class MLPResidualBlock(nn.Module):
     ):
         super().__init__()
         self.activation = activation
-        self.linear = build_linear_block(size, size, sigma=noisy_sigma)
+        self.linear = build_linear_layer(size, size, sigma=noisy_sigma)
         self.norm = build_normalization_layer(norm_type, size, dim=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -55,7 +55,7 @@ class MLPResNetBackbone(nn.Module):
             if width != current_width:
                 self.layers.append(
                     nn.Sequential(
-                        build_linear_block(current_width, width, sigma=noisy_sigma),
+                        build_linear_layer(current_width, width, sigma=noisy_sigma),
                         build_normalization_layer(norm_type, width, dim=1),
                         activation,
                     )
