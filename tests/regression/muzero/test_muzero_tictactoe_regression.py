@@ -53,7 +53,7 @@ from agents.learner.target_builders import (
     TargetFormatter,
 )
 from agents.learner.losses.shape_validator import ShapeValidator
-from configs.games.tictactoe import TicTacToeConfig
+from env_factories.tictactoe import tictactoe_factory
 from agents.tictactoe_expert import TicTacToeBestAgent
 from agents.executors.torch_mp_executor import TorchMPExecutor
 from agents.workers.actors import PettingZooActor
@@ -86,8 +86,7 @@ def test_muzero_tictactoe_full_training():
     # --- Exact Hyperparameters from Notebook ---
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    game_config = TicTacToeConfig()
-    env = game_config.env_factory()
+    env = tictactoe_factory()
     num_actions = env.action_space("player_1").n
     obs_dim = env.observation_space("player_1").shape
 
@@ -349,7 +348,7 @@ def test_muzero_tictactoe_full_training():
 
     # Match BaseActor.__init__ positional arguments
     launch_args = (
-        game_config.env_factory,
+        tictactoe_factory,
         agent_network,
         action_selector,
         replay_buffer,
@@ -367,7 +366,7 @@ def test_muzero_tictactoe_full_training():
 
     # Tester setup
     tester_launch_args = (
-        game_config.env_factory,
+        tictactoe_factory,
         agent_network,
         action_selector,
         None,  # replay_buffer

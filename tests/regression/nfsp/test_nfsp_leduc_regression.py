@@ -24,6 +24,7 @@ from agents.learner.target_builders import (
 )
 from agents.learner.batch_iterators import RepeatSampleIterator
 import pytest
+
 pytestmark = pytest.mark.regression
 from replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
 from replay_buffers.samplers import UniformSampler
@@ -351,7 +352,7 @@ def test_nfsp_leduc_regression():
     print(f"Average Reward (Player 0) against Random: {avg_reward:.3f}")
 
     # In Leduc, a basic strategy should always beat random (avg reward > 0)
-    assert avg_reward > -0.1, f"NFSP failed! Avg reward: {avg_reward}"
+    assert avg_reward > 0.0, f"NFSP failed! Avg reward: {avg_reward}"
     print("Regression test PASSED: NFSP policy evaluated successfully.")
 
 
