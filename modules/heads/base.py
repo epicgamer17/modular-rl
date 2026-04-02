@@ -2,7 +2,7 @@ from typing import Tuple, Optional, Callable, Dict, Any
 import torch
 from torch import nn, Tensor
 from agents.learner.losses.representations import BaseRepresentation
-from modules.blocks.linear import build_linear_block
+from modules.layers.noisy_linear import build_linear_layer
 
 
 class BaseHead(nn.Module):
@@ -36,7 +36,7 @@ class BaseHead(nn.Module):
         # 2. Final Output Layer
         self.output_layer = None
         if self.representation is not None:
-            self.output_layer = build_linear_block(
+            self.output_layer = build_linear_layer(
                 in_features=self.flat_dim,
                 out_features=self.representation.num_features,
                 sigma=noisy_sigma,
