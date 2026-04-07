@@ -25,21 +25,21 @@ Contains: AgentNetworks, Backbones, Heads, WorldModels.
 
 Rule: Classes here know nothing about RL environments, Replay Buffers, or loss functions. They strictly turn tensors into other tensors.
 
-agents/learners/ (The Optimization Logic)
+learner/ (The Optimization Logic)
 Domain: The Loss Pipeline and Optimizer.
 
 Contains: PPOLearner, RainbowLearner, MuZeroLearner.
 
 Rule: The Learner orchestrates backpropagation. It must never contain PyTorch graph routing (e.g., for t in range(T): ...). It asks the AgentNetwork for an unrolled output and feeds it to the losses/.
 
-agents/action_selectors/ (The Bridge)
+actors/action_selectors/ (The Bridge)
 Domain: Translating Math into Actions.
 
 Contains: CategoricalSelector, ArgmaxSelector, MCTSSelector.
 
 Rule: This is where game rules meet network math. Action masking happens here. It extracts the action from a PyTorch Distribution.
 
-replay_buffers/ (The Fact Store)
+data/ (The Fact Store)
 Domain: High-performance, multi-processed data storage.
 
 Contains: ModularReplayBuffer, Writers, Samplers, Processors.

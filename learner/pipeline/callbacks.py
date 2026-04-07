@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Callable, Dict, Any, Iterable, List, Optional, TYPE_CHECKING
 
 import torch
-from utils.telemetry import (
+from telemetry.stats import (
     add_latent_visualization_metric,
     append_metric,
     set_metric,

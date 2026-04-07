@@ -29,7 +29,7 @@ from learner.pipeline.callbacks import (
     EarlyStopIteration,
     MPSCacheClearCallback,
 )
-from utils.telemetry import finalize_metrics
+from telemetry.stats import finalize_metrics
 
 
 @dataclass
