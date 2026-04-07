@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from abc import ABC, abstractmethod
 from collections import deque
-from replay_buffers.utils import discounted_cumulative_sums
+from data.utils import discounted_cumulative_sums
 from utils.utils import legal_moves_mask
 from logging import warning
 

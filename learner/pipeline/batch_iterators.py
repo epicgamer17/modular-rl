@@ -11,7 +11,7 @@ from typing import Any, Dict, Iterator
 
 import torch
 
-from replay_buffers.modular_buffer import ModularReplayBuffer
+from data.storage.circular import ModularReplayBuffer
 
 
 class SingleBatchIterator:

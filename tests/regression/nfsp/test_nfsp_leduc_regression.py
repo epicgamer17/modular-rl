@@ -26,8 +26,8 @@ from learner.pipeline.batch_iterators import RepeatSampleIterator
 import pytest
 
 pytestmark = pytest.mark.regression
-from replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
-from replay_buffers.samplers import UniformSampler
+from data.storage.circular import BufferConfig, ModularReplayBuffer
+from data.samplers.prioritized import UniformSampler
 from pettingzoo.classic import leduc_holdem_v4
 
 

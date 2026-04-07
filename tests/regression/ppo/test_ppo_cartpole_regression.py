@@ -17,16 +17,16 @@ from actors.action_selectors.selectors import CategoricalSelector
 from actors.action_selectors.decorators import PPODecorator
 from actors.action_selectors.policy_sources import NetworkPolicySource
 
-from replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
-from replay_buffers.concurrency import LocalBackend
-from replay_buffers.processors import (
+from data.storage.circular import BufferConfig, ModularReplayBuffer
+from data.concurrency import LocalBackend
+from data.processors import (
     GAEProcessor,
     LegalMovesMaskProcessor,
     AdvantageNormalizer,
     StackedInputProcessor,
 )
-from replay_buffers.writers import PPOWriter
-from replay_buffers.samplers import WholeBufferSampler
+from data.writers import PPOWriter
+from data.samplers.prioritized import WholeBufferSampler
 
 from learner.pipeline.batch_iterators import PPOEpochIterator
 from learner.base import UniversalLearner

@@ -5,10 +5,10 @@ import torch.multiprocessing as mp
 from dataclasses import dataclass
 from typing import List, Optional, Any
 
-from replay_buffers.processors import IdentityInputProcessor, StandardOutputProcessor
-from replay_buffers.writers import CircularWriter
-from replay_buffers.samplers import UniformSampler
-from replay_buffers.concurrency import ConcurrencyBackend, LocalBackend
+from data.processors import IdentityInputProcessor, StandardOutputProcessor
+from data.writers import CircularWriter
+from data.samplers.prioritized import UniformSampler
+from data.concurrency import ConcurrencyBackend, LocalBackend
 from utils.utils import numpy_dtype_to_torch_dtype
 
 
@@ -270,7 +270,7 @@ class ModularReplayBuffer:
         """
         # We assume the most recent trajectory ends at the current pointer
         # This is primarily for PPO-style sequential buffers
-        from replay_buffers.writers import PPOWriter
+        from data.writers import PPOWriter
 
         trajectory_slice = slice(0, self.size)
         results = self.input_processor.finish_trajectory(

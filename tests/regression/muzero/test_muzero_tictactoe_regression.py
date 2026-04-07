@@ -25,12 +25,12 @@ from actors.action_selectors.policy_sources import SearchPolicySource
 from search.search_py.modular_search import ModularSearch
 from utils.schedule import StepwiseSchedule
 
-from replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
-from replay_buffers.sequence import Sequence
-from replay_buffers.processors import SequenceTensorProcessor, NStepUnrollProcessor
-from replay_buffers.writers import SharedCircularWriter
-from replay_buffers.samplers import UniformSampler
-from replay_buffers.concurrency import TorchMPBackend
+from data.storage.circular import BufferConfig, ModularReplayBuffer
+from data.samplers.sequence import Sequence
+from data.processors import SequenceTensorProcessor, NStepUnrollProcessor
+from data.writers import SharedCircularWriter
+from data.samplers.prioritized import UniformSampler
+from data.concurrency import TorchMPBackend
 
 from learner.base import UniversalLearner
 from learner.pipeline.batch_iterators import SingleBatchIterator

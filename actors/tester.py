@@ -12,7 +12,7 @@ from actors.action_selectors.policy_sources import (
     NetworkPolicySource,
     SearchPolicySource,
 )
-from replay_buffers.modular_buffer import ModularReplayBuffer
+from data.storage.circular import ModularReplayBuffer
 
 
 class NetworkAgent:

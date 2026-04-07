@@ -3,7 +3,7 @@ import torch
 from typing import Any, Callable, Dict, Optional, Tuple
 from abc import ABC, abstractmethod
 
-from replay_buffers.sequence import Sequence
+from data.samplers.sequence import Sequence
 from actors.action_selectors.selectors import BaseActionSelector
 from actors.action_selectors.types import InferenceResult
 from actors.action_selectors.policy_sources import (
@@ -11,7 +11,7 @@ from actors.action_selectors.policy_sources import (
     NetworkPolicySource,
     SearchPolicySource,
 )
-from replay_buffers.modular_buffer import ModularReplayBuffer
+from data.storage.circular import ModularReplayBuffer
 from modules.agent_nets.modular import ModularAgentNetwork
 from env_factories.wrappers import wrap_recording
 import numpy as np

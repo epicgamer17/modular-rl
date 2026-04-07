@@ -2,7 +2,7 @@ from typing import Callable, Optional
 
 import torch
 
-from .concurrency import ConcurrencyBackend, LocalBackend
+from data.concurrency import ConcurrencyBackend, LocalBackend
 
 
 class SegmentTree:

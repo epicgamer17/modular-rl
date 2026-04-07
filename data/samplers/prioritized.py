@@ -2,8 +2,8 @@ from abc import ABC, abstractmethod
 from typing import Optional, Any
 import numpy as np
 import torch
-from .segment_tree import SumSegmentTree, MinSegmentTree
-from .concurrency import ConcurrencyBackend, LocalBackend
+from data.samplers.segment_tree import SumSegmentTree, MinSegmentTree
+from data.concurrency import ConcurrencyBackend, LocalBackend
 
 
 class Sampler(ABC):

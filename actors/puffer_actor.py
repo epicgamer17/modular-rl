@@ -12,10 +12,10 @@ from typing import Callable, Any, Optional, Tuple, Dict, List
 from abc import abstractmethod
 
 import pufferlib.vector
-from replay_buffers.sequence import Sequence
+from data.samplers.sequence import Sequence
 from actors.core import BaseActor
 from utils.wrappers import AECSequentialWrapper
-from replay_buffers.modular_buffer import ModularReplayBuffer
+from data.storage.circular import ModularReplayBuffer
 from modules.agent_nets.modular import ModularAgentNetwork
 from actors.action_selectors.selectors import BaseActionSelector
 from actors.action_selectors.types import InferenceResult

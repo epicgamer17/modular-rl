@@ -14,9 +14,9 @@ from modules.heads.q import QHead
 from learner.losses.representations import C51Representation
 from actors.action_selectors.selectors import ArgmaxSelector
 
-from replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
-from replay_buffers.concurrency import LocalBackend
-from replay_buffers.processors import (
+from data.storage.circular import BufferConfig, ModularReplayBuffer
+from data.concurrency import LocalBackend
+from data.processors import (
     StackedInputProcessor,
     NStepInputProcessor,
     TerminationFlagsInputProcessor,
@@ -24,8 +24,8 @@ from replay_buffers.processors import (
     FilterKeysInputProcessor,
     StandardOutputProcessor,
 )
-from replay_buffers.writers import CircularWriter
-from replay_buffers.samplers import PrioritizedSampler
+from data.writers import CircularWriter
+from data.samplers.prioritized import PrioritizedSampler
 
 from learner.base import UniversalLearner
 from learner.losses.loss_pipeline import LossPipeline
