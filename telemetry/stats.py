@@ -6,11 +6,11 @@ from typing import Dict, Optional, List, Any
 import matplotlib.pyplot as plt
 from enum import Enum, auto
 from pathlib import Path
-from stats.latent_pca import LatentPCAVisualizer
-from stats.latent_tsne import LatentTSNEVisualizer
+from analysis.embeddings.latent_pca import LatentPCAVisualizer
+from analysis.embeddings.latent_tsne import LatentTSNEVisualizer
 
 try:
-    from stats.latent_umap import LatentUMAPVisualizer
+    from analysis.embeddings.latent_umap import LatentUMAPVisualizer
 except ImportError:
     LatentUMAPVisualizer = None
 
