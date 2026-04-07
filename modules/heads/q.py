@@ -5,7 +5,7 @@ import torch
 from torch import nn, Tensor
 
 from .base import BaseHead
-from agents.learner.losses.representations import BaseRepresentation
+from learner.losses.representations import BaseRepresentation
 from modules.layers.noisy_linear import build_linear_layer
 from modules.utils import build_normalization_layer
 

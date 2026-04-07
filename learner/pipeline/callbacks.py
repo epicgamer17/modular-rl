@@ -10,7 +10,7 @@ from utils.telemetry import (
 )
 
 if TYPE_CHECKING:
-    from agents.learner.base import StepResult, UniversalLearner
+    from learner.base import StepResult, UniversalLearner
     from modules.agent_nets.modular import ModularAgentNetwork
 from abc import ABC, abstractmethod
 

@@ -5,9 +5,9 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Union, Tuple, Callable
 
 from modules.agent_nets.modular import ModularAgentNetwork
-from agents.action_selectors.selectors import BaseActionSelector
-from agents.action_selectors.types import InferenceResult
-from agents.action_selectors.policy_sources import (
+from actors.action_selectors.selectors import BaseActionSelector
+from actors.action_selectors.types import InferenceResult
+from actors.action_selectors.policy_sources import (
     BasePolicySource,
     NetworkPolicySource,
     SearchPolicySource,

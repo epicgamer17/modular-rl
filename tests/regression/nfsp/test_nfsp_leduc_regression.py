@@ -10,19 +10,19 @@ from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.policy import PolicyHead
 from modules.heads.q import QHead
-from agents.learner.losses.representations import (
+from learner.losses.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
-from agents.learner.base import UniversalLearner
-from agents.learner.losses import LossPipeline, ImitationLoss, QBootstrappingLoss
-from agents.learner.target_builders import (
+from learner.base import UniversalLearner
+from learner.losses import LossPipeline, ImitationLoss, QBootstrappingLoss
+from learner.pipeline.targets import (
     PassThroughTargetBuilder,
     SingleStepFormatter,
     TemporalDifferenceBuilder,
     TargetBuilderPipeline,
 )
-from agents.learner.batch_iterators import RepeatSampleIterator
+from learner.pipeline.batch_iterators import RepeatSampleIterator
 import pytest
 
 pytestmark = pytest.mark.regression

@@ -4,9 +4,9 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from abc import ABC, abstractmethod
 
 from replay_buffers.sequence import Sequence
-from agents.action_selectors.selectors import BaseActionSelector
-from agents.action_selectors.types import InferenceResult
-from agents.action_selectors.policy_sources import (
+from actors.action_selectors.selectors import BaseActionSelector
+from actors.action_selectors.types import InferenceResult
+from actors.action_selectors.policy_sources import (
     BasePolicySource,
     NetworkPolicySource,
     SearchPolicySource,
@@ -414,7 +414,7 @@ def get_actor_class(env: Any, num_envs_per_worker: int = 1) -> type[BaseActor]:
     """
     # 1. Check for Vectorized Execution (Fat Workers)
     if num_envs_per_worker > 1:
-        from agents.workers.puffer_actor import GymPufferActor, PettingZooPufferActor
+        from actors.puffer_actor import GymPufferActor, PettingZooPufferActor
 
         # Detect PettingZoo for Puffer
         is_pz = hasattr(env, "possible_agents")

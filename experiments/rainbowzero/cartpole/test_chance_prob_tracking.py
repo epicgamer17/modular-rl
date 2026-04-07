@@ -3,7 +3,7 @@ import torch
 import shutil
 
 from configs.agents.muzero import MuZeroConfig
-from agents.muzero import MuZeroAgent
+from actors.core import MuZeroAgent
 from modules.models.world_model import WorldModel
 from configs.games.cartpole_config import CartPoleConfig
 

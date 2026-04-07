@@ -13,13 +13,13 @@ from abc import abstractmethod
 
 import pufferlib.vector
 from replay_buffers.sequence import Sequence
-from agents.workers.actors import BaseActor
+from actors.core import BaseActor
 from utils.wrappers import AECSequentialWrapper
 from replay_buffers.modular_buffer import ModularReplayBuffer
 from modules.agent_nets.modular import ModularAgentNetwork
-from agents.action_selectors.selectors import BaseActionSelector
-from agents.action_selectors.types import InferenceResult
-from agents.action_selectors.policy_sources import (
+from actors.action_selectors.selectors import BaseActionSelector
+from actors.action_selectors.types import InferenceResult
+from actors.action_selectors.policy_sources import (
     BasePolicySource,
     NetworkPolicySource,
     SearchPolicySource,

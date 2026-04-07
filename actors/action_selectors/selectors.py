@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 import torch
 import numpy as np
 from modules.world_models.inference_output import InferenceOutput
-from agents.action_selectors.types import InferenceResult
+from actors.action_selectors.types import InferenceResult
 
 # Constant for default epsilon
 DEFAULT_EPSILON = 0.05

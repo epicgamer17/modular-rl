@@ -19,9 +19,9 @@ from modules.world_models.muzero_world_model import MuzeroWorldModel
 from modules.world_models.components.representation import Representation
 from modules.world_models.components.dynamics import Dynamics
 
-from agents.action_selectors.decorators import TemperatureSelector
-from agents.action_selectors.selectors import CategoricalSelector
-from agents.action_selectors.policy_sources import SearchPolicySource
+from actors.action_selectors.decorators import TemperatureSelector
+from actors.action_selectors.selectors import CategoricalSelector
+from actors.action_selectors.policy_sources import SearchPolicySource
 from search.search_py.modular_search import ModularSearch
 from utils.schedule import StepwiseSchedule
 
@@ -32,19 +32,19 @@ from replay_buffers.writers import SharedCircularWriter
 from replay_buffers.samplers import UniformSampler
 from replay_buffers.concurrency import TorchMPBackend
 
-from agents.learner.base import UniversalLearner
-from agents.learner.batch_iterators import SingleBatchIterator
-from agents.learner.losses.loss_pipeline import LossPipeline
-from agents.learner.losses.value import ValueLoss
-from agents.learner.losses.policy import PolicyLoss
-from agents.learner.losses.reward import RewardLoss
-from agents.learner.losses.to_play import ToPlayLoss
-from agents.learner.losses.representations import (
+from learner.base import UniversalLearner
+from learner.pipeline.batch_iterators import SingleBatchIterator
+from learner.losses.loss_pipeline import LossPipeline
+from learner.losses.value import ValueLoss
+from learner.losses.policy import PolicyLoss
+from learner.losses.reward import RewardLoss
+from learner.losses.to_play import ToPlayLoss
+from learner.losses.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
-from agents.learner.losses.priorities import ExpectedValueErrorPriorityComputer
-from agents.learner.target_builders import (
+from learner.losses.priorities import ExpectedValueErrorPriorityComputer
+from learner.pipeline.targets import (
     TargetBuilderPipeline,
     MCTSExtractor,
     SequencePadder,
@@ -52,12 +52,12 @@ from agents.learner.target_builders import (
     SequenceInfrastructureBuilder,
     TargetFormatter,
 )
-from agents.learner.losses.shape_validator import ShapeValidator
+from learner.losses.shape_validator import ShapeValidator
 from env_factories.tictactoe import tictactoe_factory
-from agents.tictactoe_expert import TicTacToeBestAgent
-from agents.executors.torch_mp_executor import TorchMPExecutor
-from agents.workers.actors import PettingZooActor
-from agents.workers.tester import Tester, VsAgentTest
+from actors.experts.tictactoe_expert import TicTacToeBestAgent
+from executors.torch_mp_executor import TorchMPExecutor
+from actors.core import PettingZooActor
+from actors.tester import Tester, VsAgentTest
 
 # Module-level marker for regression tests
 pytestmark = pytest.mark.regression

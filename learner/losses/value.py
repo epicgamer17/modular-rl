@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Dict, Optional, Tuple
-from agents.learner.losses.base import BaseLoss
+from learner.losses.base import BaseLoss
 
 
 class ValueLoss(BaseLoss):

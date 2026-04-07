@@ -9,13 +9,13 @@ from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.policy import PolicyHead
 from modules.heads.value import ValueHead
-from agents.learner.losses.representations import (
+from learner.losses.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
-from agents.action_selectors.selectors import CategoricalSelector
-from agents.action_selectors.decorators import PPODecorator
-from agents.action_selectors.policy_sources import NetworkPolicySource
+from actors.action_selectors.selectors import CategoricalSelector
+from actors.action_selectors.decorators import PPODecorator
+from actors.action_selectors.policy_sources import NetworkPolicySource
 
 from replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
 from replay_buffers.concurrency import LocalBackend
@@ -28,19 +28,19 @@ from replay_buffers.processors import (
 from replay_buffers.writers import PPOWriter
 from replay_buffers.samplers import WholeBufferSampler
 
-from agents.learner.batch_iterators import PPOEpochIterator
-from agents.learner.base import UniversalLearner
-from agents.learner.losses.loss_pipeline import LossPipeline
-from agents.learner.losses.policy import ClippedSurrogateLoss
-from agents.learner.losses.value import ClippedValueLoss
-from agents.learner.callbacks import MetricEarlyStopCallback
-from agents.learner.target_builders import (
+from learner.pipeline.batch_iterators import PPOEpochIterator
+from learner.base import UniversalLearner
+from learner.losses.loss_pipeline import LossPipeline
+from learner.losses.policy import ClippedSurrogateLoss
+from learner.losses.value import ClippedValueLoss
+from learner.pipeline.callbacks import MetricEarlyStopCallback
+from learner.pipeline.targets import (
     PassThroughTargetBuilder,
     TargetBuilderPipeline,
     SingleStepFormatter,
     TargetFormatter,
 )
-from agents.learner.losses.shape_validator import ShapeValidator
+from learner.losses.shape_validator import ShapeValidator
 
 # Module-level marker for regression tests
 # Declared just below imports as per README.md

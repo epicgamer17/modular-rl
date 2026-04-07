@@ -1,6 +1,6 @@
 import torch
 from typing import Any, Dict, Optional, Tuple
-from agents.learner.losses.base import BaseLoss
+from learner.losses.base import BaseLoss
 
 
 class RewardLoss(BaseLoss):

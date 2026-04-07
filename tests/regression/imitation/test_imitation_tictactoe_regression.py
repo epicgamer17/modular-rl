@@ -9,21 +9,21 @@ from typing import Dict, Any
 from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.policy import PolicyHead
-from agents.learner.losses.representations import ClassificationRepresentation
-from agents.learner.base import UniversalLearner
-from agents.learner.losses import LossPipeline, ImitationLoss
-from agents.learner.target_builders import (
+from learner.losses.representations import ClassificationRepresentation
+from learner.base import UniversalLearner
+from learner.losses import LossPipeline, ImitationLoss
+from learner.pipeline.targets import (
     PassThroughTargetBuilder,
     SingleStepFormatter,
     TargetBuilderPipeline,
 )
-from agents.learner.batch_iterators import RepeatSampleIterator
+from learner.pipeline.batch_iterators import RepeatSampleIterator
 import pytest
 
 pytestmark = pytest.mark.regression
 from replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
 from replay_buffers.samplers import UniformSampler
-from agents.tictactoe_expert import TicTacToeBestAgent
+from actors.experts.tictactoe_expert import TicTacToeBestAgent
 from pettingzoo.classic import tictactoe_v3
 
 
