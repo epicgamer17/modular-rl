@@ -32,19 +32,19 @@ from data.writers import SharedCircularWriter
 from data.samplers.prioritized import UniformSampler
 from data.concurrency import TorchMPBackend
 
-from agents.learner.base import UniversalLearner
-from agents.learner.batch_iterators import SingleBatchIterator
-from agents.learner.losses.loss_pipeline import LossPipeline
-from agents.learner.losses.value import ValueLoss
-from agents.learner.losses.policy import PolicyLoss
-from agents.learner.losses.reward import RewardLoss
-from agents.learner.losses.to_play import ToPlayLoss
-from agents.learner.losses.representations import (
+from learner.pipeline.base import UniversalLearner
+from learner.pipeline.batch_iterators import SingleBatchIterator
+from learner.losses.loss_pipeline import LossPipeline
+from learner.losses.value import ValueLoss
+from learner.losses.policy import PolicyLoss
+from learner.losses.reward import RewardLoss
+from learner.losses.to_play import ToPlayLoss
+from learner.losses.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
-from agents.learner.losses.priorities import ExpectedValueErrorPriorityComputer
-from agents.learner.target_builders import (
+from learner.losses.priorities import ExpectedValueErrorPriorityComputer
+from learner.pipeline.target_builders import (
     TargetBuilderPipeline,
     MCTSExtractor,
     SequencePadder,
@@ -52,7 +52,7 @@ from agents.learner.target_builders import (
     SequenceInfrastructureBuilder,
     TargetFormatter,
 )
-from agents.learner.losses.shape_validator import ShapeValidator
+from learner.losses.shape_validator import ShapeValidator
 from envs.factories.tictactoe import tictactoe_factory
 from agents.tictactoe_expert import TicTacToeBestAgent
 from executors.torch_mp_executor import TorchMPExecutor

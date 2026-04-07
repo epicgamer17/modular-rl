@@ -2,9 +2,9 @@ import torch
 import numpy as np
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
-from agents.learner.losses.base import BaseLoss
-from agents.learner.losses.priorities import BasePriorityComputer, NullPriorityComputer
-from agents.learner.losses.shape_validator import ShapeValidator
+from learner.losses.base import BaseLoss
+from learner.losses.priorities import BasePriorityComputer, NullPriorityComputer
+from learner.losses.shape_validator import ShapeValidator
 
 
 class LossPipeline:

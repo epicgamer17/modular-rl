@@ -1,7 +1,7 @@
 from typing import Tuple, Optional, Callable, Dict, Any
 import torch
 from torch import nn, Tensor
-from agents.learner.losses.representations import BaseRepresentation
+from learner.losses.representations import BaseRepresentation
 from modules.layers.noisy_linear import build_linear_layer
 
 

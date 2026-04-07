@@ -11,9 +11,9 @@ from modules.world_models.muzero_world_model import MuzeroWorldModel
 from modules.heads.policy import PolicyHead
 from modules.heads.value import ValueHead
 from modules.heads.q import QHead, DuelingQHead
-from agents.learner.losses.representations import get_representation
+from learner.losses.representations import get_representation
 from modules.projectors.sim_siam import Projector
-from agents.learner.losses.shape_validator import ShapeValidator
+from learner.losses.shape_validator import ShapeValidator
 
 
 class ModularAgentNetwork(BaseAgentNetwork):
@@ -185,8 +185,12 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
             pred_features = self.components["prediction_backbone"](flat_latents)
             raw_values, _, _ = self.components["value_head"](pred_features)
-            raw_policies, _, _ = self.components["policy_head"](raw_values if "prediction_backbone" not in self.components else pred_features)
-            # Note: The above logic for policy_head input depends on the architecture. 
+            raw_policies, _, _ = self.components["policy_head"](
+                raw_values
+                if "prediction_backbone" not in self.components
+                else pred_features
+            )
+            # Note: The above logic for policy_head input depends on the architecture.
             # In MuZero, policy and value heads often share the same backbone features.
             raw_policies, _, _ = self.components["policy_head"](pred_features)
 
@@ -200,7 +204,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
             # --- PAD TRANSITION OUTPUTS (Rewards/Chance) ---
             dummy_reward = torch.zeros(
-                B, 1, *physics_output.rewards.shape[2:],
+                B,
+                1,
+                *physics_output.rewards.shape[2:],
                 device=self.device,
                 dtype=physics_output.rewards.dtype,
             )
@@ -219,7 +225,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 )
                 stochastic_chance_values = raw_chance_values.view(B_as, T_as, -1)
                 dummy_chance_values = torch.zeros(
-                    B_as, 1, *stochastic_chance_values.shape[2:],
+                    B_as,
+                    1,
+                    *stochastic_chance_values.shape[2:],
                     device=self.device,
                     dtype=stochastic_chance_values.dtype,
                 )
@@ -229,7 +237,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
                 stochastic_chance_logits = physics_output.chance_logits
                 dummy_chance_logits = torch.zeros(
-                    B_as, 1, *stochastic_chance_logits.shape[2:],
+                    B_as,
+                    1,
+                    *stochastic_chance_logits.shape[2:],
                     device=self.device,
                     dtype=stochastic_chance_logits.dtype,
                 )
@@ -239,7 +249,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
                 chance_encoder_embeddings = physics_output.chance_encoder_embeddings
                 dummy_chance_embeddings = torch.zeros(
-                    B_as, 1, *chance_encoder_embeddings.shape[2:],
+                    B_as,
+                    1,
+                    *chance_encoder_embeddings.shape[2:],
                     device=self.device,
                     dtype=chance_encoder_embeddings.dtype,
                 )
