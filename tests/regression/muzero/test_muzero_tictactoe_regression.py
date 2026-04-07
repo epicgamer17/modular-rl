@@ -53,7 +53,7 @@ from learner.pipeline.targets import (
     TargetFormatter,
 )
 from learner.losses.shape_validator import ShapeValidator
-from env_factories.tictactoe import tictactoe_factory
+from envs.factories.tictactoe import tictactoe_factory
 from actors.experts.tictactoe_expert import TicTacToeBestAgent
 from executors.torch_mp_executor import TorchMPExecutor
 from actors.core import PettingZooActor

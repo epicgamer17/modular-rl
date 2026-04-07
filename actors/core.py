@@ -13,7 +13,7 @@ from actors.action_selectors.policy_sources import (
 )
 from data.storage.circular import ModularReplayBuffer
 from modules.agent_nets.modular import ModularAgentNetwork
-from env_factories.wrappers import wrap_recording
+from envs.factories.wrappers import wrap_recording
 import numpy as np
 
 

@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from env_factories import tictactoe_factory
+from envs.factories import tictactoe_factory
 
 pytestmark = pytest.mark.unit
 
