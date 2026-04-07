@@ -4,7 +4,7 @@ import torch
 import time
 import numpy as np
 
-from actors.action_selectors.types import InferenceResult
+from agents.action_selectors.types import InferenceResult
 from modules.agent_nets.base import BaseAgentNetwork
 from modules.world_models.inference_output import InferenceOutput
 

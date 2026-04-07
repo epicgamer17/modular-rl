@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 
 if TYPE_CHECKING:
-    from learner.losses.loss_pipeline import LossPipeline
+    from agents.learner.losses.loss_pipeline import LossPipeline
 
 
 class BaseTargetBuilder(ABC):

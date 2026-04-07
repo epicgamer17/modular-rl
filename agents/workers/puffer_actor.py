@@ -12,14 +12,14 @@ from typing import Callable, Any, Optional, Tuple, Dict, List
 from abc import abstractmethod
 
 import pufferlib.vector
-from data.samplers.sequence import Sequence
-from actors.core import BaseActor
+from replay_buffers.sequence import Sequence
+from agents.workers.actors import BaseActor
 from utils.wrappers import AECSequentialWrapper
 from data.storage.circular import ModularReplayBuffer
 from modules.agent_nets.modular import ModularAgentNetwork
-from actors.action_selectors.selectors import BaseActionSelector
-from actors.action_selectors.types import InferenceResult
-from actors.action_selectors.policy_sources import (
+from agents.action_selectors.selectors import BaseActionSelector
+from agents.action_selectors.types import InferenceResult
+from agents.action_selectors.policy_sources import (
     BasePolicySource,
     NetworkPolicySource,
     SearchPolicySource,

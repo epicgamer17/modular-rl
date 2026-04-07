@@ -1,7 +1,7 @@
 import torch
 import pytest
 import numpy as np
-from learner.pipeline.targets import (
+from agents.learner.target_builders import (
     SequenceMaskBuilder,
     SequencePadder,
     TargetBuilderPipeline,

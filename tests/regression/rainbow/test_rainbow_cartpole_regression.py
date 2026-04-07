@@ -11,8 +11,8 @@ import time
 from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.q import QHead
-from learner.losses.representations import C51Representation
-from actors.action_selectors.selectors import ArgmaxSelector
+from agents.learner.losses.representations import C51Representation
+from agents.action_selectors.selectors import ArgmaxSelector
 
 from data.storage.circular import BufferConfig, ModularReplayBuffer
 from data.concurrency import LocalBackend
@@ -27,16 +27,16 @@ from data.processors import (
 from data.writers import CircularWriter
 from data.samplers.prioritized import PrioritizedSampler
 
-from learner.base import UniversalLearner
-from learner.losses.loss_pipeline import LossPipeline
-from learner.losses.q import QBootstrappingLoss
-from learner.losses.priorities import MaxLossPriorityComputer
-from learner.pipeline.targets import (
+from agents.learner.base import UniversalLearner
+from agents.learner.losses.loss_pipeline import LossPipeline
+from agents.learner.losses.q import QBootstrappingLoss
+from agents.learner.losses.priorities import MaxLossPriorityComputer
+from agents.learner.target_builders import (
     DistributionalTargetBuilder,
     TargetBuilderPipeline,
     SingleStepFormatter,
 )
-from learner.pipeline.batch_iterators import RepeatSampleIterator
+from agents.learner.batch_iterators import RepeatSampleIterator
 
 
 def setup_seeds(seed=42):
@@ -221,7 +221,7 @@ def test_rainbow_cartpole_full_training():
         ]
     )
 
-    from learner.pipeline.callbacks import PriorityUpdaterCallback, ResetNoiseCallback
+    from agents.learner.callbacks import PriorityUpdaterCallback, ResetNoiseCallback
     from utils.schedule import ConstantSchedule
 
     per_beta_schedule = ConstantSchedule(PER_BETA)

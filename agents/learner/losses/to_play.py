@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from typing import Any, Optional
-from learner.losses.base import BaseLoss
+from agents.learner.losses.base import BaseLoss
 
 
 class ToPlayLoss(BaseLoss):

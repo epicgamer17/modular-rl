@@ -2,7 +2,7 @@ from typing import Tuple, Optional, Dict, Any
 import torch
 from torch import nn, Tensor
 from .base import BaseHead
-from learner.losses.representations import BaseRepresentation
+from agents.learner.losses.representations import BaseRepresentation
 
 
 class PolicyHead(BaseHead):

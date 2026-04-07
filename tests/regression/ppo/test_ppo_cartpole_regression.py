@@ -9,13 +9,13 @@ from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.policy import PolicyHead
 from modules.heads.value import ValueHead
-from learner.losses.representations import (
+from agents.learner.losses.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
-from actors.action_selectors.selectors import CategoricalSelector
-from actors.action_selectors.decorators import PPODecorator
-from actors.action_selectors.policy_sources import NetworkPolicySource
+from agents.action_selectors.selectors import CategoricalSelector
+from agents.action_selectors.decorators import PPODecorator
+from agents.action_selectors.policy_sources import NetworkPolicySource
 
 from data.storage.circular import BufferConfig, ModularReplayBuffer
 from data.concurrency import LocalBackend
@@ -28,19 +28,19 @@ from data.processors import (
 from data.writers import PPOWriter
 from data.samplers.prioritized import WholeBufferSampler
 
-from learner.pipeline.batch_iterators import PPOEpochIterator
-from learner.base import UniversalLearner
-from learner.losses.loss_pipeline import LossPipeline
-from learner.losses.policy import ClippedSurrogateLoss
-from learner.losses.value import ClippedValueLoss
-from learner.pipeline.callbacks import MetricEarlyStopCallback
-from learner.pipeline.targets import (
+from agents.learner.batch_iterators import PPOEpochIterator
+from agents.learner.base import UniversalLearner
+from agents.learner.losses.loss_pipeline import LossPipeline
+from agents.learner.losses.policy import ClippedSurrogateLoss
+from agents.learner.losses.value import ClippedValueLoss
+from agents.learner.callbacks import MetricEarlyStopCallback
+from agents.learner.target_builders import (
     PassThroughTargetBuilder,
     TargetBuilderPipeline,
     SingleStepFormatter,
     TargetFormatter,
 )
-from learner.losses.shape_validator import ShapeValidator
+from agents.learner.losses.shape_validator import ShapeValidator
 
 # Module-level marker for regression tests
 # Declared just below imports as per README.md

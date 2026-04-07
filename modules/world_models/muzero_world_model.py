@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from modules.heads.to_play import ToPlayHead
 from modules.heads.reward import RewardHead
-from learner.losses.representations import get_representation
+from agents.learner.losses.representations import get_representation
 from modules.utils import scale_gradient, kernel_initializer_wrapper
 from modules.world_models.inference_output import (
     MuZeroNetworkState,

@@ -26,7 +26,7 @@ from sklearn.preprocessing import OrdinalEncoder
 # These are placeholders to ensure the script parses even if your local environment
 # is missing the specific agents/elo packages.
 try:
-    from actors.baselines.random_agent import RandomAgent
+    from agents.random import RandomAgent
     from elo.elo import StandingsTable
 except ImportError:
     print("Warning: Local 'agents' or 'elo' modules not found. Using mocks.")
