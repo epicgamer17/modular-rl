@@ -4,7 +4,7 @@ import torch
 import time
 import numpy as np
 
-from agents.action_selectors.types import InferenceResult
+from actors.action_selectors.types import InferenceResult
 from modules.agent_nets.base import BaseAgentNetwork
 from modules.world_models.inference_output import InferenceOutput
 
@@ -43,7 +43,7 @@ class NetworkPolicySource(BasePolicySource):
         # Ensure batch dimension
         if obs.dim() == len(self.input_shape):
             obs = obs.unsqueeze(0)
-            
+
         output = self.agent_network.obs_inference(obs)
         return InferenceResult.from_inference_output(output)
 

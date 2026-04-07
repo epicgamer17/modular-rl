@@ -12,7 +12,7 @@ from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.q import QHead
 from learner.losses.representations import C51Representation
-from agents.action_selectors.selectors import ArgmaxSelector
+from actors.action_selectors.selectors import ArgmaxSelector
 
 from data.storage.circular import BufferConfig, ModularReplayBuffer
 from data.concurrency import LocalBackend

@@ -13,9 +13,9 @@ from learner.losses.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
-from agents.action_selectors.selectors import CategoricalSelector
-from agents.action_selectors.decorators import PPODecorator
-from agents.action_selectors.policy_sources import NetworkPolicySource
+from actors.action_selectors.selectors import CategoricalSelector
+from actors.action_selectors.decorators import PPODecorator
+from actors.action_selectors.policy_sources import NetworkPolicySource
 
 from data.storage.circular import BufferConfig, ModularReplayBuffer
 from data.concurrency import LocalBackend

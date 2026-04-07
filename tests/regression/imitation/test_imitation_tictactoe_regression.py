@@ -21,9 +21,9 @@ from learner.pipeline.batch_iterators import RepeatSampleIterator
 import pytest
 
 pytestmark = pytest.mark.regression
-from data.modular_buffer import BufferConfig, ModularReplayBuffer
-from data.samplers import UniformSampler
-from agents.tictactoe_expert import TicTacToeBestAgent
+from data.storage.circular import BufferConfig, ModularReplayBuffer
+from data.samplers.prioritized import UniformSampler
+from actors.experts.tictactoe_expert import TicTacToeBestAgent
 from pettingzoo.classic import tictactoe_v3
 
 

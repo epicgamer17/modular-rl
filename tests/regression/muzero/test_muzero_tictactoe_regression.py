@@ -19,9 +19,9 @@ from modules.world_models.muzero_world_model import MuzeroWorldModel
 from modules.world_models.components.representation import Representation
 from modules.world_models.components.dynamics import Dynamics
 
-from agents.action_selectors.decorators import TemperatureSelector
-from agents.action_selectors.selectors import CategoricalSelector
-from agents.action_selectors.policy_sources import SearchPolicySource
+from actors.action_selectors.decorators import TemperatureSelector
+from actors.action_selectors.selectors import CategoricalSelector
+from actors.action_selectors.policy_sources import SearchPolicySource
 from search.backends.py_search.modular_search import ModularSearch
 from utils.schedule import StepwiseSchedule
 
@@ -54,10 +54,10 @@ from learner.pipeline.target_builders import (
 )
 from learner.losses.shape_validator import ShapeValidator
 from envs.factories.tictactoe import tictactoe_factory
-from agents.tictactoe_expert import TicTacToeBestAgent
+from actors.experts.tictactoe_expert import TicTacToeBestAgent
 from executors.torch_mp_executor import TorchMPExecutor
-from agents.workers.actors import PettingZooActor
-from agents.workers.tester import Tester, VsAgentTest
+from actors.workers.actors import PettingZooActor
+from actors.workers.tester import Tester, VsAgentTest
 
 # Module-level marker for regression tests
 pytestmark = pytest.mark.regression

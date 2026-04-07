@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 import torch
 import numpy as np
 from modules.world_models.inference_output import InferenceOutput
-from agents.action_selectors.types import InferenceResult
+from actors.action_selectors.types import InferenceResult
 
 # Constant for default epsilon
 DEFAULT_EPSILON = 0.05
@@ -188,13 +188,15 @@ class EpsilonGreedySelector(BaseActionSelector):
                     new_mask = torch.zeros(
                         (batch_size, q_values.shape[-1]), device=q_values.device
                     )
-                    
+
                     if q_values.dim() == 1:
                         new_mask[mask] = 1.0
                     else:
                         # Batch size > 1 or Batch size 1 with possible nesting
                         if batch_size == 1 and len(mask) > 0:
-                            is_nested = isinstance(mask[0], (list, np.ndarray, torch.Tensor))
+                            is_nested = isinstance(
+                                mask[0], (list, np.ndarray, torch.Tensor)
+                            )
                             if not is_nested:
                                 new_mask[0, mask] = 1.0
                             else:
