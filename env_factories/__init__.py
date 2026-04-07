@@ -1,3 +1,0 @@
-from env_factories.tictactoe import tictactoe_factory
-
-__all__ = ["tictactoe_factory"]
