@@ -12,7 +12,7 @@ from typing import Callable, Any, Optional, Tuple, Dict, List
 from abc import abstractmethod
 
 import pufferlib.vector
-from replay_buffers.sequence import Sequence
+from data.samplers.sequence import Sequence
 from agents.workers.actors import BaseActor
 from utils.wrappers import AECSequentialWrapper
 from data.storage.circular import ModularReplayBuffer

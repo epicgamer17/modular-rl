@@ -55,7 +55,7 @@ from agents.learner.target_builders import (
 from agents.learner.losses.shape_validator import ShapeValidator
 from envs.factories.tictactoe import tictactoe_factory
 from agents.tictactoe_expert import TicTacToeBestAgent
-from agents.executors.torch_mp_executor import TorchMPExecutor
+from executors.torch_mp_executor import TorchMPExecutor
 from agents.workers.actors import PettingZooActor
 from agents.workers.tester import Tester, VsAgentTest
 
