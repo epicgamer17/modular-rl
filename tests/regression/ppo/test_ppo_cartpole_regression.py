@@ -30,6 +30,7 @@ from data.samplers.prioritized import WholeBufferSampler
 
 from learner.pipeline.batch_iterators import PPOEpochIterator
 from learner.core import UniversalLearner
+from learner.pipeline.base import DeviceTransferComponent
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
 from learner.pipeline.wrappers import TargetBuilderComponent, ComponentCallbacks
@@ -219,6 +220,7 @@ def test_ppo_cartpole_full_training():
 
     learner = UniversalLearner(
         components=[
+            DeviceTransferComponent(DEVICE),
             ForwardPassComponent(agent_network, shape_validator),
             TargetBuilderComponent(target_builder, agent_network),
             loss_pipeline,

@@ -15,6 +15,7 @@ from learner.losses.representations import (
     ScalarRepresentation,
 )
 from learner.core import UniversalLearner
+from learner.pipeline.base import DeviceTransferComponent
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
 from learner.pipeline.wrappers import TargetBuilderComponent, ComponentCallbacks
@@ -164,6 +165,7 @@ def test_nfsp_leduc_regression():
     )
     rl_learner = UniversalLearner(
         components=[
+            DeviceTransferComponent(DEVICE),
             ForwardPassComponent(rl_network, None),
             TargetBuilderComponent(rl_target_builder, rl_network),
             rl_loss_pipeline,
@@ -176,7 +178,9 @@ def test_nfsp_leduc_regression():
 
     # 2. SL Learner
     sl_optimizer = torch.optim.Adam(sl_network.parameters(), lr=LR_SL)
-    sl_loss = ImitationLoss(device=DEVICE, loss_fn=F.cross_entropy)
+    sl_loss = ImitationLoss(
+        device=DEVICE, loss_fn=F.cross_entropy, target_key="actions"
+    )
     sl_loss_pipeline = LossAggregator(
         modules=[sl_loss], minibatch_size=BATCH_SIZE, num_actions=num_actions
     )
@@ -188,6 +192,7 @@ def test_nfsp_leduc_regression():
     )
     sl_learner = UniversalLearner(
         components=[
+            DeviceTransferComponent(DEVICE),
             ForwardPassComponent(sl_network, None),
             TargetBuilderComponent(sl_target_builder, sl_network),
             sl_loss_pipeline,

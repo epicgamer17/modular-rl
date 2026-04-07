@@ -119,15 +119,48 @@ class ImitationLoss(BaseLoss):
         loss_factor: float = 1.0,
         optimizer_name: str = "default",
         mask_key: str = "policy_mask",
+        target_key: str = "policies",
         name: Optional[str] = None,
     ):
         super().__init__(
             device=device,
             pred_key="policies",
-            target_key="policies",
+            target_key=target_key,
             mask_key=mask_key,
             loss_fn=loss_fn,
             optimizer_name=optimizer_name,
             loss_factor=loss_factor,
             name=name,
         )
+
+    def compute_loss(
+        self, predictions: Dict[str, torch.Tensor], targets: Dict[str, torch.Tensor]
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        # 1. Extract [B, T, ...] inputs
+        pred = predictions[self.pred_key] # [B, T, A]
+        
+        # 2. Extract targets [B, T, ...]
+        formatted_target = targets[self.target_key]
+
+        # Determine B, T directly from the primary prediction tensor
+        B, T = pred.shape[:2]
+
+        # Flatten B, T
+        orig_shape = pred.shape
+        flat_pred = pred.reshape(B * T, *orig_shape[2:])
+        
+        # Determine if target is class indices or probabilities
+        if formatted_target.shape == orig_shape:
+            flat_target = formatted_target.reshape(B * T, *orig_shape[2:])
+        else:
+            flat_target = formatted_target.reshape(B * T).long()
+
+        raw_loss = self.loss_fn(flat_pred, flat_target, reduction="none")
+
+        # 4. Collapse and Reshape to [B, T] result
+        if raw_loss.ndim > 1:
+            raw_loss = raw_loss.sum(dim=-1)
+
+        elementwise_loss = self.loss_factor * raw_loss.reshape(B, T)
+
+        return elementwise_loss, {}

@@ -61,8 +61,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
         Universal Actor API: Translates raw observations based
         on the exact flow implied by the instantiated components.
         """
-        if not torch.is_tensor(obs):
-            obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+        assert torch.is_tensor(obs), f"obs_inference expects a tensor, got {type(obs)}. Stage 2 (Tensor Routing) must happen outside the network."
+        # obs typically arrives as uint8 from Stage 2. Cast to float here (Neural Preprocessing).
+        obs = obs.float()
 
         # ----------------------------------------
         # MuZero Logic
@@ -144,7 +145,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
         """
         initial_observation = batch.get("observations")
         assert initial_observation is not None, "Batch must contain 'observations'"
-        initial_observation = initial_observation.to(self.device).float()
+        # Stage 2 (Tensor Routing) must have moved the batch to the correct device.
+        # We perform type casting here (Neural Preprocessing).
+        initial_observation = initial_observation.float()
 
         # ----------------------------------------
         # MuZero Logic
