@@ -4,7 +4,7 @@ from typing import Dict, Any, Optional
 
 class ShapeValidator:
     """
-    Validates tensor shapes for predictions and targets in the LossPipeline.
+    Validates tensor shapes for predictions and targets in the LossAggregator.
     Ensures that data matches expected minibatch_size, unroll_steps (K), and action dimensions.
     """
 

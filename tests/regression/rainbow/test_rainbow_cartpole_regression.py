@@ -27,8 +27,12 @@ from data.processors import (
 from data.writers import CircularWriter
 from data.samplers.prioritized import PrioritizedSampler
 
-from learner.pipeline.base import UniversalLearner
-from learner.losses.loss_pipeline import LossPipeline
+from learner.core import UniversalLearner
+from learner.pipeline.forward_pass import ForwardPassComponent
+from learner.losses.optimizer_step import OptimizerStepComponent
+from learner.pipeline.wrappers import TargetBuilderComponent, ComponentCallbacks
+
+from learner.losses.aggregator import LossAggregator
 from learner.losses.q import QBootstrappingLoss
 from learner.losses.priorities import MaxLossPriorityComputer
 from learner.pipeline.target_builders import (
@@ -202,7 +206,7 @@ def test_rainbow_cartpole_full_training():
         )
     }
 
-    loss_pipeline = LossPipeline(
+    loss_pipeline = LossAggregator(
         modules=[QBootstrappingLoss(device=DEVICE, is_categorical=True)],
         priority_computer=MaxLossPriorityComputer(loss_key="QBootstrappingLoss"),
         minibatch_size=MINIBATCH_SIZE,
@@ -236,16 +240,17 @@ def test_rainbow_cartpole_full_training():
     ]
 
     learner = UniversalLearner(
-        agent_network=agent_network,
-        device=DEVICE,
-        num_actions=num_actions,
-        observation_dimensions=obs_dim,
-        observation_dtype=torch.float32,
-        loss_pipeline=loss_pipeline,
-        optimizer=optimizer,
-        target_builder=target_builder,
-        clipnorm=CLIP_NORM,
-        callbacks=callbacks,
+        components=[
+            ForwardPassComponent(agent_network, None),
+            TargetBuilderComponent(target_builder, agent_network),
+            loss_pipeline,
+            OptimizerStepComponent(
+                agent_network=agent_network,
+                optimizer=optimizer,
+                clipnorm=CLIP_NORM,
+            ),
+            ComponentCallbacks(callbacks, hook="on_step_end"),
+        ]
     )
 
     # --- Training Loop ---

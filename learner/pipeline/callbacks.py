@@ -10,7 +10,7 @@ from telemetry.stats import (
 )
 
 if TYPE_CHECKING:
-    from learner.pipeline.base import StepResult, UniversalLearner
+    from learner.core import UniversalLearner, Blackboard
     from modules.agent_nets.modular import ModularAgentNetwork
 from abc import ABC, abstractmethod
 

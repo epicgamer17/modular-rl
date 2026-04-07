@@ -28,7 +28,7 @@ Coverage threshold is **80%** (enforced by `pytest.ini` via `--cov-fail-under=80
 
 This framework is built on **Strict Separation of Concerns and Perfect Polymorphism**. Deep RL systems collapse when neural network math bleeds into game logic, or when optimization math bleeds into tree search logic.
 
-- **The Blind Learner:** `UniversalLearner` must be completely blind to the network's architecture. It calls `learner_inference(batch)`, receives raw math, and routes it to the `LossPipeline`.
+- **The Blind Learner:** `UniversalLearner` must be completely blind to the network's architecture. It calls `learner_inference(batch)`, receives raw math, and routes it to the `LossAggregator`.
 - **The Blind Actor/Tree:** MCTS and Actor treat `network_state` (a generic recurrent state dictionary) as an **Opaque Token** — they store and pass it back without inspecting it.
 - **Game Logic Isolation:** The Neural Network is a pure math function. Action masking and legal move filtering happen strictly *outside* the network (in `BaseActionSelector` subclasses or the Search Tree).
 
@@ -39,13 +39,13 @@ This framework is built on **Strict Separation of Concerns and Perfect Polymorph
 | Directory | Domain | Rule |
 |---|---|---|
 | `modules/` | Pure PyTorch Neural Networks | No knowledge of envs, buffers, or loss functions. Tensors in → tensors out. |
-| `agents/learners/` | Loss Pipeline & Optimizer | Calls `learner_inference(batch) -> LearningOutput`, unpacks it, routes raw tensors to `LossPipeline`. Never contains graph routing loops. |
+| `agents/learners/` | Loss Pipeline & Optimizer | Calls `learner_inference(batch) -> LearningOutput`, unpacks it, routes raw tensors to `LossAggregator`. Never contains graph routing loops. |
 | `agents/action_selectors/` | Math → Action bridge | Where game rules meet network math. Action masking happens here via `mask_actions()`. |
 | `agents/trainers/` | Training orchestration | Instantiates and wires learner, workers, buffer, and executors. |
 | `agents/workers/` | Actor & testing workers | `BaseActor` subclasses (`actors.py`, `puffer_actor.py`) run env loops and write to the replay buffer. |
 | `agents/executors/` | Process management | `local` and `torch_mp` backends for scaling workers. |
 | `replay_buffers/` | High-performance data storage | Stores immutable facts (uint8). Mathematical targets computed on-the-fly in `sample()` via `OutputProcessor`. |
-| `losses/` | Loss computation | `LossModule` subclasses + `LossPipeline`. Take raw tensors — never Distribution objects. |
+| `losses/` | Loss computation | `LossModule` subclasses + `LossAggregator`. Take raw tensors — never Distribution objects. |
 | `search/` | CPU-bound MCTS | Lives entirely on CPU. Interacts with GPU only by batching opaque states. |
 | `custom_gym_envs_pkg/custom_gym_envs/` | All RL Environments | **All environments must be in this package.** |
 | `configs/` | Configuration | YAML-backed, composable via mixins (`OptimizationConfig`, `ReplayConfig`, `SearchConfig`, etc.) |
@@ -148,11 +148,11 @@ class StepResult:
     targets: Dict[str, Tensor] = ...
     meta: Dict[str, Any] = ...
 ```
-Cannot loop over network modules. Calls `learner_inference(batch)`, unpacks `LearningOutput`, routes raw tensors to `LossPipeline`.
+Cannot loop over network modules. Calls `learner_inference(batch)`, unpacks `LearningOutput`, routes raw tensors to `LossAggregator`.
 
-Algorithm-specific learners/wrappers: `PPOLearner`. DQN-style and supervised learning are now assembled by trainers using `UniversalLearner` + `TargetBuilder` + `LossPipeline` + callbacks (e.g. `TargetNetworkSyncCallback`).
+Algorithm-specific learners/wrappers: `PPOLearner`. DQN-style and supervised learning are now assembled by trainers using `UniversalLearner` + `TargetBuilder` + `LossAggregator` + callbacks (e.g. `TargetNetworkSyncCallback`).
 
-### `LossPipeline`
+### `LossAggregator`
 ```python
 # losses/losses.py
 def run(
@@ -250,7 +250,7 @@ Key mixin fields (partial list):
 
 ### Compilation & Performance
 - `torch.compile` is controlled via `config.compilation`. Disable on MPS. Use `fullgraph=config.compilation.fullgraph` during development to surface graph breaks.
-- Apply `torch.compile` to `LossPipeline.run` and return estimators, not just network forward passes.
+- Apply `torch.compile` to `LossAggregator.run` and return estimators, not just network forward passes.
 - Never store attached tensors in the buffer — always `.detach().cpu()` before appending.
 - Use `.item()` when logging metrics.
 - Keep Replay Buffers on CPU. Move to GPU only immediately before the training step.

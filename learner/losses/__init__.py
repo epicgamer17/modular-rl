@@ -1,5 +1,5 @@
 from learner.losses.base import BaseLoss
-from learner.losses.loss_pipeline import LossPipeline
+from learner.losses.aggregator import LossAggregator
 from learner.losses.value import ValueLoss, ClippedValueLoss
 from learner.losses.policy import PolicyLoss, ClippedSurrogateLoss, ImitationLoss
 from learner.losses.to_play import ToPlayLoss, RelativeToPlayLoss

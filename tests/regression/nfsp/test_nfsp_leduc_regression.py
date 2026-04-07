@@ -14,8 +14,12 @@ from learner.losses.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
-from learner.pipeline.base import UniversalLearner
-from learner.losses import LossPipeline, ImitationLoss, QBootstrappingLoss
+from learner.core import UniversalLearner
+from learner.pipeline.forward_pass import ForwardPassComponent
+from learner.losses.optimizer_step import OptimizerStepComponent
+from learner.pipeline.wrappers import TargetBuilderComponent, ComponentCallbacks
+
+from learner.losses import LossAggregator, ImitationLoss, QBootstrappingLoss
 from learner.pipeline.target_builders import (
     PassThroughTargetBuilder,
     SingleStepFormatter,
@@ -147,7 +151,7 @@ def test_nfsp_leduc_regression():
     # 1. RL Learner
     rl_optimizer = torch.optim.Adam(rl_network.parameters(), lr=LR_RL)
     rl_loss = QBootstrappingLoss(device=DEVICE)
-    rl_loss_pipeline = LossPipeline(
+    rl_loss_pipeline = LossAggregator(
         modules=[rl_loss], minibatch_size=BATCH_SIZE, num_actions=num_actions
     )
     rl_target_builder = TargetBuilderPipeline(
@@ -159,20 +163,21 @@ def test_nfsp_leduc_regression():
         ]
     )
     rl_learner = UniversalLearner(
-        agent_network=rl_network,
-        device=DEVICE,
-        num_actions=num_actions,
-        observation_dimensions=obs_shape,
-        observation_dtype=torch.float32,
-        optimizer=rl_optimizer,
-        loss_pipeline=rl_loss_pipeline,
-        target_builder=rl_target_builder,
+        components=[
+            ForwardPassComponent(rl_network, None),
+            TargetBuilderComponent(rl_target_builder, rl_network),
+            rl_loss_pipeline,
+            OptimizerStepComponent(
+                agent_network=rl_network,
+                optimizer=rl_optimizer,
+            ),
+        ]
     )
 
     # 2. SL Learner
     sl_optimizer = torch.optim.Adam(sl_network.parameters(), lr=LR_SL)
     sl_loss = ImitationLoss(device=DEVICE, loss_fn=F.cross_entropy)
-    sl_loss_pipeline = LossPipeline(
+    sl_loss_pipeline = LossAggregator(
         modules=[sl_loss], minibatch_size=BATCH_SIZE, num_actions=num_actions
     )
     sl_target_builder = TargetBuilderPipeline(
@@ -182,14 +187,15 @@ def test_nfsp_leduc_regression():
         ]
     )
     sl_learner = UniversalLearner(
-        agent_network=sl_network,
-        device=DEVICE,
-        num_actions=num_actions,
-        observation_dimensions=obs_shape,
-        observation_dtype=torch.float32,
-        optimizer=sl_optimizer,
-        loss_pipeline=sl_loss_pipeline,
-        target_builder=sl_target_builder,
+        components=[
+            ForwardPassComponent(sl_network, None),
+            TargetBuilderComponent(sl_target_builder, sl_network),
+            sl_loss_pipeline,
+            OptimizerStepComponent(
+                agent_network=sl_network,
+                optimizer=sl_optimizer,
+            ),
+        ]
     )
 
     # --- Setup Buffers ---

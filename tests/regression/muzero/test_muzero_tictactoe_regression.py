@@ -32,9 +32,13 @@ from data.writers import SharedCircularWriter
 from data.samplers.prioritized import UniformSampler
 from data.concurrency import TorchMPBackend
 
-from learner.pipeline.base import UniversalLearner
+from learner.core import UniversalLearner
+from learner.pipeline.forward_pass import ForwardPassComponent
+from learner.losses.optimizer_step import OptimizerStepComponent
+from learner.pipeline.wrappers import TargetBuilderComponent, ComponentCallbacks
+
 from learner.pipeline.batch_iterators import SingleBatchIterator
-from learner.losses.loss_pipeline import LossPipeline
+from learner.losses.aggregator import LossAggregator
 from learner.losses.value import ValueLoss
 from learner.losses.policy import PolicyLoss
 from learner.losses.reward import RewardLoss
@@ -291,7 +295,7 @@ def test_muzero_tictactoe_full_training():
     )
     priority_computer = ExpectedValueErrorPriorityComputer(value_representation=val_rep)
 
-    loss_pipeline = LossPipeline(
+    loss_pipeline = LossAggregator(
         modules=[
             ValueLoss(device=DEVICE, loss_fn=nn.functional.mse_loss, loss_factor=1.0),
             PolicyLoss(
@@ -332,15 +336,15 @@ def test_muzero_tictactoe_full_training():
     )
 
     learner = UniversalLearner(
-        agent_network=agent_network,
-        device=DEVICE,
-        optimizer=optimizer,
-        loss_pipeline=loss_pipeline,
-        target_builder=target_builder,
-        num_actions=num_actions,
-        observation_dimensions=obs_dim,
-        observation_dtype=torch.float32,
-        shape_validator=shape_validator,
+        components=[
+            ForwardPassComponent(agent_network, shape_validator),
+            TargetBuilderComponent(target_builder, agent_network),
+            loss_pipeline,
+            OptimizerStepComponent(
+                agent_network=agent_network,
+                optimizer=optimizer,
+            ),
+        ]
     )
 
     # --- 5. Executor Launch ---

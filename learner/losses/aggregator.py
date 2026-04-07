@@ -1,16 +1,20 @@
 import torch
-import numpy as np
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
+
+from learner.pipeline.base import PipelineComponent
+from learner.core import Blackboard
 from learner.losses.base import BaseLoss
 from learner.losses.priorities import BasePriorityComputer, NullPriorityComputer
 from learner.losses.shape_validator import ShapeValidator
+from modules.utils import scale_gradient
 
 
-class LossPipeline:
+class LossAggregator(PipelineComponent):
     """
     Unified pipeline that handles both single-step (DQN) and sequence (MuZero) losses.
-    Validated at initialization to ensure all required keys are present.
+    Reads individual losses from predictions/targets, sums them, and writes 'total_loss' 
+    to the blackboard.
     """
 
     def __init__(
@@ -61,46 +65,40 @@ class LossPipeline:
                     f"Available: {target_keys}"
                 )
 
-    def run(
-        self,
-        predictions: Dict[str, torch.Tensor],
-        targets: Dict[str, torch.Tensor],
-        weights: Optional[torch.Tensor] = None,
-        gradient_scales: Optional[torch.Tensor] = None,
-    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, float], torch.Tensor]:
+    def execute(self, blackboard: Blackboard) -> None:
         """
-        Run the loss pipeline in a single vectorized pass across all sequence steps.
+        Execute the loss pipeline in a single vectorized pass reading from Blackboard.
+        Memory layout is structured to maintain GPU contiguous checks for throughput.
         """
-        from modules.utils import scale_gradient
-
-        # 1. Shape Validation and Latency Setup
         start_time = time.perf_counter()
         device = self.modules[0].device if self.modules else torch.device("cpu")
-        self.shape_validator.validate(predictions, targets)
+        
+        # 1. Shape Validation
+        self.shape_validator.validate(blackboard.predictions, blackboard.targets)
 
         # 2. Prediction & Target Formatting
-        # This is the single point of truth for representation-based formatting.
-        # It ensures losses stay blind to the underlying mathematical representations.
-        formatted_target_keys = set()
-
-        # A. Format Predictions (Expected Values & Distributions)
         for pred_key, rep in self.representations.items():
-            if pred_key in predictions:
+            if pred_key in blackboard.predictions:
                 if hasattr(rep, "to_expected_value"):
-                    predictions[f"{pred_key}_expected"] = rep.to_expected_value(
-                        predictions[pred_key]
+                    blackboard.predictions[f"{pred_key}_expected"] = rep.to_expected_value(
+                        blackboard.predictions[pred_key]
                     )
                 if hasattr(rep, "to_inference"):
-                    predictions[f"{pred_key}_dist"] = rep.to_inference(
-                        predictions[pred_key]
+                    blackboard.predictions[f"{pred_key}_dist"] = rep.to_inference(
+                        blackboard.predictions[pred_key]
                     )
 
-        # 3. Defaults and Secure Scaling
-        # We no longer guess B and T. They are anchored by weights and gradient_scales.
+        # 3. Secure Weights & Gradient Scales
+        weights = blackboard.batch.get("weights")
         if weights is None:
-            weights = targets["weights"]
-        if gradient_scales is None:
-            gradient_scales = targets["gradient_scales"]
+            weights = blackboard.targets.get("weights")
+        if weights is not None and torch.is_tensor(weights):
+            weights = weights.to(device, memory_format=torch.contiguous_format).float()
+            
+        gradient_scales = blackboard.targets.get("gradient_scales")
+        
+        if weights is None or gradient_scales is None:
+            raise ValueError("LossAggregator requires 'weights' and 'gradient_scales'.")
 
         B = weights.shape[0]
         T = gradient_scales.shape[1]
@@ -114,34 +112,37 @@ class LossPipeline:
         # 4. Single-Pass Vectorized Execution
         for module in self.modules:
             # Blindly compute: decision logic now lives in the Factory/Registry
-            # Compute ([B, T] elementwise loss, metrics_dict)
-            elementwise_loss, module_metrics = module.compute_loss(predictions, targets)
+            elementwise_loss, module_metrics = module.compute_loss(
+                blackboard.predictions, blackboard.targets
+            )
             all_elementwise_losses[module.name] = elementwise_loss
-            mask = module.get_mask(targets)
+            mask = module.get_mask(blackboard.targets)
 
-            # Aggregate metrics from the module
             loss_dict.update(module_metrics)
 
-            # Scale by Gradient Scales [1, T] and PER Weights [B, 1]
+            # Scale and Weight
             scaled_loss = scale_gradient(elementwise_loss, gradient_scales)
             weighted_loss = scaled_loss * weights.reshape(B, 1)
 
-            # Mask and Reduce (Sum-over-Mask)
+            # Mask and Reduce
             masked_weighted_loss = (weighted_loss * mask.float()).sum()
             valid_transition_count = mask.float().sum().clamp(min=1.0)
-
-            # Final Transition-Averaged Loss [Scalar]
+            
             total_scalar_loss = masked_weighted_loss / valid_transition_count
 
             total_loss_dict[module.optimizer_name] += total_scalar_loss
             loss_dict[module.name] = total_scalar_loss.item()
 
-        # 5. Extract Priorities via standalone computer [B]
+        # 5. Extract Priorities
         priorities = self.priority_computer.compute(
-            all_elementwise_losses, predictions, targets
+            all_elementwise_losses, blackboard.predictions, blackboard.targets
         )
 
         loss_dict["loss_pipeline_latency_ms"] = (
             time.perf_counter() - start_time
         ) * 1000
-        return total_loss_dict, loss_dict, priorities
+
+        # Optional contiguous memory enforce before passing gradient nodes via blackboard
+        blackboard.losses = {k: v.contiguous() for k, v in total_loss_dict.items()}
+        blackboard.loss_dict.update(loss_dict)
+        blackboard.priorities = priorities

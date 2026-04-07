@@ -29,8 +29,12 @@ from data.writers import PPOWriter
 from data.samplers.prioritized import WholeBufferSampler
 
 from learner.pipeline.batch_iterators import PPOEpochIterator
-from learner.pipeline.base import UniversalLearner
-from learner.losses.loss_pipeline import LossPipeline
+from learner.core import UniversalLearner
+from learner.pipeline.forward_pass import ForwardPassComponent
+from learner.losses.optimizer_step import OptimizerStepComponent
+from learner.pipeline.wrappers import TargetBuilderComponent, ComponentCallbacks
+
+from learner.losses.aggregator import LossAggregator
 from learner.losses.policy import ClippedSurrogateLoss
 from learner.losses.value import ClippedValueLoss
 from learner.pipeline.callbacks import MetricEarlyStopCallback
@@ -180,7 +184,7 @@ def test_ppo_cartpole_full_training():
         unroll_steps=0,
     )
 
-    loss_pipeline = LossPipeline(
+    loss_pipeline = LossAggregator(
         modules=[
             ClippedSurrogateLoss(
                 device=DEVICE,
@@ -214,18 +218,20 @@ def test_ppo_cartpole_full_training():
     )
 
     learner = UniversalLearner(
-        agent_network=agent_network,
-        device=DEVICE,
-        num_actions=num_actions,
-        observation_dimensions=obs_dim,
-        observation_dtype=torch.float32,
-        loss_pipeline=loss_pipeline,
-        optimizer=optimizer,
-        lr_scheduler={},
-        target_builder=target_builder,
-        callbacks=[MetricEarlyStopCallback(threshold=TARGET_KL)],
-        clipnorm=0.5,
-        shape_validator=shape_validator,
+        components=[
+            ForwardPassComponent(agent_network, shape_validator),
+            TargetBuilderComponent(target_builder, agent_network),
+            loss_pipeline,
+            OptimizerStepComponent(
+                agent_network=agent_network,
+                optimizer=optimizer,
+                clipnorm=0.5,
+                lr_scheduler={},
+            ),
+            ComponentCallbacks(
+                [MetricEarlyStopCallback(threshold=TARGET_KL)], hook="on_step_end"
+            ),
+        ]
     )
 
     # --- Training Loop ---

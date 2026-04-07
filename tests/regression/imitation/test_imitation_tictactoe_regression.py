@@ -10,8 +10,12 @@ from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.policy import PolicyHead
 from learner.losses.representations import ClassificationRepresentation
-from learner.pipeline.base import UniversalLearner
-from learner.losses import LossPipeline, ImitationLoss
+from learner.core import UniversalLearner
+from learner.pipeline.forward_pass import ForwardPassComponent
+from learner.losses.optimizer_step import OptimizerStepComponent
+from learner.pipeline.wrappers import TargetBuilderComponent, ComponentCallbacks
+
+from learner.losses import LossAggregator, ImitationLoss
 from learner.pipeline.target_builders import (
     PassThroughTargetBuilder,
     SingleStepFormatter,
@@ -134,7 +138,7 @@ def test_imitation_tictactoe_regression():
         loss_fn=loss_fn,
     )
 
-    loss_pipeline = LossPipeline(
+    loss_pipeline = LossAggregator(
         modules=[imitation_loss],
         minibatch_size=BATCH_SIZE,
         num_actions=num_actions,
@@ -148,14 +152,15 @@ def test_imitation_tictactoe_regression():
     )
 
     learner = UniversalLearner(
-        agent_network=agent_network,
-        device=DEVICE,
-        num_actions=num_actions,
-        observation_dimensions=obs_shape,
-        observation_dtype=torch.float32,
-        optimizer=optimizer,
-        loss_pipeline=loss_pipeline,
-        target_builder=target_builder,
+        components=[
+            ForwardPassComponent(agent_network, None),
+            TargetBuilderComponent(target_builder, agent_network),
+            loss_pipeline,
+            OptimizerStepComponent(
+                agent_network=agent_network,
+                optimizer=optimizer,
+            ),
+        ]
     )
 
     # --- Training Loop ---
