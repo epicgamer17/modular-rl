@@ -29,7 +29,7 @@ from typing import Callable
 
 import torch
 
-from search.aos_search.tree import FlatTree
+from search.backends.aos_search.tree import FlatTree
 
 
 # ---------------------------------------------------------------------------

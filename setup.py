@@ -4,7 +4,7 @@ from pybind11.setup_helpers import Pybind11Extension, build_ext
 from setuptools import setup
 
 
-CPP_DIR = Path("search") / "search_cpp"
+CPP_DIR = Path("search") / "backends" / "cpp_search"
 CPP_SOURCES = [
     "bindings.cpp",
     "backprop.cpp",
@@ -17,7 +17,7 @@ CPP_SOURCES = [
 
 ext_modules = [
     Pybind11Extension(
-        "search.search_cpp",
+        "search.backends.cpp_search.search_cpp",
         [str(CPP_DIR / src) for src in CPP_SOURCES],
         include_dirs=[str(CPP_DIR)],
         cxx_std=17,

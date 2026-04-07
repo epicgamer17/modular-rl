@@ -22,7 +22,7 @@ from modules.world_models.components.dynamics import Dynamics
 from actors.action_selectors.decorators import TemperatureSelector
 from actors.action_selectors.selectors import CategoricalSelector
 from actors.action_selectors.policy_sources import SearchPolicySource
-from search.search_py.modular_search import ModularSearch
+from search.backends.py_search.modular_search import ModularSearch
 from utils.schedule import StepwiseSchedule
 
 from data.storage.circular import BufferConfig, ModularReplayBuffer

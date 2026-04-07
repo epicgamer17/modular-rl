@@ -4,7 +4,7 @@ from pathlib import Path
 import matplotlib.cm as cm
 import matplotlib.colors as colors
 
-from search.nodes import DecisionNode, ChanceNode
+from search.backends.py_search.nodes import DecisionNode, ChanceNode
 
 
 def visualize_mcts(root, output_path="stats/mcts_tree", max_depth=5):

@@ -20,20 +20,20 @@ from typing import Callable, Dict, Optional, Any
 import torch
 import torch.utils._pytree as pytree
 
-from search.aos_search.tree import FlatTree
-from search.aos_search.batched_mcts import batched_mcts_step
-from search.aos_search.min_max_stats import VectorizedMinMaxStats
-from search.aos_search.scoring import ScoringFn, ucb_score_fn, gumbel_score_fn
-from search.aos_search.functional_modifiers import (
+from search.backends.aos_search.tree import FlatTree
+from search.backends.aos_search.batched_mcts import batched_mcts_step
+from search.backends.aos_search.min_max_stats import VectorizedMinMaxStats
+from search.backends.aos_search.scoring import ScoringFn, ucb_score_fn, gumbel_score_fn
+from search.backends.aos_search.functional_modifiers import (
     apply_dirichlet_noise,
 )
-from search.aos_search.dynamic_masking import apply_sequential_halving
-from search.aos_search.backpropogation import (
+from search.backends.aos_search.dynamic_masking import apply_sequential_halving
+from search.backends.aos_search.backpropogation import (
     BackpropFn,
     average_discounted_backprop,
     minimax_backprop,
 )
-from search.aos_search.search_output import (
+from search.backends.aos_search.search_output import (
     SearchOutput,
     visit_count_policy,
     gumbel_max_q_policy,

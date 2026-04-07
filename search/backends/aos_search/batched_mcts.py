@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import torch
 
-from search.aos_search.tree import FlatTree
-from search.aos_search.scoring import ScoringFn, ucb_score_fn
-from search.aos_search.backpropogation import BackpropFn, average_discounted_backprop
-from search.aos_search.min_max_stats import VectorizedMinMaxStats
+from search.backends.aos_search.tree import FlatTree
+from search.backends.aos_search.scoring import ScoringFn, ucb_score_fn
+from search.backends.aos_search.backpropogation import BackpropFn, average_discounted_backprop
+from search.backends.aos_search.min_max_stats import VectorizedMinMaxStats
 import torch.utils._pytree as pytree
 import torch.distributions as dists
 from modules.world_models.inference_output import InferenceOutput

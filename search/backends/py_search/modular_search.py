@@ -7,29 +7,29 @@ from torch.distributions import Categorical
 import math
 from modules.utils import support_to_scalar
 from modules.world_models.inference_output import InferenceOutput
-from search.search_selectors import (
+from search.backends.py_search.search_selectors import (
     SelectionStrategy,
     TopScoreSelection,
     SamplingSelection,
 )
-from search.backpropogation import Backpropagator, AverageDiscountedReturnBackpropagator
-from search.initial_searchsets import SearchSet, SelectAll, SelectTopK
-from search.nodes import ChanceNode, DecisionNode
-from search.min_max_stats import MinMaxStats
-from search.prior_injectors import (
+from search.backends.py_search.backpropogation import Backpropagator, AverageDiscountedReturnBackpropagator
+from search.backends.py_search.initial_searchsets import SearchSet, SelectAll, SelectTopK
+from search.backends.py_search.nodes import ChanceNode, DecisionNode
+from search.backends.py_search.min_max_stats import MinMaxStats
+from search.backends.py_search.prior_injectors import (
     PriorInjector,
     ActionTargetInjector,
     DirichletInjector,
     GumbelInjector,
 )
-from search.root_policies import (
+from search.backends.py_search.root_policies import (
     RootPolicyStrategy,
     CompletedQValuesRootPolicy,
     VisitFrequencyPolicy,
 )
 from utils.utils import get_legal_moves
-from search.pruners import PruningMethod, NoPruning, SequentialHalvingPruning
-from search.scoring_methods import (
+from search.backends.py_search.pruners import PruningMethod, NoPruning, SequentialHalvingPruning
+from search.backends.py_search.scoring_methods import (
     GumbelScoring,
     LeastVisitedScoring,
     UCBScoring,
@@ -139,7 +139,7 @@ class ModularSearch:
                 DeterministicChanceScoring()
             )
 
-            from search.search_py.root_policies import (
+            from search.backends.py_search.root_policies import (
                 BestActionRootPolicy,
                 VisitFrequencyPolicy,
             )
@@ -168,7 +168,7 @@ class ModularSearch:
             self.pruning_method: PruningMethod = NoPruning()
             self.internal_pruning_method: PruningMethod = NoPruning()
 
-            from search.search_py.backpropogation import (
+            from search.backends.py_search.backpropogation import (
                 MinimaxBackpropagator,
                 AverageDiscountedReturnBackpropagator,
             )
@@ -365,7 +365,7 @@ class ModularSearch:
         # already baked into root.child_priors by the GumbelInjector.
         # Non-Gumbel searches use argmax of the clean target policy.
         if self.gumbel:
-            from search.search_py.utils import (
+            from search.backends.py_search.utils import (
                 get_completed_q,
                 calculate_gumbel_sigma,
             )
@@ -588,7 +588,7 @@ class ModularSearch:
             # Gumbel MuZero: play argmax(g + σ) — Paper Alg. 2.
             # Non-Gumbel: play argmax of the clean target policy.
             if self.gumbel:
-                from search.search_py.utils import (
+                from search.backends.py_search.utils import (
                     get_completed_q,
                     calculate_gumbel_sigma,
                 )

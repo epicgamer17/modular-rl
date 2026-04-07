@@ -1,6 +1,6 @@
 import torch
 from typing import List, Optional
-from search.aos_search.search_factories import build_search_pipeline
+from search.backends.aos_search.search_factories import build_search_pipeline
 
 
 class ModularSearch:

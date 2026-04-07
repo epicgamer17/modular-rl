@@ -18,8 +18,8 @@ from typing import Callable, Optional
 
 import torch
 
-from search.aos_search.tree import FlatTree
-from search.aos_search.min_max_stats import VectorizedMinMaxStats
+from search.backends.aos_search.tree import FlatTree
+from search.backends.aos_search.min_max_stats import VectorizedMinMaxStats
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +179,7 @@ def ucb_score_fn(
     elif bootstrap_method == "zero":
         bootstrap_q = torch.zeros_like(child_values)
     elif bootstrap_method == "v_mix":
-        from search.aos_search.scoring import compute_v_mix
+        from search.backends.aos_search.scoring import compute_v_mix
 
         v_mix = compute_v_mix(tree, node_indices)
         bootstrap_q = v_mix.unsqueeze(-1).expand_as(child_values)

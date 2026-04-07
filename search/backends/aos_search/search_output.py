@@ -17,7 +17,7 @@ from typing import NamedTuple, Optional
 
 import torch
 
-from search.aos_search.tree import FlatTree
+from search.backends.aos_search.tree import FlatTree
 
 
 # ---------------------------------------------------------------------------
