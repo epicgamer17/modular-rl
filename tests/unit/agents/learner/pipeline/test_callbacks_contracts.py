@@ -14,7 +14,8 @@ def test_component_callbacks_hook_dispatch():
     bb = Blackboard(batch={"data": 1})
     bb.predictions = {"p": 2}
     bb.targets = {"t": 3}
-    bb.meta = {"loss": 0.5, "priorities": [1, 1]}
+    bb.meta = {"acc": 0.9, "priorities": [1, 1]}
+    bb.losses = {"default": torch.tensor(0.5)}
     
     component.execute(bb)
     
@@ -24,10 +25,11 @@ def test_component_callbacks_hook_dispatch():
     
     assert kwargs["predictions"] == bb.predictions
     assert kwargs["targets"] == bb.targets
-    assert kwargs["loss_dict"] == bb.meta # Current implementation passes meta as loss_dict
+    assert kwargs["loss_dict"] == {"default": 0.5}
     assert kwargs["priorities"] == bb.meta["priorities"]
     assert kwargs["batch"] == bb.batch
     assert kwargs["meta"] == bb.meta
+
 
 def test_component_callbacks_no_op_on_wrong_hook():
     """Verify ComponentCallbacks does nothing if the hook doesn't match."""

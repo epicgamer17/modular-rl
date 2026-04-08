@@ -32,9 +32,8 @@ from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
 from learner.pipeline.callbacks import ComponentCallbacks, PriorityUpdaterCallback, ResetNoiseCallback
 
-from learner.losses.aggregator import LossAggregator
+from learner.losses.aggregator import LossAggregatorComponent, PriorityUpdateComponent
 from learner.losses.q import QBootstrappingLoss
-from learner.losses.priorities import MaxLossPriorityComputer
 from learner.pipeline.target_builders import (
     DistributionalTargetComponent,
     UniversalInfrastructureComponent,
@@ -205,13 +204,12 @@ def test_rainbow_cartpole_full_training():
         )
     }
 
-    loss_pipeline = LossAggregator(
-        modules=[QBootstrappingLoss(device=DEVICE, is_categorical=True)],
-        priority_computer=MaxLossPriorityComputer(loss_key="QBootstrappingLoss"),
-        minibatch_size=MINIBATCH_SIZE,
-        atom_size=ATOM_SIZE,
-        representations={"q_logits": representation},
-    )
+    from learner.losses.priorities import MaxLossPriorityComputer
+    priority_computer = MaxLossPriorityComputer(loss_key="q_loss")
+
+    q_loss = QBootstrappingLoss(is_categorical=True, name="q_loss")
+    priority_comp = PriorityUpdateComponent(priority_computer=priority_computer)
+
 
     from utils.schedule import ConstantSchedule
 
@@ -236,7 +234,10 @@ def test_rainbow_cartpole_full_training():
                 n_step=N_STEP,
             ),
             UniversalInfrastructureComponent(),
-            loss_pipeline,
+            q_loss,
+            LossAggregatorComponent(),
+            priority_comp,
+
             OptimizerStepComponent(
                 agent_network=agent_network,
                 optimizer=optimizer,

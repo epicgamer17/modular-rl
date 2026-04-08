@@ -1,89 +1,49 @@
 import torch
-from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Any, TYPE_CHECKING
+from modules.utils import scale_gradient
 
+if TYPE_CHECKING:
+    from learner.core import Blackboard
 
-class BaseLoss(ABC):
+def apply_infrastructure(
+    elementwise_loss: torch.Tensor,
+    blackboard: 'Blackboard',
+    mask_key: str,
+) -> torch.Tensor:
     """
-    Unified base class and execution engine for all loss modules.
-    Handles data extraction, representation bridging, and masking.
+    Applies standard infrastructure to a [B, T] elementwise loss:
+    1. Gradient Scaling (depth-based)
+    2. Weights (Importance Sampling)
+    3. Masking
+    4. Reduction to Mean Scalar
     """
+    # 1. Secure Weights & Gradient Scales from Meta (Truth Source)
+    weights = blackboard.meta.get("weights")
+    gradient_scales = blackboard.meta.get("gradient_scales")
+    masks = blackboard.targets.get(mask_key)
 
-    def __init__(
-        self,
-        device: torch.device,
-        pred_key: str,
-        target_key: str,
-        mask_key: str,
-        loss_fn: Optional[Any] = None,
-        optimizer_name: str = "default",
-        loss_factor: float = 1.0,
-        name: Optional[str] = None,
-    ):
-        self.device = device
-        self.pred_key = pred_key
-        self.target_key = target_key
-        self.mask_key = mask_key
-        self.loss_fn = loss_fn
-        self.optimizer_name = optimizer_name
-        self.loss_factor = loss_factor
-        self.name = name or self.__class__.__name__
+    if weights is None or gradient_scales is None or masks is None:
+        # Fallback for simple environments or missing infra
+        B, T = elementwise_loss.shape[:2]
+        device = elementwise_loss.device
+        weights = weights if weights is not None else torch.ones(B, device=device)
+        gradient_scales = gradient_scales if gradient_scales is not None else torch.ones((1, T), device=device)
+        masks = masks if masks is not None else torch.ones((B, T), device=device, dtype=torch.bool)
 
-    @property
-    def required_predictions(self) -> set[str]:
-        return {self.pred_key}
+    B = weights.shape[0]
+    T = gradient_scales.shape[1]
 
-    @property
-    def required_targets(self) -> set[str]:
-        return {self.target_key, self.mask_key}
+    # Normalize elements
+    elementwise_loss = elementwise_loss.reshape(B, T)
 
-    def get_mask(self, targets: Dict[str, torch.Tensor]) -> torch.Tensor:
-        """Get the mask to apply for this loss (B, T)."""
-        mask = targets.get(self.mask_key)
-        if mask is None:
-            raise KeyError(
-                f"Missing required mask '{self.mask_key}' for {self.__class__.__name__}"
-            )
-        return mask
+    # 2. Scale and Weight
+    scaled_loss = scale_gradient(elementwise_loss, gradient_scales)
+    weighted_loss = scaled_loss * weights.reshape(B, 1)
 
-    def compute_loss(
-        self,
-        predictions: Dict[str, torch.Tensor],
-        targets: Dict[str, torch.Tensor],
-    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        """
-        Pure Vectorized Execution Engine.
-        Returns:
-            elementwise_tensor: [B, T]
-            metrics: Dictionary of auxiliary logging metrics
-        """
-        # 1. Extract [B, T, ...] inputs
-        pred = predictions[self.pred_key]
+    # 3. Mask and Reduce
+    masked_weighted_loss = (weighted_loss * masks.float()).sum()
+    valid_transition_count = masks.float().sum().clamp(min=1.0)
+    
+    return masked_weighted_loss / valid_transition_count
 
-        # 2. Extract targets [B, T, ...]
-        formatted_target = targets[self.target_key]
 
-        # 3. Apply raw PyTorch loss function
-        assert pred.shape == formatted_target.shape, (
-            f"{self.__class__.__name__}: shape mismatch between pred {pred.shape} "
-            f"and formatted_target {formatted_target.shape}"
-        )
-
-        # Determine B, T directly from the primary prediction tensor
-        B, T = pred.shape[:2]
-
-        # Flatten B, T to handle universal T contract correctly
-        orig_shape = pred.shape
-        flat_pred = pred.reshape(B * T, *orig_shape[2:])
-        flat_target = formatted_target.reshape(B * T, *orig_shape[2:])
-
-        raw_loss = self.loss_fn(flat_pred, flat_target, reduction="none")
-
-        # 4. Collapse and Reshape to [B, T] result
-        if raw_loss.ndim > 1:
-            raw_loss = raw_loss.sum(dim=-1)
-
-        elementwise_loss = self.loss_factor * raw_loss.reshape(B, T)
-
-        # Base losses return no extra metrics by default
-        return elementwise_loss, {}

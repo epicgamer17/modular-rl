@@ -226,8 +226,6 @@ class DecisionNode:
         self.prior = prior
         self.value_sum = 0
         self.children = {}
-        self.value_sum = 0
-        self.children = {}
         self.network_state = None
 
         self.reward = 0
@@ -305,8 +303,6 @@ class DecisionNode:
 
         # Lazy child creation: do NOT populate children dict yet.
 
-    def _populate_children(self, allowed_actions, priors):
-        pass  # Deprecated by vectorized stats
 
     def expanded(self):
         # assert (len(self.children) > 0) == (self.visits > 0)

@@ -1,75 +1,58 @@
 import torch
 import torch.nn.functional as F
-from typing import Any, Dict, Optional, Tuple
-from learner.losses.base import BaseLoss
+from typing import Any, Dict, Optional
+from learner.pipeline.base import PipelineComponent
+from learner.core import Blackboard
+from learner.losses.base import apply_infrastructure
 
 
-class QBootstrappingLoss(BaseLoss):
+class QBootstrappingLoss(PipelineComponent):
     """
     Standard TD target loss for Q-learning.
     Indexes the prediction tensor by the taken actions to compute TD errors.
     """
-
     def __init__(
         self,
-        device: torch.device,
         is_categorical: bool = False,
         loss_fn: Any = None,
-        optimizer_name: str = "default",
         mask_key: str = "value_mask",
-        name: Optional[str] = None,
+        name: str = "q_loss",
     ):
-        # 1. Determine Pred/Target keys and default Loss function based on atom_size
-        pred_key = "q_logits" if is_categorical else "q_values"
-        target_key = "q_logits" if is_categorical else "values"
-
+        self.is_categorical = is_categorical
+        self.pred_key = "q_logits" if is_categorical else "q_values"
+        self.target_key = "q_logits" if is_categorical else "values"
+        
         if loss_fn is None:
-            loss_fn = F.cross_entropy if is_categorical else F.mse_loss
+            self.loss_fn = F.cross_entropy if is_categorical else F.mse_loss
+        else:
+            self.loss_fn = loss_fn
+            
+        self.mask_key = mask_key
+        self.name = name
 
-        super().__init__(
-            device=device,
-            pred_key=pred_key,
-            target_key=target_key,
-            mask_key=mask_key,
-            loss_fn=loss_fn,
-            optimizer_name=optimizer_name,
-            name=name,
-        )
+    def execute(self, blackboard: Blackboard) -> None:
+        q_preds = blackboard.predictions[self.pred_key]
+        actions = blackboard.targets["actions"].long()
+        formatted_target = blackboard.targets[self.target_key]
 
-    def compute_loss(
-        self, predictions: Dict[str, torch.Tensor], targets: Dict[str, torch.Tensor]
-    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        q_preds = predictions[self.pred_key]
-        actions = targets["actions"].long()
-
-        # 1. Capture and Validate Shapes
-        assert (
-            q_preds.ndim >= 3
-        ), f"QBootstrappingLoss requires at least [B, T, Actions] predictions, got {q_preds.shape}"
-        B, T = actions.shape
+        B, T = actions.shape[:2]
         num_actions = q_preds.shape[2]
 
-        # 2. Select Take Action Predictions: [B, T, Atoms] or [B, T, 1]
+        # Select Take Action Predictions
         flat_preds = q_preds.reshape(B * T, num_actions, -1)
         flat_actions = actions.reshape(-1)
-        selected_preds = flat_preds[
-            torch.arange(B * T, device=self.device), flat_actions
-        ]
+        selected_preds = flat_preds[torch.arange(B * T, device=q_preds.device), flat_actions]
 
-        # 3. Use pre-formatted Targets
-        formatted_target = targets[self.target_key]
+        # Use pre-formatted Targets
         flat_targets = formatted_target.reshape(B * T, -1)
 
-        # 4. Final Squeezing and Matching
-        # We ensure they are both [B*T] for standard MSE or [B*T, Atoms] for C51
+        # Matching shapes
         if selected_preds.ndim > 1 and selected_preds.shape[-1] == 1:
-            # Bring B*T, 1 -> B*T
             selected_preds = selected_preds.squeeze(-1)
         if flat_targets.ndim > 1 and flat_targets.shape[-1] == 1:
-            # Bring B*T, 1 -> B*T
             flat_targets = flat_targets.squeeze(-1)
 
-        # 5. Apply Loss Function
+        # Apply Loss Function
         if self.pred_key == "q_logits":
             # Multi-atom categorical cross-entropy
             log_probs = F.log_softmax(selected_preds, dim=-1)
@@ -78,52 +61,55 @@ class QBootstrappingLoss(BaseLoss):
             # Standard scalar regression (MSE)
             raw_loss = self.loss_fn(selected_preds, flat_targets, reduction="none")
 
-        return raw_loss.reshape(B, T), {}
+        elementwise_loss = raw_loss.reshape(B, T)
+
+        # Pass through infrastructure
+        scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
+
+        # Write out
+        blackboard.losses[self.name] = scalar_loss
+        blackboard.meta[self.name] = scalar_loss.item()
+        
+        # Store elementwise loss for priority computation
+        if "elementwise_losses" not in blackboard.meta:
+            blackboard.meta["elementwise_losses"] = {}
+        blackboard.meta["elementwise_losses"][self.name] = elementwise_loss
 
 
-class ChanceQLoss(BaseLoss):
+
+class ChanceQLoss(PipelineComponent):
     """Loss for stochastic muzero chance Q heads."""
-
     def __init__(
         self,
-        device: torch.device,
-        loss_factor: float,
-        optimizer_name: str = "default",
+        loss_factor: float = 1.0,
         mask_key: str = "afterstate_value_mask",
-        name: Optional[str] = None,
+        name: str = "chance_q_loss",
     ):
-        super().__init__(
-            device=device,
-            pred_key="chance_q_logits",
-            target_key="chance_values_next",
-            mask_key=mask_key,
-            loss_fn=F.cross_entropy,
-            optimizer_name=optimizer_name,
-            loss_factor=loss_factor,
-            name=name,
-        )
+        self.loss_factor = loss_factor
+        self.mask_key = mask_key
+        self.name = name
 
-    def compute_loss(
-        self, predictions: Dict[str, torch.Tensor], targets: Dict[str, torch.Tensor]
-    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        """Chance Q computes target value from next step."""
-        chance_values_next = targets.get("chance_values_next")
-        if chance_values_next is None:
-            raise KeyError(
-                "ChanceQLoss requires 'chance_values_next' in targets. (MuZero target builders must provide it)"
-            )
+    def execute(self, blackboard: Blackboard) -> None:
+        formatted_target = blackboard.targets.get("chance_values_next")
+        if formatted_target is None:
+            raise KeyError("ChanceQLoss requires 'chance_values_next' in targets.")
 
-        # Ingredients for Representation: chance_values_next is already provided and whitelisted
-        formatted_target = targets["chance_values_next"]
-
-        pred = predictions[self.pred_key]
+        pred = blackboard.predictions["chance_q_logits"]
         B, T = pred.shape[:2]
 
         flat_pred = pred.reshape(B * T, -1)
         flat_target = formatted_target.reshape(B * T, -1)
 
-        raw_loss = self.loss_fn(flat_pred, flat_target, reduction="none")
+        raw_loss = F.cross_entropy(flat_pred, flat_target, reduction="none")
         if raw_loss.ndim > 1:
             raw_loss = raw_loss.sum(dim=-1)
 
-        return self.loss_factor * raw_loss.reshape(B, T), {}
+        elementwise_loss = raw_loss.reshape(B, T) * self.loss_factor
+
+        # Pass through infrastructure
+        scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
+
+        # Write out
+        blackboard.losses[self.name] = scalar_loss
+        blackboard.meta[self.name] = scalar_loss.item()
+

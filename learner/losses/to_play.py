@@ -1,54 +1,38 @@
 import torch
 import torch.nn.functional as F
-from typing import Any, Optional
-from learner.losses.base import BaseLoss
+from typing import Any, Dict, Optional
+from learner.pipeline.base import PipelineComponent
+from learner.core import Blackboard
+from learner.losses.base import apply_infrastructure
 
 
-class ToPlayLoss(BaseLoss):
-    """Loss for learning to predict who's turn it is."""
-
+class ToPlayLoss(PipelineComponent):
+    """Loss for learning to predict whose turn it is."""
     def __init__(
         self,
-        device: torch.device,
-        loss_factor: float,
-        optimizer_name: str = "default",
+        loss_factor: float = 1.0,
         mask_key: str = "to_play_mask",
-        name: Optional[str] = None,
+        name: str = "to_play_loss",
     ):
-        super().__init__(
-            device=device,
-            pred_key="to_plays",
-            target_key="to_plays",
-            mask_key=mask_key,
-            loss_fn=F.cross_entropy,
-            optimizer_name=optimizer_name,
-            loss_factor=loss_factor,
-            name=name,
-        )
+        self.loss_factor = loss_factor
+        self.mask_key = mask_key
+        self.name = name
 
+    def execute(self, blackboard: Blackboard) -> None:
+        preds = blackboard.predictions["to_plays"]
+        targets = blackboard.targets["to_plays"]
+        
+        B, T = preds.shape[:2]
+        
+        # Flatten B, T
+        raw_loss = F.cross_entropy(preds.flatten(0, 1), targets.flatten(0, 1), reduction="none")
+        if raw_loss.ndim > 1:
+            raw_loss = raw_loss.sum(dim=-1)
+        elementwise_loss = raw_loss.reshape(B, T) * self.loss_factor
 
-class RelativeToPlayLoss(BaseLoss):
-    """
-    Loss for relative player turn prediction.
-    Predicted [B, T, num_players] is a softmax over players relative to root.
-    Target logic shifts based on sequence current player.
-    """
+        # Pass through infrastructure
+        scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
-    def __init__(
-        self,
-        device: torch.device,
-        loss_factor: float,
-        optimizer_name: str = "default",
-        mask_key: str = "to_play_mask",
-        name: Optional[str] = None,
-    ):
-        super().__init__(
-            device=device,
-            pred_key="to_plays",
-            target_key="to_plays",
-            mask_key=mask_key,
-            loss_fn=F.cross_entropy,
-            optimizer_name=optimizer_name,
-            loss_factor=loss_factor,
-            name=name,
-        )
+        # Write out
+        blackboard.losses[self.name] = scalar_loss
+        blackboard.meta[self.name] = scalar_loss.item()

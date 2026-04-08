@@ -78,13 +78,18 @@ def test_universal_learner_execution_order():
     assert bb_history == [1, 2, 3]
 
 
-def test_universal_learner_yields_meta():
-    """Verify UniversalLearner yields the blackboard.meta dictionary."""
-    components = [MockComponent("loss", 0.5), MockComponent("acc", 0.9)]
-    learner = UniversalLearner(components=components, device=torch.device("cpu"))
+def test_universal_learner_yields_metrics():
+    """Verify UniversalLearner yields the blackboard.meta and losses dictionaries."""
+    class LossComponent(PipelineComponent):
+        def execute(self, blackboard: Blackboard) -> None:
+            blackboard.losses["main"] = torch.tensor(1.0)
+            blackboard.meta["acc"] = 0.9
+
+    learner = UniversalLearner(components=[LossComponent()], device=torch.device("cpu"))
 
     results = list(learner.step([{"dummy": 0}]))
 
     assert len(results) == 1
-    assert results[0]["loss"] == 0.5
-    assert results[0]["acc"] == 0.9
+    assert results[0]["losses"]["main"] == 1.0
+    assert results[0]["meta"]["acc"] == 0.9
+

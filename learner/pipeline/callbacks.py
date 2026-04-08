@@ -317,11 +317,12 @@ class ComponentCallbacks(PipelineComponent):
     def execute(self, blackboard: Blackboard) -> None:
         if self.hook == "on_step_end":
             self.callbacks.on_step_end(
-                learner=None,  # Deprecated reference
+                learner=None,
                 predictions=blackboard.predictions,
                 targets=blackboard.targets,
-                loss_dict=blackboard.meta,
+                loss_dict={k: v.item() for k, v in blackboard.losses.items()},
                 priorities=blackboard.meta.get("priorities"),
                 batch=blackboard.batch,
                 meta=blackboard.meta,
             )
+

@@ -15,7 +15,7 @@ from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
 from learner.pipeline.callbacks import ComponentCallbacks
 
-from learner.losses import LossAggregator, ImitationLoss
+from learner.losses import LossAggregatorComponent, ImitationLoss
 from learner.pipeline.target_builders import (
     PassThroughTargetComponent,
     UniversalInfrastructureComponent,
@@ -133,15 +133,12 @@ def test_imitation_tictactoe_regression():
     loss_fn = F.cross_entropy
 
     imitation_loss = ImitationLoss(
-        device=DEVICE,
         loss_fn=loss_fn,
     )
 
-    loss_pipeline = LossAggregator(
-        modules=[imitation_loss],
-        minibatch_size=BATCH_SIZE,
-        num_actions=num_actions,
-    )
+
+    # loss_pipeline ignored, we add components directly to learner
+
 
     # Target building components
 
@@ -150,7 +147,8 @@ def test_imitation_tictactoe_regression():
             ForwardPassComponent(agent_network, None),
             PassThroughTargetComponent(keys_to_keep=["policies", "actions"]),
             UniversalInfrastructureComponent(),
-            loss_pipeline,
+            imitation_loss,
+            LossAggregatorComponent(),
             OptimizerStepComponent(
                 agent_network=agent_network,
                 optimizer=optimizer,
@@ -165,11 +163,12 @@ def test_imitation_tictactoe_regression():
         iterator = RepeatSampleIterator(replay_buffer, num_iterations=1, device=DEVICE)
         metrics = []
         for step_metrics in learner.step(iterator):
-            # UniversalLearner.step yields a dict containing 'loss' (total loss)
-            metrics.append(step_metrics["loss"])
+            # UniversalLearner.step yields {"losses": ..., "meta": ...}
+            metrics.append(step_metrics["losses"]["default"])
 
         if step % 500 == 0:
             loss_val = np.mean(metrics)
+
             print(f"Step {step} | Loss: {loss_val:.4f}")
 
     # --- Evaluation ---

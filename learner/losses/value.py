@@ -1,78 +1,85 @@
 import torch
 import torch.nn.functional as F
-from typing import Any, Dict, Optional, Tuple
-from learner.losses.base import BaseLoss
+from typing import Any, Dict, Optional
+from learner.pipeline.base import PipelineComponent
+from learner.core import Blackboard
+from learner.losses.base import apply_infrastructure
 
 
-class ValueLoss(BaseLoss):
-    """Value prediction loss module (Universal)."""
-
+class ValueLoss(PipelineComponent):
+    """
+    Standard Value prediction loss component.
+    Reads 'values' from predictions and targets.
+    """
     def __init__(
         self,
-        device: torch.device,
         target_key: str = "values",
-        optimizer_name: str = "default",
         mask_key: str = "value_mask",
         loss_fn: Any = F.mse_loss,
         loss_factor: float = 1.0,
-        name: Optional[str] = None,
+        name: str = "value_loss",
     ):
-        super().__init__(
-            device=device,
-            pred_key="values",
-            target_key=target_key,
-            mask_key=mask_key,
-            loss_fn=loss_fn,
-            optimizer_name=optimizer_name,
-            loss_factor=loss_factor,
-            name=name,
-        )
+        self.target_key = target_key
+        self.mask_key = mask_key
+        self.loss_fn = loss_fn
+        self.loss_factor = loss_factor
+        self.name = name
+
+    def execute(self, blackboard: Blackboard) -> None:
+        preds = blackboard.predictions["values"]
+        targets = blackboard.targets[self.target_key]
+        
+        # Determine B, T
+        B, T = preds.shape[:2]
+        
+        # Flatten B, T for loss function
+        raw_loss = self.loss_fn(preds.flatten(0, 1), targets.flatten(0, 1), reduction="none")
+        
+        # Reshape to [B, T]
+        if raw_loss.ndim > 1:
+            raw_loss = raw_loss.sum(dim=-1)
+        elementwise_loss = raw_loss.reshape(B, T) * self.loss_factor
+
+        # Pass through infrastructure
+        scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
+
+        # Write out
+        blackboard.losses[self.name] = scalar_loss
+        blackboard.meta[self.name] = scalar_loss.item()
+        
+        # Store elementwise loss for priority computation
+        if "elementwise_losses" not in blackboard.meta:
+            blackboard.meta["elementwise_losses"] = {}
+        blackboard.meta["elementwise_losses"][self.name] = elementwise_loss
 
 
-class ClippedValueLoss(BaseLoss):
+
+class ClippedValueLoss(PipelineComponent):
     """
     PPO Clipped Value Loss.
     Formula: max[(V - V_targ)^2, (clip(V, V_old - eps, V_old + eps) - V_targ)^2]
     """
-
     def __init__(
         self,
-        device: torch.device,
         clip_param: float,
         target_key: str = "returns",
         old_values_key: str = "values",
-        optimizer_name: str = "default",
         mask_key: str = "value_mask",
         loss_factor: float = 1.0,
-        name: Optional[str] = None,
+        name: str = "value_loss",
     ):
-        super().__init__(
-            device=device,
-            pred_key="values",
-            target_key=target_key,
-            mask_key=mask_key,
-            optimizer_name=optimizer_name,
-            loss_factor=loss_factor,
-            name=name,
-        )
         self.clip_param = clip_param
+        self.target_key = target_key
         self.old_values_key = old_values_key
+        self.mask_key = mask_key
+        self.loss_factor = loss_factor
+        self.name = name
 
-    def compute_loss(
-        self, predictions: Dict[str, torch.Tensor], targets: Dict[str, torch.Tensor]
-    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        """
-        Clipped Value Loss execution.
-        Expects:
-            predictions['values']: [B, T, 1]
-            targets[target_key]: [B, T] or [B, T, 1]
-            targets[old_values_key]: [B, T] or [B, T, 1]
-        """
+    def execute(self, blackboard: Blackboard) -> None:
         # 1. Extract inputs
-        # We assume predictions contains the expected scalar value directly
-        values = predictions.get("values_expected", predictions[self.pred_key])
-        returns = targets[self.target_key]
-        old_values = targets["values"]
+        values = blackboard.predictions.get("values_expected", blackboard.predictions["values"])
+        returns = blackboard.targets[self.target_key]
+        old_values = blackboard.targets[self.old_values_key]
 
         # Ensure shapes match [B, T]
         if values.ndim == 3 and values.shape[-1] == 1:
@@ -91,8 +98,18 @@ class ClippedValueLoss(BaseLoss):
 
         # PPO clipped value loss is the maximum of the two
         elementwise_loss = torch.max(v_loss_unclipped, v_loss_clipped)
+        elementwise_loss = elementwise_loss * self.loss_factor
 
-        # Apply loss factor
-        elementwise_loss = self.loss_factor * elementwise_loss
+        # Pass through infrastructure
+        scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
-        return elementwise_loss, {}
+        # Write out
+        blackboard.losses[self.name] = scalar_loss
+        blackboard.meta[self.name] = scalar_loss.item()
+        
+        # Store elementwise loss for priority computation
+        if "elementwise_losses" not in blackboard.meta:
+            blackboard.meta["elementwise_losses"] = {}
+        blackboard.meta["elementwise_losses"][self.name] = elementwise_loss
+
+

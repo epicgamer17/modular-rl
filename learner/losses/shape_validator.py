@@ -4,9 +4,10 @@ from typing import Dict, Any, Optional
 
 class ShapeValidator:
     """
-    Validates tensor shapes for predictions and targets in the LossAggregator.
+    Validates tensor shapes for predictions and targets in the Learner pipeline.
     Ensures that data matches expected minibatch_size, unroll_steps (K), and action dimensions.
     """
+
 
     def __init__(
         self,
@@ -90,3 +91,19 @@ class ShapeValidator:
             assert (
                 len(shape) == 2
             ), f"{prefix} mask must be exactly 2D [B, T], got {shape} | full shape: {shape}"
+
+
+from learner.pipeline.base import PipelineComponent
+from learner.core import Blackboard
+
+class ShapeValidatorComponent(PipelineComponent):
+    """
+    Pipeline Component wrapper for ShapeValidator.
+    Ensures that all tensors in the Blackboard follow the [B, T, ...] contract.
+    """
+    def __init__(self, validator: ShapeValidator):
+        self.validator = validator
+
+    def execute(self, blackboard: Blackboard) -> None:
+        self.validator.validate(blackboard.predictions, blackboard.targets)
+

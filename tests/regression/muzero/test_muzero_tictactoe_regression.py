@@ -38,7 +38,7 @@ from learner.losses.optimizer_step import OptimizerStepComponent
 from learner.pipeline.callbacks import ComponentCallbacks
 
 from learner.pipeline.batch_iterators import SingleBatchIterator
-from learner.losses.aggregator import LossAggregator
+from learner.losses.aggregator import LossAggregatorComponent, PriorityUpdateComponent
 from learner.losses.value import ValueLoss
 from learner.losses.policy import PolicyLoss
 from learner.losses.reward import RewardLoss
@@ -294,28 +294,11 @@ def test_muzero_tictactoe_full_training():
     )
     priority_computer = ExpectedValueErrorPriorityComputer(value_representation=val_rep)
 
-    loss_pipeline = LossAggregator(
-        modules=[
-            ValueLoss(device=DEVICE, loss_fn=nn.functional.mse_loss, loss_factor=1.0),
-            PolicyLoss(
-                device=DEVICE, loss_fn=nn.functional.cross_entropy, loss_factor=1.0
-            ),
-            RewardLoss(device=DEVICE, loss_fn=nn.functional.mse_loss, loss_factor=1.0),
-            ToPlayLoss(device=DEVICE, loss_factor=1.0),
-        ],
-        priority_computer=priority_computer,
-        minibatch_size=BATCH_SIZE,
-        unroll_steps=UNROLL_STEPS,
-        num_actions=num_actions,
-        atom_size=1,
-        representations={
-            "values": val_rep,
-            "policies": pol_rep,
-            "rewards": rew_rep,
-            "to_plays": tp_rep,
-        },
-        shape_validator=shape_validator,
-    )
+    v_loss = ValueLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
+    p_loss = PolicyLoss(loss_fn=nn.functional.cross_entropy, loss_factor=1.0)
+    r_loss = RewardLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
+    tp_loss = ToPlayLoss(loss_factor=1.0)
+    priority_comp = PriorityUpdateComponent(priority_computer=priority_computer)
 
     # Target building components are listed directly in UniversalLearner
 
@@ -334,7 +317,12 @@ def test_muzero_tictactoe_full_training():
                     "to_plays": tp_rep,
                 }
             ),
-            loss_pipeline,
+            v_loss,
+            p_loss,
+            r_loss,
+            tp_loss,
+            LossAggregatorComponent(),
+            priority_comp,
             OptimizerStepComponent(
                 agent_network=agent_network,
                 optimizer=optimizer,
@@ -406,7 +394,7 @@ def test_muzero_tictactoe_full_training():
             iterator = SingleBatchIterator(replay_buffer, DEVICE)
             for metrics in learner.step(iterator):
                 if train_steps % 1000 == 0:
-                    loss_val = metrics.get("loss", 0.0)
+                    loss_val = metrics["losses"].get("default")
                     print(f"Step {train_steps} | Loss: {loss_val:.4f}")
 
             train_steps += 1

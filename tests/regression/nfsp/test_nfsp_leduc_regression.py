@@ -19,7 +19,7 @@ from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
 from learner.pipeline.callbacks import ComponentCallbacks
 
-from learner.losses import LossAggregator, ImitationLoss, QBootstrappingLoss
+from learner.losses import LossAggregatorComponent, ImitationLoss, QBootstrappingLoss
 from learner.pipeline.target_builders import (
     PassThroughTargetComponent,
     TDTargetComponent,
@@ -149,10 +149,8 @@ def test_nfsp_leduc_regression():
     # --- Setup Learners ---
     # 1. RL Learner
     rl_optimizer = torch.optim.Adam(rl_network.parameters(), lr=LR_RL)
-    rl_loss = QBootstrappingLoss(device=DEVICE)
-    rl_loss_pipeline = LossAggregator(
-        modules=[rl_loss], minibatch_size=BATCH_SIZE, num_actions=num_actions
-    )
+    rl_loss = QBootstrappingLoss()
+
     # RL target building components
     rl_learner = UniversalLearner(
         components=[
@@ -164,7 +162,8 @@ def test_nfsp_leduc_regression():
                 n_step=1,
             ),
             UniversalInfrastructureComponent(),
-            rl_loss_pipeline,
+            rl_loss,
+            LossAggregatorComponent(),
             OptimizerStepComponent(
                 agent_network=rl_network,
                 optimizer=rl_optimizer,
@@ -173,21 +172,21 @@ def test_nfsp_leduc_regression():
         device=DEVICE,
     )
 
+
     # 2. SL Learner
     sl_optimizer = torch.optim.Adam(sl_network.parameters(), lr=LR_SL)
     sl_loss = ImitationLoss(
-        device=DEVICE, loss_fn=F.cross_entropy, target_key="actions"
+        loss_fn=F.cross_entropy, target_key="actions"
     )
-    sl_loss_pipeline = LossAggregator(
-        modules=[sl_loss], minibatch_size=BATCH_SIZE, num_actions=num_actions
-    )
+
     # SL target building components
     sl_learner = UniversalLearner(
         components=[
             ForwardPassComponent(sl_network, None),
             PassThroughTargetComponent(keys_to_keep=["policies", "actions"]),
             UniversalInfrastructureComponent(),
-            sl_loss_pipeline,
+            sl_loss,
+            LossAggregatorComponent(),
             OptimizerStepComponent(
                 agent_network=sl_network,
                 optimizer=sl_optimizer,
@@ -195,6 +194,7 @@ def test_nfsp_leduc_regression():
         ],
         device=DEVICE,
     )
+
 
     # --- Setup Buffers ---
     rl_buffer = ModularReplayBuffer(

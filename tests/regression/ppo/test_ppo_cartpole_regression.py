@@ -33,9 +33,10 @@ from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
 from learner.pipeline.callbacks import ComponentCallbacks, MetricEarlyStopCallback
 
-from learner.losses.aggregator import LossAggregator
+from learner.losses.aggregator import LossAggregatorComponent
 from learner.losses.policy import ClippedSurrogateLoss
 from learner.losses.value import ClippedValueLoss
+from learner.pipeline.batch_iterators import PPOEpochIterator
 from learner.pipeline.target_builders import (
     PassThroughTargetComponent,
     TargetFormatterComponent,
@@ -181,28 +182,16 @@ def test_ppo_cartpole_full_training():
         unroll_steps=0,
     )
 
-    loss_pipeline = LossAggregator(
-        modules=[
-            ClippedSurrogateLoss(
-                device=DEVICE,
-                clip_param=CLIP_PARAM,
-                entropy_coefficient=ENTROPY_COEF,
-                optimizer_name="default",
-            ),
-            ClippedValueLoss(
-                device=DEVICE,
-                clip_param=CLIP_PARAM,
-                target_key="returns",
-                optimizer_name="default",
-                loss_factor=VALUE_COEF,
-            ),
-        ],
-        minibatch_size=minibatch_size,
-        num_actions=num_actions,
-        unroll_steps=0,
-        representations={"policies": pol_rep, "values": val_rep},
-        shape_validator=shape_validator,
+    surrogate_loss = ClippedSurrogateLoss(
+        clip_param=CLIP_PARAM,
+        entropy_coefficient=ENTROPY_COEF,
     )
+    value_loss = ClippedValueLoss(
+        clip_param=CLIP_PARAM,
+        target_key="returns",
+        loss_factor=VALUE_COEF,
+    )
+
 
     # Target building components are listed directly in UniversalLearner
 
@@ -214,7 +203,10 @@ def test_ppo_cartpole_full_training():
             ),
             TargetFormatterComponent({"values": val_rep, "returns": val_rep}),
             UniversalInfrastructureComponent(),
-            loss_pipeline,
+            surrogate_loss,
+            value_loss,
+            LossAggregatorComponent(),
+
             OptimizerStepComponent(
                 agent_network=agent_network,
                 optimizer=optimizer,
