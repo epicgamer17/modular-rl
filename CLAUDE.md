@@ -28,7 +28,7 @@ Coverage threshold is **80%** (enforced by `pytest.ini` via `--cov-fail-under=80
 
 This framework is built on **Strict Separation of Concerns and Perfect Polymorphism**. Deep RL systems collapse when neural network math bleeds into game logic, or when optimization math bleeds into tree search logic.
 
-- **The Blind Learner:** `UniversalLearner` must be completely blind to the network's architecture. It calls `learner_inference(batch)`, receives raw math, and routes it to the `LossAggregator`.
+- **The Blind Learner:** `BlackboardEngine` must be completely blind to the network's architecture. It calls `learner_inference(batch)`, receives raw math, and routes it to the `LossAggregator`.
 - **The Blind Actor/Tree:** MCTS and Actor treat `network_state` (a generic recurrent state dictionary) as an **Opaque Token** — they store and pass it back without inspecting it.
 - **Game Logic Isolation:** The Neural Network is a pure math function. Action masking and legal move filtering happen strictly *outside* the network (in `BaseActionSelector` subclasses or the Search Tree).
 
@@ -131,7 +131,7 @@ Concrete implementations: `CategoricalSelector`, `EpsilonGreedySelector`, `Argma
 
 Must call `obs_inference`. Must apply action mask directly to Distribution logits before sampling. After Softmax/Gumbel, re-apply mask to set illegal probability to exactly `0.0`.
 
-### `UniversalLearner`
+### `BlackboardEngine`
 ```python
 # agents/learners/base.py
 def step(self, stats=None) -> Optional[Dict[str, Any]]
@@ -150,7 +150,7 @@ class StepResult:
 ```
 Cannot loop over network modules. Calls `learner_inference(batch)`, unpacks `LearningOutput`, routes raw tensors to `LossAggregator`.
 
-Algorithm-specific learners/wrappers: `PPOLearner`. DQN-style and supervised learning are now assembled by trainers using `UniversalLearner` + `TargetBuilder` + `LossAggregator` + callbacks (e.g. `TargetNetworkSyncCallback`).
+Algorithm-specific learners/wrappers: `PPOLearner`. DQN-style and supervised learning are now assembled by trainers using `BlackboardEngine` + `TargetBuilder` + `LossAggregator` + callbacks (e.g. `TargetNetworkSyncCallback`).
 
 ### `LossAggregator`
 ```python
@@ -334,7 +334,7 @@ MCTS always lives on CPU.
 
 - **No magic values:** Define constants at the top of the file.
 - **No `sys.path.append()`:** Project uses `pyproject.toml`. Run as `python -m package.module`.
-- **OOP:** Use inheritance (`UniversalLearner`, `ConfigBase`, `BaseActionSelector`). Inject dependencies — don't instantiate internally.
+- **OOP:** Use inheritance (`BlackboardEngine`, `ConfigBase`, `BaseActionSelector`). Inject dependencies — don't instantiate internally.
 - **Strong Typing:** All functions must be fully typed (args + return values). Avoid `Any`. Use `if TYPE_CHECKING:` for typing-only imports.
 - **Error handling:** Minimize `try/except`. Use `assert` with descriptive messages. No `getattr(obj, 'attr', default)` — use `assert hasattr` then direct access.
 - **Docstrings:** New functions must have docstrings. If you touch a function without one, add it.

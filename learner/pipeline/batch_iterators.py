@@ -1,6 +1,6 @@
 """Batch iterators that decouple data sampling from the optimization loop.
 
-The UniversalLearner accepts any iterable of batch dicts. These iterators
+The BlackboardEngine accepts any iterable of batch dicts. These iterators
 wrap replay buffers to provide algorithm-specific sampling patterns:
 - SingleBatchIterator: yields one batch (DQN, MuZero, Imitation)
 - RepeatSampleIterator: yields N independent samples (training_iterations > 1)

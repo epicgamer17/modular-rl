@@ -14,7 +14,7 @@ from learner.losses.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
-from learner.core import UniversalLearner
+from learner.core import BlackboardEngine
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
 from learner.pipeline.callbacks import ComponentCallbacks
@@ -67,7 +67,7 @@ class ReservoirBuffer:
             return None
         indices = np.random.choice(self.current_size, batch_size, replace=False)
 
-        # UniversalLearner expects [B, ...] for single-step logic in learner_inference
+        # BlackboardEngine expects [B, ...] for single-step logic in learner_inference
         obs = self.observations[indices].to(self.device)
         actions = self.actions[indices].to(self.device)
 
@@ -148,11 +148,11 @@ def test_nfsp_leduc_regression():
 
     # --- Setup Learners ---
     # 1. RL Learner
-    rl_optimizer = torch.optim.Adam(rl_network.parameters(), lr=LR_RL)
+    rl_optimizer = {"default": torch.optim.Adam(rl_network.parameters(), lr=LR_RL)}
     rl_loss = QBootstrappingLoss()
 
     # RL target building components
-    rl_learner = UniversalLearner(
+    rl_learner = BlackboardEngine(
         components=[
             ForwardPassComponent(rl_network, None),
             TDTargetComponent(
@@ -166,7 +166,7 @@ def test_nfsp_leduc_regression():
             LossAggregatorComponent(loss_weights={"q_loss": 1.0}),
             OptimizerStepComponent(
                 agent_network=rl_network,
-                optimizer=rl_optimizer,
+                optimizers=rl_optimizer,
             ),
         ],
         device=DEVICE,
@@ -174,13 +174,13 @@ def test_nfsp_leduc_regression():
 
 
     # 2. SL Learner
-    sl_optimizer = torch.optim.Adam(sl_network.parameters(), lr=LR_SL)
+    sl_optimizer = {"default": torch.optim.Adam(sl_network.parameters(), lr=LR_SL)}
     sl_loss = ImitationLoss(
         loss_fn=F.cross_entropy, target_key="actions"
     )
 
     # SL target building components
-    sl_learner = UniversalLearner(
+    sl_learner = BlackboardEngine(
         components=[
             ForwardPassComponent(sl_network, None),
             PassThroughTargetComponent(keys_to_keep=["policies", "actions"]),
@@ -189,7 +189,7 @@ def test_nfsp_leduc_regression():
             LossAggregatorComponent(loss_weights={"policy_loss": 1.0}),
             OptimizerStepComponent(
                 agent_network=sl_network,
-                optimizer=sl_optimizer,
+                optimizers=sl_optimizer,
             ),
         ],
         device=DEVICE,
@@ -290,7 +290,7 @@ def test_nfsp_leduc_regression():
                 rl_iterator = RepeatSampleIterator(
                     rl_buffer, num_iterations=1, device=DEVICE
                 )
-                # UniversalLearner.step returns an iterator of results
+                # BlackboardEngine.step returns an iterator of results
                 for _ in rl_learner.step(rl_iterator):
                     pass
 
@@ -298,7 +298,7 @@ def test_nfsp_leduc_regression():
             sl_batch = sl_buffer.sample(BATCH_SIZE)
             if sl_batch is not None:
 
-                # UniversalLearner needs an iterator that yields dicts
+                # BlackboardEngine needs an iterator that yields dicts
                 class SimpleIterator:
                     def __init__(self, data):
                         self.data = data

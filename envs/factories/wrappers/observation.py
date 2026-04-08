@@ -38,14 +38,17 @@ class ActionMaskInInfoWrapper(BaseWrapper):
     def step(self, action: ActionType):
         self.env.step(action)
         agent = self.env.agent_selection
-        agent_index = self.env.possible_agents.index(agent)
-        obs = self.env.observe(agent)
         if agent in self.env.infos:
+            agent_index = self.env.possible_agents.index(agent)
+            obs = self.env.observe(agent)
             _ = action_mask_to_info(obs, self.env.infos[agent], agent_index)
 
     def last(self, observe: bool = True):
         _, reward, term, trunc, info = self.env.last(observe=False)
-        obs = self.observe(self.env.agent_selection) if observe else None
+        if observe and not term and not trunc:
+            obs = self.observe(self.env.agent_selection)
+        else:
+            obs = None
         return obs, reward, term, trunc, info
 
     def state(self) -> np.ndarray:

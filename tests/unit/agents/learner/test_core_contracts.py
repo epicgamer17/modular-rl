@@ -1,6 +1,6 @@
 import torch
 import pytest
-from learner.core import Blackboard, UniversalLearner
+from learner.core import Blackboard, BlackboardEngine
 from learner.pipeline.base import PipelineComponent
 
 pytestmark = pytest.mark.unit
@@ -28,14 +28,14 @@ def test_blackboard_initialization():
 
 
 def test_universal_learner_device_transfer():
-    """Verify UniversalLearner enforces the Universal Time Mandate (device transfer)."""
+    """Verify BlackboardEngine enforces the Universal Time Mandate (device transfer)."""
     device = torch.device("cpu")
     # If a GPU is available, we'd use it, but for unit tests CPU is fine.
     # The key is checking if .to(device) is called.
 
     batch = {"obs": torch.randn(2, 4), "non_tensor": [1, 2, 3]}
 
-    learner = UniversalLearner(components=[], device=device)
+    learner = BlackboardEngine(components=[], device=device)
 
     # We can't easily mock torch.Tensor.to because it's a C-extension method,
     # but we can check if the result is on the correct device.
@@ -70,7 +70,7 @@ def test_universal_learner_execution_order():
             bb_history.append(self.val)
 
     components = [TapeComponent(1), TapeComponent(2), TapeComponent(3)]
-    learner = UniversalLearner(components=components, device=torch.device("cpu"))
+    learner = BlackboardEngine(components=components, device=torch.device("cpu"))
 
     for _ in learner.step([{"dummy": 0}]):
         pass
@@ -79,13 +79,13 @@ def test_universal_learner_execution_order():
 
 
 def test_universal_learner_yields_metrics():
-    """Verify UniversalLearner yields the blackboard.meta and losses dictionaries."""
+    """Verify BlackboardEngine yields the blackboard.meta and losses dictionaries."""
     class LossComponent(PipelineComponent):
         def execute(self, blackboard: Blackboard) -> None:
             blackboard.losses["main"] = torch.tensor(1.0)
             blackboard.meta["acc"] = 0.9
 
-    learner = UniversalLearner(components=[LossComponent()], device=torch.device("cpu"))
+    learner = BlackboardEngine(components=[LossComponent()], device=torch.device("cpu"))
 
     results = list(learner.step([{"dummy": 0}]))
 

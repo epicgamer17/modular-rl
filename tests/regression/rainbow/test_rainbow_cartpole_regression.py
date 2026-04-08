@@ -27,7 +27,7 @@ from data.processors import (
 from data.writers import CircularWriter
 from data.samplers.prioritized import PrioritizedSampler
 
-from learner.core import UniversalLearner
+from learner.core import BlackboardEngine
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
 from learner.pipeline.callbacks import ComponentCallbacks, PriorityUpdaterCallback, ResetNoiseCallback
@@ -224,7 +224,7 @@ def test_rainbow_cartpole_full_training():
         ResetNoiseCallback(),
     ]
 
-    learner = UniversalLearner(
+    learner = BlackboardEngine(
         components=[
             ForwardPassComponent(agent_network, None),
             DistributionalTargetComponent(
@@ -241,8 +241,8 @@ def test_rainbow_cartpole_full_training():
 
             OptimizerStepComponent(
                 agent_network=agent_network,
-                optimizer=optimizer,
-                clipnorm=CLIP_NORM,
+                optimizers=optimizer,
+                max_grad_norm=CLIP_NORM,
             ),
             ComponentCallbacks(callbacks, hook="on_step_end"),
         ],

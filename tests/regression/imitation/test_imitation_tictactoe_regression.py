@@ -10,7 +10,7 @@ from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.policy import PolicyHead
 from learner.losses.representations import ClassificationRepresentation
-from learner.core import UniversalLearner
+from learner.core import BlackboardEngine
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
 from learner.pipeline.callbacks import ComponentCallbacks
@@ -21,6 +21,7 @@ from learner.pipeline.target_builders import (
     UniversalInfrastructureComponent,
 )
 from learner.pipeline.batch_iterators import RepeatSampleIterator
+from envs.factories.wrappers.observation import ActionMaskInInfoWrapper
 import pytest
 
 pytestmark = pytest.mark.regression
@@ -49,6 +50,7 @@ def test_imitation_tictactoe_regression():
 
     # --- Setup Environment & Expert ---
     env = tictactoe_v3.env()
+    env = ActionMaskInInfoWrapper(env)
     expert = TicTacToeBestAgent()
 
     # TicTacToe observation space is (3, 3, 2), action space is Discrete(9)
@@ -93,17 +95,20 @@ def test_imitation_tictactoe_regression():
             else:
                 # Expert expects (2, 3, 3) observation
                 expert_obs = np.moveaxis(obs, -1, 0)
-                expert_info = {"legal_moves": np.where(mask)[0]}
+                expert_info = {"legal_moves": mask}
                 action = expert.select_actions(expert_obs, expert_info)
 
                 # Store one-hot target policy
                 target_policy = np.zeros(num_actions, dtype=np.float32)
                 target_policy[action] = 1.0
 
+                mask_bool = np.zeros(num_actions, dtype=bool)
+                mask_bool[mask] = True
+
                 replay_buffer.store(
                     observations=obs,
                     actions=action,
-                    legal_moves_masks=mask.astype(bool),
+                    legal_moves_masks=mask_bool,
                     policies=target_policy,
                 )
 
@@ -112,12 +117,12 @@ def test_imitation_tictactoe_regression():
     print(f"Buffer size: {replay_buffer.size}")
 
     # --- Setup Learner ---
-    optimizer = torch.optim.Adam(agent_network.parameters(), lr=LEARNING_RATE)
+    optimizer = {"default": torch.optim.Adam(agent_network.parameters(), lr=LEARNING_RATE)}
     imitation_loss = ImitationLoss(
         loss_fn=F.cross_entropy,
     )
 
-    learner = UniversalLearner(
+    learner = BlackboardEngine(
         components=[
             ForwardPassComponent(agent_network, None),
             PassThroughTargetComponent(keys_to_keep=["policies", "actions"]),
@@ -126,7 +131,7 @@ def test_imitation_tictactoe_regression():
             LossAggregatorComponent(loss_weights={"policy_loss": 1.0}),
             OptimizerStepComponent(
                 agent_network=agent_network,
-                optimizer=optimizer,
+                optimizers=optimizer,
             ),
         ],
         device=DEVICE,
@@ -138,7 +143,7 @@ def test_imitation_tictactoe_regression():
         iterator = RepeatSampleIterator(replay_buffer, num_iterations=1, device=DEVICE)
         metrics = []
         for step_metrics in learner.step(iterator):
-            # UniversalLearner.step yields {"losses": ..., "total_losses": ..., "meta": ...}
+            # BlackboardEngine.step yields {"losses": ..., "total_losses": ..., "meta": ...}
             metrics.append(step_metrics["total_losses"]["default"])
 
         if step % 500 == 0:
@@ -165,13 +170,12 @@ def test_imitation_tictactoe_regression():
                 obs_tensor = (
                     torch.from_numpy(obs).float().unsqueeze(0).to(DEVICE)
                 )  # [1, H, W, C]
-                # Fix for (B, T, ...) -> (1, 1, 3, 3, 2)
-                obs_tensor = obs_tensor.unsqueeze(1)
                 with torch.inference_mode():
                     output = agent_network.obs_inference(obs_tensor)
-                    logits = output.distributions["policies"].logits[0, 0]
+                    logits = output.policy.logits[0]
                     # Mask legal moves
-                    mask = torch.from_numpy(info["legal_moves"]).to(DEVICE).bool()
+                    mask = torch.zeros(num_actions, dtype=torch.bool, device=DEVICE)
+                    mask[info["legal_moves"]] = True
                     logits[~mask] = -float("inf")
                     action = torch.argmax(logits).item()
 

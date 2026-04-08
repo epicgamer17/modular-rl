@@ -27,9 +27,9 @@ class Blackboard:
     meta: Dict[str, Any] = field(default_factory=dict)
 
 
-class UniversalLearner:
+class BlackboardEngine:
     """
-    The Unchanging Orchestrator. Blindly routes the Blackboard through components.
+    The Unchanging Orchestrator. Manages the lifecycle of the Blackboard dictionary by routing it through sequential components.
     """
     def __init__(self, components: list[PipelineComponent], device: torch.device):
         self.components = components

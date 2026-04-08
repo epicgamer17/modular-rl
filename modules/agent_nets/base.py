@@ -10,7 +10,7 @@ from modules.world_models.inference_output import InferenceOutput
 class BaseAgentNetwork(nn.Module, ABC):
     """
     Enforces a strict separation between Actor (Environment) and Learner (Training) APIs.
-    All Agent Networks must implement these methods to be compatible with ModularSearch and UniversalLearner.
+    All Agent Networks must implement these methods to be compatible with ModularSearch and BlackboardEngine.
     """
 
     def __init__(self):

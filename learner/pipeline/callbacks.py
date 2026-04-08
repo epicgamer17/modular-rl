@@ -10,7 +10,7 @@ from telemetry.stats import (
 )
 
 if TYPE_CHECKING:
-    from learner.core import UniversalLearner, Blackboard
+    from learner.core import BlackboardEngine, Blackboard
     from modules.agent_nets.modular import ModularAgentNetwork
 from learner.pipeline.base import PipelineComponent
 from abc import ABC, abstractmethod
@@ -27,7 +27,7 @@ class Callback(ABC):
 
     def on_step_begin(
         self,
-        learner: UniversalLearner,
+        learner: BlackboardEngine,
         iterator: Iterable[Dict[str, Any]],
     ) -> None:
         """Fired at the very beginning of the learner step, before fetching batches."""
@@ -35,7 +35,7 @@ class Callback(ABC):
 
     def on_backward_end(
         self,
-        learner: UniversalLearner,
+        learner: BlackboardEngine,
         step_result: StepResult,
     ) -> None:
         """Fired after loss.backward() but before optimizer.step().
@@ -46,14 +46,14 @@ class Callback(ABC):
 
     def on_optimizer_step_end(
         self,
-        learner: UniversalLearner,
+        learner: BlackboardEngine,
     ) -> None:
         """Fired exactly after optimizer.step() and optional lr_scheduler.step()."""
         pass  # pragma: no cover
 
     def on_step_end(
         self,
-        learner: UniversalLearner,
+        learner: BlackboardEngine,
         predictions: Dict[str, torch.Tensor],
         targets: Dict[str, torch.Tensor],
         loss_dict: Dict[str, float],
@@ -64,7 +64,7 @@ class Callback(ABC):
 
     def on_training_step_end(
         self,
-        learner: UniversalLearner,
+        learner: BlackboardEngine,
         metrics: Dict[str, Any],
     ) -> None:
         """Fired after the full training step (all iterations complete)."""
@@ -79,7 +79,7 @@ class CallbackList:
 
     def on_step_begin(
         self,
-        learner: UniversalLearner,
+        learner: BlackboardEngine,
         iterator: Iterable[Dict[str, Any]],
     ) -> None:
         for callback in self.callbacks:
@@ -87,7 +87,7 @@ class CallbackList:
 
     def on_backward_end(
         self,
-        learner: UniversalLearner,
+        learner: BlackboardEngine,
         step_result: StepResult,
     ) -> None:
         for callback in self.callbacks:
@@ -98,14 +98,14 @@ class CallbackList:
 
     def on_optimizer_step_end(
         self,
-        learner: UniversalLearner,
+        learner: BlackboardEngine,
     ) -> None:
         for callback in self.callbacks:
             callback.on_optimizer_step_end(learner=learner)
 
     def on_step_end(
         self,
-        learner: UniversalLearner,
+        learner: BlackboardEngine,
         predictions: Dict[str, torch.Tensor],
         targets: Dict[str, torch.Tensor],
         loss_dict: Dict[str, float],
@@ -122,7 +122,7 @@ class CallbackList:
 
     def on_training_step_end(
         self,
-        learner: UniversalLearner,
+        learner: BlackboardEngine,
         metrics: Dict[str, Any],
     ) -> None:
         for callback in self.callbacks:
@@ -146,7 +146,7 @@ class TargetNetworkSyncCallback(Callback):
 
     def on_training_step_end(
         self,
-        learner: UniversalLearner,
+        learner: BlackboardEngine,
         metrics: Dict[str, Any],
     ) -> None:
         if self.sync_interval > 0 and learner.training_step % self.sync_interval != 0:
@@ -223,7 +223,7 @@ class PriorityUpdaterCallback(Callback):
 
     def on_step_end(
         self,
-        learner: UniversalLearner,
+        learner: BlackboardEngine,
         predictions: Dict[str, torch.Tensor],
         targets: Dict[str, torch.Tensor],
         loss_dict: Dict[str, float],
@@ -238,7 +238,7 @@ class PriorityUpdaterCallback(Callback):
 
     def on_training_step_end(
         self,
-        learner: UniversalLearner,
+        learner: BlackboardEngine,
         metrics: Dict[str, Any],
     ) -> None:
         self.set_beta_fn(self.per_beta_schedule.get_value())
@@ -258,7 +258,7 @@ class WeightBroadcastCallback(Callback):
 
     def on_training_step_end(
         self,
-        learner: UniversalLearner,
+        learner: BlackboardEngine,
         metrics: Dict[str, Any],
     ) -> None:
         """Broadcast weights at the end of the full training step (after all iterations/batches)."""
@@ -288,7 +288,7 @@ class MPSCacheClearCallback(Callback):
 
     def on_training_step_end(
         self,
-        learner: UniversalLearner,
+        learner: BlackboardEngine,
         metrics: Dict[str, Any],
     ) -> None:
         if self.interval <= 0:

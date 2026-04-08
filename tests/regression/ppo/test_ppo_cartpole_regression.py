@@ -28,7 +28,7 @@ from data.processors import (
 from data.writers import PPOWriter
 from data.samplers.prioritized import WholeBufferSampler
 
-from learner.core import UniversalLearner
+from learner.core import BlackboardEngine
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
 from learner.pipeline.callbacks import ComponentCallbacks, MetricEarlyStopCallback
@@ -194,9 +194,9 @@ def test_ppo_cartpole_full_training():
     )
 
 
-    # Target building components are listed directly in UniversalLearner
+    # Target building components are listed directly in BlackboardEngine
 
-    learner = UniversalLearner(
+    learner = BlackboardEngine(
         components=[
             ForwardPassComponent(agent_network, shape_validator),
             PassThroughTargetComponent(
@@ -213,9 +213,8 @@ def test_ppo_cartpole_full_training():
 
             OptimizerStepComponent(
                 agent_network=agent_network,
-                optimizer=optimizer,
-                clipnorm=0.5,
-                lr_scheduler={},
+                optimizers=optimizer,
+                max_grad_norm=0.5,
             ),
             ComponentCallbacks(
                 [MetricEarlyStopCallback(threshold=TARGET_KL)], hook="on_step_end"

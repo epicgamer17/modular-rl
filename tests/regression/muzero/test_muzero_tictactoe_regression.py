@@ -32,7 +32,7 @@ from data.writers import SharedCircularWriter
 from data.samplers.prioritized import UniformSampler
 from data.concurrency import TorchMPBackend
 
-from learner.core import UniversalLearner
+from learner.core import BlackboardEngine
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
 from learner.pipeline.callbacks import ComponentCallbacks
@@ -300,9 +300,9 @@ def test_muzero_tictactoe_full_training():
     tp_loss = ToPlayLoss(loss_factor=1.0)
     priority_comp = PriorityUpdateComponent(priority_computer=priority_computer)
 
-    # Target building components are listed directly in UniversalLearner
+    # Target building components are listed directly in BlackboardEngine
 
-    learner = UniversalLearner(
+    learner = BlackboardEngine(
         components=[
             ForwardPassComponent(agent_network, shape_validator),
             MCTSExtractorComponent(),
@@ -334,7 +334,7 @@ def test_muzero_tictactoe_full_training():
             priority_comp,
             OptimizerStepComponent(
                 agent_network=agent_network,
-                optimizer=optimizer,
+                optimizers=optimizer,
             ),
         ],
         device=DEVICE,
