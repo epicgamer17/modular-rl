@@ -321,7 +321,16 @@ def test_muzero_tictactoe_full_training():
             p_loss,
             r_loss,
             tp_loss,
-            LossAggregatorComponent(),
+            LossAggregatorComponent(
+                loss_weights={
+                    "value_loss": 1.0,
+                    "reward_loss": 1.0,
+                    "policy_loss": 1.0,
+                    "consistency_loss": 1.0,
+                    "to_play_loss": 1.0,
+                }
+            ),
+
             priority_comp,
             OptimizerStepComponent(
                 agent_network=agent_network,
@@ -394,7 +403,7 @@ def test_muzero_tictactoe_full_training():
             iterator = SingleBatchIterator(replay_buffer, DEVICE)
             for metrics in learner.step(iterator):
                 if train_steps % 1000 == 0:
-                    loss_val = metrics["losses"].get("default")
+                    loss_val = metrics["total_losses"].get("default")
                     print(f"Step {train_steps} | Loss: {loss_val:.4f}")
 
             train_steps += 1

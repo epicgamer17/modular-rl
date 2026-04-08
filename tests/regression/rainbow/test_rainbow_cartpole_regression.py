@@ -235,7 +235,8 @@ def test_rainbow_cartpole_full_training():
             ),
             UniversalInfrastructureComponent(),
             q_loss,
-            LossAggregatorComponent(),
+            LossAggregatorComponent(loss_weights={"q_loss": 1.0}),
+
             priority_comp,
 
             OptimizerStepComponent(

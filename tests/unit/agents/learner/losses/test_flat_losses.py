@@ -21,8 +21,9 @@ class MockPriorityComputer:
         return total.mean(dim=1) # [B]
 
 def test_loss_aggregator_component():
-    """Verify LossAggregatorComponent sums scalar losses."""
-    agg = LossAggregatorComponent()
+    """Verify LossAggregatorComponent weighted summation."""
+    weights = {"loss_a": 1.0, "loss_b": 0.5}
+    agg = LossAggregatorComponent(loss_weights=weights)
     bb = Blackboard()
     
     # Mock some existing scalar losses
@@ -31,25 +32,29 @@ def test_loss_aggregator_component():
     
     agg.execute(bb)
     
-    assert "default" in bb.losses
-    assert bb.losses["default"].item() == 3.0
+    assert "total_loss" in bb.losses
+    assert "default" in bb.losses["total_loss"]
+    # 1.0 * 1.0 + 0.5 * 2.0 = 2.0
+    assert bb.losses["total_loss"]["default"].item() == pytest.approx(2.0)
 
-def test_loss_aggregator_mapping():
-    """Verify LossAggregatorComponent handles explicit mappings."""
-    mapping = {
-        "opt1": ["loss_a"],
-        "opt2": ["loss_a", "loss_b"]
-    }
-    agg = LossAggregatorComponent(mapping=mapping)
+
+
+def test_loss_aggregator_disjoint_optimizers():
+    """Verify LossAggregatorComponent handles different optimizer keys."""
+    agg_p = LossAggregatorComponent(loss_weights={"policy": 1.0}, optimizer_key="actor")
+    agg_v = LossAggregatorComponent(loss_weights={"value": 1.0}, optimizer_key="critic")
+    
     bb = Blackboard()
+    bb.losses["policy"] = torch.tensor(0.5)
+    bb.losses["value"] = torch.tensor(0.8)
     
-    bb.losses["loss_a"] = torch.tensor(1.0)
-    bb.losses["loss_b"] = torch.tensor(2.0)
+    agg_p.execute(bb)
+    agg_v.execute(bb)
     
-    agg.execute(bb)
-    
-    assert bb.losses["opt1"].item() == 1.0
-    assert bb.losses["opt2"].item() == 3.0
+    assert bb.losses["total_loss"]["actor"].item() == pytest.approx(0.5)
+    assert bb.losses["total_loss"]["critic"].item() == pytest.approx(0.8)
+
+
 
 def test_value_loss_component_contracts():
     """Verify ValueLoss writes scalar and elementwise losses."""

@@ -316,13 +316,18 @@ class ComponentCallbacks(PipelineComponent):
 
     def execute(self, blackboard: Blackboard) -> None:
         if self.hook == "on_step_end":
+            all_losses = {k: v.item() for k, v in blackboard.losses.items() if k != "total_loss"}
+            total_losses = {f"total/{k}": v.item() for k, v in blackboard.losses.get("total_loss", {}).items()}
+            all_losses.update(total_losses)
+
             self.callbacks.on_step_end(
                 learner=None,
                 predictions=blackboard.predictions,
                 targets=blackboard.targets,
-                loss_dict={k: v.item() for k, v in blackboard.losses.items()},
+                loss_dict=all_losses,
                 priorities=blackboard.meta.get("priorities"),
                 batch=blackboard.batch,
                 meta=blackboard.meta,
             )
+
 

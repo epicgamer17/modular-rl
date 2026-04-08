@@ -163,7 +163,7 @@ def test_nfsp_leduc_regression():
             ),
             UniversalInfrastructureComponent(),
             rl_loss,
-            LossAggregatorComponent(),
+            LossAggregatorComponent(loss_weights={"q_loss": 1.0}),
             OptimizerStepComponent(
                 agent_network=rl_network,
                 optimizer=rl_optimizer,
@@ -186,7 +186,7 @@ def test_nfsp_leduc_regression():
             PassThroughTargetComponent(keys_to_keep=["policies", "actions"]),
             UniversalInfrastructureComponent(),
             sl_loss,
-            LossAggregatorComponent(),
+            LossAggregatorComponent(loss_weights={"policy_loss": 1.0}),
             OptimizerStepComponent(
                 agent_network=sl_network,
                 optimizer=sl_optimizer,

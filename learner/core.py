@@ -58,8 +58,10 @@ class UniversalLearner:
             
             blackboard.meta["learner_throughput"] = throughput
             self.training_step += 1
-            
             yield {
-                "losses": {k: v.item() for k, v in blackboard.losses.items()},
+
+                "losses": {k: v.item() for k, v in blackboard.losses.items() if k != "total_loss"},
+                "total_losses": {k: v.item() for k, v in blackboard.losses.get("total_loss", {}).items()},
                 "meta": blackboard.meta,
             }
+

@@ -1,52 +1,41 @@
 import torch
-from typing import Dict, List, Optional
+from typing import Dict
 from learner.pipeline.base import PipelineComponent
 from learner.core import Blackboard
 
-
 class LossAggregatorComponent(PipelineComponent):
     """
-    Flat Loss Pipeline Aggregator.
-    Pulls individual scalar losses from blackboard.losses (e.g., 'value_loss', 'policy_loss'),
-    sums them according to a mapping, and writes the total to an optimizer-specific key.
-
-    Example:
-        mapping = {"default": ["value_loss", "policy_loss", "entropy_loss"]}
-        This will create blackboard.losses["default"] = value_loss + policy_loss + entropy_loss.
+    Reads individual loss keys, applies predefined weights, sums them, 
+    and writes total_loss to the Blackboard.
     """
-
-    def __init__(self, mapping: Optional[Dict[str, List[str]]] = None):
-        # Default mapping is to sum everything in blackboard.losses into "default"
-        self.mapping = mapping
+    def __init__(self, loss_weights: Dict[str, float], optimizer_key: str = "default"):
+        self.loss_weights = loss_weights
+        self.optimizer_key = optimizer_key
 
     def execute(self, blackboard: Blackboard) -> None:
         if not blackboard.losses:
             return
 
-        # Explicit mapping sum
-        if self.mapping:
-            new_losses = {}
-            for opt_key, loss_keys in self.mapping.items():
-                total = torch.tensor(
-                    0.0, device=next(iter(blackboard.losses.values())).device
-                )
-                for l_key in loss_keys:
-                    if l_key in blackboard.losses:
-                        total = total + blackboard.losses[l_key]
-                new_losses[opt_key] = total
+        total_loss = None
 
-            # Update blackboard.losses with the aggregated ones
-            blackboard.losses.update(new_losses)
-        else:
-            # Default behavior: Sum everything into "default" NOT ALREADY SUMMED
-            # (To avoid double counting if some losses are already optimizer keys)
-            device = next(iter(blackboard.losses.values())).device
-            total = torch.tensor(0.0, device=device)
-            for k, v in blackboard.losses.items():
-                total = total + v
-            blackboard.losses["default"] = total
+        for loss_name, weight in self.loss_weights.items():
+            if loss_name in blackboard.losses:
+                weighted_loss = weight * blackboard.losses[loss_name]
+                if total_loss is None:
+                    total_loss = weighted_loss
+                else:
+                    total_loss = total_loss + weighted_loss
 
+        if total_loss is None:
+            return
 
+        # Write the final backward-ready tensor to the blackboard
+
+        # Grouped by optimizer_key in case of disjoint networks (e.g., separate Actor/Critic opts)
+        if "total_loss" not in blackboard.losses:
+            blackboard.losses["total_loss"] = {}
+            
+        blackboard.losses["total_loss"][self.optimizer_key] = total_loss
 
 
 class PriorityUpdateComponent(PipelineComponent):
@@ -78,4 +67,3 @@ class PriorityUpdateComponent(PipelineComponent):
         # 2. Store in blackboard for the Writer component to pick up
         # We must detach and move to cpu to avoid memory leaks in the buffer
         blackboard.meta["priorities"] = priorities.detach()
-

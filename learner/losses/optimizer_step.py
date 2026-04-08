@@ -54,13 +54,15 @@ class OptimizerStepComponent(PipelineComponent):
         self.step_counter += 1
 
         # 1. Backward Pass
-        # Iterate over unique optimizers
-        num_losses = len(blackboard.losses)
-        for opt_key, total_loss in blackboard.losses.items():
+        # Iterate over unique optimizers via the total_loss mapping
+        total_losses = blackboard.losses.get("total_loss", {})
+        num_losses = len(total_losses)
+        for opt_key, total_loss in total_losses.items():
             # Scale loss for gradient accumulation so accumulated gradients represent the mean over accumulation steps
             loss_tensor = total_loss / self.gradient_accumulation_steps
             # Keep graph attached if multiple optimizers share backward computation graph
             loss_tensor.backward(retain_graph=(num_losses > 1))
+
 
         # 2. Accumulation boundary
         if self.step_counter % self.gradient_accumulation_steps == 0:

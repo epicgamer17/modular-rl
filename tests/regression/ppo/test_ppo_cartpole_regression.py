@@ -182,10 +182,11 @@ def test_ppo_cartpole_full_training():
         unroll_steps=0,
     )
 
-    surrogate_loss = ClippedSurrogateLoss(
+    policy_loss = ClippedSurrogateLoss(
         clip_param=CLIP_PARAM,
         entropy_coefficient=ENTROPY_COEF,
     )
+
     value_loss = ClippedValueLoss(
         clip_param=CLIP_PARAM,
         target_key="returns",
@@ -203,9 +204,12 @@ def test_ppo_cartpole_full_training():
             ),
             TargetFormatterComponent({"values": val_rep, "returns": val_rep}),
             UniversalInfrastructureComponent(),
-            surrogate_loss,
+            policy_loss,
             value_loss,
-            LossAggregatorComponent(),
+            LossAggregatorComponent(
+                loss_weights={"policy_loss": 1.0, "value_loss": 1.0}
+            ),
+
 
             OptimizerStepComponent(
                 agent_network=agent_network,

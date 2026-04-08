@@ -15,7 +15,10 @@ def test_component_callbacks_hook_dispatch():
     bb.predictions = {"p": 2}
     bb.targets = {"t": 3}
     bb.meta = {"acc": 0.9, "priorities": [1, 1]}
-    bb.losses = {"default": torch.tensor(0.5)}
+    bb.losses = {
+        "loss_a": torch.tensor(0.1),
+        "total_loss": {"default": torch.tensor(0.5)}
+    }
     
     component.execute(bb)
     
@@ -25,7 +28,10 @@ def test_component_callbacks_hook_dispatch():
     
     assert kwargs["predictions"] == bb.predictions
     assert kwargs["targets"] == bb.targets
-    assert kwargs["loss_dict"] == {"default": 0.5}
+    assert kwargs["loss_dict"]["loss_a"] == pytest.approx(0.1)
+    assert kwargs["loss_dict"]["total/default"] == pytest.approx(0.5)
+
+
     assert kwargs["priorities"] == bb.meta["priorities"]
     assert kwargs["batch"] == bb.batch
     assert kwargs["meta"] == bb.meta
