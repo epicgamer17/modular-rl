@@ -30,15 +30,14 @@ from data.samplers.prioritized import PrioritizedSampler
 from learner.core import UniversalLearner
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
-from learner.pipeline.wrappers import TargetBuilderComponent, ComponentCallbacks
+from learner.pipeline.callbacks import ComponentCallbacks, PriorityUpdaterCallback, ResetNoiseCallback
 
 from learner.losses.aggregator import LossAggregator
 from learner.losses.q import QBootstrappingLoss
 from learner.losses.priorities import MaxLossPriorityComputer
 from learner.pipeline.target_builders import (
-    DistributionalTargetBuilder,
-    TargetBuilderPipeline,
-    SingleStepFormatter,
+    DistributionalTargetComponent,
+    UniversalInfrastructureComponent,
 )
 from learner.pipeline.batch_iterators import RepeatSampleIterator
 
@@ -214,18 +213,6 @@ def test_rainbow_cartpole_full_training():
         representations={"q_logits": representation},
     )
 
-    target_builder = TargetBuilderPipeline(
-        [
-            DistributionalTargetBuilder(
-                target_network=target_network,
-                gamma=GAMMA,
-                n_step=N_STEP,
-            ),
-            SingleStepFormatter(),
-        ]
-    )
-
-    from learner.pipeline.callbacks import PriorityUpdaterCallback, ResetNoiseCallback
     from utils.schedule import ConstantSchedule
 
     per_beta_schedule = ConstantSchedule(PER_BETA)
@@ -242,7 +229,13 @@ def test_rainbow_cartpole_full_training():
     learner = UniversalLearner(
         components=[
             ForwardPassComponent(agent_network, None),
-            TargetBuilderComponent(target_builder, agent_network),
+            DistributionalTargetComponent(
+                target_network=target_network,
+                online_network=agent_network,
+                gamma=GAMMA,
+                n_step=N_STEP,
+            ),
+            UniversalInfrastructureComponent(),
             loss_pipeline,
             OptimizerStepComponent(
                 agent_network=agent_network,

@@ -35,7 +35,7 @@ from data.concurrency import TorchMPBackend
 from learner.core import UniversalLearner
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
-from learner.pipeline.wrappers import TargetBuilderComponent, ComponentCallbacks
+from learner.pipeline.callbacks import ComponentCallbacks
 
 from learner.pipeline.batch_iterators import SingleBatchIterator
 from learner.losses.aggregator import LossAggregator
@@ -49,12 +49,11 @@ from learner.losses.representations import (
 )
 from learner.losses.priorities import ExpectedValueErrorPriorityComputer
 from learner.pipeline.target_builders import (
-    TargetBuilderPipeline,
-    MCTSExtractor,
-    SequencePadder,
-    SequenceMaskBuilder,
-    SequenceInfrastructureBuilder,
-    TargetFormatter,
+    MCTSExtractorComponent,
+    SequencePadderComponent,
+    SequenceMaskComponent,
+    SequenceInfrastructureComponent,
+    TargetFormatterComponent,
 )
 from learner.losses.shape_validator import ShapeValidator
 from envs.factories.tictactoe import tictactoe_factory
@@ -318,13 +317,16 @@ def test_muzero_tictactoe_full_training():
         shape_validator=shape_validator,
     )
 
-    target_builder = TargetBuilderPipeline(
-        builders=[
-            MCTSExtractor(),
-            SequencePadder(UNROLL_STEPS),
-            SequenceMaskBuilder(),
-            SequenceInfrastructureBuilder(UNROLL_STEPS),
-            TargetFormatter(
+    # Target building components are listed directly in UniversalLearner
+
+    learner = UniversalLearner(
+        components=[
+            ForwardPassComponent(agent_network, shape_validator),
+            MCTSExtractorComponent(),
+            SequencePadderComponent(UNROLL_STEPS),
+            SequenceMaskComponent(),
+            SequenceInfrastructureComponent(UNROLL_STEPS),
+            TargetFormatterComponent(
                 {
                     "values": val_rep,
                     "policies": pol_rep,
@@ -332,13 +334,6 @@ def test_muzero_tictactoe_full_training():
                     "to_plays": tp_rep,
                 }
             ),
-        ]
-    )
-
-    learner = UniversalLearner(
-        components=[
-            ForwardPassComponent(agent_network, shape_validator),
-            TargetBuilderComponent(target_builder, agent_network),
             loss_pipeline,
             OptimizerStepComponent(
                 agent_network=agent_network,

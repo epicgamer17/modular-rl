@@ -17,14 +17,13 @@ from learner.losses.representations import (
 from learner.core import UniversalLearner
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
-from learner.pipeline.wrappers import TargetBuilderComponent, ComponentCallbacks
+from learner.pipeline.callbacks import ComponentCallbacks
 
 from learner.losses import LossAggregator, ImitationLoss, QBootstrappingLoss
 from learner.pipeline.target_builders import (
-    PassThroughTargetBuilder,
-    SingleStepFormatter,
-    TemporalDifferenceBuilder,
-    TargetBuilderPipeline,
+    PassThroughTargetComponent,
+    TDTargetComponent,
+    UniversalInfrastructureComponent,
 )
 from learner.pipeline.batch_iterators import RepeatSampleIterator
 import pytest
@@ -154,18 +153,17 @@ def test_nfsp_leduc_regression():
     rl_loss_pipeline = LossAggregator(
         modules=[rl_loss], minibatch_size=BATCH_SIZE, num_actions=num_actions
     )
-    rl_target_builder = TargetBuilderPipeline(
-        [
-            TemporalDifferenceBuilder(
-                target_network=rl_target_network, gamma=0.99, n_step=1
-            ),
-            SingleStepFormatter(),
-        ]
-    )
+    # RL target building components
     rl_learner = UniversalLearner(
         components=[
             ForwardPassComponent(rl_network, None),
-            TargetBuilderComponent(rl_target_builder, rl_network),
+            TDTargetComponent(
+                target_network=rl_target_network,
+                online_network=rl_network,
+                gamma=0.99,
+                n_step=1,
+            ),
+            UniversalInfrastructureComponent(),
             rl_loss_pipeline,
             OptimizerStepComponent(
                 agent_network=rl_network,
@@ -183,16 +181,12 @@ def test_nfsp_leduc_regression():
     sl_loss_pipeline = LossAggregator(
         modules=[sl_loss], minibatch_size=BATCH_SIZE, num_actions=num_actions
     )
-    sl_target_builder = TargetBuilderPipeline(
-        [
-            PassThroughTargetBuilder(keys_to_keep=["policies", "actions"]),
-            SingleStepFormatter(),  # Use default to cover policies and actions
-        ]
-    )
+    # SL target building components
     sl_learner = UniversalLearner(
         components=[
             ForwardPassComponent(sl_network, None),
-            TargetBuilderComponent(sl_target_builder, sl_network),
+            PassThroughTargetComponent(keys_to_keep=["policies", "actions"]),
+            UniversalInfrastructureComponent(),
             sl_loss_pipeline,
             OptimizerStepComponent(
                 agent_network=sl_network,

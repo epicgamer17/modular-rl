@@ -28,21 +28,18 @@ from data.processors import (
 from data.writers import PPOWriter
 from data.samplers.prioritized import WholeBufferSampler
 
-from learner.pipeline.batch_iterators import PPOEpochIterator
 from learner.core import UniversalLearner
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
-from learner.pipeline.wrappers import TargetBuilderComponent, ComponentCallbacks
+from learner.pipeline.callbacks import ComponentCallbacks, MetricEarlyStopCallback
 
 from learner.losses.aggregator import LossAggregator
 from learner.losses.policy import ClippedSurrogateLoss
 from learner.losses.value import ClippedValueLoss
-from learner.pipeline.callbacks import MetricEarlyStopCallback
 from learner.pipeline.target_builders import (
-    PassThroughTargetBuilder,
-    TargetBuilderPipeline,
-    SingleStepFormatter,
-    TargetFormatter,
+    PassThroughTargetComponent,
+    TargetFormatterComponent,
+    UniversalInfrastructureComponent,
 )
 from learner.losses.shape_validator import ShapeValidator
 
@@ -207,20 +204,16 @@ def test_ppo_cartpole_full_training():
         shape_validator=shape_validator,
     )
 
-    target_builder = TargetBuilderPipeline(
-        [
-            PassThroughTargetBuilder(
-                ["values", "returns", "actions", "old_log_probs", "advantages"]
-            ),
-            TargetFormatter({"values": val_rep, "returns": val_rep}),
-            SingleStepFormatter(),
-        ]
-    )
+    # Target building components are listed directly in UniversalLearner
 
     learner = UniversalLearner(
         components=[
             ForwardPassComponent(agent_network, shape_validator),
-            TargetBuilderComponent(target_builder, agent_network),
+            PassThroughTargetComponent(
+                ["values", "returns", "actions", "old_log_probs", "advantages"]
+            ),
+            TargetFormatterComponent({"values": val_rep, "returns": val_rep}),
+            UniversalInfrastructureComponent(),
             loss_pipeline,
             OptimizerStepComponent(
                 agent_network=agent_network,

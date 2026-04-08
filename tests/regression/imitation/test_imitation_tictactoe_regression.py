@@ -13,13 +13,12 @@ from learner.losses.representations import ClassificationRepresentation
 from learner.core import UniversalLearner
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
-from learner.pipeline.wrappers import TargetBuilderComponent, ComponentCallbacks
+from learner.pipeline.callbacks import ComponentCallbacks
 
 from learner.losses import LossAggregator, ImitationLoss
 from learner.pipeline.target_builders import (
-    PassThroughTargetBuilder,
-    SingleStepFormatter,
-    TargetBuilderPipeline,
+    PassThroughTargetComponent,
+    UniversalInfrastructureComponent,
 )
 from learner.pipeline.batch_iterators import RepeatSampleIterator
 import pytest
@@ -144,17 +143,13 @@ def test_imitation_tictactoe_regression():
         num_actions=num_actions,
     )
 
-    target_builder = TargetBuilderPipeline(
-        [
-            PassThroughTargetBuilder(keys_to_keep=["policies", "actions"]),
-            SingleStepFormatter(temporal_keys=["policies", "actions"]),
-        ]
-    )
+    # Target building components
 
     learner = UniversalLearner(
         components=[
             ForwardPassComponent(agent_network, None),
-            TargetBuilderComponent(target_builder, agent_network),
+            PassThroughTargetComponent(keys_to_keep=["policies", "actions"]),
+            UniversalInfrastructureComponent(),
             loss_pipeline,
             OptimizerStepComponent(
                 agent_network=agent_network,

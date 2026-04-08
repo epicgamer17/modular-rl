@@ -12,6 +12,7 @@ from telemetry.stats import (
 if TYPE_CHECKING:
     from learner.core import UniversalLearner, Blackboard
     from modules.agent_nets.modular import ModularAgentNetwork
+from learner.pipeline.base import PipelineComponent
 from abc import ABC, abstractmethod
 
 
@@ -301,3 +302,26 @@ class MPSCacheClearCallback(Callback):
         )
         if is_mps and learner.training_step % self.interval == 0:
             torch.mps.empty_cache()
+
+
+class ComponentCallbacks(PipelineComponent):
+    """
+    Bridge that fires callback events before and after execution flow.
+    Can be broken down into individual Pipeline Components later.
+    """
+
+    def __init__(self, callbacks: List[Callback], hook: str = "on_step_end"):
+        self.callbacks = CallbackList(callbacks)
+        self.hook = hook
+
+    def execute(self, blackboard: Blackboard) -> None:
+        if self.hook == "on_step_end":
+            self.callbacks.on_step_end(
+                learner=None,  # Deprecated reference
+                predictions=blackboard.predictions,
+                targets=blackboard.targets,
+                loss_dict=blackboard.meta,
+                priorities=blackboard.meta.get("priorities"),
+                batch=blackboard.batch,
+                meta=blackboard.meta,
+            )
