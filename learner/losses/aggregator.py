@@ -88,17 +88,15 @@ class LossAggregator(PipelineComponent):
                         blackboard.predictions[pred_key]
                     )
 
-        # 3. Secure Weights & Gradient Scales
-        weights = blackboard.batch.get("weights")
-        if weights is None:
-            weights = blackboard.targets.get("weights")
-        if weights is not None and torch.is_tensor(weights):
-            weights = weights.to(device, memory_format=torch.contiguous_format).float()
-            
-        gradient_scales = blackboard.targets.get("gradient_scales")
+        # 3. Secure Weights & Gradient Scales from Meta (Truth Source)
+        weights = blackboard.meta.get("weights")
+        gradient_scales = blackboard.meta.get("gradient_scales")
         
         if weights is None or gradient_scales is None:
-            raise ValueError("LossAggregator requires 'weights' and 'gradient_scales'.")
+            raise ValueError(
+                f"LossAggregator requires 'weights' and 'gradient_scales' in blackboard.meta. "
+                f"Did you run UniversalInfrastructureComponent? Meta keys: {list(blackboard.meta.keys())}"
+            )
 
         B = weights.shape[0]
         T = gradient_scales.shape[1]

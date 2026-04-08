@@ -2,10 +2,10 @@ import torch
 import pytest
 import numpy as np
 from learner.pipeline.target_builders import (
-    SequenceMaskBuilder,
-    SequencePadder,
-    TargetBuilderPipeline,
+    SequenceMaskComponent,
+    SequencePadderComponent,
 )
+from learner.core import Blackboard
 
 # Module-level marker for unit tests
 pytestmark = pytest.mark.unit
@@ -19,7 +19,7 @@ def test_muzero_loss_masking_contracts():
     3. policy: terminal masked, post-terminal masked, pre-terminal valid.
     4. value: valid everywhere in same game.
     """
-    builder = SequenceMaskBuilder()
+    builder = SequenceMaskComponent()
 
     # B=1, T=5. Terminal at t=3.
     # index 0: root
@@ -30,10 +30,6 @@ def test_muzero_loss_masking_contracts():
 
     B, T = 1, 5
     terminal_idx = 3
-
-    current_targets = {
-        "actions": torch.zeros((B, T, 1)),  # [B, T, ...]
-    }
 
     # is_same_game: True for t=0..3, False for t=4
     is_same_game = torch.zeros((B, T), dtype=torch.bool)
@@ -51,9 +47,12 @@ def test_muzero_loss_masking_contracts():
         "has_valid_obs_mask": has_valid_obs_mask,
         "dones": dones,
     }
+    
+    bb = Blackboard(batch=batch)
 
     # Run builder
-    builder.build_targets(batch, {}, None, current_targets)
+    builder.execute(bb)
+    current_targets = bb.targets
 
     # --- Assert to_play_mask ---
     tp_mask = current_targets["to_play_mask"]
@@ -67,7 +66,6 @@ def test_muzero_loss_masking_contracts():
     ), "to_play should be masked post-terminal (t=4)"
 
     # --- Assert reward_mask ---
-    # User requirement: reward should be valid post-terminal to train self-absorbing states to 0
     rew_mask = current_targets["reward_mask"]
     assert rew_mask[0, 0] == False, "reward should be masked on root (t=0)"
     assert rew_mask[0, 1] == True, "reward should be valid on intermediate step"
@@ -76,7 +74,7 @@ def test_muzero_loss_masking_contracts():
     ), "reward should be valid on terminal state (prediction of reward entering s_3)"
     assert (
         rew_mask[0, terminal_idx + 1] == False
-    ), "reward should be valid post-terminal (t=4) to learn 0"
+    ), "reward should be masked post-terminal"
 
     # --- Assert policy_mask ---
     pol_mask = current_targets["policy_mask"]
@@ -91,32 +89,30 @@ def test_muzero_loss_masking_contracts():
     ), "policy should be masked post-terminal"
 
     # --- Assert value_mask ---
-    # User requirement: value should be valid post-terminal
     val_mask = current_targets["value_mask"]
     assert val_mask[0, 0] == True, "value should be valid on root"
     assert val_mask[0, terminal_idx] == True, "value should be valid on terminal state"
-    assert val_mask[0, terminal_idx + 1] == False, "value should be valid post-terminal"
+    assert val_mask[0, terminal_idx + 1] == False, "value should be masked post-terminal"
 
 
 def test_muzero_padding_contracts():
     """
-    Verifies that SequencePadder correctly handles t=0 padding for transition-aligned data.
+    Verifies that SequencePadderComponent correctly handles t=0 padding.
     """
     K = 4
     T = K + 1
     B = 1
 
-    padder = SequencePadder(unroll_steps=K)
+    padder = SequencePadderComponent(unroll_steps=K)
 
     # Transition data (rewards, actions) are length K
     rewards = torch.ones((B, K))
 
-    current_targets = {
-        "rewards": rewards,
-        "actions": torch.zeros((B, T, 1)),  # Anchor to determine T
-    }
+    bb = Blackboard(batch={})
+    bb.targets["rewards"] = rewards
 
-    padder.build_targets({}, {}, None, current_targets)
+    padder.execute(bb)
+    current_targets = bb.targets
 
     assert current_targets["rewards"].shape == (B, T)
     assert (
