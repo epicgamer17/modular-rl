@@ -11,7 +11,6 @@ from modules.backbones.mlp import MLPBackbone
 from modules.heads.policy import PolicyHead
 from learner.losses.representations import ClassificationRepresentation
 from learner.core import UniversalLearner
-from learner.pipeline.base import DeviceTransferComponent
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
 from learner.pipeline.wrappers import TargetBuilderComponent, ComponentCallbacks
@@ -154,7 +153,6 @@ def test_imitation_tictactoe_regression():
 
     learner = UniversalLearner(
         components=[
-            DeviceTransferComponent(DEVICE),
             ForwardPassComponent(agent_network, None),
             TargetBuilderComponent(target_builder, agent_network),
             loss_pipeline,
@@ -162,7 +160,8 @@ def test_imitation_tictactoe_regression():
                 agent_network=agent_network,
                 optimizer=optimizer,
             ),
-        ]
+        ],
+        device=DEVICE,
     )
 
     # --- Training Loop ---

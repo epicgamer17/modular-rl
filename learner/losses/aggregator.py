@@ -109,6 +109,7 @@ class LossAggregator(PipelineComponent):
         loss_dict = {}
         all_elementwise_losses = {}
 
+        total_module_loss = 0.0
         # 4. Single-Pass Vectorized Execution
         for module in self.modules:
             # Blindly compute: decision logic now lives in the Factory/Registry
@@ -131,7 +132,9 @@ class LossAggregator(PipelineComponent):
             total_scalar_loss = masked_weighted_loss / valid_transition_count
 
             total_loss_dict[module.optimizer_name] += total_scalar_loss
-            loss_dict[module.name] = total_scalar_loss.item()
+            scalar_loss_val = total_scalar_loss.item()
+            loss_dict[module.name] = scalar_loss_val
+            total_module_loss += scalar_loss_val
 
         # 5. Extract Priorities
         priorities = self.priority_computer.compute(
@@ -141,8 +144,10 @@ class LossAggregator(PipelineComponent):
         loss_dict["loss_pipeline_latency_ms"] = (
             time.perf_counter() - start_time
         ) * 1000
+        loss_dict["loss"] = total_module_loss
 
         # Optional contiguous memory enforce before passing gradient nodes via blackboard
         blackboard.losses = {k: v.contiguous() for k, v in total_loss_dict.items()}
-        blackboard.loss_dict.update(loss_dict)
-        blackboard.priorities = priorities
+        
+        blackboard.meta.update(loss_dict)
+        blackboard.meta["priorities"] = priorities

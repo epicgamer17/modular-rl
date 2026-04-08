@@ -35,11 +35,11 @@ class ComponentCallbacks(PipelineComponent):
     def execute(self, blackboard: Blackboard) -> None:
         if self.hook == "on_step_end":
             self.callbacks.on_step_end(
-                learner=None, # Deprecated reference
+                learner=None,  # Deprecated reference
                 predictions=blackboard.predictions,
                 targets=blackboard.targets,
-                loss_dict=blackboard.loss_dict,
-                priorities=blackboard.priorities,
+                loss_dict=blackboard.meta,
+                priorities=blackboard.meta.get("priorities"),
                 batch=blackboard.batch,
                 meta=blackboard.meta,
             )

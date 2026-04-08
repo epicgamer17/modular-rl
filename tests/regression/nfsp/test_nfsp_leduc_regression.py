@@ -15,7 +15,6 @@ from learner.losses.representations import (
     ScalarRepresentation,
 )
 from learner.core import UniversalLearner
-from learner.pipeline.base import DeviceTransferComponent
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
 from learner.pipeline.wrappers import TargetBuilderComponent, ComponentCallbacks
@@ -165,7 +164,6 @@ def test_nfsp_leduc_regression():
     )
     rl_learner = UniversalLearner(
         components=[
-            DeviceTransferComponent(DEVICE),
             ForwardPassComponent(rl_network, None),
             TargetBuilderComponent(rl_target_builder, rl_network),
             rl_loss_pipeline,
@@ -173,7 +171,8 @@ def test_nfsp_leduc_regression():
                 agent_network=rl_network,
                 optimizer=rl_optimizer,
             ),
-        ]
+        ],
+        device=DEVICE,
     )
 
     # 2. SL Learner
@@ -192,7 +191,6 @@ def test_nfsp_leduc_regression():
     )
     sl_learner = UniversalLearner(
         components=[
-            DeviceTransferComponent(DEVICE),
             ForwardPassComponent(sl_network, None),
             TargetBuilderComponent(sl_target_builder, sl_network),
             sl_loss_pipeline,
@@ -200,7 +198,8 @@ def test_nfsp_leduc_regression():
                 agent_network=sl_network,
                 optimizer=sl_optimizer,
             ),
-        ]
+        ],
+        device=DEVICE,
     )
 
     # --- Setup Buffers ---

@@ -33,7 +33,6 @@ from data.samplers.prioritized import UniformSampler
 from data.concurrency import TorchMPBackend
 
 from learner.core import UniversalLearner
-from learner.pipeline.base import DeviceTransferComponent
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
 from learner.pipeline.wrappers import TargetBuilderComponent, ComponentCallbacks
@@ -338,7 +337,6 @@ def test_muzero_tictactoe_full_training():
 
     learner = UniversalLearner(
         components=[
-            DeviceTransferComponent(DEVICE),
             ForwardPassComponent(agent_network, shape_validator),
             TargetBuilderComponent(target_builder, agent_network),
             loss_pipeline,
@@ -346,7 +344,8 @@ def test_muzero_tictactoe_full_training():
                 agent_network=agent_network,
                 optimizer=optimizer,
             ),
-        ]
+        ],
+        device=DEVICE,
     )
 
     # --- 5. Executor Launch ---
