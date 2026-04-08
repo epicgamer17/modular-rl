@@ -48,7 +48,12 @@ class PolicyLoss(PipelineComponent):
 
 
 class ClippedSurrogateLoss(PipelineComponent):
-    """PPO Clipped Surrogate Policy Loss."""
+    """PPO Clipped Surrogate Policy Loss.
+
+    Reconstructs the action distribution internally from raw policy logits
+    to comply with the 'No PyTorch Object Passing in Loss Functions' rule.
+    Loss functions operate on raw tensors, not Distribution objects.
+    """
     def __init__(
         self,
         clip_param: float,
@@ -62,10 +67,19 @@ class ClippedSurrogateLoss(PipelineComponent):
         self.name = name
 
     def execute(self, blackboard: Blackboard) -> None:
-        dist = blackboard.predictions["policies_dist"]
+        """Compute PPO clipped surrogate loss from raw policy logits.
+
+        Reads raw logits from ``blackboard.predictions["policies"]`` and
+        builds a ``Categorical`` distribution locally so that the pipeline
+        never transports Distribution objects.
+        """
+        policy_logits = blackboard.predictions["policies"]
         actions = blackboard.targets["actions"]
         old_log_probs = blackboard.targets["old_log_probs"]
         advantages = blackboard.targets["advantages"]
+
+        # Build distribution from raw logits inside the loss  [B, T, num_actions] -> Categorical
+        dist = torch.distributions.Categorical(logits=policy_logits)
 
         # [B, T]
         log_probs = dist.log_prob(actions)
@@ -128,4 +142,3 @@ class ImitationLoss(PipelineComponent):
         # Write out
         blackboard.losses[self.name] = scalar_loss
         blackboard.meta[self.name] = scalar_loss.item()
-
