@@ -31,7 +31,7 @@ from data.samplers.prioritized import WholeBufferSampler
 from learner.core import BlackboardEngine
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
-from learner.pipeline.callbacks import ComponentCallbacks, MetricEarlyStopCallback
+from learner.pipeline.components import MetricEarlyStopComponent
 
 from learner.losses.aggregator import LossAggregatorComponent
 from learner.losses.policy import ClippedSurrogateLoss
@@ -216,9 +216,7 @@ def test_ppo_cartpole_full_training():
                 optimizers=optimizer,
                 max_grad_norm=0.5,
             ),
-            ComponentCallbacks(
-                [MetricEarlyStopCallback(threshold=TARGET_KL)], hook="on_step_end"
-            ),
+            MetricEarlyStopComponent(threshold=TARGET_KL),
         ],
         device=DEVICE,
     )

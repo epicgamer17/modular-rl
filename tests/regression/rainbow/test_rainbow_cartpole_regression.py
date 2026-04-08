@@ -30,7 +30,11 @@ from data.samplers.prioritized import PrioritizedSampler
 from learner.core import BlackboardEngine
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
-from learner.pipeline.callbacks import ComponentCallbacks, PriorityUpdaterCallback, ResetNoiseCallback
+from learner.pipeline.components import (
+    PriorityBufferUpdateComponent,
+    BetaScheduleComponent,
+    ResetNoiseComponent,
+)
 
 from learner.losses.aggregator import LossAggregatorComponent, PriorityUpdateComponent
 from learner.losses.q import QBootstrappingLoss
@@ -215,15 +219,6 @@ def test_rainbow_cartpole_full_training():
 
     per_beta_schedule = ConstantSchedule(PER_BETA)
 
-    callbacks = [
-        PriorityUpdaterCallback(
-            priority_update_fn=replay_buffer.update_priorities,
-            set_beta_fn=replay_buffer.set_beta,
-            per_beta_schedule=per_beta_schedule,
-        ),
-        ResetNoiseCallback(),
-    ]
-
     learner = BlackboardEngine(
         components=[
             ForwardPassComponent(agent_network, None),
@@ -236,15 +231,20 @@ def test_rainbow_cartpole_full_training():
             UniversalInfrastructureComponent(),
             q_loss,
             LossAggregatorComponent(loss_weights={"q_loss": 1.0}),
-
             priority_comp,
-
             OptimizerStepComponent(
                 agent_network=agent_network,
                 optimizers=optimizer,
                 max_grad_norm=CLIP_NORM,
             ),
-            ComponentCallbacks(callbacks, hook="on_step_end"),
+            PriorityBufferUpdateComponent(
+                priority_update_fn=replay_buffer.update_priorities,
+            ),
+            BetaScheduleComponent(
+                set_beta_fn=replay_buffer.set_beta,
+                per_beta_schedule=per_beta_schedule,
+            ),
+            ResetNoiseComponent(agent_network=agent_network),
         ],
         device=DEVICE,
     )

@@ -513,6 +513,11 @@ class PettingZooActor(BaseActor):
         self.env.step(action)
         obs, reward, term, trunc, info = self.env.last()
 
+        # When the game terminates, wrappers may return obs=None.
+        # Provide a zero-filled dummy so the sequence can be stacked.
+        if obs is None and (term or trunc):
+            obs = np.zeros(self.input_shape, dtype=np.float32)
+
         # PettingZoo AEC rewards are incremental and can be extracted per-agent
         player_reward = float(self.env.rewards.get(player_id, 0.0))
 

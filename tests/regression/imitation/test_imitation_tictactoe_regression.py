@@ -13,7 +13,7 @@ from learner.losses.representations import ClassificationRepresentation
 from learner.core import BlackboardEngine
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
-from learner.pipeline.callbacks import ComponentCallbacks
+
 
 from learner.losses import LossAggregatorComponent, ImitationLoss
 from learner.pipeline.target_builders import (

@@ -86,7 +86,10 @@ class ChannelLastToFirstWrapper(BaseWrapper):
         self.env.reset(seed=seed, options=options)
     def last(self, observe: bool = True):
         _, reward, term, trunc, info = self.env.last(observe=False)
-        obs = self.observe(self.env.agent_selection) if observe else None
+        if observe and not term and not trunc:
+            obs = self.observe(self.env.agent_selection)
+        else:
+            obs = None
         return obs, reward, term, trunc, info
     def state(self) -> np.ndarray: return self.env.state()
 
@@ -139,7 +142,10 @@ class AppendAgentSelectionWrapper(BaseWrapper):
         return self.env.step(action)
     def last(self, observe: bool = True):
         _, reward, term, trunc, info = self.env.last(observe=False)
-        obs = self.observe(self.env.agent_selection) if observe else None
+        if observe and not term and not trunc:
+            obs = self.observe(self.env.agent_selection)
+        else:
+            obs = None
         return obs, reward, term, trunc, info
     def state(self) -> np.ndarray: return self.env.state()
 
@@ -184,7 +190,10 @@ class TwoPlayerPlayerPlaneWrapper(BaseWrapper):
         self.env.reset(seed=seed, options=options)
     def last(self, observe: bool = True):
         _, reward, term, trunc, info = self.env.last(observe=False)
-        obs = self.observe(self.env.agent_selection) if observe else None
+        if observe and not term and not trunc:
+            obs = self.observe(self.env.agent_selection)
+        else:
+            obs = None
         return obs, reward, term, trunc, info
     def state(self) -> np.ndarray: return self.env.state()
 
@@ -230,6 +239,9 @@ class FrameStackWrapper(BaseWrapper):
     def step(self, action: ActionType) -> None: self.env.step(action)
     def last(self, observe: bool = True):
         _, reward, term, trunc, info = self.env.last(observe=False)
-        obs = self.observe(self.env.agent_selection) if observe else None
+        if observe and not term and not trunc:
+            obs = self.observe(self.env.agent_selection)
+        else:
+            obs = None
         return obs, reward, term, trunc, info
     def state(self) -> np.ndarray: return self.env.state()

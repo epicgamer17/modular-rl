@@ -35,7 +35,7 @@ from data.concurrency import TorchMPBackend
 from learner.core import BlackboardEngine
 from learner.pipeline.forward_pass import ForwardPassComponent
 from learner.losses.optimizer_step import OptimizerStepComponent
-from learner.pipeline.callbacks import ComponentCallbacks
+
 
 from learner.pipeline.batch_iterators import SingleBatchIterator
 from learner.losses.aggregator import LossAggregatorComponent, PriorityUpdateComponent

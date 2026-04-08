@@ -50,6 +50,8 @@ class BlackboardEngine:
             # 2. Sequential Pipeline Execution (Radical Transparency)
             for component in self.components:
                 component.execute(blackboard)
+                if blackboard.meta.get("stop_execution"):
+                    break
             
             # 3. Telemetry Output
             t_now = time.perf_counter()
@@ -59,9 +61,11 @@ class BlackboardEngine:
             blackboard.meta["learner_throughput"] = throughput
             self.training_step += 1
             yield {
-
                 "losses": {k: v.item() for k, v in blackboard.losses.items() if k != "total_loss"},
                 "total_losses": {k: v.item() for k, v in blackboard.losses.get("total_loss", {}).items()},
                 "meta": blackboard.meta,
             }
+
+            if blackboard.meta.get("stop_execution"):
+                break
 
