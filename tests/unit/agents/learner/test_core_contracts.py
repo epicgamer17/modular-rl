@@ -1,7 +1,7 @@
 import torch
 import pytest
-from learner.core import Blackboard, BlackboardEngine
-from learner.pipeline.base import PipelineComponent
+from core import Blackboard, BlackboardEngine
+from core import PipelineComponent
 
 pytestmark = pytest.mark.unit
 

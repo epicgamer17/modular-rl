@@ -1,11 +1,8 @@
 import torch
 import pytest
 import numpy as np
-from learner.pipeline.target_builders import (
-    SequenceMaskComponent,
-    SequencePadderComponent,
-)
-from learner.core import Blackboard
+from components.targets import SequenceMaskComponent, SequencePadderComponent
+from core import Blackboard
 
 # Module-level marker for unit tests
 pytestmark = pytest.mark.unit

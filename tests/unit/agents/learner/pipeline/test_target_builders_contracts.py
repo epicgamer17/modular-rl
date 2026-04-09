@@ -2,13 +2,8 @@ import torch
 import torch.nn as nn
 import pytest
 from unittest.mock import MagicMock
-from learner.pipeline.target_builders import (
-    TDTargetComponent,
-    DistributionalTargetComponent,
-    PassThroughTargetComponent,
-    UniversalInfrastructureComponent,
-)
-from learner.core import Blackboard
+from components.targets import TDTargetComponent, DistributionalTargetComponent, PassThroughTargetComponent, UniversalInfrastructureComponent
+from core import Blackboard
 
 pytestmark = pytest.mark.unit
 

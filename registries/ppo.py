@@ -25,19 +25,15 @@ from data.processors import (
 from data.writers import PPOWriter
 from data.samplers.prioritized import WholeBufferSampler
 
-from learner.core import BlackboardEngine
-from learner.pipeline.forward_pass import ForwardPassComponent
-from learner.losses.optimizer_step import OptimizerStepComponent
-from learner.pipeline.components import MetricEarlyStopComponent
-from learner.losses.aggregator import LossAggregatorComponent
-from learner.losses.policy import ClippedSurrogateLoss
-from learner.losses.value import ClippedValueLoss
-from learner.pipeline.target_builders import (
-    PassThroughTargetComponent,
-    TargetFormatterComponent,
-    UniversalInfrastructureComponent,
-)
-from learner.losses.shape_validator import ShapeValidator
+from core import BlackboardEngine
+from components.neural import ForwardPassComponent
+from components.math import OptimizerStepComponent
+from components.math import MetricEarlyStopComponent
+from components.math import LossAggregatorComponent
+from components.math import ClippedSurrogateLoss
+from components.math import ClippedValueLoss
+from components.targets import PassThroughTargetComponent, TargetFormatterComponent, UniversalInfrastructureComponent
+from components.math import ShapeValidator
 
 
 def make_ppo_network(

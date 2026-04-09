@@ -18,15 +18,12 @@ from data.processors import (
 from data.writers import CircularWriter
 from data.samplers.prioritized import UniformSampler
 
-from learner.core import BlackboardEngine
-from learner.pipeline.forward_pass import ForwardPassComponent
-from learner.losses.optimizer_step import OptimizerStepComponent
-from learner.losses.aggregator import LossAggregatorComponent
-from learner.losses.q import QBootstrappingLoss
-from learner.pipeline.target_builders import (
-    TDTargetComponent,
-    UniversalInfrastructureComponent,
-)
+from core import BlackboardEngine
+from components.neural import ForwardPassComponent
+from components.math import OptimizerStepComponent
+from components.math import LossAggregatorComponent
+from components.math import QBootstrappingLoss
+from components.targets import TDTargetComponent, UniversalInfrastructureComponent
 
 
 def make_dqn_network(

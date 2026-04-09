@@ -5,6 +5,7 @@ from torch import Tensor
 import torch.nn.functional as F
 
 
+# TODO: clean up representation stuff (its close to distributions too, and its kind of clunky with action selectors, they are all closely coupled and annoying to initialize and use.)
 class BaseRepresentation(ABC):
     """
     Base interface for mathematical representations of values (scalars, distributions, etc.).
@@ -140,15 +141,17 @@ class DiscreteSupportRepresentation(BaseRepresentation):
     ) -> Tensor:
         """Handle ingredient-based targets or fallback to scalar."""
         if target_key not in targets:
-             raise ValueError(f"{self.__class__.__name__} received a targets dict without '{target_key}'")
-             
+            raise ValueError(
+                f"{self.__class__.__name__} received a targets dict without '{target_key}'"
+            )
+
         target = targets[target_key]
         # If the target is already a distribution over our support, pass it through.
-        # This occurs when a TargetBuilder (like DistributionalTargetBuilder) 
+        # This occurs when a TargetBuilder (like DistributionalTargetBuilder)
         # has already performed the projection.
         if target.ndim > 1 and target.shape[-1] == self.bins:
             return target
-            
+
         return self.to_representation(target)
 
 

@@ -1,11 +1,12 @@
 import torch
 import torch.nn.functional as F
 import pytest
-from learner.losses.aggregator import LossAggregatorComponent, PriorityUpdateComponent
-from learner.losses.value import ValueLoss
-from learner.losses.q import QBootstrappingLoss
-from learner.core import Blackboard
-from learner.pipeline.base import PipelineComponent
+from components.math import LossAggregatorComponent
+from components.memory import PriorityUpdateComponent
+from components.math import ValueLoss
+from components.math import QBootstrappingLoss
+from core import Blackboard
+from core import PipelineComponent
 
 pytestmark = pytest.mark.unit
 
@@ -116,7 +117,7 @@ def test_q_bootstrapping_loss_contracts():
 
 def test_clipped_value_loss_contracts():
     """Verify ClippedValueLoss logic."""
-    from learner.losses.value import ClippedValueLoss
+    from components.math import ClippedValueLoss
     loss = ClippedValueLoss(clip_param=0.2, name="clipped_v")
     bb = Blackboard()
     

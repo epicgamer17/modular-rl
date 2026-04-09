@@ -13,7 +13,7 @@ from modules.heads.value import ValueHead
 from modules.heads.q import QHead, DuelingQHead
 from learner.losses.representations import get_representation
 from modules.projectors.sim_siam import Projector
-from learner.losses.shape_validator import ShapeValidator
+from components.math import ShapeValidator
 
 
 class ModularAgentNetwork(BaseAgentNetwork):

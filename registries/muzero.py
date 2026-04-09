@@ -25,27 +25,23 @@ from data.writers import SharedCircularWriter
 from data.samplers.prioritized import UniformSampler
 from data.concurrency import TorchMPBackend
 
-from learner.core import BlackboardEngine
-from learner.pipeline.forward_pass import ForwardPassComponent
-from learner.losses.optimizer_step import OptimizerStepComponent
-from learner.losses.aggregator import LossAggregatorComponent, PriorityUpdateComponent
-from learner.losses.value import ValueLoss
-from learner.losses.policy import PolicyLoss
-from learner.losses.reward import RewardLoss
-from learner.losses.to_play import ToPlayLoss
+from core import BlackboardEngine
+from components.neural import ForwardPassComponent
+from components.math import OptimizerStepComponent
+from components.math import LossAggregatorComponent
+from components.memory import PriorityUpdateComponent
+from components.math import ValueLoss
+from components.math import PolicyLoss
+from components.math import RewardLoss
+from components.math import ToPlayLoss
 from learner.losses.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
 from learner.losses.priorities import ExpectedValueErrorPriorityComputer
-from learner.pipeline.target_builders import (
-    MCTSExtractorComponent,
-    SequencePadderComponent,
-    SequenceMaskComponent,
-    SequenceInfrastructureComponent,
-    TargetFormatterComponent,
-)
-from learner.losses.shape_validator import ShapeValidator
+from components.search import MCTSExtractorComponent
+from components.targets import SequencePadderComponent, SequenceMaskComponent, SequenceInfrastructureComponent, TargetFormatterComponent
+from components.math import ShapeValidator
 
 
 def make_muzero_network(

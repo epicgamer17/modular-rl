@@ -14,11 +14,11 @@ from registries import (
     make_rainbow_learner,
 )
 from actors.action_selectors.selectors import ArgmaxSelector
-from learner.pipeline.batch_iterators import RepeatSampleIterator
+from core import RepeatSampleIterator
 from utils.schedule import ConstantSchedule
 
 # Module-level marker for regression tests
-pytestmark = pytest.mark.regression
+pytestmark = [pytest.mark.regression, pytest.mark.slow]
 
 
 def setup_seeds(seed=42):
@@ -97,62 +97,24 @@ def test_rainbow_cartpole_full_training():
     # --- Components ---
     # 1. Network
     agent_network = make_rainbow_network(
-        obs_dim=obs_dim,
-        num_actions=num_actions,
-        hidden_widths=[128],
-        noisy_sigma=NOISY_SIGMA,
-        atom_size=ATOM_SIZE,
-        v_min=V_MIN,
-        v_max=V_MAX,
-        device=DEVICE,
-    )
+        obs_dim=obs_dim, num_actions=num_actions, hidden_widths=[128], noisy_sigma=NOISY_SIGMA, atom_size=ATOM_SIZE, v_min=V_MIN, v_max=V_MAX, device=DEVICE, )
     target_network = make_rainbow_network(
-        obs_dim=obs_dim,
-        num_actions=num_actions,
-        hidden_widths=[128],
-        noisy_sigma=NOISY_SIGMA,
-        atom_size=ATOM_SIZE,
-        v_min=V_MIN,
-        v_max=V_MAX,
-        device=DEVICE,
-    )
+        obs_dim=obs_dim, num_actions=num_actions, hidden_widths=[128], noisy_sigma=NOISY_SIGMA, atom_size=ATOM_SIZE, v_min=V_MIN, v_max=V_MAX, device=DEVICE, )
     target_network.load_state_dict(agent_network.state_dict())
     target_network.eval()
 
     # 2. Replay Buffer
     replay_buffer = make_rainbow_replay_buffer(
-        obs_dim=obs_dim,
-        num_actions=num_actions,
-        max_size=REPLAY_BUFFER_SIZE,
-        batch_size=MINIBATCH_SIZE,
-        n_step=N_STEP,
-        gamma=GAMMA,
-        alpha=PER_ALPHA,
-        beta=PER_BETA,
-        epsilon=PER_EPSILON,
-    )
+        obs_dim=obs_dim, num_actions=num_actions, max_size=REPLAY_BUFFER_SIZE, batch_size=MINIBATCH_SIZE, n_step=N_STEP, gamma=GAMMA, alpha=PER_ALPHA, beta=PER_BETA, epsilon=PER_EPSILON, )
 
     # 3. Learner
     optimizer = torch.optim.Adam(
-        agent_network.parameters(),
-        lr=LEARNING_RATE,
-        eps=ADAM_EPSILON,
-        weight_decay=WEIGHT_DECAY,
-    )
+        agent_network.parameters(), lr=LEARNING_RATE, eps=ADAM_EPSILON, weight_decay=WEIGHT_DECAY, )
 
     per_beta_schedule = ConstantSchedule(PER_BETA)
 
     learner = make_rainbow_learner(
-        agent_network=agent_network,
-        target_network=target_network,
-        optimizer=optimizer,
-        replay_buffer=replay_buffer,
-        gamma=GAMMA,
-        n_step=N_STEP,
-        clip_norm=CLIP_NORM,
-        per_beta_schedule=per_beta_schedule,
-        device=DEVICE,
-    )
+        agent_network=agent_network, target_network=target_network, optimizer=optimizer, replay_buffer=replay_buffer, gamma=GAMMA, n_step=N_STEP, clip_norm=CLIP_NORM, per_beta_schedule=per_beta_schedule, device=DEVICE, )
 
     # --- Training Loop ---
     training_scores = []
@@ -179,13 +141,7 @@ def test_rainbow_cartpole_full_training():
         current_episode_score += reward
 
         replay_buffer.store(
-            observations=state,
-            actions=action_val,
-            rewards=reward,
-            next_observations=next_state,
-            dones=done,
-            next_legal_moves=next_info.get("legal_moves"),
-        )
+            observations=state, actions=action_val, rewards=reward, next_observations=next_state, dones=done, next_legal_moves=next_info.get("legal_moves"), )
 
         if done:
             training_scores.append(current_episode_score)
@@ -212,13 +168,7 @@ def test_rainbow_cartpole_full_training():
             current_episode_score += reward
 
             replay_buffer.store(
-                observations=state,
-                actions=action_val,
-                rewards=reward,
-                next_observations=next_state,
-                dones=done,
-                next_legal_moves=next_info.get("legal_moves"),
-            )
+                observations=state, actions=action_val, rewards=reward, next_observations=next_state, dones=done, next_legal_moves=next_info.get("legal_moves"), )
 
             state, info = next_state, next_info
             global_step += 1

@@ -14,21 +14,19 @@ from learner.losses.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
-from learner.core import BlackboardEngine
-from learner.pipeline.forward_pass import ForwardPassComponent
-from learner.losses.optimizer_step import OptimizerStepComponent
+from core import BlackboardEngine
+from components.neural import ForwardPassComponent
+from components.math import OptimizerStepComponent
 
 
-from learner.losses import LossAggregatorComponent, ImitationLoss, QBootstrappingLoss
-from learner.pipeline.target_builders import (
-    PassThroughTargetComponent,
-    TDTargetComponent,
-    UniversalInfrastructureComponent,
-)
-from learner.pipeline.batch_iterators import RepeatSampleIterator
+from components.math import LossAggregatorComponent, ImitationLoss
+from components.targets import TDTargetComponent
+from components.math import QBootstrappingLoss
+from components.targets import PassThroughTargetComponent, UniversalInfrastructureComponent
+from core import RepeatSampleIterator
 import pytest
 
-pytestmark = pytest.mark.regression
+pytestmark = [pytest.mark.regression, pytest.mark.slow]
 from data.storage.circular import BufferConfig, ModularReplayBuffer
 from data.samplers.prioritized import UniformSampler
 from pettingzoo.classic import leduc_holdem_v4
@@ -45,7 +43,7 @@ class ReservoirBuffer:
         self.obs_shape = obs_shape
         self.num_actions = num_actions
         self.observations = torch.zeros((max_size, *obs_shape), dtype=torch.float32)
-        self.actions = torch.zeros((max_size,), dtype=torch.int64)
+        self.actions = torch.zeros((max_size, ), dtype=torch.int64)
         self.count = 0
         self.current_size = 0
 
@@ -80,10 +78,7 @@ class ReservoirBuffer:
         )
 
         return {
-            "observations": obs,
-            "actions": actions,
-            "policies": one_hot_policies,
-        }
+            "observations": obs, "actions": actions, "policies": one_hot_policies, }
 
 
 def test_nfsp_leduc_regression():
@@ -122,11 +117,7 @@ def test_nfsp_leduc_regression():
         backbone = MLPBackbone(input_shape=obs_shape, widths=[128, 128])
         # QHead needs representation and hidden_widths
         head = QHead(
-            input_shape=backbone.output_shape,
-            representation=ScalarRepresentation(),
-            hidden_widths=[],
-            num_actions=num_actions,
-        )
+            input_shape=backbone.output_shape, representation=ScalarRepresentation(), hidden_widths=[], num_actions=num_actions, )
         return ModularAgentNetwork(
             components={"feature_block": backbone, "q_head": head}
         ).to(DEVICE)
@@ -139,9 +130,7 @@ def test_nfsp_leduc_regression():
     sl_backbone = MLPBackbone(input_shape=obs_shape, widths=[128, 128])
     # PolicyHead needs representation
     sl_head = PolicyHead(
-        input_shape=sl_backbone.output_shape,
-        representation=ClassificationRepresentation(num_actions),
-    )
+        input_shape=sl_backbone.output_shape, representation=ClassificationRepresentation(num_actions), )
     sl_network = ModularAgentNetwork(
         components={"feature_block": sl_backbone, "policy_head": sl_head}
     ).to(DEVICE)
@@ -154,23 +143,9 @@ def test_nfsp_leduc_regression():
     # RL target building components
     rl_learner = BlackboardEngine(
         components=[
-            ForwardPassComponent(rl_network, None),
-            TDTargetComponent(
-                target_network=rl_target_network,
-                online_network=rl_network,
-                gamma=0.99,
-                n_step=1,
-            ),
-            UniversalInfrastructureComponent(),
-            rl_loss,
-            LossAggregatorComponent(loss_weights={"q_loss": 1.0}),
-            OptimizerStepComponent(
-                agent_network=rl_network,
-                optimizers=rl_optimizer,
-            ),
-        ],
-        device=DEVICE,
-    )
+            ForwardPassComponent(rl_network, None), TDTargetComponent(
+                target_network=rl_target_network, online_network=rl_network, gamma=0.99, n_step=1, ), UniversalInfrastructureComponent(), rl_loss, LossAggregatorComponent(loss_weights={"q_loss": 1.0}), OptimizerStepComponent(
+                agent_network=rl_network, optimizers=rl_optimizer, ), ], device=DEVICE, )
 
 
     # 2. SL Learner
@@ -182,39 +157,15 @@ def test_nfsp_leduc_regression():
     # SL target building components
     sl_learner = BlackboardEngine(
         components=[
-            ForwardPassComponent(sl_network, None),
-            PassThroughTargetComponent(keys_to_keep=["policies", "actions"]),
-            UniversalInfrastructureComponent(),
-            sl_loss,
-            LossAggregatorComponent(loss_weights={"policy_loss": 1.0}),
-            OptimizerStepComponent(
-                agent_network=sl_network,
-                optimizers=sl_optimizer,
-            ),
-        ],
-        device=DEVICE,
-    )
+            ForwardPassComponent(sl_network, None), PassThroughTargetComponent(keys_to_keep=["policies", "actions"]), UniversalInfrastructureComponent(), sl_loss, LossAggregatorComponent(loss_weights={"policy_loss": 1.0}), OptimizerStepComponent(
+                agent_network=sl_network, optimizers=sl_optimizer, ), ], device=DEVICE, )
 
 
     # --- Setup Buffers ---
     rl_buffer = ModularReplayBuffer(
-        max_size=20000,
-        batch_size=BATCH_SIZE,
-        buffer_configs=[
-            BufferConfig("observations", shape=obs_shape, dtype=torch.float32),
-            BufferConfig("actions", shape=(), dtype=torch.int64),
-            BufferConfig("rewards", shape=(), dtype=torch.float32),
-            BufferConfig("dones", shape=(), dtype=torch.bool),
-            BufferConfig("next_observations", shape=obs_shape, dtype=torch.float32),
-            BufferConfig(
-                "next_legal_moves_masks",
-                shape=(num_actions,),
-                dtype=torch.bool,
-                fill_value=True,
-            ),
-        ],
-        sampler=UniformSampler(),
-    )
+        max_size=20000, batch_size=BATCH_SIZE, buffer_configs=[
+            BufferConfig("observations", shape=obs_shape, dtype=torch.float32), BufferConfig("actions", shape=(), dtype=torch.int64), BufferConfig("rewards", shape=(), dtype=torch.float32), BufferConfig("dones", shape=(), dtype=torch.bool), BufferConfig("next_observations", shape=obs_shape, dtype=torch.float32), BufferConfig(
+                "next_legal_moves_masks", shape=(num_actions, ), dtype=torch.bool, fill_value=True, ), ], sampler=UniformSampler(), )
     sl_buffer = ReservoirBuffer(
         max_size=50000, obs_shape=obs_shape, num_actions=num_actions, device=DEVICE
     )
@@ -235,13 +186,7 @@ def test_nfsp_leduc_regression():
             # Store transitions for RL buffer
             if last_obs[agent] is not None:
                 rl_buffer.store(
-                    observations=last_obs[agent],
-                    actions=last_action[agent],
-                    rewards=reward,
-                    dones=termination or truncation,
-                    next_observations=obs_dict["observation"],
-                    next_legal_moves_masks=obs_dict["action_mask"],
-                )
+                    observations=last_obs[agent], actions=last_action[agent], rewards=reward, dones=termination or truncation, next_observations=obs_dict["observation"], next_legal_moves_masks=obs_dict["action_mask"], )
 
             if termination or truncation:
                 action = None

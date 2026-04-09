@@ -21,21 +21,16 @@ from data.processors import (
 from data.writers import CircularWriter
 from data.samplers.prioritized import PrioritizedSampler
 
-from learner.core import BlackboardEngine
-from learner.pipeline.forward_pass import ForwardPassComponent
-from learner.losses.optimizer_step import OptimizerStepComponent
-from learner.pipeline.components import (
-    PriorityBufferUpdateComponent,
-    BetaScheduleComponent,
-    ResetNoiseComponent,
-)
+from core import BlackboardEngine
+from components.neural import ForwardPassComponent
+from components.math import OptimizerStepComponent
+from components.memory import PriorityBufferUpdateComponent, BetaScheduleComponent
+from components.routing import ResetNoiseComponent
 
-from learner.losses.aggregator import LossAggregatorComponent, PriorityUpdateComponent
-from learner.losses.q import QBootstrappingLoss
-from learner.pipeline.target_builders import (
-    DistributionalTargetComponent,
-    UniversalInfrastructureComponent,
-)
+from components.math import LossAggregatorComponent
+from components.memory import PriorityUpdateComponent
+from components.math import QBootstrappingLoss
+from components.targets import DistributionalTargetComponent, UniversalInfrastructureComponent
 from learner.losses.priorities import MaxLossPriorityComputer
 from utils.schedule import Schedule, ConstantSchedule
 

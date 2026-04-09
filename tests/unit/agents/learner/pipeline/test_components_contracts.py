@@ -3,15 +3,11 @@ import numpy as np
 import pytest
 from unittest.mock import MagicMock, call
 
-from learner.pipeline.components import (
-    MetricEarlyStopComponent,
-    PriorityBufferUpdateComponent,
-    BetaScheduleComponent,
-    ResetNoiseComponent,
-    EpsilonScheduleComponent,
-    MPSCacheClearComponent,
-)
-from learner.core import Blackboard
+from components.math import MetricEarlyStopComponent, MPSCacheClearComponent
+from components.memory import PriorityBufferUpdateComponent, BetaScheduleComponent
+from components.routing import ResetNoiseComponent
+from components.environment import EpsilonScheduleComponent
+from core import Blackboard
 
 pytestmark = pytest.mark.unit
 

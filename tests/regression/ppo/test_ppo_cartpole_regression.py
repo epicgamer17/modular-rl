@@ -13,7 +13,7 @@ from registries import (
 from actors.action_selectors.selectors import CategoricalSelector
 from actors.action_selectors.decorators import PPODecorator
 from actors.action_selectors.policy_sources import NetworkPolicySource
-from learner.pipeline.batch_iterators import PPOEpochIterator
+from core import PPOEpochIterator
 
 # Module-level marker for regression tests
 # Declared just below imports as per README.md
@@ -38,10 +38,7 @@ def evaluate_agent(
 
                 result = policy_source.get_inference(obs=obs_tensor, info=info)
                 action, _ = action_selector.select_action(
-                    result=result,
-                    info=info,
-                    exploration=False,
-                )
+                    result=result, info=info, exploration=False, )
 
                 state, reward, terminated, truncated, info = env.step(action.item())
                 done = terminated or truncated
@@ -90,38 +87,19 @@ def test_ppo_cartpole_full_training():
 
     # --- Components ---
     agent_network = make_ppo_network(
-        obs_dim=obs_dim,
-        num_actions=num_actions,
-        hidden_widths=[64, 64],
-        device=DEVICE,
-    )
+        obs_dim=obs_dim, num_actions=num_actions, hidden_widths=[64, 64], device=DEVICE, )
 
     action_selector = CategoricalSelector(exploration=True)
     action_selector = PPODecorator(inner_selector=action_selector)
     policy_source = NetworkPolicySource(agent_network, input_shape=obs_dim)
 
     replay_buffer = make_ppo_replay_buffer(
-        obs_dim=obs_dim,
-        num_actions=num_actions,
-        steps_per_epoch=STEPS_PER_EPOCH,
-        gamma=GAMMA,
-        gae_lambda=GAE_LAMBDA,
-    )
+        obs_dim=obs_dim, num_actions=num_actions, steps_per_epoch=STEPS_PER_EPOCH, gamma=GAMMA, gae_lambda=GAE_LAMBDA, )
 
     optimizer = torch.optim.Adam(agent_network.parameters(), lr=LEARNING_RATE)
 
     learner = make_ppo_learner(
-        agent_network=agent_network,
-        optimizer=optimizer,
-        minibatch_size=STEPS_PER_EPOCH // NUM_MINIBATCHES,
-        num_actions=num_actions,
-        device=DEVICE,
-        clip_param=CLIP_PARAM,
-        entropy_coef=ENTROPY_COEF,
-        value_coef=VALUE_COEF,
-        max_grad_norm=0.5,
-        target_kl=TARGET_KL,
-    )
+        agent_network=agent_network, optimizer=optimizer, minibatch_size=STEPS_PER_EPOCH // NUM_MINIBATCHES, num_actions=num_actions, device=DEVICE, clip_param=CLIP_PARAM, entropy_coef=ENTROPY_COEF, value_coef=VALUE_COEF, max_grad_norm=0.5, target_kl=TARGET_KL, )
 
     # --- Training Loop ---
     steps_collected = 0
@@ -142,10 +120,7 @@ def test_ppo_cartpole_full_training():
 
                 result = policy_source.get_inference(obs=obs_tensor, info=info)
                 action, metadata = action_selector.select_action(
-                    result=result,
-                    info=info,
-                    exploration=True,
-                )
+                    result=result, info=info, exploration=True, )
 
                 action_val = action.item()
                 next_state, reward, terminated, truncated, next_info = env.step(
@@ -154,14 +129,7 @@ def test_ppo_cartpole_full_training():
                 done = terminated or truncated
 
                 replay_buffer.store(
-                    observations=state,
-                    actions=action_val,
-                    values=float(metadata["value"].item()),
-                    old_log_probs=float(metadata["log_prob"].item()),
-                    rewards=reward,
-                    dones=done,
-                    info=info,
-                )
+                    observations=state, actions=action_val, values=float(metadata["value"].item()), old_log_probs=float(metadata["log_prob"].item()), rewards=reward, dones=done, info=info, )
 
                 state, info = next_state, next_info
                 current_episode_score += reward
@@ -185,10 +153,7 @@ def test_ppo_cartpole_full_training():
 
                     if trajectory_end_index > trajectory_start_index:
                         res = replay_buffer.input_processor.finish_trajectory(
-                            replay_buffer.buffers,
-                            trajectory_slice,
-                            last_value=last_value,
-                        )
+                            replay_buffer.buffers, trajectory_slice, last_value=last_value, )
                         if res:
                             for k, v in res.items():
                                 replay_buffer.buffers[k][trajectory_slice] = v
@@ -208,11 +173,7 @@ def test_ppo_cartpole_full_training():
 
         # Learning Phase
         iterator = PPOEpochIterator(
-            replay_buffer=replay_buffer,
-            num_epochs=TRAIN_POLICY_ITERATIONS,
-            num_minibatches=NUM_MINIBATCHES,
-            device=DEVICE,
-        )
+            replay_buffer=replay_buffer, num_epochs=TRAIN_POLICY_ITERATIONS, num_minibatches=NUM_MINIBATCHES, device=DEVICE, )
         for _ in learner.step(iterator):
             pass
         replay_buffer.clear()

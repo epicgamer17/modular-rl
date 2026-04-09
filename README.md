@@ -22,9 +22,10 @@ This framework is built on the principle of **Strict Separation of Concerns**. W
 
 | Directory | Domain | Responsibility |
 |---|---|---|
+| `core/` | **Primitives** | The Graph Execution Engine (`Blackboard`, `BlackboardEngine`). |
 | `modules/` | **The Compute Graph** | Pure PyTorch Neural Networks. No knowledge of RL logic. |
 | `agents/trainers/` | **Orchestration** | Interfaces with all components to run the training loop. |
-| `agents/learner/` | **Optimization** | The Loss Pipeline and Optimizer (e.g., `BlackboardEngine`). |
+| `agents/learner/` | **Optimization** | The Loss Pipeline and Optimizer orchestration. |
 | `agents/action_selectors/`| **The Bridge** | Translates network math into environment actions; handles masking. |
 | `replay_buffers/` | **The Fact Store** | High-performance transition storage with vectorized processing. |
 | `search/` | **The Imagination** | CPU-bound MCTS (Backends: Python, C++, AOS). |

@@ -11,17 +11,10 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 from unittest.mock import MagicMock, patch
 
-from actors.pipeline.components import (
-    EnvironmentState,
-    EnvObservationComponent,
-    ActorInferenceComponent,
-    ActionSelectionComponent,
-    EnvStepComponent,
-    BufferStoreComponent,
-    infinite_ticks,
-    _sanitize_info,
-)
-from learner.core import Blackboard
+from components.environment import EnvironmentState, EnvObservationComponent, ActionSelectionComponent, EnvStepComponent, _sanitize_info
+from components.neural import ActorInferenceComponent
+from components.memory import BufferStoreComponent
+from core import Blackboard, infinite_ticks
 
 pytestmark = pytest.mark.unit
 
@@ -292,7 +285,7 @@ def test_infinite_ticks_yields_empty_dicts():
 
 def test_full_actor_pipeline_one_tick(env_state):
     """Smoke test: all actor components compose through BlackboardEngine."""
-    from learner.core import BlackboardEngine
+    from core import BlackboardEngine
 
     mock_source = MagicMock()
     mock_result = MagicMock()

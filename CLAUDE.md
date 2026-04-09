@@ -38,6 +38,7 @@ This framework is built on **Strict Separation of Concerns and Perfect Polymorph
 
 | Directory | Domain | Rule |
 |---|---|---|
+| `core/` | Primitives | The Graph Execution Engine. Contains `Blackboard`, `BlackboardEngine`, and `PipelineComponent`. |
 | `modules/` | Pure PyTorch Neural Networks | No knowledge of envs, buffers, or loss functions. Tensors in → tensors out. |
 | `agents/learners/` | Loss Pipeline & Optimizer | Calls `learner_inference(batch) -> LearningOutput`, unpacks it, routes raw tensors to `LossAggregator`. Never contains graph routing loops. |
 | `agents/action_selectors/` | Math → Action bridge | Where game rules meet network math. Action masking happens here via `mask_actions()`. |
@@ -133,7 +134,7 @@ Must call `obs_inference`. Must apply action mask directly to Distribution logit
 
 ### `BlackboardEngine`
 ```python
-# agents/learners/base.py
+# core/blackboard_engine.py
 def step(self, stats=None) -> Optional[Dict[str, Any]]
 def compute_step_result(self, batch: Dict[str, Any], stats=None) -> StepResult
 def save_checkpoint(self, path: str)
