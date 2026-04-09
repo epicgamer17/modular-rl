@@ -716,9 +716,12 @@ class MetricEarlyStopComponent(PipelineComponent):
         if val is None:
             val = blackboard.losses.get(self.metric_key)
 
-        if val is not None and val >= self.threshold:
-            print(f"Early Stopping: {self.metric_key} reached {val} >= {self.threshold}")
-            blackboard.meta["stop_execution"] = True
+        if val is not None:
+            # Handle both tensors and scalars
+            scalar_val = val.item() if torch.is_tensor(val) else val
+            if scalar_val >= self.threshold:
+                print(f"Early Stopping: {self.metric_key} reached {scalar_val} >= {self.threshold}")
+                blackboard.meta["stop_execution"] = True
 
 
 class MPSCacheClearComponent(PipelineComponent):
