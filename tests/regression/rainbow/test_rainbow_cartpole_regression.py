@@ -8,41 +8,17 @@ pytestmark = pytest.mark.regression
 
 import time
 
-from modules.agent_nets.modular import ModularAgentNetwork
-from modules.backbones.mlp import MLPBackbone
-from modules.heads.q import QHead
-from learner.losses.representations import C51Representation
+from registries import (
+    make_rainbow_network,
+    make_rainbow_replay_buffer,
+    make_rainbow_learner,
+)
 from actors.action_selectors.selectors import ArgmaxSelector
-
-from data.storage.circular import BufferConfig, ModularReplayBuffer
-from data.concurrency import LocalBackend
-from data.processors import (
-    StackedInputProcessor,
-    NStepInputProcessor,
-    TerminationFlagsInputProcessor,
-    LegalMovesMaskProcessor,
-    FilterKeysInputProcessor,
-    StandardOutputProcessor,
-)
-from data.writers import CircularWriter
-from data.samplers.prioritized import PrioritizedSampler
-
-from learner.core import BlackboardEngine
-from learner.pipeline.forward_pass import ForwardPassComponent
-from learner.losses.optimizer_step import OptimizerStepComponent
-from learner.pipeline.components import (
-    PriorityBufferUpdateComponent,
-    BetaScheduleComponent,
-    ResetNoiseComponent,
-)
-
-from learner.losses.aggregator import LossAggregatorComponent, PriorityUpdateComponent
-from learner.losses.q import QBootstrappingLoss
-from learner.pipeline.target_builders import (
-    DistributionalTargetComponent,
-    UniversalInfrastructureComponent,
-)
 from learner.pipeline.batch_iterators import RepeatSampleIterator
+from utils.schedule import ConstantSchedule
+
+# Module-level marker for regression tests
+pytestmark = pytest.mark.regression
 
 
 def setup_seeds(seed=42):
@@ -120,132 +96,61 @@ def test_rainbow_cartpole_full_training():
 
     # --- Components ---
     # 1. Network
-    representation = C51Representation(vmin=V_MIN, vmax=V_MAX, bins=ATOM_SIZE)
-
-    def make_network():
-        backbone = MLPBackbone(input_shape=obs_dim, widths=[128])
-        head = QHead(
-            input_shape=backbone.output_shape,
-            num_actions=num_actions,
-            representation=representation,
-            hidden_widths=[],  # Minimal head as per MLP widths [128]
-            noisy_sigma=NOISY_SIGMA,
-        )
-        return ModularAgentNetwork(
-            components={
-                "feature_block": backbone,
-                "q_head": head,
-            },
-            atom_size=ATOM_SIZE,
-        ).to(DEVICE)
-
-    agent_network = make_network()
-    target_network = make_network()
+    agent_network = make_rainbow_network(
+        obs_dim=obs_dim,
+        num_actions=num_actions,
+        hidden_widths=[128],
+        noisy_sigma=NOISY_SIGMA,
+        atom_size=ATOM_SIZE,
+        v_min=V_MIN,
+        v_max=V_MAX,
+        device=DEVICE,
+    )
+    target_network = make_rainbow_network(
+        obs_dim=obs_dim,
+        num_actions=num_actions,
+        hidden_widths=[128],
+        noisy_sigma=NOISY_SIGMA,
+        atom_size=ATOM_SIZE,
+        v_min=V_MIN,
+        v_max=V_MAX,
+        device=DEVICE,
+    )
     target_network.load_state_dict(agent_network.state_dict())
     target_network.eval()
 
     # 2. Replay Buffer
-    buffer_configs = [
-        BufferConfig("observations", shape=obs_dim, dtype=torch.float32),
-        BufferConfig("actions", shape=(), dtype=torch.int64),
-        BufferConfig("rewards", shape=(), dtype=torch.float32),
-        BufferConfig("next_observations", shape=obs_dim, dtype=torch.float32),
-        BufferConfig("terminated", shape=(), dtype=torch.bool),
-        BufferConfig("truncated", shape=(), dtype=torch.bool),
-        BufferConfig("dones", shape=(), dtype=torch.bool),
-        BufferConfig("next_legal_moves_masks", shape=(num_actions,), dtype=torch.bool),
-    ]
-
-    input_processor = StackedInputProcessor(
-        [
-            TerminationFlagsInputProcessor(),
-            NStepInputProcessor(n_step=N_STEP, gamma=GAMMA),
-            LegalMovesMaskProcessor(
-                num_actions,
-                input_key="next_legal_moves",
-                output_key="next_legal_moves_masks",
-            ),
-            FilterKeysInputProcessor(
-                [
-                    "observations",
-                    "actions",
-                    "rewards",
-                    "next_observations",
-                    "terminated",
-                    "truncated",
-                    "dones",
-                    "next_legal_moves_masks",
-                ]
-            ),
-        ]
-    )
-
-    sampler = PrioritizedSampler(
+    replay_buffer = make_rainbow_replay_buffer(
+        obs_dim=obs_dim,
+        num_actions=num_actions,
         max_size=REPLAY_BUFFER_SIZE,
+        batch_size=MINIBATCH_SIZE,
+        n_step=N_STEP,
+        gamma=GAMMA,
         alpha=PER_ALPHA,
         beta=PER_BETA,
         epsilon=PER_EPSILON,
     )
 
-    replay_buffer = ModularReplayBuffer(
-        max_size=REPLAY_BUFFER_SIZE,
-        batch_size=MINIBATCH_SIZE,
-        buffer_configs=buffer_configs,
-        input_processor=input_processor,
-        output_processor=StandardOutputProcessor(),
-        writer=CircularWriter(REPLAY_BUFFER_SIZE),
-        sampler=sampler,
-        backend=LocalBackend(),
-    )
-
     # 3. Learner
-    optimizer = {
-        "default": torch.optim.Adam(
-            agent_network.parameters(),
-            lr=LEARNING_RATE,
-            eps=ADAM_EPSILON,
-            weight_decay=WEIGHT_DECAY,
-        )
-    }
-
-    from learner.losses.priorities import MaxLossPriorityComputer
-    priority_computer = MaxLossPriorityComputer(loss_key="q_loss")
-
-    q_loss = QBootstrappingLoss(is_categorical=True, name="q_loss")
-    priority_comp = PriorityUpdateComponent(priority_computer=priority_computer)
-
-
-    from utils.schedule import ConstantSchedule
+    optimizer = torch.optim.Adam(
+        agent_network.parameters(),
+        lr=LEARNING_RATE,
+        eps=ADAM_EPSILON,
+        weight_decay=WEIGHT_DECAY,
+    )
 
     per_beta_schedule = ConstantSchedule(PER_BETA)
 
-    learner = BlackboardEngine(
-        components=[
-            ForwardPassComponent(agent_network, None),
-            DistributionalTargetComponent(
-                target_network=target_network,
-                online_network=agent_network,
-                gamma=GAMMA,
-                n_step=N_STEP,
-            ),
-            UniversalInfrastructureComponent(),
-            q_loss,
-            LossAggregatorComponent(loss_weights={"q_loss": 1.0}),
-            priority_comp,
-            OptimizerStepComponent(
-                agent_network=agent_network,
-                optimizers=optimizer,
-                max_grad_norm=CLIP_NORM,
-            ),
-            PriorityBufferUpdateComponent(
-                priority_update_fn=replay_buffer.update_priorities,
-            ),
-            BetaScheduleComponent(
-                set_beta_fn=replay_buffer.set_beta,
-                per_beta_schedule=per_beta_schedule,
-            ),
-            ResetNoiseComponent(agent_network=agent_network),
-        ],
+    learner = make_rainbow_learner(
+        agent_network=agent_network,
+        target_network=target_network,
+        optimizer=optimizer,
+        replay_buffer=replay_buffer,
+        gamma=GAMMA,
+        n_step=N_STEP,
+        clip_norm=CLIP_NORM,
+        per_beta_schedule=per_beta_schedule,
         device=DEVICE,
     )
 

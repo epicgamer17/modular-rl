@@ -5,44 +5,15 @@ import torch
 import gymnasium as gym
 import pytest
 
-from modules.agent_nets.modular import ModularAgentNetwork
-from modules.backbones.mlp import MLPBackbone
-from modules.heads.policy import PolicyHead
-from modules.heads.value import ValueHead
-from learner.losses.representations import (
-    ClassificationRepresentation,
-    ScalarRepresentation,
+from registries import (
+    make_ppo_network,
+    make_ppo_replay_buffer,
+    make_ppo_learner,
 )
 from actors.action_selectors.selectors import CategoricalSelector
 from actors.action_selectors.decorators import PPODecorator
 from actors.action_selectors.policy_sources import NetworkPolicySource
-
-from data.storage.circular import BufferConfig, ModularReplayBuffer
-from data.concurrency import LocalBackend
-from data.processors import (
-    GAEProcessor,
-    LegalMovesMaskProcessor,
-    AdvantageNormalizer,
-    StackedInputProcessor,
-)
-from data.writers import PPOWriter
-from data.samplers.prioritized import WholeBufferSampler
-
-from learner.core import BlackboardEngine
-from learner.pipeline.forward_pass import ForwardPassComponent
-from learner.losses.optimizer_step import OptimizerStepComponent
-from learner.pipeline.components import MetricEarlyStopComponent
-
-from learner.losses.aggregator import LossAggregatorComponent
-from learner.losses.policy import ClippedSurrogateLoss
-from learner.losses.value import ClippedValueLoss
 from learner.pipeline.batch_iterators import PPOEpochIterator
-from learner.pipeline.target_builders import (
-    PassThroughTargetComponent,
-    TargetFormatterComponent,
-    UniversalInfrastructureComponent,
-)
-from learner.losses.shape_validator import ShapeValidator
 
 # Module-level marker for regression tests
 # Declared just below imports as per README.md
@@ -118,107 +89,38 @@ def test_ppo_cartpole_full_training():
     num_actions = env.action_space.n
 
     # --- Components ---
-    agent_network = ModularAgentNetwork(
-        components={
-            "policy_head": PolicyHead(
-                input_shape=obs_dim,
-                representation=ClassificationRepresentation(num_classes=num_actions),
-                neck=MLPBackbone(input_shape=obs_dim, widths=[64, 64]),
-            ),
-            "value_head": ValueHead(
-                input_shape=obs_dim,
-                representation=ScalarRepresentation(),
-                neck=MLPBackbone(input_shape=obs_dim, widths=[64, 64]),
-            ),
-        },
-    ).to(DEVICE)
+    agent_network = make_ppo_network(
+        obs_dim=obs_dim,
+        num_actions=num_actions,
+        hidden_widths=[64, 64],
+        device=DEVICE,
+    )
 
     action_selector = CategoricalSelector(exploration=True)
     action_selector = PPODecorator(inner_selector=action_selector)
     policy_source = NetworkPolicySource(agent_network, input_shape=obs_dim)
 
-    configs = [
-        BufferConfig("observations", shape=obs_dim, dtype=torch.float32),
-        BufferConfig("actions", shape=(), dtype=torch.int64),
-        BufferConfig("rewards", shape=(), dtype=torch.float32),
-        BufferConfig("values", shape=(), dtype=torch.float32),
-        BufferConfig("old_log_probs", shape=(), dtype=torch.float32),
-        BufferConfig("legal_moves_masks", shape=(num_actions,), dtype=torch.bool),
-        BufferConfig("advantages", shape=(), dtype=torch.float32),
-        BufferConfig("returns", shape=(), dtype=torch.float32),
-    ]
-
-    input_stack = StackedInputProcessor(
-        [
-            GAEProcessor(GAMMA, GAE_LAMBDA),
-            LegalMovesMaskProcessor(
-                num_actions, input_key="legal_moves", output_key="legal_moves_masks"
-            ),
-        ]
-    )
-
-    replay_buffer = ModularReplayBuffer(
-        max_size=STEPS_PER_EPOCH,
-        batch_size=STEPS_PER_EPOCH,
-        buffer_configs=configs,
-        input_processor=input_stack,
-        output_processor=AdvantageNormalizer(),
-        writer=PPOWriter(STEPS_PER_EPOCH),
-        sampler=WholeBufferSampler(),
-        backend=LocalBackend(),
-    )
-
-    optimizer = {
-        "default": torch.optim.Adam(agent_network.parameters(), lr=LEARNING_RATE)
-    }
-
-    pol_rep = agent_network.components["policy_head"].representation
-    val_rep = agent_network.components["value_head"].representation
-
-    minibatch_size = STEPS_PER_EPOCH // NUM_MINIBATCHES
-    shape_validator = ShapeValidator(
-        minibatch_size=minibatch_size,
+    replay_buffer = make_ppo_replay_buffer(
+        obs_dim=obs_dim,
         num_actions=num_actions,
-        unroll_steps=0,
+        steps_per_epoch=STEPS_PER_EPOCH,
+        gamma=GAMMA,
+        gae_lambda=GAE_LAMBDA,
     )
 
-    policy_loss = ClippedSurrogateLoss(
-        clip_param=CLIP_PARAM,
-        entropy_coefficient=ENTROPY_COEF,
-    )
+    optimizer = torch.optim.Adam(agent_network.parameters(), lr=LEARNING_RATE)
 
-    value_loss = ClippedValueLoss(
-        clip_param=CLIP_PARAM,
-        target_key="returns",
-        loss_factor=VALUE_COEF,
-    )
-
-
-    # Target building components are listed directly in BlackboardEngine
-
-    learner = BlackboardEngine(
-        components=[
-            ForwardPassComponent(agent_network, shape_validator),
-            PassThroughTargetComponent(
-                ["values", "returns", "actions", "old_log_probs", "advantages"]
-            ),
-            TargetFormatterComponent({"values": val_rep, "returns": val_rep}),
-            UniversalInfrastructureComponent(),
-            policy_loss,
-            value_loss,
-            LossAggregatorComponent(
-                loss_weights={"policy_loss": 1.0, "value_loss": 1.0}
-            ),
-
-
-            OptimizerStepComponent(
-                agent_network=agent_network,
-                optimizers=optimizer,
-                max_grad_norm=0.5,
-            ),
-            MetricEarlyStopComponent(threshold=TARGET_KL),
-        ],
+    learner = make_ppo_learner(
+        agent_network=agent_network,
+        optimizer=optimizer,
+        minibatch_size=STEPS_PER_EPOCH // NUM_MINIBATCHES,
+        num_actions=num_actions,
         device=DEVICE,
+        clip_param=CLIP_PARAM,
+        entropy_coef=ENTROPY_COEF,
+        value_coef=VALUE_COEF,
+        max_grad_norm=0.5,
+        target_kl=TARGET_KL,
     )
 
     # --- Training Loop ---

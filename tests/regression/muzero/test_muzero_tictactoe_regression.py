@@ -7,55 +7,16 @@ import gymnasium as gym
 import pytest
 import torch.multiprocessing as mp
 
-from modules.agent_nets.modular import ModularAgentNetwork
-from modules.embeddings.action_embedding import ActionEncoder
-from modules.backbones.resnet import ResNetBackbone
-from modules.backbones.conv import ConvBackbone
-from modules.heads.value import ValueHead
-from modules.heads.policy import PolicyHead
-from modules.heads.reward import RewardHead
-from modules.heads.to_play import ToPlayHead
-from modules.world_models.muzero_world_model import MuzeroWorldModel
-from modules.world_models.components.representation import Representation
-from modules.world_models.components.dynamics import Dynamics
-
-from actors.action_selectors.decorators import TemperatureSelector
-from actors.action_selectors.selectors import CategoricalSelector
-from actors.action_selectors.policy_sources import SearchPolicySource
-from search.backends.py_search.modular_search import ModularSearch
-from utils.schedule import StepwiseSchedule
-
-from data.storage.circular import BufferConfig, ModularReplayBuffer
-from data.samplers.sequence import Sequence
-from data.processors import SequenceTensorProcessor, NStepUnrollProcessor
-from data.writers import SharedCircularWriter
-from data.samplers.prioritized import UniformSampler
-from data.concurrency import TorchMPBackend
-
-from learner.core import BlackboardEngine
-from learner.pipeline.forward_pass import ForwardPassComponent
-from learner.losses.optimizer_step import OptimizerStepComponent
-
-
+from registries import (
+    make_muzero_network,
+    make_muzero_search_engine,
+    make_muzero_replay_buffer,
+    make_muzero_learner,
+)
 from learner.pipeline.batch_iterators import SingleBatchIterator
-from learner.losses.aggregator import LossAggregatorComponent, PriorityUpdateComponent
-from learner.losses.value import ValueLoss
-from learner.losses.policy import PolicyLoss
-from learner.losses.reward import RewardLoss
-from learner.losses.to_play import ToPlayLoss
-from learner.losses.representations import (
-    ClassificationRepresentation,
-    ScalarRepresentation,
-)
-from learner.losses.priorities import ExpectedValueErrorPriorityComputer
-from learner.pipeline.target_builders import (
-    MCTSExtractorComponent,
-    SequencePadderComponent,
-    SequenceMaskComponent,
-    SequenceInfrastructureComponent,
-    TargetFormatterComponent,
-)
-from learner.losses.shape_validator import ShapeValidator
+from actors.action_selectors.selectors import CategoricalSelector
+from actors.action_selectors.decorators import TemperatureSelector
+from utils.schedule import StepwiseSchedule
 from envs.factories.tictactoe import tictactoe_factory
 from actors.experts.tictactoe_expert import TicTacToeBestAgent
 from executors.torch_mp_executor import TorchMPExecutor
@@ -112,119 +73,26 @@ def test_muzero_tictactoe_full_training():
     NUM_WORKERS = 4
 
     # --- 1. Agent Network Architecture ---
-    action_encoder = ActionEncoder(num_actions, ACTION_EMBEDDING_DIM)
-
-    representation = Representation(
-        backbone=ResNetBackbone(
-            input_shape=obs_dim,
-            filters=[24, 24, 24],
-            kernel_sizes=[3, 3, 3],
-            strides=[1, 1, 1],
-            norm_type="batch",
-        )
-    )
-    hidden_state_shape = representation.output_shape
-
-    dynamics = Dynamics(
-        backbone=ResNetBackbone(
-            input_shape=hidden_state_shape,
-            filters=[24, 24, 24],
-            kernel_sizes=[3, 3, 3],
-            strides=[1, 1, 1],
-            norm_type="batch",
-        ),
-        action_encoder=action_encoder,
-        input_shape=hidden_state_shape,
-        action_embedding_dim=ACTION_EMBEDDING_DIM,
-    )
-
-    reward_head = RewardHead(
-        input_shape=hidden_state_shape,
-        representation=ScalarRepresentation(),
-        neck=ConvBackbone(
-            input_shape=hidden_state_shape,
-            filters=[16],
-            kernel_sizes=[1],
-            strides=[1],
-            norm_type="batch",
-        ),
-    )
-
-    to_play_head = ToPlayHead(
-        input_shape=hidden_state_shape,
-        num_players=2,
-        neck=ConvBackbone(
-            input_shape=hidden_state_shape,
-            filters=[16],
-            kernel_sizes=[1],
-            strides=[1],
-            norm_type="batch",
-        ),
-    )
-
-    world_model = MuzeroWorldModel(
-        representation=representation,
-        dynamics=dynamics,
-        reward_head=reward_head,
-        to_play_head=to_play_head,
+    agent_network = make_muzero_network(
+        obs_dim=obs_dim,
         num_actions=num_actions,
-    )
-
-    prediction_backbone = ResNetBackbone(
-        input_shape=hidden_state_shape,
-        filters=[24, 24, 24],
-        kernel_sizes=[3, 3, 3],
-        strides=[1, 1, 1],
-        norm_type="batch",
-    )
-
-    value_head = ValueHead(
-        input_shape=hidden_state_shape,
-        representation=ScalarRepresentation(),
-        neck=ConvBackbone(
-            input_shape=hidden_state_shape,
-            filters=[16],
-            kernel_sizes=[1],
-            strides=[1],
-            norm_type="batch",
-        ),
-    )
-
-    policy_head = PolicyHead(
-        input_shape=hidden_state_shape,
-        neck=ConvBackbone(
-            input_shape=hidden_state_shape,
-            filters=[16],
-            kernel_sizes=[1],
-            strides=[1],
-            norm_type="batch",
-        ),
-        representation=ClassificationRepresentation(num_classes=num_actions),
-    )
-
-    agent_network = ModularAgentNetwork(
-        components={
-            "world_model": world_model,
-            "prediction_backbone": prediction_backbone,
-            "value_head": value_head,
-            "policy_head": policy_head,
-        },
+        action_embedding_dim=ACTION_EMBEDDING_DIM,
+        resnet_filters=[24, 24, 24],
         unroll_steps=UNROLL_STEPS,
-        atom_size=1,
-    ).to(DEVICE)
+        device=DEVICE,
+    )
 
     # --- 2. Search Backend ---
-    search_engine = ModularSearch(
-        device=DEVICE,
+    search_engine = make_muzero_search_engine(
         num_actions=num_actions,
         num_simulations=NUM_SIMULATIONS,
         discount_factor=DISCOUNT_FACTOR,
         search_batch_size=SEARCH_BATCH_SIZE,
         use_virtual_mean=USE_VIRTUAL_MEAN,
-        use_dirichlet=True,
         dirichlet_alpha=DIRICHLET_ALPHA,
         dirichlet_fraction=DIRICHLET_FRACTION,
         num_players=2,
+        device=DEVICE,
     )
 
     inner_selector = CategoricalSelector(exploration=True)
@@ -234,109 +102,28 @@ def test_muzero_tictactoe_full_training():
     )
 
     # --- 3. Replay Buffer ---
-    configs = [
-        BufferConfig(
-            "observations", shape=obs_dim, dtype=torch.float32, is_shared=True
-        ),
-        BufferConfig("actions", shape=(), dtype=torch.float16, is_shared=True),
-        BufferConfig("rewards", shape=(), dtype=torch.float32, is_shared=True),
-        BufferConfig("values", shape=(), dtype=torch.float32, is_shared=True),
-        BufferConfig(
-            "policies", shape=(num_actions,), dtype=torch.float32, is_shared=True
-        ),
-        BufferConfig("to_plays", shape=(), dtype=torch.int16, is_shared=True),
-        BufferConfig("chances", shape=(1,), dtype=torch.int16, is_shared=True),
-        BufferConfig("game_ids", shape=(), dtype=torch.int64, is_shared=True),
-        BufferConfig("ids", shape=(), dtype=torch.int64, is_shared=True),
-        BufferConfig("training_steps", shape=(), dtype=torch.int64, is_shared=True),
-        BufferConfig("terminated", shape=(), dtype=torch.bool, is_shared=True),
-        BufferConfig("truncated", shape=(), dtype=torch.bool, is_shared=True),
-        BufferConfig("dones", shape=(), dtype=torch.bool, is_shared=True),
-        BufferConfig(
-            "legal_masks", shape=(num_actions,), dtype=torch.bool, is_shared=True
-        ),
-    ]
-
-    input_processor = SequenceTensorProcessor(
-        num_actions, 2, {"player_1": 0, "player_2": 1}
-    )
-    output_processor = NStepUnrollProcessor(
-        UNROLL_STEPS, TD_STEPS, DISCOUNT_FACTOR, num_actions, 2, BUFFER_SIZE
-    )
-
-    replay_buffer = ModularReplayBuffer(
-        max_size=BUFFER_SIZE,
+    replay_buffer = make_muzero_replay_buffer(
+        obs_dim=obs_dim,
+        num_actions=num_actions,
+        buffer_size=BUFFER_SIZE,
         batch_size=BATCH_SIZE,
-        buffer_configs=configs,
-        input_processor=input_processor,
-        output_processor=output_processor,
-        writer=SharedCircularWriter(max_size=BUFFER_SIZE),
-        sampler=UniformSampler(),
-        backend=TorchMPBackend(),
+        unroll_steps=UNROLL_STEPS,
+        td_steps=TD_STEPS,
+        discount_factor=DISCOUNT_FACTOR,
+        num_players=2,
     )
 
     # --- 4. Learner ---
-    optimizer = {
-        "default": torch.optim.Adam(
-            agent_network.parameters(), lr=LEARNING_RATE, eps=1e-5
-        )
-    }
-    val_rep = agent_network.components["value_head"].representation
-    pol_rep = agent_network.components["policy_head"].representation
-    rew_rep = agent_network.components["world_model"].reward_head.representation
-    tp_rep = agent_network.components["world_model"].to_play_head.representation
-
-    shape_validator = ShapeValidator(
-        minibatch_size=BATCH_SIZE,
+    optimizer = torch.optim.Adam(
+        agent_network.parameters(), lr=LEARNING_RATE, eps=1e-5
+    )
+    
+    learner = make_muzero_learner(
+        agent_network=agent_network,
+        optimizer=optimizer,
+        batch_size=BATCH_SIZE,
         unroll_steps=UNROLL_STEPS,
         num_actions=num_actions,
-        atom_size=1,
-    )
-    priority_computer = ExpectedValueErrorPriorityComputer(value_representation=val_rep)
-
-    v_loss = ValueLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
-    p_loss = PolicyLoss(loss_fn=nn.functional.cross_entropy, loss_factor=1.0)
-    r_loss = RewardLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
-    tp_loss = ToPlayLoss(loss_factor=1.0)
-    priority_comp = PriorityUpdateComponent(priority_computer=priority_computer)
-
-    # Target building components are listed directly in BlackboardEngine
-
-    learner = BlackboardEngine(
-        components=[
-            ForwardPassComponent(agent_network, shape_validator),
-            MCTSExtractorComponent(),
-            SequencePadderComponent(UNROLL_STEPS),
-            SequenceMaskComponent(),
-            SequenceInfrastructureComponent(UNROLL_STEPS),
-            TargetFormatterComponent(
-                {
-                    "values": val_rep,
-                    "policies": pol_rep,
-                    "rewards": rew_rep,
-                    "to_plays": tp_rep,
-                }
-            ),
-            v_loss,
-            p_loss,
-            r_loss,
-            tp_loss,
-            LossAggregatorComponent(
-                loss_weights={
-                    "value_loss": 1.0,
-                    "reward_loss": 1.0,
-                    "policy_loss": 1.0,
-                    "consistency_loss": 1.0,
-                    "to_play_loss": 1.0,
-                }
-            ),
-
-            priority_comp,
-            OptimizerStepComponent(
-                agent_network=agent_network,
-                optimizers=optimizer,
-            ),
-        ],
         device=DEVICE,
     )
 
