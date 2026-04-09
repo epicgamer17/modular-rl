@@ -10,7 +10,6 @@ class BaseExecutor(ABC):
 
     def __init__(self):
         self.workers = []
-        self._last_stats_time = time.time()
         # Buffer for results from different worker types
         # Stores {worker_type_name: [results]}
         self.result_buffer = {}
@@ -87,10 +86,10 @@ class BaseExecutor(ABC):
 
         if min_samples is not None:
             while True:
-                current_transitions = sum(
-                    r.get("episode_length", 0) for r in results if isinstance(r, dict)
+                current_samples = sum(
+                    r.get("num_samples", 0) for r in results if isinstance(r, dict)
                 )
-                if current_transitions >= min_samples:
+                if current_samples >= min_samples:
                     break
 
                 old_len = len(results)
@@ -104,61 +103,6 @@ class BaseExecutor(ABC):
         else:
             fetch_and_route()
 
-        # Stats calculation logic (only for TransitionBatch-like objects)
-        stats = self._calculate_stats(results)
-
-        return results, stats
-
-    def _calculate_stats(self, results: List[Any]) -> Dict[str, Any]:
-        """Calculates statistics from the collected data items."""
-        stats = {}
-        if results:
-            scores = []
-            lengths = []
-            total_transitions = 0
-            total_duration = 0.0
-            total_mcts_simulations = 0
-            total_mcts_search_time = 0.0
-
-            for res in results:
-                # If res is a dictionary representing episode_stats from BaseActor
-                if isinstance(res, dict) and "episode_length" in res:
-                    total_transitions += res["episode_length"]
-                    total_duration += res.get("duration_seconds", 0.0)
-
-                    if "mcts_simulations" in res:
-                        total_mcts_simulations += res["mcts_simulations"]
-                    if "mcts_search_time" in res:
-                        total_mcts_search_time += res["mcts_search_time"]
-
-                    if "final_player_rewards" in res:
-                        player_ids = list(res["final_player_rewards"].keys())
-                        if player_ids:
-                            scores.append(res["final_player_rewards"][player_ids[0]])
-                        else:
-                            scores.append(res.get("score", 0.0))
-                    else:
-                        scores.append(res.get("score", 0.0))
-
-                    if "final_episode_length" in res:
-                        lengths.append(res["final_episode_length"])
-                    else:
-                        lengths.append(res["episode_length"])
-                # We skip Tester results here, as they are processed elsewhere (e.g. Trainers' process_test_results)
-
-            current_time = time.time()
-            elapsed_wall = current_time - self._last_stats_time
-            self._last_stats_time = current_time
-
-            if scores:
-                stats["score"] = sum(scores) / len(scores)
-                stats["episode_length"] = sum(lengths) / len(lengths)
-                stats["num_episodes"] = len(results)
-
-            if elapsed_wall > 0 and total_transitions > 0:
-                stats["actor_fps"] = total_transitions / elapsed_wall
-
-            if total_mcts_search_time > 0:
-                stats["mcts_sps"] = total_mcts_simulations / total_mcts_search_time
-
-        return stats
+        # Stats and telemetry are now handled by TelemetryComponent inside the Engine/Worker
+        # The executor simply yields whatever the results contain.
+        return results, {}

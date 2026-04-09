@@ -49,6 +49,7 @@ from components.actor_logic import (
     EpisodeTemperatureComponent,
 )
 from components.memory import SequenceBufferComponent
+from components.telemetry import TelemetryComponent
 
 
 def make_muzero_network(
@@ -351,6 +352,9 @@ def make_muzero_actor_engine(
         components.append(EpisodeTemperatureComponent(temperature_schedule))
 
     components.append(CategoricalSelectorComponent(exploration=exploration))
+
+    # Add TelemetryComponent to calculate stats like episode_length and scores
+    components.append(TelemetryComponent(name="muzero_actor"))
 
     if replay_buffer is not None:
         components.append(SequenceBufferComponent(replay_buffer, num_players=num_players))
