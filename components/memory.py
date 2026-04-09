@@ -25,10 +25,15 @@ class BufferStoreComponent(PipelineComponent):
         }
 
     def _resolve(self, blackboard: Blackboard, path: str) -> Any:
-        """Resolves a dotted path like 'meta.action' from the blackboard."""
-        section, key = path.split(".", 1)
-        container = getattr(blackboard, section)
-        return container[key]
+        """Resolves a nested dotted path like 'meta.action_metadata.value' from the blackboard."""
+        parts = path.split(".")
+        # Start at the blackboard root using the first part as a section name (e.g., 'meta', 'data')
+        container = getattr(blackboard, parts[0])
+        
+        # Traverse remaining parts as dictionary keys
+        for key in parts[1:]:
+            container = container[key]
+        return container
 
     def execute(self, blackboard: Blackboard) -> None:
         transition = {}
@@ -106,6 +111,7 @@ class SequenceBufferComponent(PipelineComponent):
         next_legal = next_info.get("legal_moves", [])
         policy = metadata.get("target_policies", metadata.get("policy"))
         value = metadata.get("value")
+        player_id = blackboard.data.get("player_id") # MuZero needs this
 
         self._sequence.append(
             observation=next_obs,
@@ -115,6 +121,7 @@ class SequenceBufferComponent(PipelineComponent):
             reward=reward,
             policy=policy,
             value=value,
+            player_id=player_id,
             legal_moves=next_legal,
         )
 

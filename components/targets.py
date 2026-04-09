@@ -74,6 +74,12 @@ class TDTargetComponent(PipelineComponent):
                 target_q_values = target_out["q_values"]
                 if target_q_values.ndim == 3:
                     target_q_values = target_q_values.squeeze(1)
+
+                if next_masks is not None:
+                    target_q_values = target_q_values.masked_fill(
+                        ~next_masks.bool(), -float("inf")
+                    )
+
                 max_next_q = target_q_values.max(dim=-1).values
 
         # Bellman Math
@@ -148,18 +154,21 @@ class DistributionalTargetComponent(PipelineComponent):
             )
 
         # Get the base grid geometry from the network's representation
-        # Assuming we can find the representation from the online network or similar
         # For NFSP/Rainbow, it's usually in network.components["q_head"].representation
-        representation = (
-            getattr(self.online_network, "components", {})
-            .get("q_head", {})
-            .representation
-        )
-        if representation is None:
+        components = getattr(self.online_network, "components", {})
+        q_head = None
+        if "q_head" in components:
+            q_head = components["q_head"]
+        elif hasattr(self.online_network, "q_head"):
+            q_head = self.online_network.q_head
+
+        if q_head is None:
             # Fallback or error
             raise RuntimeError(
-                "Could not find representation for DistributionalTargetComponent"
+                "Could not find q_head/representation for DistributionalTargetComponent"
             )
+
+        representation = q_head.representation
 
         base_support = representation.support.to(rewards.device)
 

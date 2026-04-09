@@ -89,6 +89,18 @@ def test_rainbow_cartpole_full_training():
     REPLAY_BUFFER_SIZE = 100000
     MIN_REPLAY_SIZE = MINIBATCH_SIZE + N_STEP
 
+    from components.environment import (
+        SimpleEnvObservationComponent,
+        SimpleEnvStepComponent,
+    )
+    from components.actor_logic import (
+        NetworkInferenceComponent,
+        ArgmaxSelectorComponent,
+    )
+    from components.memory import BufferStoreComponent
+    from core import BlackboardEngine, infinite_ticks
+    from actors.action_selectors.policy_sources import NetworkPolicySource
+
     # --- Setup Environment ---
     env = gym.make(ENV_ID)
     obs_dim = env.observation_space.shape
@@ -105,7 +117,7 @@ def test_rainbow_cartpole_full_training():
 
     # 2. Replay Buffer
     replay_buffer = make_rainbow_replay_buffer(
-        obs_dim=obs_dim, num_actions=num_actions, max_size=REPLAY_BUFFER_SIZE, batch_size=MINIBATCH_SIZE, n_step=N_STEP, gamma=GAMMA, alpha=PER_ALPHA, beta=PER_BETA, epsilon=PER_EPSILON, )
+        obs_dim=obs_dim, num_actions=num_actions, max_size=REPLAY_BUFFER_SIZE, batch_size=MINIBATCH_SIZE, n_step=N_STEP, gamma=GAMMA, per_alpha=PER_ALPHA, per_beta=PER_BETA, per_epsilon=PER_EPSILON, )
 
     # 3. Learner
     optimizer = torch.optim.Adam(
@@ -116,67 +128,52 @@ def test_rainbow_cartpole_full_training():
     learner = make_rainbow_learner(
         agent_network=agent_network, target_network=target_network, optimizer=optimizer, replay_buffer=replay_buffer, gamma=GAMMA, n_step=N_STEP, clip_norm=CLIP_NORM, per_beta_schedule=per_beta_schedule, device=DEVICE, )
 
+    # --- Pipelines ---
+    obs_comp = SimpleEnvObservationComponent(env)
+    
+    # Collection Pipeline
+    collection_components = [
+        obs_comp,
+        NetworkInferenceComponent(agent_network, obs_dim),
+        ArgmaxSelectorComponent(),
+        SimpleEnvStepComponent(env, obs_comp),
+        BufferStoreComponent(replay_buffer),
+    ]
+    collector = BlackboardEngine(collection_components, device=DEVICE)
+
+    # Evaluation Pipeline
+    eval_obs_comp = SimpleEnvObservationComponent(env)
+    eval_components = [
+        eval_obs_comp,
+        NetworkInferenceComponent(agent_network, obs_dim),
+        ArgmaxSelectorComponent(),
+        SimpleEnvStepComponent(env, eval_obs_comp, stop_on_done=True),
+    ]
+    evaluator = BlackboardEngine(eval_components, device=DEVICE)
+
     # --- Training Loop ---
     training_scores = []
     global_step = 0
-    state, info = env.reset()
-    current_episode_score = 0.0
 
-    print(
-        f"Starting Rainbow CartPole regression training for {TRAINING_STEPS} learning steps..."
-    )
+    print(f"Starting Rainbow CartPole regression training for {TRAINING_STEPS} learning steps...")
 
     # 1. Warm-up Phase: Fill buffer before training starts
-    while global_step < MIN_REPLAY_SIZE:
-        with torch.no_grad():
-            obs_tensor = torch.tensor(
-                state, dtype=torch.float32, device=DEVICE
-            ).unsqueeze(0)
-            result = agent_network.obs_inference(obs_tensor)
-            q_values = result.q_values
-            action_val = q_values.argmax(dim=-1).item()
-
-        next_state, reward, terminated, truncated, next_info = env.step(action_val)
-        done = terminated or truncated
-        current_episode_score += reward
-
-        replay_buffer.store(
-            observations=state, actions=action_val, rewards=reward, next_observations=next_state, dones=done, next_legal_moves=next_info.get("legal_moves"), )
-
-        if done:
-            training_scores.append(current_episode_score)
-            state, info = env.reset()
-            current_episode_score = 0.0
-        else:
-            state, info = next_state, next_info
+    print("Warm-up phase...")
+    for _ in collector.step(infinite_ticks()):
         global_step += 1
+        if global_step >= MIN_REPLAY_SIZE:
+            break
 
     # 2. Main Training Loop: Replay Interval steps -> 1 Learning step
     for learning_step in range(1, TRAINING_STEPS + 1):
         # Step environment REPLAY_INTERVAL times
         for _ in range(REPLAY_INTERVAL):
-            with torch.no_grad():
-                obs_tensor = torch.tensor(
-                    state, dtype=torch.float32, device=DEVICE
-                ).unsqueeze(0)
-                result = agent_network.obs_inference(obs_tensor)
-                q_values = result.q_values
-                action_val = q_values.argmax(dim=-1).item()
-
-            next_state, reward, terminated, truncated, next_info = env.step(action_val)
-            done = terminated or truncated
-            current_episode_score += reward
-
-            replay_buffer.store(
-                observations=state, actions=action_val, rewards=reward, next_observations=next_state, dones=done, next_legal_moves=next_info.get("legal_moves"), )
-
-            state, info = next_state, next_info
+            # Run one step of collection
+            result = next(collector.step(infinite_ticks()))
             global_step += 1
-
-            if done:
-                training_scores.append(current_episode_score)
-                state, info = env.reset()
-                current_episode_score = 0.0
+            
+            if "episode_score" in result["meta"]:
+                training_scores.append(result["meta"]["episode_score"])
 
             # Target Network Sync (based on global_step)
             if global_step % TRANSFER_INTERVAL == 0:
@@ -190,9 +187,7 @@ def test_rainbow_cartpole_full_training():
         # Logging every 100 learning steps
         if learning_step % 100 == 0:
             avg_score = np.mean(training_scores[-100:]) if training_scores else 0.0
-            print(
-                f"Learning Step {learning_step} | Total Steps {global_step} | Avg Score: {avg_score:.2f}"
-            )
+            print(f"Learning Step {learning_step} | Total Steps {global_step} | Avg Score: {avg_score:.2f}")
 
             # Early stop if we reach the goal consistently (480.0 is near-perfect for CartPole)
             if len(training_scores) >= 10 and np.mean(training_scores[-10:]) >= 490.0:
@@ -200,17 +195,25 @@ def test_rainbow_cartpole_full_training():
                 break
 
     # --- Final Evaluation ---
-    test_scores = evaluate_agent(env, agent_network, DEVICE, num_episodes=100)
+    print("Final Evaluation...")
+    agent_network.eval()
+    test_scores = []
+    for _ in range(100):
+        # Run until stop_on_done
+        for result in evaluator.step(infinite_ticks()):
+            if "episode_score" in result["meta"]:
+                test_scores.append(result["meta"]["episode_score"])
+                break
+    
     avg_test_score = np.mean(test_scores)
-    print(f"Final Test Scores: {test_scores} | Avg: {avg_test_score:.2f}")
+    print(f"Final Test Scores: Average {avg_test_score:.2f}")
+    agent_network.train()
 
     # --- Assertions ---
     assert len(training_scores) > 0, "No episodes completed during training"
     final_avg = np.mean(training_scores[-100:])
     assert final_avg >= 400.0, f"Average training score {final_avg:.2f} is below 400.0"
-    assert (
-        avg_test_score >= 450.0
-    ), f"Average test score {avg_test_score:.2f} is below 450.0"
+    assert avg_test_score >= 450.0, f"Average test score {avg_test_score:.2f} is below 450.0"
 
     env.close()
 

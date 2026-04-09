@@ -3,6 +3,7 @@ from .muzero import (
     make_muzero_search_engine,
     make_muzero_replay_buffer,
     make_muzero_learner,
+    make_muzero_actor_engine,
 )
 from .ppo import (
     make_ppo_network,

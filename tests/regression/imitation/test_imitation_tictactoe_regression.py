@@ -17,7 +17,10 @@ from components.math import OptimizerStepComponent
 
 from components.math import LossAggregatorComponent
 from components.math import ImitationLoss
-from components.targets import PassThroughTargetComponent, UniversalInfrastructureComponent
+from components.targets import (
+    PassThroughTargetComponent,
+    UniversalInfrastructureComponent,
+)
 from core import RepeatSampleIterator
 from envs.factories.wrappers.observation import ActionMaskInInfoWrapper
 import pytest
@@ -58,17 +61,27 @@ def test_imitation_tictactoe_regression():
     # --- Setup Network ---
     backbone = MLPBackbone(input_shape=obs_shape, widths=[128, 128])
     head = PolicyHead(
-        input_shape=backbone.output_shape, representation=ClassificationRepresentation(num_actions), )
+        input_shape=backbone.output_shape,
+        representation=ClassificationRepresentation(num_actions),
+    )
     agent_network = ModularAgentNetwork(
         components={"feature_block": backbone, "policy_head": head}
     ).to(DEVICE)
 
     # --- Setup Buffer ---
     buffer_configs = [
-        BufferConfig("observations", shape=obs_shape, dtype=torch.float32), BufferConfig("actions", shape=(), dtype=torch.int64), BufferConfig("legal_moves_masks", shape=(num_actions, ), dtype=torch.bool), BufferConfig("policies", shape=(num_actions, ), dtype=torch.float32), ]
+        BufferConfig("observations", shape=obs_shape, dtype=torch.float32),
+        BufferConfig("actions", shape=(), dtype=torch.int64),
+        BufferConfig("legal_moves_masks", shape=(num_actions,), dtype=torch.bool),
+        BufferConfig("policies", shape=(num_actions,), dtype=torch.float32),
+    ]
 
     replay_buffer = ModularReplayBuffer(
-        max_size=20000, batch_size=BATCH_SIZE, buffer_configs=buffer_configs, sampler=UniformSampler(), )
+        max_size=20000,
+        batch_size=BATCH_SIZE,
+        buffer_configs=buffer_configs,
+        sampler=UniformSampler(),
+    )
 
     # --- Collect Expert Data ---
     print(f"Collecting expert data for {EXPERT_EPISODES} episodes...")
@@ -94,21 +107,38 @@ def test_imitation_tictactoe_regression():
                 mask_bool[mask] = True
 
                 replay_buffer.store(
-                    observations=obs, actions=action, legal_moves_masks=mask_bool, policies=target_policy, )
+                    observations=obs,
+                    actions=action,
+                    legal_moves_masks=mask_bool,
+                    policies=target_policy,
+                )
 
             env.step(action)
 
     print(f"Buffer size: {replay_buffer.size}")
 
     # --- Setup Learner ---
-    optimizer = {"default": torch.optim.Adam(agent_network.parameters(), lr=LEARNING_RATE)}
+    optimizer = {
+        "default": torch.optim.Adam(agent_network.parameters(), lr=LEARNING_RATE)
+    }
     imitation_loss = ImitationLoss(
-        loss_fn=F.cross_entropy, )
+        loss_fn=F.cross_entropy,
+    )
 
     learner = BlackboardEngine(
         components=[
-            ForwardPassComponent(agent_network, None), PassThroughTargetComponent(keys_to_keep=["policies", "actions"]), UniversalInfrastructureComponent(), imitation_loss, LossAggregatorComponent(loss_weights={"policy_loss": 1.0}), OptimizerStepComponent(
-                agent_network=agent_network, optimizers=optimizer, ), ], device=DEVICE, )
+            ForwardPassComponent(agent_network, None),
+            PassThroughTargetComponent(keys_to_keep=["policies", "actions"]),
+            UniversalInfrastructureComponent(),
+            imitation_loss,
+            LossAggregatorComponent(loss_weights={"policy_loss": 1.0}),
+            OptimizerStepComponent(
+                agent_network=agent_network,
+                optimizers=optimizer,
+            ),
+        ],
+        device=DEVICE,
+    )
 
     # --- Training Loop ---
     print(f"Training for {TRAINING_STEPS} steps...")
@@ -157,9 +187,9 @@ def test_imitation_tictactoe_regression():
     win_rate = wins / total_eval_episodes
     print(f"Win rate: {win_rate:.2f}")
 
-    # In TicTacToe imitation of a perfect expert, it should never lose against random, # but win rate can vary depending on random moves. 
+    # In TicTacToe imitation of a perfect expert, it should never lose against random, # but win rate can vary depending on random moves.
     # Let's just assert it learns SOMETHING (win rate > 0.8)
-    assert win_rate >= 0.8, f"Imitation win rate {win_rate} is too low."
+    assert win_rate == 1.00, f"Imitation win rate {win_rate} is too low."
 
 
 if __name__ == "__main__":

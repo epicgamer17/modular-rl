@@ -10,6 +10,36 @@ if TYPE_CHECKING:
     from modules.agent_nets.base import BaseAgentNetwork
 
 
+class EpsilonDecayComponent(PipelineComponent):
+    """
+    Component for linear epsilon decay.
+    Writes current epsilon to blackboard.meta["epsilon"].
+    """
+
+    def __init__(
+        self,
+        initial_epsilon: float,
+        min_epsilon: float,
+        decay_steps: int,
+    ):
+        self.initial_epsilon = initial_epsilon
+        self.min_epsilon = min_epsilon
+        self.decay_steps = decay_steps
+        self.current_step = 0
+
+    def execute(self, blackboard: Blackboard) -> None:
+        if self.decay_steps > 0:
+            epsilon = self.initial_epsilon - (
+                (self.initial_epsilon - self.min_epsilon)
+                * min(1.0, self.current_step / self.decay_steps)
+            )
+        else:
+            epsilon = self.min_epsilon
+
+        blackboard.meta["epsilon"] = epsilon
+        self.current_step += 1
+
+
 # TODO: get rid of this hacky stuff
 def apply_infrastructure(
     elementwise_loss: torch.Tensor,

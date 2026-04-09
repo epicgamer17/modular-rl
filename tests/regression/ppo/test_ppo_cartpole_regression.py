@@ -80,6 +80,18 @@ def test_ppo_cartpole_full_training():
     TARGET_KL = 0.02
     TOTAL_STEPS = 512000  # Enough to reach high average reliably (450+)
 
+    from components.environment import (
+        SimpleEnvObservationComponent,
+        SimpleEnvStepComponent,
+    )
+    from components.actor_logic import (
+        NetworkInferenceComponent,
+        CategoricalSelectorComponent,
+        PPODecoratorComponent,
+    )
+    from components.memory import BufferStoreComponent
+    from core import BlackboardEngine, infinite_ticks
+
     # --- Setup Environment ---
     env = gym.make(ENV_ID)
     obs_dim = env.observation_space.shape
@@ -89,10 +101,6 @@ def test_ppo_cartpole_full_training():
     agent_network = make_ppo_network(
         obs_dim=obs_dim, num_actions=num_actions, hidden_widths=[64, 64], device=DEVICE, )
 
-    action_selector = CategoricalSelector(exploration=True)
-    action_selector = PPODecorator(inner_selector=action_selector)
-    policy_source = NetworkPolicySource(agent_network, input_shape=obs_dim)
-
     replay_buffer = make_ppo_replay_buffer(
         obs_dim=obs_dim, num_actions=num_actions, steps_per_epoch=STEPS_PER_EPOCH, gamma=GAMMA, gae_lambda=GAE_LAMBDA, )
 
@@ -101,10 +109,32 @@ def test_ppo_cartpole_full_training():
     learner = make_ppo_learner(
         agent_network=agent_network, optimizer=optimizer, minibatch_size=STEPS_PER_EPOCH // NUM_MINIBATCHES, num_actions=num_actions, device=DEVICE, clip_param=CLIP_PARAM, entropy_coef=ENTROPY_COEF, value_coef=VALUE_COEF, max_grad_norm=0.5, target_kl=TARGET_KL, )
 
+    # --- Collection Pipeline ---
+    obs_comp = SimpleEnvObservationComponent(env)
+    
+    # Custom field map for PPO buffer keys
+    ppo_field_map = {
+        "observations": "data.observations",
+        "actions": "meta.action",
+        "rewards": "data.rewards",
+        "dones": "data.dones",
+        "values": "meta.action_metadata.value",
+        "old_log_probs": "meta.action_metadata.log_prob",
+    }
+    
+    collection_components = [
+        obs_comp,
+        NetworkInferenceComponent(agent_network, obs_dim),
+        CategoricalSelectorComponent(exploration=True),
+        PPODecoratorComponent(),
+        SimpleEnvStepComponent(env, obs_comp),
+        BufferStoreComponent(replay_buffer, field_map=ppo_field_map),
+    ]
+    collector = BlackboardEngine(collection_components, device=DEVICE)
+
     # --- Training Loop ---
     steps_collected = 0
     training_scores = []
-    current_episode_score = 0.0
     state, info = env.reset()
 
     print("Starting PPO training loop...")
@@ -112,64 +142,49 @@ def test_ppo_cartpole_full_training():
         epoch_steps = 0
         trajectory_start_index = replay_buffer.size
 
-        while epoch_steps < STEPS_PER_EPOCH:
-            with torch.no_grad():
-                obs_tensor = torch.tensor(
-                    state, dtype=torch.float32, device=DEVICE
-                ).unsqueeze(0)
+        # Collection Phase
+        for result in collector.step(infinite_ticks()):
+            meta = result["meta"]
+            epoch_steps += 1
+            steps_collected += 1
+            
+            if "episode_score" in meta:
+                training_scores.append(meta["episode_score"])
+                if len(training_scores) % 50 == 0:
+                    print(f"Game {len(training_scores)} | Score: {meta['episode_score']} | Avg (L100): {np.mean(training_scores[-100:]):.2f} | Total Steps: {steps_collected}")
 
-                result = policy_source.get_inference(obs=obs_tensor, info=info)
-                action, metadata = action_selector.select_action(
-                    result=result, info=info, exploration=True, )
-
-                action_val = action.item()
-                next_state, reward, terminated, truncated, next_info = env.step(
-                    action_val
-                )
-                done = terminated or truncated
-
-                replay_buffer.store(
-                    observations=state, actions=action_val, values=float(metadata["value"].item()), old_log_probs=float(metadata["log_prob"].item()), rewards=reward, dones=done, info=info, )
-
-                state, info = next_state, next_info
-                current_episode_score += reward
-                epoch_steps += 1
-                steps_collected += 1
-
-                if done or epoch_steps == STEPS_PER_EPOCH:
-                    if terminated:
-                        last_value = 0.0
-                    else:
-                        obs_t = torch.tensor(
-                            state, dtype=torch.float32, device=DEVICE
-                        ).unsqueeze(0)
+            # PPO Trajectory Finishing Logic (at episode end or epoch end)
+            if meta["done"] or epoch_steps == STEPS_PER_EPOCH:
+                if meta["terminated"]:
+                    last_value = 0.0
+                else:
+                    # Bootstrap value for truncated trajectories
+                    with torch.inference_mode():
+                        # Try to get final_observation from info (Gym standard for truncated episodes)
+                        final_obs = meta.get("info", {}).get("final_observation")
+                        if final_obs is not None:
+                            obs_t = torch.as_tensor(final_obs, dtype=torch.float32, device=DEVICE).unsqueeze(0)
+                        else:
+                            # Fallback to the current observation in the env_state/obs_comp
+                            obs_t = torch.as_tensor(obs_comp.current_obs, dtype=torch.float32, device=DEVICE).unsqueeze(0)
+                            
                         out = agent_network.obs_inference(obs_t)
                         last_value = out.value.item()
 
-                    trajectory_end_index = replay_buffer.size
-                    trajectory_slice = slice(
-                        trajectory_start_index, trajectory_end_index
-                    )
+                trajectory_end_index = replay_buffer.size
+                trajectory_slice = slice(trajectory_start_index, trajectory_end_index)
 
-                    if trajectory_end_index > trajectory_start_index:
-                        res = replay_buffer.input_processor.finish_trajectory(
-                            replay_buffer.buffers, trajectory_slice, last_value=last_value, )
-                        if res:
-                            for k, v in res.items():
-                                replay_buffer.buffers[k][trajectory_slice] = v
+                if trajectory_end_index > trajectory_start_index:
+                    res = replay_buffer.input_processor.finish_trajectory(
+                        replay_buffer.buffers, trajectory_slice, last_value=last_value, )
+                    if res:
+                        for k, v in res.items():
+                            replay_buffer.buffers[k][trajectory_slice] = v
+                
+                trajectory_start_index = trajectory_end_index
 
-                    trajectory_start_index = trajectory_end_index
-
-                    if done:
-                        training_scores.append(current_episode_score)
-                        avg_training_score = np.mean(training_scores[-100:])
-                        if len(training_scores) % 50 == 0:
-                            print(
-                                f"Game {len(training_scores)} | Score: {current_episode_score} | Avg (L100): {avg_training_score:.2f} | Total Steps: {steps_collected}"
-                            )
-
-                        state, info = env.reset()
-                        current_episode_score = 0.0
+            if epoch_steps >= STEPS_PER_EPOCH:
+                break
 
         # Learning Phase
         iterator = PPOEpochIterator(
@@ -182,28 +197,23 @@ def test_ppo_cartpole_full_training():
         if len(training_scores) >= 100:
             avg_training_score = np.mean(training_scores[-100:])
             if avg_training_score >= 475.0:
-                print(
-                    f"Solved! Final Avg Training Score (last 100): {avg_training_score:.2f}"
-                )
+                print(f"Solved! Final Avg Training Score (last 100): {avg_training_score:.2f}")
                 break
 
     # --- Assertions ---
-    # 1. Average of last 100 training games is 450+
-    assert (
-        len(training_scores) >= 100
-    ), f"Not enough training games completed: {len(training_scores)}"
+    assert len(training_scores) >= 100
     avg_training_score = np.mean(training_scores[-100:])
-    assert (
-        avg_training_score >= 450.0
-    ), f"Average training score {avg_training_score:.2f} is below 450.0"
+    assert avg_training_score >= 450.0
 
-    # 2. Last 3 test scores are 500
+    # Evaluation
+    policy_source = NetworkPolicySource(agent_network, obs_dim)
+    action_selector = CategoricalSelector()
     test_scores = evaluate_agent(
         env, agent_network, policy_source, action_selector, DEVICE, num_episodes=3
     )
     print(f"Evaluation scores: {test_scores}")
     for i, score in enumerate(test_scores):
-        assert score == 500.0, f"Test episode {i} score {score} is not 500.0"
+        assert score == 500.0
 
     env.close()
 

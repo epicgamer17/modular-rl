@@ -104,21 +104,4 @@ class StateInjectionComponent(PipelineComponent):
         pass
 
 
-class ActorInferenceComponent(PipelineComponent):
-    """Runs ``obs_inference`` via a ``PolicySource`` and writes the result.
-
-    Writes ``predictions["inference_result"]`` (an ``InferenceResult``).
-    Uses ``torch.inference_mode`` internally for throughput.
-    """
-
-    def __init__(self, policy_source: 'BasePolicySource'):
-        self.policy_source = policy_source
-
-    def execute(self, blackboard: Blackboard) -> None:
-        obs = blackboard.data["observations"]
-        info = blackboard.meta.get("info", {})
-
-        with torch.inference_mode():
-            result = self.policy_source.get_inference(obs=obs, info=info)
-
-        blackboard.predictions["inference_result"] = result
+# Actor logic components have been moved to components/actor_logic.py

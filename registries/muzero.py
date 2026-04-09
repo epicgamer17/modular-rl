@@ -42,6 +42,13 @@ from learner.losses.priorities import ExpectedValueErrorPriorityComputer
 from components.search import MCTSExtractorComponent
 from components.targets import SequencePadderComponent, SequenceMaskComponent, SequenceInfrastructureComponent, TargetFormatterComponent
 from components.math import ShapeValidator
+from components.environment import PettingZooAECComponent
+from components.actor_logic import (
+    SearchInferenceComponent,
+    CategoricalSelectorComponent,
+    EpisodeTemperatureComponent,
+)
+from components.memory import SequenceBufferComponent
 
 
 def make_muzero_network(
@@ -312,3 +319,40 @@ def make_muzero_learner(
     )
 
     return learner
+
+
+def make_muzero_actor_engine(
+    env: Any,
+    agent_network: ModularAgentNetwork,
+    search_engine: Any,
+    replay_buffer: Optional[ModularReplayBuffer],
+    obs_dim: Tuple[int, ...],
+    num_actions: int,
+    num_players: int,
+    temperature_schedule: Optional[StepwiseSchedule] = None,
+    exploration: bool = True,
+    device: torch.device = torch.device("cpu"),
+) -> BlackboardEngine:
+    """
+    Creates a standard MuZero actor engine (BlackboardEngine).
+    """
+    components = [
+        PettingZooAECComponent(env, obs_dim, device=device),
+        SearchInferenceComponent(
+            search_engine=search_engine,
+            agent_network=agent_network,
+            input_shape=obs_dim,
+            num_actions=num_actions,
+            exploration=exploration,
+        ),
+    ]
+
+    if temperature_schedule is not None:
+        components.append(EpisodeTemperatureComponent(temperature_schedule))
+
+    components.append(CategoricalSelectorComponent(exploration=exploration))
+
+    if replay_buffer is not None:
+        components.append(SequenceBufferComponent(replay_buffer, num_players=num_players))
+
+    return BlackboardEngine(components=components, device=device)

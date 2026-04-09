@@ -22,7 +22,10 @@ from components.math import OptimizerStepComponent
 from components.math import LossAggregatorComponent, ImitationLoss
 from components.targets import TDTargetComponent
 from components.math import QBootstrappingLoss
-from components.targets import PassThroughTargetComponent, UniversalInfrastructureComponent
+from components.targets import (
+    PassThroughTargetComponent,
+    UniversalInfrastructureComponent,
+)
 from core import RepeatSampleIterator
 import pytest
 
@@ -43,7 +46,7 @@ class ReservoirBuffer:
         self.obs_shape = obs_shape
         self.num_actions = num_actions
         self.observations = torch.zeros((max_size, *obs_shape), dtype=torch.float32)
-        self.actions = torch.zeros((max_size, ), dtype=torch.int64)
+        self.actions = torch.zeros((max_size,), dtype=torch.int64)
         self.count = 0
         self.current_size = 0
 
@@ -78,7 +81,10 @@ class ReservoirBuffer:
         )
 
         return {
-            "observations": obs, "actions": actions, "policies": one_hot_policies, }
+            "observations": obs,
+            "actions": actions,
+            "policies": one_hot_policies,
+        }
 
 
 def test_nfsp_leduc_regression():
@@ -117,7 +123,11 @@ def test_nfsp_leduc_regression():
         backbone = MLPBackbone(input_shape=obs_shape, widths=[128, 128])
         # QHead needs representation and hidden_widths
         head = QHead(
-            input_shape=backbone.output_shape, representation=ScalarRepresentation(), hidden_widths=[], num_actions=num_actions, )
+            input_shape=backbone.output_shape,
+            representation=ScalarRepresentation(),
+            hidden_widths=[],
+            num_actions=num_actions,
+        )
         return ModularAgentNetwork(
             components={"feature_block": backbone, "q_head": head}
         ).to(DEVICE)
@@ -130,11 +140,14 @@ def test_nfsp_leduc_regression():
     sl_backbone = MLPBackbone(input_shape=obs_shape, widths=[128, 128])
     # PolicyHead needs representation
     sl_head = PolicyHead(
-        input_shape=sl_backbone.output_shape, representation=ClassificationRepresentation(num_actions), )
+        input_shape=sl_backbone.output_shape,
+        representation=ClassificationRepresentation(num_actions),
+    )
     sl_network = ModularAgentNetwork(
         components={"feature_block": sl_backbone, "policy_head": sl_head}
     ).to(DEVICE)
 
+    # --- Setup Learners ---
     # --- Setup Learners ---
     # 1. RL Learner
     rl_optimizer = {"default": torch.optim.Adam(rl_network.parameters(), lr=LR_RL)}
@@ -143,29 +156,63 @@ def test_nfsp_leduc_regression():
     # RL target building components
     rl_learner = BlackboardEngine(
         components=[
-            ForwardPassComponent(rl_network, None), TDTargetComponent(
-                target_network=rl_target_network, online_network=rl_network, gamma=0.99, n_step=1, ), UniversalInfrastructureComponent(), rl_loss, LossAggregatorComponent(loss_weights={"q_loss": 1.0}), OptimizerStepComponent(
-                agent_network=rl_network, optimizers=rl_optimizer, ), ], device=DEVICE, )
-
+            ForwardPassComponent(rl_network, None),
+            TDTargetComponent(
+                target_network=rl_target_network,
+                online_network=rl_network,
+                gamma=1.0,
+                n_step=1,
+            ),
+            UniversalInfrastructureComponent(),
+            rl_loss,
+            LossAggregatorComponent(loss_weights={"q_loss": 1.0}),
+            OptimizerStepComponent(
+                agent_network=rl_network,
+                optimizers=rl_optimizer,
+            ),
+        ],
+        device=DEVICE,
+    )
 
     # 2. SL Learner
     sl_optimizer = {"default": torch.optim.Adam(sl_network.parameters(), lr=LR_SL)}
-    sl_loss = ImitationLoss(
-        loss_fn=F.cross_entropy, target_key="actions"
-    )
+    sl_loss = ImitationLoss(loss_fn=F.cross_entropy, target_key="actions")
 
     # SL target building components
     sl_learner = BlackboardEngine(
         components=[
-            ForwardPassComponent(sl_network, None), PassThroughTargetComponent(keys_to_keep=["policies", "actions"]), UniversalInfrastructureComponent(), sl_loss, LossAggregatorComponent(loss_weights={"policy_loss": 1.0}), OptimizerStepComponent(
-                agent_network=sl_network, optimizers=sl_optimizer, ), ], device=DEVICE, )
-
+            ForwardPassComponent(sl_network, None),
+            PassThroughTargetComponent(keys_to_keep=["policies", "actions"]),
+            UniversalInfrastructureComponent(),
+            sl_loss,
+            LossAggregatorComponent(loss_weights={"policy_loss": 1.0}),
+            OptimizerStepComponent(
+                agent_network=sl_network,
+                optimizers=sl_optimizer,
+            ),
+        ],
+        device=DEVICE,
+    )
 
     # --- Setup Buffers ---
     rl_buffer = ModularReplayBuffer(
-        max_size=20000, batch_size=BATCH_SIZE, buffer_configs=[
-            BufferConfig("observations", shape=obs_shape, dtype=torch.float32), BufferConfig("actions", shape=(), dtype=torch.int64), BufferConfig("rewards", shape=(), dtype=torch.float32), BufferConfig("dones", shape=(), dtype=torch.bool), BufferConfig("next_observations", shape=obs_shape, dtype=torch.float32), BufferConfig(
-                "next_legal_moves_masks", shape=(num_actions, ), dtype=torch.bool, fill_value=True, ), ], sampler=UniformSampler(), )
+        max_size=20000,
+        batch_size=BATCH_SIZE,
+        buffer_configs=[
+            BufferConfig("observations", shape=obs_shape, dtype=torch.float32),
+            BufferConfig("actions", shape=(), dtype=torch.int64),
+            BufferConfig("rewards", shape=(), dtype=torch.float32),
+            BufferConfig("dones", shape=(), dtype=torch.bool),
+            BufferConfig("next_observations", shape=obs_shape, dtype=torch.float32),
+            BufferConfig(
+                "next_legal_moves_masks",
+                shape=(num_actions,),
+                dtype=torch.bool,
+                fill_value=True,
+            ),
+        ],
+        sampler=UniformSampler(),
+    )
     sl_buffer = ReservoirBuffer(
         max_size=50000, obs_shape=obs_shape, num_actions=num_actions, device=DEVICE
     )
@@ -186,7 +233,13 @@ def test_nfsp_leduc_regression():
             # Store transitions for RL buffer
             if last_obs[agent] is not None:
                 rl_buffer.store(
-                    observations=last_obs[agent], actions=last_action[agent], rewards=reward, dones=termination or truncation, next_observations=obs_dict["observation"], next_legal_moves_masks=obs_dict["action_mask"], )
+                    observations=last_obs[agent],
+                    actions=last_action[agent],
+                    rewards=reward,
+                    dones=termination or truncation,
+                    next_observations=obs_dict["observation"],
+                    next_legal_moves_masks=obs_dict["action_mask"],
+                )
 
             if termination or truncation:
                 action = None
@@ -228,41 +281,41 @@ def test_nfsp_leduc_regression():
             env.step(action)
             total_steps += 1
 
-        # Perform learning steps
-        if episode > 100:
-            # RL Update
-            if rl_buffer.size >= BATCH_SIZE:
-                rl_iterator = RepeatSampleIterator(
-                    rl_buffer, num_iterations=1, device=DEVICE
-                )
-                # BlackboardEngine.step returns an iterator of results
-                for _ in rl_learner.step(rl_iterator):
-                    pass
+            # Perform learning steps every few steps
+            if total_steps > 500 and total_steps % 4 == 0:
+                # RL Update
+                if rl_buffer.size >= BATCH_SIZE:
+                    rl_iterator = RepeatSampleIterator(
+                        rl_buffer, num_iterations=1, device=DEVICE
+                    )
+                    for _ in rl_learner.step(rl_iterator):
+                        pass
 
-            # SL Update
-            sl_batch = sl_buffer.sample(BATCH_SIZE)
-            if sl_batch is not None:
+                # SL Update
+                sl_batch = sl_buffer.sample(BATCH_SIZE)
+                if sl_batch is not None:
+                    # BlackboardEngine needs an iterator that yields dicts
+                    class SimpleIterator:
+                        def __init__(self, data):
+                            self.data = data
+                            self.done = False
 
-                # BlackboardEngine needs an iterator that yields dicts
-                class SimpleIterator:
-                    def __init__(self, data):
-                        self.data = data
-                        self.done = False
+                        def __next__(self):
+                            if self.done:
+                                raise StopIteration
+                            self.done = True
+                            return self.data
 
-                    def __next__(self):
-                        if self.done:
-                            raise StopIteration
-                        self.done = True
-                        return self.data
+                        def __iter__(self):
+                            return self
 
-                    def __iter__(self):
-                        return self
-
-                for _ in sl_learner.step(SimpleIterator(sl_batch)):
-                    pass
+                    for _ in sl_learner.step(SimpleIterator(sl_batch)):
+                        pass
 
         if episode % 1000 == 0:
             print(f"Episode {episode} completed. Total steps: {total_steps}")
+
+        if episode % 100 == 0:
             # Target network sync
             rl_target_network.load_state_dict(rl_network.state_dict())
 
@@ -284,16 +337,20 @@ def test_nfsp_leduc_regression():
             if termination or truncation:
                 action = None
             else:
-                obs = obs_dict["observation"]
                 mask = obs_dict["action_mask"]
-                with torch.no_grad():
-                    obs_t = torch.as_tensor(
-                        obs, device=DEVICE, dtype=torch.float32
-                    ).unsqueeze(0)
-                    dist = sl_network.obs_inference(obs_t).policy
-                    logits = dist.logits
-                    logits[0, mask == 0] = -1e9
-                    action = int(logits.argmax().item())
+                if agent == "player_0":
+                    obs = obs_dict["observation"]
+                    with torch.no_grad():
+                        obs_t = torch.as_tensor(
+                            obs, device=DEVICE, dtype=torch.float32
+                        ).unsqueeze(0)
+                        dist = sl_network.obs_inference(obs_t).policy
+                        logits = dist.logits
+                        logits[0, mask == 0] = -1e9
+                        action = int(logits.argmax().item())
+                else:
+                    # Player 1 plays randomly
+                    action = int(env.action_space(agent).sample(mask))
             env.step(action)
         total_reward += episode_reward
 
@@ -301,7 +358,7 @@ def test_nfsp_leduc_regression():
     print(f"Average Reward (Player 0) against Random: {avg_reward:.3f}")
 
     # In Leduc, a basic strategy should always beat random (avg reward > 0)
-    assert avg_reward > 0.0, f"NFSP failed! Avg reward: {avg_reward}"
+    assert avg_reward > 0.3, f"NFSP failed! Avg reward: {avg_reward}"
     print("Regression test PASSED: NFSP policy evaluated successfully.")
 
 
