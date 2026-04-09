@@ -62,7 +62,7 @@ def test_muzero_tictactoe_full_training():
     TD_STEPS = 10
     BATCH_SIZE = 8
     LEARNING_RATE = 1e-3
-    TOTAL_TRAINING_STEPS = 10000
+    TOTAL_TRAINING_STEPS = 20000
     TRAIN_STEPS_PER_EPISODE = 10
     ACTION_EMBEDDING_DIM = 32
     DIRICHLET_FRACTION = 0.25
@@ -114,10 +114,8 @@ def test_muzero_tictactoe_full_training():
     )
 
     # --- 4. Learner ---
-    optimizer = torch.optim.Adam(
-        agent_network.parameters(), lr=LEARNING_RATE, eps=1e-5
-    )
-    
+    optimizer = torch.optim.Adam(agent_network.parameters(), lr=LEARNING_RATE, eps=1e-5)
+
     learner = make_muzero_learner(
         agent_network=agent_network,
         optimizer=optimizer,
@@ -179,6 +177,7 @@ def test_muzero_tictactoe_full_training():
     # --- 6. Training Loop ---
     print(f"Starting MuZero Tic-Tac-Toe training for {TOTAL_TRAINING_STEPS} steps...")
     train_steps = 0
+    to_play_losses = []
     while train_steps < TOTAL_TRAINING_STEPS:
         # 1. Data Collection
         results, collect_stats = executor.collect_data(
@@ -192,6 +191,9 @@ def test_muzero_tictactoe_full_training():
                 if train_steps % 1000 == 0:
                     loss_val = metrics["total_losses"].get("default")
                     print(f"Step {train_steps} | Loss: {loss_val:.4f}")
+
+                if "to_play_loss" in metrics["losses"]:
+                    to_play_losses.append(metrics["losses"]["to_play_loss"])
 
             train_steps += 1
 
@@ -227,17 +229,29 @@ def test_muzero_tictactoe_full_training():
     if test_results:
         # Take the most recent evaluation
         last_res = test_results[-1]
-        p0_score = last_res.get("vs_expert_p0", {}).get("score")
-        p1_score = last_res.get("vs_expert_p1", {}).get("score")
+        p0_score = last_res.get("vs_expert_p0", {}).get("score", -1.0)
+        p1_score = last_res.get("vs_expert_p1", {}).get("score", -1.0)
         mean_score = (p0_score + p1_score) / 2
         print(f"Final Mean Score: {mean_score:.4f}")
-
-        assert (
-            mean_score > -0.3
-        ), f"Performance too low! Final mean score {mean_score:.4f} is below threshold -0.3"
-        print("MuZero Regression Training complete and PASSED!")
     else:
         print("MuZero Regression Training complete, but no test results collected!")
+        p0_score = p1_score = mean_score = -1.0
+
+    # assert to play loss is very very close to 0 (like maybe the mean of last 100 or 1000 is < 0.01)
+    if to_play_losses:
+        final_tp_loss = np.mean(to_play_losses[-1000:])
+        assert (
+            final_tp_loss < 0.01
+        ), f"To-play loss is too high! Mean of last 1000: {final_tp_loss:.6f} > 0.01"
+        print(f"Final To-Play Loss (L1000): {final_tp_loss:.6f}")
+
+    assert (
+        mean_score > 0.2
+    ), f"Performance too low! Final mean score {mean_score:.4f} is below threshold 0.0"
+    assert (
+        p0_score > 0.35 and p1_score > -0.05
+    ), f"Performance too low! Final p0_score {p0_score:.4f} or p1_score {p1_score:.4f} is below threshold"
+    print("MuZero Regression Training complete and PASSED!")
 
     env.close()
 
