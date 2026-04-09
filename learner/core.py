@@ -11,16 +11,16 @@ class Blackboard:
     The Absolute Truth. All keys are strings. 
     All tensor values MUST conform to [B, T, ...] where possible.
     """
-    # 1. Hardware/Routing
-    batch: Dict[str, Any] = field(default_factory=dict)
+    # 1. Incoming Data (Replay Buffer Batches, or Env Observations)
+    data: Dict[str, Any] = field(default_factory=dict)
     
-    # 2. Forward Pass Outputs
+    # 2. Network Outputs (Action logits, values, etc.)
     predictions: Dict[str, torch.Tensor] = field(default_factory=dict)
     
-    # 3. Target Math Outputs
+    # 3. Ground Truth / Targets (MCTS targets, TD-targets)
     targets: Dict[str, torch.Tensor] = field(default_factory=dict)
     
-    # 4. Pure Scalar Losses & Aggregation
+    # 4. Pure Scalar Losses
     losses: Dict[str, torch.Tensor] = field(default_factory=dict)
     
     # 5. Non-Graph Metadata (Logging, PER priorities)
@@ -45,7 +45,7 @@ class BlackboardEngine:
                 k: v.to(self.device) if torch.is_tensor(v) else v 
                 for k, v in batch.items()
             }
-            blackboard = Blackboard(batch=device_batch)
+            blackboard = Blackboard(data=device_batch)
             
             # 2. Sequential Pipeline Execution (Radical Transparency)
             for component in self.components:

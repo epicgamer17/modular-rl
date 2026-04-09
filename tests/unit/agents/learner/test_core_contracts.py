@@ -18,9 +18,9 @@ class MockComponent(PipelineComponent):
 def test_blackboard_initialization():
     """Verify Blackboard is a pure data hub with correct fields."""
     batch = {"obs": torch.zeros(1)}
-    bb = Blackboard(batch=batch)
+    bb = Blackboard(data=batch)
 
-    assert bb.batch == batch
+    assert bb.data == batch
     assert isinstance(bb.predictions, dict)
     assert isinstance(bb.targets, dict)
     assert isinstance(bb.losses, dict)
@@ -49,7 +49,7 @@ def test_universal_learner_device_transfer():
     class DeviceCheckComponent(PipelineComponent):
         def execute(self, blackboard: Blackboard) -> None:
             nonlocal received_device
-            received_device = blackboard.batch["obs"].device
+            received_device = blackboard.data["obs"].device
 
     learner.components = [DeviceCheckComponent()]
     for _ in learner.step([batch]):

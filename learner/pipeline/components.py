@@ -104,10 +104,10 @@ class PriorityBufferUpdateComponent(PipelineComponent):
         if priorities is None:
             return
 
-        batch = blackboard.batch
+        data = blackboard.data
         priorities_np = priorities.detach().cpu().numpy()
-        ids = batch.get("ids")
-        self.priority_update_fn(batch["indices"], priorities_np, ids=ids)
+        ids = data.get("ids")
+        self.priority_update_fn(data["indices"], priorities_np, ids=ids)
 
 
 class BetaScheduleComponent(PipelineComponent):

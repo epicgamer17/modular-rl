@@ -110,8 +110,8 @@ def test_env_observation_resets_on_first_tick(env_state):
 
     comp.execute(bb)
 
-    assert "observations" in bb.batch
-    obs = bb.batch["observations"]
+    assert "observations" in bb.data
+    obs = bb.data["observations"]
     assert obs.shape == (1, *OBS_SHAPE)  # unsqueezed batch dim
     assert obs.dtype == torch.float32
     assert "info" in bb.meta
@@ -129,7 +129,7 @@ def test_env_observation_reuses_obs_when_not_done(env_state):
 
     comp.execute(bb)
 
-    obs = bb.batch["observations"]
+    obs = bb.data["observations"]
     assert torch.allclose(obs, torch.zeros(1, *OBS_SHAPE))
 
 
@@ -145,7 +145,7 @@ def test_actor_inference_writes_result():
 
     comp = ActorInferenceComponent(policy_source=mock_source)
     bb = Blackboard()
-    bb.batch["observations"] = torch.zeros(1, 4)
+    bb.data["observations"] = torch.zeros(1, 4)
     bb.meta["info"] = {}
 
     comp.execute(bb)
@@ -219,12 +219,12 @@ def test_env_step_writes_transition(env_state):
 
     comp.execute(bb)
 
-    assert "rewards" in bb.batch
-    assert "dones" in bb.batch
-    assert "terminated" in bb.batch
-    assert "truncated" in bb.batch
-    assert "next_observations" in bb.batch
-    assert bb.batch["rewards"].item() == 1.0
+    assert "rewards" in bb.data
+    assert "dones" in bb.data
+    assert "terminated" in bb.data
+    assert "truncated" in bb.data
+    assert "next_observations" in bb.data
+    assert bb.data["rewards"].item() == 1.0
     assert env_state.episode_reward == 1.0
     assert env_state.episode_length == 1
 
@@ -256,10 +256,10 @@ def test_buffer_store_calls_store():
     comp = BufferStoreComponent(replay_buffer=mock_buffer)
 
     bb = Blackboard()
-    bb.batch["observations"] = torch.ones(1, 4)
-    bb.batch["rewards"] = torch.tensor(1.0)
-    bb.batch["dones"] = torch.tensor(False)
-    bb.batch["next_observations"] = torch.ones(1, 4) * 2
+    bb.data["observations"] = torch.ones(1, 4)
+    bb.data["rewards"] = torch.tensor(1.0)
+    bb.data["dones"] = torch.tensor(False)
+    bb.data["next_observations"] = torch.ones(1, 4) * 2
     bb.meta["action"] = 1
     bb.meta["info"] = {}
     bb.meta["action_metadata"] = {"value": torch.tensor(0.5)}

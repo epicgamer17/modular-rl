@@ -24,12 +24,12 @@ class TDTargetComponent(PipelineComponent):
         self.bootstrap_on_truncated = bootstrap_on_truncated
 
     def execute(self, blackboard: Blackboard) -> None:
-        batch = blackboard.batch
-        rewards = batch["rewards"].float()
-        dones = batch["dones"].bool()
-        terminated = batch.get("terminated", dones).bool()
-        next_obs = batch.get("next_observations")
-        next_masks = batch.get("next_legal_moves_masks")
+        data = blackboard.data
+        rewards = data["rewards"].float()
+        dones = data["dones"].bool()
+        terminated = data.get("terminated", dones).bool()
+        next_obs = data.get("next_observations")
+        next_masks = data.get("next_legal_moves_masks")
         
         terminal_mask = terminated if self.bootstrap_on_truncated else dones
         batch_size = rewards.shape[0]
@@ -71,7 +71,7 @@ class TDTargetComponent(PipelineComponent):
         blackboard.targets["values"] = target_q.unsqueeze(1)
         blackboard.targets["rewards"] = rewards.unsqueeze(1)
         blackboard.targets["dones"] = terminal_mask.float().unsqueeze(1)
-        blackboard.targets["actions"] = batch["actions"].unsqueeze(1)
+        blackboard.targets["actions"] = data["actions"].unsqueeze(1)
 
 class DistributionalTargetComponent(PipelineComponent):
     """
@@ -92,12 +92,12 @@ class DistributionalTargetComponent(PipelineComponent):
         self.bootstrap_on_truncated = bootstrap_on_truncated
 
     def execute(self, blackboard: Blackboard) -> None:
-        batch = blackboard.batch
-        rewards = batch["rewards"].float()
-        dones = batch["dones"].bool()
-        terminated = batch.get("terminated", dones).bool()
-        next_obs = batch.get("next_observations")
-        next_masks = batch.get("next_legal_moves_masks")
+        data = blackboard.data
+        rewards = data["rewards"].float()
+        dones = data["dones"].bool()
+        terminated = data.get("terminated", dones).bool()
+        next_obs = data.get("next_observations")
+        next_masks = data.get("next_legal_moves_masks")
 
         terminal_mask = terminated if self.bootstrap_on_truncated else dones
         batch_size = rewards.shape[0]
@@ -146,7 +146,7 @@ class DistributionalTargetComponent(PipelineComponent):
 
         blackboard.targets["q_logits"] = target_distribution.unsqueeze(1)
         blackboard.targets["rewards"] = rewards.unsqueeze(1)
-        blackboard.targets["actions"] = batch["actions"].unsqueeze(1)
+        blackboard.targets["actions"] = data["actions"].unsqueeze(1)
         blackboard.targets["next_actions"] = next_actions.unsqueeze(1)
         blackboard.targets["dones"] = terminal_mask.float().unsqueeze(1)
 
@@ -159,10 +159,10 @@ class PassThroughTargetComponent(PipelineComponent):
         self.keys_to_keep = keys_to_keep
 
     def execute(self, blackboard: Blackboard) -> None:
-        batch = blackboard.batch
+        data = blackboard.data
         for key in self.keys_to_keep:
-            if key in batch:
-                val = batch[key]
+            if key in data:
+                val = data[key]
                 # Ensure T dimension [B, 1, ...] if not already present
                 if torch.is_tensor(val) and (val.ndim == 1 or (val.ndim >= 2 and val.shape[1] != 1)):
                     blackboard.targets[key] = val.unsqueeze(1)
@@ -172,11 +172,11 @@ class PassThroughTargetComponent(PipelineComponent):
 class MCTSExtractorComponent(PipelineComponent):
     """Extracts MCTS search statistics from the batch into targets."""
     def execute(self, blackboard: Blackboard) -> None:
-        batch = blackboard.batch
+        data = blackboard.data
         target_keys = ["values", "rewards", "policies", "actions", "to_plays"]
         for key in target_keys:
-            if key in batch:
-                blackboard.targets[key] = batch[key]
+            if key in data:
+                blackboard.targets[key] = data[key]
 
 class SequencePadderComponent(PipelineComponent):
     """Modifier: Pads transition-aligned data to state-aligned length."""
@@ -194,16 +194,16 @@ class SequencePadderComponent(PipelineComponent):
 class SequenceMaskComponent(PipelineComponent):
     """Modifier: Generates Universal [B, T] sequence masks."""
     def execute(self, blackboard: Blackboard) -> None:
-        batch = blackboard.batch
-        blackboard.targets["value_mask"] = batch["is_same_game"].clone()
-        blackboard.targets["masks"] = batch["is_same_game"].clone()
-        blackboard.targets["policy_mask"] = batch["has_valid_obs_mask"].clone()
-        blackboard.targets["policy_mask"] &= ~batch["dones"]
+        data = blackboard.data
+        blackboard.targets["value_mask"] = data["is_same_game"].clone()
+        blackboard.targets["masks"] = data["is_same_game"].clone()
+        blackboard.targets["policy_mask"] = data["has_valid_obs_mask"].clone()
+        blackboard.targets["policy_mask"] &= ~data["dones"]
 
-        blackboard.targets["reward_mask"] = batch["is_same_game"].clone()
+        blackboard.targets["reward_mask"] = data["is_same_game"].clone()
         blackboard.targets["reward_mask"][:, 0] = False
 
-        blackboard.targets["to_play_mask"] = batch["is_same_game"].clone()
+        blackboard.targets["to_play_mask"] = data["is_same_game"].clone()
         blackboard.targets["to_play_mask"][:, 0] = False
 
 class SequenceInfrastructureComponent(PipelineComponent):
@@ -212,12 +212,12 @@ class SequenceInfrastructureComponent(PipelineComponent):
         self.unroll_steps = unroll_steps
 
     def execute(self, blackboard: Blackboard) -> None:
-        batch = blackboard.batch
+        data = blackboard.data
         device = next(iter(blackboard.targets.values())).device if blackboard.targets else torch.device("cpu")
-        B = batch["actions"].shape[0]
+        B = data["actions"].shape[0]
 
         if "weights" not in blackboard.meta:
-            blackboard.meta["weights"] = batch.get("weights", torch.ones(B, device=device))
+            blackboard.meta["weights"] = data.get("weights", torch.ones(B, device=device))
 
         if "gradient_scales" not in blackboard.meta:
             scales = [1.0] + [1.0 / self.unroll_steps] * self.unroll_steps if self.unroll_steps > 0 else [1.0]
@@ -229,7 +229,7 @@ class LatentConsistencyComponent(PipelineComponent):
         self.agent_network = agent_network
 
     def execute(self, blackboard: Blackboard) -> None:
-        real_obs = blackboard.batch["unroll_observations"].float()
+        real_obs = blackboard.data["unroll_observations"].float()
         batch_size, unroll_len = real_obs.shape[:2]
         flat_obs = real_obs.flatten(0, 1)
 
@@ -282,6 +282,6 @@ class UniversalInfrastructureComponent(PipelineComponent):
 
         # 2. Weights and Gradient Scales
         if "weights" not in blackboard.meta:
-            blackboard.meta["weights"] = blackboard.batch.get("weights", torch.ones(batch_size, device=device))
+            blackboard.meta["weights"] = blackboard.data.get("weights", torch.ones(batch_size, device=device))
         if "gradient_scales" not in blackboard.meta:
             blackboard.meta["gradient_scales"] = torch.ones((1, 1), device=device)

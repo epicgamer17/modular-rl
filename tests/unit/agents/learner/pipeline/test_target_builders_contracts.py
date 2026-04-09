@@ -35,7 +35,7 @@ def test_td_target_component_math():
         "next_observations": torch.randn(2, 4),
         "actions": torch.tensor([0, 1])
     }
-    bb = Blackboard(batch=batch)
+    bb = Blackboard(data=batch)
     
     component.execute(bb)
     
@@ -58,7 +58,7 @@ def test_td_target_n_step_logic():
         "next_observations": torch.randn(1, 4),
         "actions": torch.tensor([0])
     }
-    bb = Blackboard(batch=batch)
+    bb = Blackboard(data=batch)
     component.execute(bb)
     
     # expected = 1.0 + 0.729 * 10.0 = 8.29
@@ -102,7 +102,7 @@ def test_distributional_target_component_math():
         "next_observations": torch.randn(1, 4),
         "actions": torch.tensor([0])
     }
-    bb = Blackboard(batch=batch)
+    bb = Blackboard(data=batch)
     
     # We need to mock project_onto_grid to capture its arguments or check outputs
     # Since we set project_onto_grid to return shifted_support:
@@ -123,7 +123,7 @@ def test_pass_through_target_component():
         "keep_me": torch.tensor([1, 2, 3]),
         "ignore_me": torch.tensor([4, 5, 6])
     }
-    bb = Blackboard(batch=batch)
+    bb = Blackboard(data=batch)
     
     component.execute(bb)
     
@@ -137,7 +137,7 @@ def test_universal_infrastructure_component():
     component = UniversalInfrastructureComponent()
     
     # Need some target to identify batch size
-    bb = Blackboard(batch={})
+    bb = Blackboard(data={})
     bb.targets["some_val"] = torch.zeros(5, 1)
     
     component.execute(bb)

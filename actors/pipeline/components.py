@@ -103,7 +103,7 @@ class EnvObservationComponent(PipelineComponent):
     """Writes the current observation to the blackboard.
 
     On the first tick (or after a terminal step), resets the environment.
-    Always writes ``batch["observations"]`` as a ``[1, *obs_shape]`` tensor
+    Always writes ``data["observations"]`` as a ``[1, *obs_shape]`` tensor
     and ``meta["info"]`` with sanitised legal-moves masks.
     """
 
@@ -129,7 +129,7 @@ class EnvObservationComponent(PipelineComponent):
         if obs_tensor.dim() == len(self.state.input_shape):
             obs_tensor = obs_tensor.unsqueeze(0)
 
-        blackboard.batch["observations"] = obs_tensor
+        blackboard.data["observations"] = obs_tensor
         blackboard.meta["info"] = self.state.info
 
 
@@ -148,7 +148,7 @@ class ActorInferenceComponent(PipelineComponent):
         self.policy_source = policy_source
 
     def execute(self, blackboard: Blackboard) -> None:
-        obs = blackboard.batch["observations"]
+        obs = blackboard.data["observations"]
         info = blackboard.meta.get("info", {})
 
         with torch.inference_mode():
@@ -213,7 +213,7 @@ class ActionSelectionComponent(PipelineComponent):
 class EnvStepComponent(PipelineComponent):
     """Steps the environment with the selected action.
 
-    Reads ``meta["action"]``.  Writes transition data to ``batch`` and
+    Reads ``meta["action"]``.  Writes transition data to ``data`` and
     updates the shared ``EnvironmentState``.  When an episode ends,
     writes ``meta["episode_score"]`` and ``meta["episode_length"]``.
     """
@@ -227,11 +227,11 @@ class EnvStepComponent(PipelineComponent):
         next_obs, reward, terminated, truncated, next_info = self.state.env.step(action)
         done = terminated or truncated
 
-        blackboard.batch["rewards"] = torch.tensor(float(reward), device=self.state.device)
-        blackboard.batch["dones"] = torch.tensor(done, device=self.state.device)
-        blackboard.batch["terminated"] = torch.tensor(terminated, device=self.state.device)
-        blackboard.batch["truncated"] = torch.tensor(truncated, device=self.state.device)
-        blackboard.batch["next_observations"] = torch.as_tensor(
+        blackboard.data["rewards"] = torch.tensor(float(reward), device=self.state.device)
+        blackboard.data["dones"] = torch.tensor(done, device=self.state.device)
+        blackboard.data["terminated"] = torch.tensor(terminated, device=self.state.device)
+        blackboard.data["truncated"] = torch.tensor(truncated, device=self.state.device)
+        blackboard.data["next_observations"] = torch.as_tensor(
             next_obs, dtype=torch.float32, device=self.state.device
         )
         blackboard.meta["next_info"] = next_info
@@ -269,11 +269,11 @@ class BufferStoreComponent(PipelineComponent):
     ):
         self.replay_buffer = replay_buffer
         self.field_map = field_map or {
-            "observations": "batch.observations",
+            "observations": "data.observations",
             "actions": "meta.action",
-            "rewards": "batch.rewards",
-            "dones": "batch.dones",
-            "next_observations": "batch.next_observations",
+            "rewards": "data.rewards",
+            "dones": "data.dones",
+            "next_observations": "data.next_observations",
         }
 
     def _resolve(self, blackboard: Blackboard, path: str) -> Any:
@@ -331,8 +331,8 @@ class SequenceBufferComponent(PipelineComponent):
     def execute(self, blackboard: Blackboard) -> None:
         self._ensure_sequence()
 
-        obs = blackboard.batch.get("observations")
-        done = blackboard.batch.get("dones")
+        obs = blackboard.data.get("observations")
+        done = blackboard.data.get("dones")
         metadata = blackboard.meta.get("action_metadata", {})
         next_info = blackboard.meta.get("next_info", {})
 
@@ -344,19 +344,19 @@ class SequenceBufferComponent(PipelineComponent):
             self._sequence.append(initial_obs, terminated=False, truncated=False, legal_moves=legal)
 
         # Record the transition
-        next_obs = blackboard.batch.get("next_observations")
+        next_obs = blackboard.data.get("next_observations")
         if torch.is_tensor(next_obs):
             next_obs = next_obs.cpu().numpy()
 
         action = blackboard.meta.get("action")
-        reward = blackboard.batch.get("rewards")
+        reward = blackboard.data.get("rewards")
         if torch.is_tensor(reward):
             reward = reward.item()
 
-        terminated = blackboard.batch.get("terminated")
+        terminated = blackboard.data.get("terminated")
         if torch.is_tensor(terminated):
             terminated = terminated.item()
-        truncated = blackboard.batch.get("truncated")
+        truncated = blackboard.data.get("truncated")
         if torch.is_tensor(truncated):
             truncated = truncated.item()
 

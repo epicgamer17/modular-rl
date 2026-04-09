@@ -48,7 +48,7 @@ def test_muzero_loss_masking_contracts():
         "dones": dones,
     }
     
-    bb = Blackboard(batch=batch)
+    bb = Blackboard(data=batch)
 
     # Run builder
     builder.execute(bb)
@@ -108,7 +108,7 @@ def test_muzero_padding_contracts():
     # Transition data (rewards, actions) are length K
     rewards = torch.ones((B, K))
 
-    bb = Blackboard(batch={})
+    bb = Blackboard(data={})
     bb.targets["rewards"] = rewards
 
     padder.execute(bb)

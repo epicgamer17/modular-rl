@@ -21,16 +21,16 @@ class PipelineComponent(ABC):
 
 class DeviceTransferComponent(PipelineComponent):
     """
-    Stage 2 Preprocessing: Moves all tensors in the blackboard.batch to the target device.
+    Stage 2 Preprocessing: Moves all tensors in the blackboard.data to the target device.
     Ensures that subsequent 'Neural' components (Stage 3) receive tensors on the correct GPU.
     """
     def __init__(self, device: torch.device):
         self.device = device
 
     def execute(self, blackboard: 'Blackboard') -> None:
-        for k, v in blackboard.batch.items():
+        for k, v in blackboard.data.items():
             if torch.is_tensor(v):
-                blackboard.batch[k] = v.to(self.device, non_blocking=True)
+                blackboard.data[k] = v.to(self.device, non_blocking=True)
             elif isinstance(v, dict):
                 # Handle nested dicts (e.g. for world model memory)
                 for sub_k, sub_v in v.items():

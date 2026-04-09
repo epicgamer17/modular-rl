@@ -16,17 +16,17 @@ class ForwardPassComponent(PipelineComponent):
 
     def execute(self, blackboard: Blackboard) -> None:
         """
-        Runs learner_inference on the batch dictionary.
+        Runs learner_inference on the data dictionary.
         Optimizes memory layout for throughput before the pass.
         """
         # OPTIMIZATION: Convert convolutional observations to channels_last for Tensor Cores
         # Only if the device is CUDA and it's a 4D tensor.
-        for k, v in blackboard.batch.items():
+        for k, v in blackboard.data.items():
             if torch.is_tensor(v) and v.ndim == 4 and v.device.type == "cuda":
-                blackboard.batch[k] = v.to(memory_format=torch.channels_last)
+                blackboard.data[k] = v.to(memory_format=torch.channels_last)
 
         predictions = self.agent_network.learner_inference(
-            blackboard.batch, shape_validator=self.shape_validator
+            blackboard.data, shape_validator=self.shape_validator
         )
         
         # Merge predictions safely into the blackboard

@@ -57,7 +57,7 @@ def test_priority_buffer_update_calls_fn():
     indices = np.array([0, 1, 2])
     priorities = torch.tensor([0.5, 0.3, 0.1])
 
-    bb = Blackboard(batch={"indices": indices, "ids": None})
+    bb = Blackboard(data={"indices": indices, "ids": None})
     bb.meta["priorities"] = priorities
 
     comp.execute(bb)
@@ -74,7 +74,7 @@ def test_priority_buffer_update_noop_without_priorities():
     mock_fn = MagicMock()
     comp = PriorityBufferUpdateComponent(priority_update_fn=mock_fn)
 
-    bb = Blackboard(batch={"indices": np.array([0])})
+    bb = Blackboard(data={"indices": np.array([0])})
 
     comp.execute(bb)
     mock_fn.assert_not_called()
