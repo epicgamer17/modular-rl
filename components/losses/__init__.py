@@ -10,7 +10,7 @@ from .infrastructure import (
     DeviceTransferComponent,
 )
 from .value import ValueLoss, ClippedValueLoss
-from .policy import PolicyLoss, ClippedSurrogateLoss, ImitationLoss
+from .policy import PolicyLoss, ClippedSurrogateLoss
 from .q_learning import QBootstrappingLoss
 from .auxiliary import (
     RewardLoss,
@@ -22,7 +22,6 @@ from .auxiliary import (
     LatentConsistencyComponent,
 )
 from .priorities import (
-    RootTDErrorComponent,
-    MaxLossPriorityComponent,
+    LossPriorityComponent,
     ExpectedValueErrorPriorityComponent,
 )

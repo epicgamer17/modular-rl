@@ -51,7 +51,7 @@ from components.environments import PettingZooObservationComponent, PettingZooSt
 from components.selectors import (
     SearchInferenceComponent,
     CategoricalSelectorComponent,
-    EpisodeTemperatureComponent,
+    TemperatureComponent,
 )
 from components.memory import SequenceBufferComponent
 from components.telemetry import TelemetryComponent
@@ -365,7 +365,7 @@ def make_muzero_actor_engine(
     ]
 
     if temperature_schedule is not None:
-        components.append(EpisodeTemperatureComponent(temperature_schedule))
+        components.append(TemperatureComponent(schedule=temperature_schedule, schedule_source="episode"))
 
     components.append(CategoricalSelectorComponent(exploration=exploration))
     

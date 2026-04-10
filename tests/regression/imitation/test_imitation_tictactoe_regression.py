@@ -16,7 +16,7 @@ from components.losses import OptimizerStepComponent
 
 
 from components.losses import LossAggregatorComponent
-from components.losses import ImitationLoss
+from components.losses import PolicyLoss
 from components.targets import (
     PassThroughTargetComponent,
     UniversalInfrastructureComponent,
@@ -123,7 +123,7 @@ def test_imitation_tictactoe_regression():
     optimizer = {
         "default": torch.optim.Adam(agent_network.parameters(), lr=LEARNING_RATE)
     }
-    imitation_loss = ImitationLoss(
+    imitation_loss = PolicyLoss(
         loss_fn=F.cross_entropy,
     )
 

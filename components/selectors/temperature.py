@@ -1,5 +1,5 @@
 import torch
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 from core import PipelineComponent, Blackboard
 
 if TYPE_CHECKING:
@@ -8,14 +8,35 @@ if TYPE_CHECKING:
 
 class TemperatureComponent(PipelineComponent):
     """
-    Pure temperature scaling component.
-    Modifies inference_result.logits in predictions.
+    Temperature scaling component for inference logits.
+
+    Three modes:
+    - Fixed: pass a static ``temperature`` float (default 1.0).
+    - Episode-scheduled: pass a ``Schedule`` + ``schedule_source="episode"``.
+      Temperature updates based on ``info["episode_step"]``.
+    - Training-scheduled: pass a ``Schedule`` + ``schedule_source="training"``.
+      Temperature updates based on ``blackboard.meta["training_step"]``.
     """
 
-    def __init__(self, temperature: float = 1.0):
+    def __init__(
+        self,
+        temperature: float = 1.0,
+        schedule: Optional["Schedule"] = None,
+        schedule_source: str = "episode",
+    ):
         self.temperature = temperature
+        self.schedule = schedule
+        self.schedule_source = schedule_source
+        self._last_step = -1
 
     def execute(self, blackboard: Blackboard) -> None:
+        # Update temperature from schedule if one is provided
+        if self.schedule is not None:
+            if self.schedule_source == "episode":
+                self._update_from_episode(blackboard)
+            elif self.schedule_source == "training":
+                self._update_from_training(blackboard)
+
         if self.temperature == 1.0:
             return
 
@@ -41,55 +62,29 @@ class TemperatureComponent(PipelineComponent):
         # Clear probs so selector is forced to use heat-treated logits
         result.probs = None
 
-
-class EpisodeTemperatureComponent(TemperatureComponent):
-    """
-    Temperature component that uses a schedule based on episode steps.
-    """
-
-    def __init__(self, schedule: "Schedule"):
-        super().__init__(temperature=1.0)
-        self.schedule = schedule
-        self._last_episode_step = -1
-
-    def execute(self, blackboard: Blackboard) -> None:
+    def _update_from_episode(self, blackboard: Blackboard) -> None:
+        """Update temperature from episode step schedule."""
         info = blackboard.meta.get("info", {})
-        # Episode step tracking depends on environment/wrapper providing it
-        # or we can track it here if we know when reset() happens.
-        # Typically info['episode_step']
         step = info.get("episode_step", 0)
 
-        if step != self._last_episode_step:
+        if step != self._last_step:
             self.schedule.step(
-                max(1, step - self._last_episode_step)
-                if self._last_episode_step >= 0
+                max(1, step - self._last_step)
+                if self._last_step >= 0
                 else step
             )
-            self._last_episode_step = step
+            self._last_step = step
             if step == 0:
                 self.schedule.reset()
 
         self.temperature = self.schedule.get_value()
-        super().execute(blackboard)
 
-
-class TrainingStepTemperatureComponent(TemperatureComponent):
-    """
-    Temperature component that uses a schedule based on global training steps.
-    """
-
-    def __init__(self, schedule: "Schedule"):
-        super().__init__(temperature=1.0)
-        self.schedule = schedule
-        self._last_training_step = -1
-
-    def execute(self, blackboard: Blackboard) -> None:
-        # Training step is often broadcasted via blackboard.meta or results
+    def _update_from_training(self, blackboard: Blackboard) -> None:
+        """Update temperature from global training step."""
         step = blackboard.meta.get("training_step", 0)
 
-        if step > self._last_training_step:
-            self.schedule.step(step - self._last_training_step)
-            self._last_training_step = step
+        if step > self._last_step:
+            self.schedule.step(step - self._last_step)
+            self._last_step = step
 
         self.temperature = self.schedule.get_value()
-        super().execute(blackboard)

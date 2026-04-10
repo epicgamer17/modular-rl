@@ -19,7 +19,7 @@ from components.neural import ForwardPassComponent
 from components.losses import OptimizerStepComponent
 
 
-from components.losses import LossAggregatorComponent, ImitationLoss
+from components.losses import LossAggregatorComponent, PolicyLoss
 from components.targets import TDTargetComponent
 from components.losses import QBootstrappingLoss
 from components.targets import (
@@ -74,7 +74,7 @@ class ReservoirBuffer:
         obs = self.observations[indices].to(self.device)
         actions = self.actions[indices].to(self.device)
 
-        # ImitationLoss expects 'policies' key to match the head's output shape [B, T, num_actions] (after T=1 unsqueeze)
+        # PolicyLoss expects 'policies' key to match the head's output shape [B, T, num_actions] (after T=1 unsqueeze)
         # We provide [B, num_actions] here, and SingleStepFormatter will make it [B, 1, num_actions]
         one_hot_policies = (
             F.one_hot(self.actions[indices], num_classes=self.num_actions)
@@ -209,7 +209,7 @@ def test_nfsp_leduc_regression():
 
     # 2. SL Learner
     sl_optimizer = {"default": torch.optim.Adam(sl_network.parameters(), lr=LR_SL)}
-    sl_loss = ImitationLoss(loss_fn=F.cross_entropy, target_key="actions")
+    sl_loss = PolicyLoss(loss_fn=F.cross_entropy, target_key="actions")
 
     # SL target building components
     sl_learner = BlackboardEngine(

@@ -33,7 +33,7 @@ from components.routing import ResetNoiseComponent
 
 from components.losses import LossAggregatorComponent
 from components.memory import PriorityUpdateComponent
-from components.losses import MaxLossPriorityComponent
+from components.losses import LossPriorityComponent
 from components.losses import QBootstrappingLoss
 from components.targets import (
     DistributionalTargetComponent,
@@ -193,7 +193,7 @@ def make_rainbow_learner(
         per_beta_schedule = ConstantSchedule(0.6)
 
     q_loss = QBootstrappingLoss(is_categorical=True, name="q_loss")
-    priority_comp = MaxLossPriorityComponent(loss_key="q_loss")
+    priority_comp = LossPriorityComponent(loss_key="q_loss", reduction="max")
     buffer_update = PriorityUpdateComponent(priority_update_fn=replay_buffer.update_priorities)
 
     return BlackboardEngine(

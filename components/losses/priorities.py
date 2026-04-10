@@ -2,45 +2,30 @@ import torch
 from typing import Any
 from core import PipelineComponent, Blackboard
 
-class RootTDErrorComponent(PipelineComponent):
+
+class LossPriorityComponent(PipelineComponent):
     """
-    MuZero Standard: Priority is determined by the loss at the root step (t=0).
-    Usually uses 'ValueLoss' as the source.
+    Extracts priorities from elementwise losses stored in blackboard.meta["elementwise_losses"].
+
+    Reduction modes:
+    - "root": Uses loss at the root step (t=0). Standard for MuZero.
+    - "max": Uses the maximum loss over the entire sequence. Standard for DQN/Rainbow.
     """
-    def __init__(self, loss_key: str = "ValueLoss"):
+    def __init__(self, loss_key: str = "q_loss", reduction: str = "max"):
         self.loss_key = loss_key
+        assert reduction in ("root", "max"), f"Unknown reduction: {reduction}"
+        self.reduction = reduction
 
     def execute(self, blackboard: Blackboard) -> None:
-        """
-        Extracts priorities from elementwise losses and stores them in blackboard.meta.
-        """
+        """Extracts priorities and stores them in blackboard.meta."""
         elementwise_losses = blackboard.meta.get("elementwise_losses", {})
         if self.loss_key in elementwise_losses:
             loss = elementwise_losses[self.loss_key]
             # [B, T] -> [B]
             if loss.ndim == 1:
                 blackboard.meta['priorities'] = loss.detach()
-            else:
+            elif self.reduction == "root":
                 blackboard.meta['priorities'] = loss[:, 0].detach()
-
-
-class MaxLossPriorityComponent(PipelineComponent):
-    """
-    DQN Standard: Priority is the max error over the entire sequence.
-    """
-    def __init__(self, loss_key: str = "q_loss"):
-        self.loss_key = loss_key
-
-    def execute(self, blackboard: Blackboard) -> None:
-        """
-        Extracts priorities as the maximum loss over time for each batch element.
-        """
-        elementwise_losses = blackboard.meta.get("elementwise_losses", {})
-        if self.loss_key in elementwise_losses:
-            loss = elementwise_losses[self.loss_key]
-            # [B, T] -> [B]
-            if loss.ndim == 1:
-                blackboard.meta['priorities'] = loss.detach()
             else:
                 blackboard.meta['priorities'] = loss.max(dim=1).values.detach()
 
@@ -63,9 +48,7 @@ class ExpectedValueErrorPriorityComponent(PipelineComponent):
         self.pred_key = pred_key
 
     def execute(self, blackboard: Blackboard) -> None:
-        """
-        Computes MSE of expected value error at root and stores in blackboard.meta.
-        """
+        """Computes MSE of expected value error at root and stores in blackboard.meta."""
         if self.pred_key not in blackboard.predictions or self.target_key not in blackboard.targets:
             return
 
@@ -77,11 +60,8 @@ class ExpectedValueErrorPriorityComponent(PipelineComponent):
         target_scalars = blackboard.targets[self.target_key]
 
         # 3. Compute root TD-error (MSE)
-        # Note: We assume T dimension exists. If B is [B, bins], we might need unsqueeze.
-        # But Blackboard says all tensors conform to [B, T, ...]
         root_pred = pred_scalars[:, 0]
         root_target = target_scalars[:, 0]
 
-        # Use absolute error or squared error for priorities (rely on (z - q)**2)
         error = (root_target - root_pred) ** 2
         blackboard.meta['priorities'] = error.detach()

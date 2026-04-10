@@ -108,7 +108,3 @@ class ClippedSurrogateLoss(PipelineComponent):
 
         blackboard.losses[self.name] = scalar_loss
         blackboard.meta[self.name] = scalar_loss.item()
-
-
-# Backward-compatible alias
-ImitationLoss = PolicyLoss
