@@ -13,7 +13,7 @@ from registries import (
 from components.telemetry import TelemetryComponent
 from actors.action_selectors.selectors import ActionSelector
 from actors.action_selectors.decorators import PPODecorator
-from actors.action_selectors.policy_sources import NetworkPolicySource
+# from actors.action_selectors.policy_sources import NetworkPolicySource (Deleted)
 from core import PPOEpochIterator
 from utils.plotting import plot_regression_results
 
@@ -39,9 +39,13 @@ def evaluate_agent(
                     state, dtype=torch.float32, device=device
                 ).unsqueeze(0)
 
-                result = policy_source.get_inference(obs=obs_tensor, info=info)
+                output = agent_network.obs_inference(obs_tensor)
+                result = {
+                    "logits": output.policy.logits,
+                    "value": output.value
+                }
                 action, _ = action_selector.select_action(
-                    result=result,
+                    predictions=result,
                     info=info,
                     exploration=False,
                 )
@@ -261,10 +265,9 @@ def test_ppo_cartpole_full_training():
     assert avg_training_score >= 450.0
 
     # Evaluation
-    policy_source = NetworkPolicySource(agent_network, obs_dim)
     action_selector = ActionSelector(input_key="logits", temperature=1.0)
     test_scores = evaluate_agent(
-        env, agent_network, policy_source, action_selector, DEVICE, num_episodes=3
+        env, agent_network, None, action_selector, DEVICE, num_episodes=3
     )
     print(f"Evaluation scores: {test_scores}")
     for i, score in enumerate(test_scores):

@@ -6,11 +6,7 @@ from typing import Any, Dict, List, Optional, Union, Tuple, Callable
 
 from modules.agent_nets.modular import ModularAgentNetwork
 from actors.action_selectors.selectors import BaseActionSelector
-from actors.action_selectors.policy_sources import (
-    BasePolicySource,
-    NetworkPolicySource,
-    SearchPolicySource,
-)
+# from actors.action_selectors.policy_sources import (Deleted)
 from data.storage.circular import ModularReplayBuffer
 
 
@@ -35,15 +31,8 @@ class NetworkAgent:
         self.num_actions = num_actions
         self.actor_state = None
 
-        # Initialize PolicySource
-        if search_engine is not None:
-            self.policy_source = SearchPolicySource(
-                search_engine, self.agent_network, self.input_shape, self.num_actions
-            )
-        else:
-            self.policy_source = NetworkPolicySource(
-                self.agent_network, self.input_shape
-            )
+        # PolicySource is deprecated, we will perform inference directly in select_actions
+        self.search_engine = search_engine
 
     def predict(self, observation, info, *args, **kwargs):
         """Returns the observation unchanged, to be processed by select_actions."""
@@ -59,13 +48,28 @@ class NetworkAgent:
             if obs_tensor.dim() == len(self.input_shape):
                 obs_tensor = obs_tensor.unsqueeze(0)
 
-            # Perform inference via PolicySource
-            result = self.policy_source.get_inference(
-                obs=obs_tensor,
-                info=info,
-                agent_network=self.agent_network,
-                exploration=False,
-            )
+            if self.search_engine is not None:
+                # Manual search call
+                res = self.search_engine.run(obs_tensor, info, self.agent_network, exploration=False)
+                root_value, exploratory_policy, target_policy, best_action, search_metadata = res
+                result = {
+                    "probs": exploratory_policy if exploratory_policy.dim() > 1 else exploratory_policy.unsqueeze(0),
+                    "value": torch.tensor([root_value], device=self.device),
+                    "extra_metadata": {
+                        "target_policies": target_policy,
+                        "best_actions": best_action,
+                        "search_metadata": search_metadata
+                    }
+                }
+            else:
+                # Manual network call
+                output = self.agent_network.obs_inference(obs_tensor)
+                result = {
+                    "logits": output.policy.logits if hasattr(output.policy, "logits") else None,
+                    "probs": output.policy.probs if hasattr(output.policy, "probs") else None,
+                    "value": output.value,
+                    "extra_metadata": getattr(output, "extras", {})
+                }
 
             # Standardize masking
             if info is None:
@@ -313,15 +317,7 @@ class Tester:
         self.compilation_mode = compilation_mode
         self.compilation_fullgraph = compilation_fullgraph
 
-        # Initialize PolicySource
-        if search_engine is not None:
-            self.policy_source = SearchPolicySource(
-                search_engine, self.agent_network, self.input_shape, self.num_actions
-            )
-        else:
-            self.policy_source = NetworkPolicySource(
-                self.agent_network, self.input_shape
-            )
+        self.search_engine = search_engine
 
     def setup(self):
         """Initializes/resets the environment."""
@@ -362,13 +358,28 @@ class Tester:
             obs_tensor = torch.as_tensor(
                 state, dtype=torch.float32, device=self.device
             ).unsqueeze(0)
-            # Perform inference via PolicySource
-            result = self.policy_source.get_inference(
-                obs=obs_tensor,
-                info=info,
-                agent_network=self.agent_network,
-                exploration=False,
-            )
+            if self.search_engine is not None:
+                # Manual search call
+                res = self.search_engine.run(obs_tensor, info, self.agent_network, exploration=False)
+                root_value, exploratory_policy, target_policy, best_action, search_metadata = res
+                result = {
+                    "probs": exploratory_policy if exploratory_policy.dim() > 1 else exploratory_policy.unsqueeze(0),
+                    "value": torch.tensor([root_value], device=self.device),
+                    "extra_metadata": {
+                        "target_policies": target_policy,
+                        "best_actions": best_action,
+                        "search_metadata": search_metadata
+                    }
+                }
+            else:
+                # Manual network call
+                output = self.agent_network.obs_inference(obs_tensor)
+                result = {
+                    "logits": output.policy.logits if hasattr(output.policy, "logits") else None,
+                    "probs": output.policy.probs if hasattr(output.policy, "probs") else None,
+                    "value": output.value,
+                    "extra_metadata": getattr(output, "extras", {})
+                }
 
             # Standardize masking
             if info is None:

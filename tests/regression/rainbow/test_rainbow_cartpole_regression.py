@@ -48,7 +48,7 @@ def evaluate_agent(env, agent_network, device, num_episodes=3):
                 ).unsqueeze(0)
                 # Rainbow inference via obs_inference returns InferenceOutput with q_values
                 result = agent_network.obs_inference(obs_tensor)
-                action, _ = action_selector.select_action(result=result, info=info)
+                action, _ = action_selector.select_action(predictions=result, info=info)
                 state, reward, terminated, truncated, info = env.step(action.item())
                 done = terminated or truncated
                 episode_score += reward

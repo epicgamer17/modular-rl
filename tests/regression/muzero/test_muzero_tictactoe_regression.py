@@ -98,7 +98,7 @@ def test_muzero_tictactoe_full_training():
     )
 
     action_selector = ActionSelector(
-        input_key="logits",
+        input_key="probs",
         schedule=StepwiseSchedule(steps=[5, 10], values=[1.0, 0.5, 0.0]),
     )
 

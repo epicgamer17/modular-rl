@@ -10,10 +10,6 @@ from modules.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
-from actors.action_selectors.selectors import ActionSelector
-from actors.action_selectors.decorators import PPODecorator
-from actors.action_selectors.policy_sources import NetworkPolicySource
-
 from data.storage.circular import BufferConfig, ModularReplayBuffer
 from data.concurrency import LocalBackend
 from data.processors import (
@@ -194,7 +190,9 @@ def make_ppo_actor_engine(
     components = [
         obs_component,
         NetworkInferenceComponent(agent_network, obs_dim),
-        ActionSelectorComponent(input_key="logits", temperature=1.0 if exploration else 0.0),
+        ActionSelectorComponent(
+            input_key="logits", temperature=1.0 if exploration else 0.0
+        ),
         PPODecoratorComponent(),
         step_component,
         TelemetryComponent(name="ppo_actor"),

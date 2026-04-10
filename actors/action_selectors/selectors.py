@@ -41,6 +41,8 @@ class BaseActionSelector(ABC):
         Returns:
             The masked tensor.
         """
+        if legal_moves is None:
+            return values
         if mask_value is None:
             mask_value = -float("inf")
 
@@ -142,7 +144,7 @@ class ActionSelector(BaseActionSelector):
 
     def select_action(
         self,
-        result: "InferenceOutput",
+        predictions: Union[Dict[str, torch.Tensor], "InferenceOutput"],
         info: Dict[str, Any],
         exploration: Optional[bool] = None,
         **kwargs,
@@ -157,25 +159,25 @@ class ActionSelector(BaseActionSelector):
 
         temp = self._get_temperature(current_step, exploration)
 
-        # Resolve values from result based on input_key
-        # result can be a dictionary (from PolicySource) or an InferenceOutput object
+        # Resolve values from predictions based on input_key
+        # predictions can be a dictionary (from PolicySource) or an InferenceOutput object
         values = None
-        if isinstance(result, dict):
-            values = result.get(self.input_key)
-            if values is None and "extra_metadata" in result:
-                values = result["extra_metadata"].get(self.input_key)
+        if isinstance(predictions, dict):
+            values = predictions.get(self.input_key)
+            if values is None and "extra_metadata" in predictions:
+                values = predictions["extra_metadata"].get(self.input_key)
         else:
-            if hasattr(result, self.input_key):
-                values = getattr(result, self.input_key)
-            elif hasattr(result, "extras") and result.extras and self.input_key in result.extras:
-                values = result.extras[self.input_key]
-            elif hasattr(result, "metadata") and result.metadata and self.input_key in result.metadata:
+            if hasattr(predictions, self.input_key):
+                values = getattr(predictions, self.input_key)
+            elif hasattr(predictions, "extras") and predictions.extras and self.input_key in predictions.extras:
+                values = predictions.extras[self.input_key]
+            elif hasattr(predictions, "metadata") and predictions.metadata and self.input_key in predictions.metadata:
                 # Legacy support for 'metadata' field if it exists in some custom objects
-                values = result.metadata[self.input_key]
+                values = predictions.metadata[self.input_key]
 
         if values is None:
-            available = list(result.keys()) if isinstance(result, dict) else dir(result)
-            raise KeyError(f"Key '{self.input_key}' not found in result. Available: {available}")
+            available = list(predictions.keys()) if isinstance(predictions, dict) else dir(predictions)
+            raise KeyError(f"Key '{self.input_key}' not found in predictions. Available: {available}")
 
         if values is None:
             raise ValueError(f"Values for key '{self.input_key}' are None")

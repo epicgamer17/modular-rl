@@ -17,8 +17,6 @@ from modules.world_models.components.dynamics import Dynamics
 from search.backends.py_search.modular_search import ModularSearch
 from actors.action_selectors.policy_sources import (
     BasePolicySource,
-    NetworkPolicySource,
-    SearchPolicySource,
 )
 from actors.action_selectors.selectors import ActionSelector
 from utils.schedule import StepwiseSchedule
@@ -43,12 +41,11 @@ from modules.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
-from components.search import MCTSExtractorComponent
+from components.search import MCTSExtractorComponent, MCTSSearchComponent
 from components.targets import SequencePadderComponent, SequenceMaskComponent, SequenceInfrastructureComponent, TargetFormatterComponent
 from components.losses import ShapeValidator
 from components.environments import PettingZooObservationComponent, PettingZooStepComponent, GymObservationComponent, GymStepComponent
 from components.selectors import (
-    SearchInferenceComponent,
     ActionSelectorComponent,
 )
 from components.memory import SequenceBufferComponent
@@ -353,12 +350,9 @@ def make_muzero_actor_engine(
 
     components = [
         obs_component,
-        SearchInferenceComponent(
+        MCTSSearchComponent(
             search_engine=search_engine,
             agent_network=agent_network,
-            input_shape=obs_dim,
-            num_actions=num_actions,
-            exploration=exploration,
         ),
     ]
 
