@@ -9,316 +9,187 @@ if TYPE_CHECKING:
 
 
 # TODO: split a little better into stuff like action selection vs env interfaces (gym, pettingzoo puffer etc)
-class EnvironmentState:
-    """Shared state for environment components in one actor pipeline.
-
-    Both ``EnvObservationComponent`` and ``EnvStepComponent`` hold a
-    reference to the same ``EnvironmentState`` so they can coordinate
-    without reaching into each other's internals.
+class GymObservationComponent(PipelineComponent):
+    """
+    Reads the environment state and writes it to the Blackboard.
+    Handles resets automatically when an episode is done.
     """
 
-    def __init__(
-        self,
-        env: Any,
-        device: torch.device,
-        num_actions: int,
-        input_shape: tuple[int, ...],
-    ):
+    def __init__(self, env):
         self.env = env
-        self.device = device
-        self.num_actions = num_actions
-        self.input_shape = input_shape
-
-        self.obs: Any = None
-        self.info: Dict[str, Any] = {}
-        self.done: bool = True
-        self.episode_reward: float = 0.0
-        self.episode_length: int = 0
-
-
-def _sanitize_info(
-    info: Optional[Dict[str, Any]],
-    num_actions: int,
-    device: torch.device,
-) -> Dict[str, Any]:
-    """Converts raw env info into pre-vectorised tensors for selectors."""
-    if info is None:
-        info = {}
-
-    # Legal moves → boolean mask [num_actions]
-    mask = torch.zeros(num_actions, dtype=torch.bool, device=device)
-    legal = info.get("legal_moves", [])
-    if isinstance(legal, (list, np.ndarray, torch.Tensor)) and len(legal) > 0:
-        mask[legal] = True
-    else:
-        mask.fill_(True)
-    info["legal_moves"] = mask
-    info["legal_moves_mask"] = mask
-
-    return info
-
-
-class EnvObservationComponent(PipelineComponent):
-    """Writes the current observation to the blackboard.
-
-    On the first tick (or after a terminal step), resets the environment.
-    Always writes ``data["observations"]`` as a ``[1, *obs_shape]`` tensor
-    and ``meta["info"]`` with sanitised legal-moves masks.
-    """
-
-    def __init__(self, env_state: EnvironmentState):
-        self.state = env_state
+        # Initial reset
+        result = self.env.reset()
+        if isinstance(result, tuple) and len(result) == 2:
+            self.state, self.info = result
+        else:
+            self.state, self.info = result, {}
+        self.terminated = False
+        self.truncated = False
+        self.done = False
 
     def execute(self, blackboard: Blackboard) -> None:
-        if self.state.done:
-            obs, info = self.state.env.reset()
-            if isinstance(obs, tuple):
-                obs, info = obs  # handle older gym API
-            self.state.obs = obs
-            self.state.info = _sanitize_info(
-                info, self.state.num_actions, self.state.device
-            )
-            self.state.done = False
-            self.state.episode_reward = 0.0
-            self.state.episode_length = 0
+        if self.state is None or self.done:
+            result = self.env.reset()
+            if isinstance(result, tuple) and len(result) == 2:
+                self.state, self.info = result
+            else:
+                self.state, self.info = result, {}
+            self.done = False
+            self.terminated = False
+            self.truncated = False
 
-        obs_tensor = torch.as_tensor(
-            self.state.obs, dtype=torch.float32, device=self.state.device
-        )
-        if obs_tensor.dim() == len(self.state.input_shape):
-            obs_tensor = obs_tensor.unsqueeze(0)
+        # Convert to tensor and ensure batch dimension [1, ...]
+        obs_tensor = torch.as_tensor(self.state, dtype=torch.float32)
+        if obs_tensor.dim() > 0: # Only if not a scalar
+             # We don't have input_shape here easily, but we can assume we want [1, ...] 
+             # for a single environment loop.
+             obs_tensor = obs_tensor.unsqueeze(0)
 
-        blackboard.data["observations"] = obs_tensor
-        blackboard.meta["info"] = self.state.info
+        blackboard.data["obs"] = obs_tensor
+        blackboard.data["info"] = self.info
+        blackboard.data["terminated"] = self.terminated
+        blackboard.data["truncated"] = self.truncated
+        blackboard.data["done"] = self.terminated or self.truncated
 
 
-# Action selection components have been moved to components/actor_logic.py
-
-
-class EnvStepComponent(PipelineComponent):
-    """Steps the environment with the selected action.
-
-    Reads ``meta["action"]``.  Writes transition data to ``data`` and
-    updates the shared ``EnvironmentState``.  When an episode ends,
-    writes ``meta["episode_score"]`` and ``meta["episode_length"]``.
+class GymStepComponent(PipelineComponent):
+    """
+    Steps the environment with the selected action and updates transition data.
+    Directly modifies the GymObservationComponent to signal resets.
     """
 
-    def __init__(self, env_state: EnvironmentState):
-        self.state = env_state
-
-    def execute(self, blackboard: Blackboard) -> None:
-        action = blackboard.meta["action"]
-
-        next_obs, reward, terminated, truncated, next_info = self.state.env.step(action)
-        done = terminated or truncated
-
-        blackboard.data["rewards"] = torch.tensor(
-            float(reward), device=self.state.device
-        )
-        blackboard.data["dones"] = torch.tensor(done, device=self.state.device)
-        blackboard.data["terminated"] = torch.tensor(
-            terminated, device=self.state.device
-        )
-        blackboard.data["truncated"] = torch.tensor(truncated, device=self.state.device)
-        blackboard.data["next_observations"] = torch.as_tensor(
-            next_obs, dtype=torch.float32, device=self.state.device
-        )
-        blackboard.meta["next_info"] = next_info
-
-        self.state.episode_reward += float(reward)
-        self.state.episode_length += 1
-
-        if done:
-            blackboard.meta["episode_score"] = self.state.episode_reward
-            blackboard.meta["episode_length"] = self.state.episode_length
-
-        self.state.obs = next_obs
-        self.state.info = _sanitize_info(
-            next_info, self.state.num_actions, self.state.device
-        )
-        self.state.done = done
-
-
-class EpsilonScheduleComponent(PipelineComponent):
-    """Steps the epsilon-greedy exploration schedule."""
-
-    def __init__(self, epsilon_schedule: Any):
-        self.epsilon_schedule = epsilon_schedule
-
-    def execute(self, blackboard: Blackboard) -> None:
-        self.epsilon_schedule.step()
-
-
-class SimpleEnvObservationComponent(PipelineComponent):
-    """Phase 1: Injects the current environment state into the Blackboard.
-
-    This is a simplified version that manages its own observation state.
-    """
-
-    def __init__(self, env: Any):
-        self.env = env
-        obs = self.env.reset()
-        if isinstance(obs, tuple):
-            obs, _ = obs
-        self.current_obs = obs
-
-    def execute(self, blackboard: Blackboard) -> None:
-        # Write observation to data dict (ensuring [B, T, ...] format if vectorized)
-        blackboard.data["observations"] = torch.as_tensor(
-            self.current_obs, dtype=torch.float32
-        ).unsqueeze(0)
-
-
-class SimpleEnvStepComponent(PipelineComponent):
-    """Phase 2: Reads the action, steps the environment, and records the transition.
-
-    This component relies on the EnvObservationComponent to update its state for the next tick.
-    """
-
-    def __init__(
-        self,
-        env: Any,
-        obs_component: SimpleEnvObservationComponent,
-        stop_on_done: bool = False,
-    ):
+    def __init__(self, env, obs_component: GymObservationComponent):
         self.env = env
         self.obs_component = obs_component
-        self.stop_on_done = stop_on_done
-        self.episode_reward = 0.0
-        self.episode_length = 0
 
     def execute(self, blackboard: Blackboard) -> None:
-        if (
-            "actions" not in blackboard.predictions
-            and "action" not in blackboard.meta
-        ):
-            raise ValueError(
-                "SimpleEnvStepComponent requires 'actions' in blackboard.predictions or 'action' in blackboard.meta"
-            )
-
-        if "actions" in blackboard.predictions:
-            action = blackboard.predictions["actions"].item()
-        else:
-            action = blackboard.meta["action"]
-
-        step_result = self.env.step(action)
-        if len(step_result) == 5:
-            next_obs, reward, terminated, truncated, info = step_result
-            done = terminated or truncated
-        else:
-            next_obs, reward, done, info = step_result
-
-        # Record the full transition for the Replay Buffer
-        blackboard.data["actions"] = torch.tensor([action])
-        blackboard.data["rewards"] = torch.tensor([float(reward)])
-        blackboard.data["dones"] = torch.tensor([done])
-        blackboard.data["next_observations"] = torch.as_tensor(
-            next_obs, dtype=torch.float32
-        ).unsqueeze(0)
-
-        blackboard.meta["done"] = done
-        blackboard.meta["terminated"] = terminated
-        blackboard.meta["info"] = info
-
-        self.episode_reward += float(reward)
-        self.episode_length += 1
-
-        # Update the Observation component's state for the next tick
-        if done:
-            blackboard.meta["episode_score"] = self.episode_reward
-            blackboard.meta["episode_length"] = self.episode_length
-            if self.stop_on_done:
-                blackboard.meta["stop_execution"] = True
-
-            obs = self.env.reset()
-            if isinstance(obs, tuple):
-                obs, _ = obs
-            self.obs_component.current_obs = obs
-            self.episode_reward = 0.0
-            self.episode_length = 0
-        else:
-            self.obs_component.current_obs = next_obs
-
-
-class PettingZooAECComponent(PipelineComponent):
-    """
-    Component for PettingZoo AEC environments.
-    Merges observation and stepping into a single component for turn-based games.
-    """
-
-    def __init__(self, env: Any, input_shape: Tuple[int, ...], stop_on_done: bool = True, device: torch.device = torch.device("cpu")):
-        self.env = env
-        self.input_shape = input_shape
-        self.stop_on_done = stop_on_done
-        self.device = device
-        self.env.reset()
-        self._last_reward = 0.0
-        self._last_done = False
-        self._last_terminated = False
-        self._last_truncated = False
-        self.episode_rewards: Dict[str, float] = {a: 0.0 for a in self.env.possible_agents}
-        self.episode_step = 0
-
-    def execute(self, blackboard: Blackboard) -> None:
-        # 1. If an action was chosen in the previous component, step the environment
+        # Pull action from blackboard
         if "action" in blackboard.meta:
             action = blackboard.meta["action"]
-            self.env.step(action)
+        elif "actions" in blackboard.predictions:
+            action = blackboard.predictions["actions"].item()
+        else:
+            raise KeyError("No action found in blackboard.meta['action'] or blackboard.predictions['actions']")
 
-        # 2. Observe the state for the current active agent
-        agent = self.env.agent_selection
-        obs, reward, termination, truncation, info = self.env.last()
-        done = termination or truncation
+        next_obs, reward, terminated, truncated, info = self.env.step(action)
+        done = terminated or truncated
 
-        # 3. Write observation to blackboard
-        # For single-agent inference components
-        if obs is None and done:
-            obs = np.zeros(self.input_shape, dtype=np.float32)
-
-        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-        blackboard.data["observations"] = obs_tensor.unsqueeze(0)
-        blackboard.data["active_agent"] = agent
+        # Write transition data to blackboard
+        blackboard.data["reward"] = float(reward)
+        blackboard.data["done"] = done
+        blackboard.data["terminated"] = terminated
+        blackboard.data["truncated"] = truncated
+        blackboard.data["next_obs"] = next_obs
         
-        # Determine player index for MuZero
+        # Also write to meta for TelemetryComponent and tests
+        blackboard.meta["reward"] = float(reward)
+        blackboard.meta["done"] = done
+        blackboard.meta["terminated"] = terminated
+        blackboard.meta["truncated"] = truncated
+        blackboard.meta["info"] = info
+
+        # Update observation component for next tick
+        self.obs_component.state = next_obs
+        self.obs_component.info = info
+        self.obs_component.done = done
+        self.obs_component.terminated = terminated
+        self.obs_component.truncated = truncated
+
+
+class PettingZooObservationComponent(PipelineComponent):
+    """
+    Reads the environment state for the currently active agent in a PettingZoo AEC environment.
+    Writes to 'obs', 'info', and 'player_id' on the Blackboard.
+    """
+
+    def __init__(self, env):
+        self.env = env
+        self._initialized = False
+        self.done = False
+
+    def execute(self, blackboard: Blackboard) -> None:
+        if not self._initialized or not self.env.agents:
+            self.env.reset()
+            self._initialized = True
+            self.done = False
+
+        try:
+            agent = self.env.agent_selection
+            obs, reward, termination, truncation, info = self.env.last()
+        except (KeyError, AttributeError, ValueError) as e:
+            # AEC environment error on terminal states
+            agent = getattr(self.env, "agent_selection", "unknown")
+            obs, reward, termination, truncation, info = None, 0.0, True, False, {}
+        
+        # Determine player index
         try:
             player_idx = self.env.possible_agents.index(agent)
         except (ValueError, AttributeError):
             player_idx = 0
-        
-        blackboard.meta["to_play"] = player_idx
+
+        # Handle terminal state where obs might be None
+        if obs is None:
+            try:
+                sp = self.env.observation_space(agent)
+                if isinstance(sp, dict) and "observation" in sp:
+                    shape = sp["observation"].shape
+                else:
+                    shape = sp.shape
+                obs = np.zeros(shape, dtype=np.float32)
+            except Exception:
+                # Ultimate fallback - we might have to rely on previous obs shape
+                pass
+
+        # Convert to tensor and ensure batch dimension [1, ...]
+        if obs is not None:
+            obs_tensor = torch.as_tensor(obs, dtype=torch.float32)
+            if obs_tensor.dim() > 0:
+                obs_tensor = obs_tensor.unsqueeze(0)
+            blackboard.data["obs"] = obs_tensor
+        else:
+            blackboard.data["obs"] = None
+
+        blackboard.data["info"] = info
+        blackboard.data["terminated"] = termination
+        blackboard.data["truncated"] = truncation
+        blackboard.data["done"] = termination or truncation
+        blackboard.data["reward"] = reward
         blackboard.data["player_id"] = player_idx
+        blackboard.data["agent"] = agent
 
-        # 4. Write transition data (for the previous agent's action)
-        # Note: In AEC, 'reward' is the reward the current agent received.
-        # MuZero typically expects rewards for all agents or just the active one.
-        blackboard.data["rewards"] = torch.tensor(float(reward), device=self.device)
-        blackboard.data["dones"] = torch.tensor(done, device=self.device)
-        blackboard.data["terminated"] = torch.tensor(termination, device=self.device)
-        blackboard.data["truncated"] = torch.tensor(truncation, device=self.device)
 
-        if done and self.stop_on_done:
-            blackboard.meta["stop_execution"] = True
-            # Reset happens on the NEXT tick's first call to execute() or we can do it here
+class PettingZooStepComponent(PipelineComponent):
+    """
+    Steps the PettingZoo environment with the selected action.
+    """
+
+    def __init__(self, env, obs_component: PettingZooObservationComponent):
+        self.env = env
+        self.obs_component = obs_component
+
+    def execute(self, blackboard: Blackboard) -> None:
+        action = blackboard.meta["action"]
+        agent = blackboard.data["agent"]
+        self.env.step(action)
         
-        # Sanitize info for action selection
-        num_actions = self.env.action_space(agent).n
-        blackboard.meta["info"] = _sanitize_info(info, num_actions, self.device)
-        blackboard.meta["info"]["episode_step"] = self.episode_step
-        blackboard.meta["done"] = done
-        blackboard.meta["terminated"] = termination
+        # In AEC, rewards are accumulated for all agents. 
+        # The reward for the agent that just acted is in self.env.rewards[agent]
+        reward = self.env.rewards.get(agent, 0.0)
         
-        # Telemetry
-        self.episode_rewards[agent] += float(reward)
-        self.episode_step += 1
+        # After step(), we can get the next state for the NEXT agent,
+        # but for MuZero/single-actor transitions we often want the current agent's next state.
+        # However, AEC is turn-based. We'll provide the reward and terminal state.
+        try:
+            obs, _, term, trunc, info = self.env.last()
+        except (KeyError, AttributeError, ValueError):
+            obs, term, trunc, info = None, True, False, {}
+        
+        self.obs_component.done = term or trunc
+        
+        blackboard.data["reward"] = float(reward)
+        blackboard.data["done"] = self.obs_component.done
+        blackboard.data["terminated"] = term
+        blackboard.data["truncated"] = trunc
+        blackboard.data["next_obs"] = obs
+        blackboard.meta["next_info"] = info
 
-        if done:
-            blackboard.meta[f"episode_score_{agent}"] = self.episode_rewards[agent]
-            # Reset for next episode
-            self.episode_rewards[agent] = 0.0
-            self.episode_step = 0
-            
-            # Reset environment if ALL agents are done (standard for PZ parallel/sequence wrappers)
-            # Actually for AEC, we should check if all agents are done. 
-            # But PZ envs often stop yielding agents when the game is over.
-            if not self.env.agents:
-                self.env.reset()

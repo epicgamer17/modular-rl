@@ -14,9 +14,11 @@ class ActorWorker:
         self,
         engine: BlackboardEngine,
         env_iterator: Optional[Iterable[Dict[str, Any]]] = None,
+        **kwargs: Any,
     ):
         self.engine = engine
         self.env_iterator = env_iterator if env_iterator is not None else infinite_ticks()
+        self.worker_id = kwargs.get("worker_id", 0)
         # Expose engine attributes for easier access by executors if needed
         self.device = engine.device
 

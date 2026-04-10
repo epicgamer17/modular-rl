@@ -15,6 +15,11 @@ from modules.world_models.components.representation import Representation
 from modules.world_models.components.dynamics import Dynamics
 
 from search.backends.py_search.modular_search import ModularSearch
+from actors.action_selectors.policy_sources import (
+    BasePolicySource,
+    NetworkPolicySource,
+    SearchPolicySource,
+)
 from actors.action_selectors.selectors import CategoricalSelector
 from actors.action_selectors.decorators import TemperatureSelector
 from utils.schedule import StepwiseSchedule
@@ -42,7 +47,7 @@ from learner.losses.priorities import ExpectedValueErrorPriorityComputer
 from components.search import MCTSExtractorComponent
 from components.targets import SequencePadderComponent, SequenceMaskComponent, SequenceInfrastructureComponent, TargetFormatterComponent
 from components.math import ShapeValidator
-from components.environment import PettingZooAECComponent
+from components.environment import PettingZooObservationComponent, PettingZooStepComponent, GymObservationComponent, GymStepComponent
 from components.actor_logic import (
     SearchInferenceComponent,
     CategoricalSelectorComponent,
@@ -337,8 +342,17 @@ def make_muzero_actor_engine(
     """
     Creates a standard MuZero actor engine (BlackboardEngine).
     """
+    is_pz = hasattr(env, "possible_agents") or (hasattr(env, "unwrapped") and hasattr(env.unwrapped, "possible_agents"))
+
+    if is_pz:
+        obs_component = PettingZooObservationComponent(env)
+        step_component = PettingZooStepComponent(env, obs_component)
+    else:
+        obs_component = GymObservationComponent(env)
+        step_component = GymStepComponent(env, obs_component)
+
     components = [
-        PettingZooAECComponent(env, obs_dim, device=device),
+        obs_component,
         SearchInferenceComponent(
             search_engine=search_engine,
             agent_network=agent_network,
@@ -352,6 +366,9 @@ def make_muzero_actor_engine(
         components.append(EpisodeTemperatureComponent(temperature_schedule))
 
     components.append(CategoricalSelectorComponent(exploration=exploration))
+    
+    # Step the environment AFTER action selection
+    components.append(step_component)
 
     # Add TelemetryComponent to calculate stats like episode_length and scores
     components.append(TelemetryComponent(name="muzero_actor"))

@@ -8,15 +8,18 @@ from modules.heads.q import QHead
 from learner.losses.representations import ScalarRepresentation
 from actors.action_selectors.selectors import ArgmaxSelector
 
-from data.storage.circular import BufferConfig, ModularReplayBuffer
+from data.storage.circular import BufferConfig, ModularReplayBuffer, CircularWriter
 from data.concurrency import LocalBackend
 from data.processors import (
     StackedInputProcessor,
     StandardOutputProcessor,
     LegalMovesMaskProcessor,
 )
-from data.writers import CircularWriter
-from data.samplers.prioritized import UniformSampler
+from data.writers import SharedCircularWriter
+from components.environment import GymObservationComponent, GymStepComponent
+from components.telemetry import TelemetryComponent
+from components.memory import BufferStoreComponent
+from components.actor_logic import NetworkInferenceComponent, EpsilonGreedySelectorComponent
 
 from core import BlackboardEngine
 from components.neural import ForwardPassComponent
@@ -57,6 +60,7 @@ def make_dqn_replay_buffer(
     num_actions: int,
     max_size: int = 100000,
     batch_size: int = 32,
+    shared: bool = False,
 ) -> ModularReplayBuffer:
     """
     Creates a standard DQN replay buffer.
@@ -82,16 +86,47 @@ def make_dqn_replay_buffer(
         ]
     )
 
+    writer_cls = SharedCircularWriter if shared else CircularWriter
+
+    from data.samplers.prioritized import UniformSampler
     return ModularReplayBuffer(
         max_size=max_size,
         batch_size=batch_size,
         buffer_configs=buffer_configs,
         input_processor=input_processor,
         output_processor=StandardOutputProcessor(),
-        writer=CircularWriter(max_size=max_size),
+        writer=writer_cls(max_size=max_size),
         sampler=UniformSampler(),
         backend=LocalBackend(),
     )
+
+
+def make_dqn_actor_engine(
+    env: Any,
+    agent_network: ModularAgentNetwork,
+    replay_buffer: Optional[ModularReplayBuffer],
+    obs_dim: Tuple[int, ...],
+    epsilon: float = 0.05,
+    device: torch.device = torch.device("cpu"),
+) -> BlackboardEngine:
+    """
+    Creates a standard DQN actor engine (BlackboardEngine).
+    """
+    obs_component = GymObservationComponent(env)
+    step_component = GymStepComponent(env, obs_component)
+
+    components = [
+        obs_component,
+        NetworkInferenceComponent(agent_network, obs_dim),
+        EpsilonGreedySelectorComponent(epsilon=epsilon),
+        step_component,
+        TelemetryComponent(name="dqn_actor"),
+    ]
+
+    if replay_buffer is not None:
+        components.append(BufferStoreComponent(replay_buffer))
+
+    return BlackboardEngine(components=components, device=device)
 
 
 def make_dqn_learner(

@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 from typing import Any
 
-from components.environment import SimpleEnvObservationComponent, SimpleEnvStepComponent
+from components.environment import GymObservationComponent, GymStepComponent
 from core import Blackboard, BlackboardEngine, infinite_ticks, PipelineComponent
 
 pytestmark = pytest.mark.unit
@@ -68,8 +68,8 @@ def test_blackboard_loop_parity():
 
     # --- 2. Blackboard Loop ---
     env_bb = FakeEnv(obs_shape=obs_shape, max_steps=5)
-    obs_comp = SimpleEnvObservationComponent(env_bb)
-    step_comp = SimpleEnvStepComponent(env_bb, obs_comp)
+    obs_comp = GymObservationComponent(env_bb)
+    step_comp = GymStepComponent(env_bb, obs_comp)
     action_comp = ConstantActionComponent(action=0)
     
     pipeline = [
@@ -87,11 +87,11 @@ def test_blackboard_loop_parity():
             # Deep copy or detach to avoid shared references if needed
             # But here we just want to verify the values
             bb_transitions.append({
-                "obs": blackboard.data["observations"].squeeze(0).numpy().copy(),
-                "action": blackboard.data["actions"].item(),
-                "reward": blackboard.data["rewards"].item(),
-                "next_obs": blackboard.data["next_observations"].squeeze(0).numpy().copy(),
-                "done": blackboard.data["dones"].item()
+                "obs": blackboard.data["obs"].squeeze(0).numpy().copy(),
+                "action": blackboard.predictions["actions"].item(),
+                "reward": blackboard.data["reward"],
+                "next_obs": blackboard.data["next_obs"].copy(),
+                "done": blackboard.data["done"]
             })
             
     pipeline.append(CaptureComponent())

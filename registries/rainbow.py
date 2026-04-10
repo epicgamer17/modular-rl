@@ -4,11 +4,12 @@ from typing import Tuple, Dict, Any, List, Optional
 
 from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
-from modules.heads.q import QHead
+from modules.heads.q import QHead, DuelingQHead
 from learner.losses.representations import C51Representation
 from actors.action_selectors.selectors import ArgmaxSelector
 
-from data.storage.circular import BufferConfig, ModularReplayBuffer
+from data.storage.circular import BufferConfig, ModularReplayBuffer, CircularWriter
+from data.samplers.prioritized import PrioritizedSampler
 from data.concurrency import LocalBackend
 from data.processors import (
     StackedInputProcessor,
@@ -18,8 +19,11 @@ from data.processors import (
     FilterKeysInputProcessor,
     StandardOutputProcessor,
 )
-from data.writers import CircularWriter
-from data.samplers.prioritized import PrioritizedSampler
+from data.writers import SharedCircularWriter
+from components.environment import GymObservationComponent, GymStepComponent
+from components.telemetry import TelemetryComponent
+from components.memory import BufferStoreComponent
+from components.actor_logic import NetworkInferenceComponent, ArgmaxSelectorComponent
 
 from core import BlackboardEngine
 from components.neural import ForwardPassComponent
@@ -30,7 +34,10 @@ from components.routing import ResetNoiseComponent
 from components.math import LossAggregatorComponent
 from components.memory import PriorityUpdateComponent
 from components.math import QBootstrappingLoss
-from components.targets import DistributionalTargetComponent, UniversalInfrastructureComponent
+from components.targets import (
+    DistributionalTargetComponent,
+    UniversalInfrastructureComponent,
+)
 from learner.losses.priorities import MaxLossPriorityComputer
 from utils.schedule import Schedule, ConstantSchedule
 
@@ -41,7 +48,7 @@ def make_rainbow_network(
     hidden_widths: List[int] = [128],
     atom_size: int = 51,
     v_min: float = 0.0,
-    v_max: float = 500.0,
+    v_max: float = 200.0,
     noisy_sigma: float = 0.5,
     device: torch.device = torch.device("cpu"),
 ) -> ModularAgentNetwork:
@@ -51,11 +58,13 @@ def make_rainbow_network(
     representation = C51Representation(vmin=v_min, vmax=v_max, bins=atom_size)
 
     backbone = MLPBackbone(input_shape=obs_dim, widths=hidden_widths)
-    head = QHead(
+    # Head uses Dueling architecture: [Backbone] -> [Value Stream / Advantage Stream]
+    head = DuelingQHead(
         input_shape=backbone.output_shape,
         num_actions=num_actions,
         representation=representation,
-        hidden_widths=[],  # Backbone handles the depth
+        value_hidden_widths=[128],
+        advantage_hidden_widths=[128],
         noisy_sigma=noisy_sigma,
     )
     return ModularAgentNetwork(
@@ -77,6 +86,7 @@ def make_rainbow_replay_buffer(
     per_alpha: float = 0.2,
     per_beta: float = 0.6,
     per_epsilon: float = 1e-6,
+    shared: bool = False,
 ) -> ModularReplayBuffer:
     """
     Creates a standard Rainbow replay buffer (Prioritized + N-Step).
@@ -123,16 +133,46 @@ def make_rainbow_replay_buffer(
         epsilon=per_epsilon,
     )
 
+    writer_cls = SharedCircularWriter if shared else CircularWriter
+
     return ModularReplayBuffer(
         max_size=max_size,
         batch_size=batch_size,
         buffer_configs=buffer_configs,
         input_processor=input_processor,
         output_processor=StandardOutputProcessor(),
-        writer=CircularWriter(max_size=max_size),
+        writer=writer_cls(max_size=max_size),
         sampler=sampler,
         backend=LocalBackend(),
     )
+
+
+def make_rainbow_actor_engine(
+    env: Any,
+    agent_network: ModularAgentNetwork,
+    replay_buffer: Optional[ModularReplayBuffer],
+    obs_dim: Tuple[int, ...],
+    device: torch.device = torch.device("cpu"),
+) -> BlackboardEngine:
+    """
+    Creates a standard Rainbow actor engine (BlackboardEngine).
+    """
+    obs_component = GymObservationComponent(env)
+    step_component = GymStepComponent(env, obs_component)
+
+    components = [
+        obs_component,
+        ResetNoiseComponent(agent_network),
+        NetworkInferenceComponent(agent_network, obs_dim),
+        ArgmaxSelectorComponent(),
+        step_component,
+        TelemetryComponent(name="rainbow_actor"),
+    ]
+
+    if replay_buffer is not None:
+        components.append(BufferStoreComponent(replay_buffer))
+
+    return BlackboardEngine(components=components, device=device)
 
 
 def make_rainbow_learner(

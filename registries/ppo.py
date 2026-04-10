@@ -26,14 +26,28 @@ from data.writers import PPOWriter
 from data.samplers.prioritized import WholeBufferSampler
 
 from core import BlackboardEngine
+from components.telemetry import TelemetryComponent
 from components.neural import ForwardPassComponent
-from components.math import OptimizerStepComponent
-from components.math import MetricEarlyStopComponent
-from components.math import LossAggregatorComponent
-from components.math import ClippedSurrogateLoss
-from components.math import ClippedValueLoss
-from components.targets import PassThroughTargetComponent, TargetFormatterComponent, UniversalInfrastructureComponent
-from components.math import ShapeValidator
+from components.math import (
+    OptimizerStepComponent,
+    MetricEarlyStopComponent,
+    LossAggregatorComponent,
+    ClippedSurrogateLoss,
+    ClippedValueLoss,
+    ShapeValidator,
+)
+from components.targets import (
+    PassThroughTargetComponent,
+    TargetFormatterComponent,
+    UniversalInfrastructureComponent,
+)
+from components.environment import GymObservationComponent, GymStepComponent
+from components.actor_logic import (
+    NetworkInferenceComponent,
+    CategoricalSelectorComponent,
+    PPODecoratorComponent,
+)
+from components.memory import BufferStoreComponent
 
 
 def make_ppo_network(
@@ -75,6 +89,7 @@ def make_ppo_replay_buffer(
         BufferConfig("observations", shape=obs_dim, dtype=torch.float32),
         BufferConfig("actions", shape=(), dtype=torch.int64),
         BufferConfig("rewards", shape=(), dtype=torch.float32),
+        BufferConfig("dones", shape=(), dtype=torch.bool),
         BufferConfig("values", shape=(), dtype=torch.float32),
         BufferConfig("old_log_probs", shape=(), dtype=torch.float32),
         BufferConfig("legal_moves_masks", shape=(num_actions,), dtype=torch.bool),
@@ -157,5 +172,45 @@ def make_ppo_learner(
 
     if target_kl is not None:
         components.append(MetricEarlyStopComponent(threshold=target_kl))
+
+    return BlackboardEngine(components=components, device=device)
+
+
+def make_ppo_actor_engine(
+    env: Any,
+    agent_network: ModularAgentNetwork,
+    replay_buffer: Optional[ModularReplayBuffer],
+    obs_dim: Tuple[int, ...],
+    num_actions: int,
+    exploration: bool = True,
+    device: torch.device = torch.device("cpu"),
+) -> BlackboardEngine:
+    """
+    Creates a standard PPO actor engine.
+    """
+    obs_component = GymObservationComponent(env)
+    step_component = GymStepComponent(env, obs_component)
+
+    components = [
+        obs_component,
+        NetworkInferenceComponent(agent_network, obs_dim),
+        CategoricalSelectorComponent(exploration=exploration),
+        PPODecoratorComponent(),
+        step_component,
+        TelemetryComponent(name="ppo_actor"),
+    ]
+
+    if replay_buffer is not None:
+        # PPO usually stores specific fields
+        ppo_field_map = {
+            "observations": "data.obs",
+            "actions": "meta.action",
+            "rewards": "data.reward",
+            "dones": "data.done",
+            "values": "meta.action_metadata.value",
+            "old_log_probs": "meta.action_metadata.log_prob",
+            "legal_moves": "data.info.legal_moves",
+        }
+        components.append(BufferStoreComponent(replay_buffer, field_map=ppo_field_map))
 
     return BlackboardEngine(components=components, device=device)

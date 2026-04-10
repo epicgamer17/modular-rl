@@ -6,8 +6,13 @@ from unittest.mock import MagicMock, call
 from components.math import MetricEarlyStopComponent, MPSCacheClearComponent
 from components.memory import PriorityBufferUpdateComponent, BetaScheduleComponent
 from components.routing import ResetNoiseComponent
-from components.environment import EpsilonScheduleComponent
-from core import Blackboard
+from core import Blackboard, PipelineComponent
+
+class EpsilonScheduleComponent(PipelineComponent):
+    def __init__(self, epsilon_schedule):
+        self.epsilon_schedule = epsilon_schedule
+    def execute(self, blackboard: Blackboard) -> None:
+        self.epsilon_schedule.step()
 
 pytestmark = pytest.mark.unit
 

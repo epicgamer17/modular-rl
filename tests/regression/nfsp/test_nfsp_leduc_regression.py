@@ -30,6 +30,8 @@ from core import RepeatSampleIterator
 import pytest
 
 pytestmark = [pytest.mark.regression, pytest.mark.slow]
+from utils.plotting import plot_regression_results
+
 from data.storage.circular import BufferConfig, ModularReplayBuffer
 from data.samplers.prioritized import UniformSampler
 from pettingzoo.classic import leduc_holdem_v4
@@ -87,6 +89,38 @@ class ReservoirBuffer:
         }
 
 
+def evaluate_nfsp(env, sl_network, num_eval_games, device):
+    """Helper to evaluate NFSP policy."""
+    total_reward = 0
+    sl_network.eval()
+    for _ in range(num_eval_games):
+        env.reset()
+        episode_reward = 0
+        for agent in env.agent_iter():
+            obs_dict, reward, termination, truncation, info = env.last()
+            if agent == "player_0":
+                episode_reward += reward
+            if termination or truncation:
+                action = None
+            else:
+                mask = obs_dict["action_mask"]
+                if agent == "player_0":
+                    obs = obs_dict["observation"]
+                    with torch.no_grad():
+                        obs_t = torch.as_tensor(
+                            obs, device=device, dtype=torch.float32
+                        ).unsqueeze(0)
+                        dist = sl_network.obs_inference(obs_t).policy
+                        logits = dist.logits
+                        logits[0, mask == 0] = -1e9
+                        action = int(logits.argmax().item())
+                else:
+                    action = int(env.action_space(agent).sample(mask))
+            env.step(action)
+        total_reward += episode_reward
+    return total_reward / num_eval_games
+
+
 def test_nfsp_leduc_regression():
     """
     Standalone regression test for Neural Fictitious Self-Play (NFSP) on Leduc Hold'em.
@@ -101,7 +135,7 @@ def test_nfsp_leduc_regression():
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     LR_RL = 1e-2
     LR_SL = 1e-2
-    TRAINING_EPISODES = 10000
+    TRAINING_EPISODES = 50000
     BATCH_SIZE = 128
     ANTICIPATORY_PARAM = 0.1  # eta
     EPSILON_START = 0.06
@@ -147,7 +181,6 @@ def test_nfsp_leduc_regression():
         components={"feature_block": sl_backbone, "policy_head": sl_head}
     ).to(DEVICE)
 
-    # --- Setup Learners ---
     # --- Setup Learners ---
     # 1. RL Learner
     rl_optimizer = {"default": torch.optim.Adam(rl_network.parameters(), lr=LR_RL)}
@@ -221,6 +254,10 @@ def test_nfsp_leduc_regression():
     print(f"Starting NFSP training for {TRAINING_EPISODES} episodes...")
 
     total_steps = 0
+    training_scores = []
+    rl_losses = []
+    sl_losses = []
+    eval_score_history = []
     for episode in range(1, TRAINING_EPISODES + 1):
         env.reset()
 
@@ -281,15 +318,23 @@ def test_nfsp_leduc_regression():
             env.step(action)
             total_steps += 1
 
-            # Perform learning steps every few steps
+            # Record score (simplified for MA environment - just recording if current agent got reward)
+            # This is a bit noisy for MA, but gives a sense of progress
+            if (termination or truncation) and agent == "player_0":
+                training_scores.append(reward)
+
             if total_steps > 500 and total_steps % 4 == 0:
                 # RL Update
                 if rl_buffer.size >= BATCH_SIZE:
                     rl_iterator = RepeatSampleIterator(
                         rl_buffer, num_iterations=1, device=DEVICE
                     )
-                    for _ in rl_learner.step(rl_iterator):
-                        pass
+                    for metrics in rl_learner.step(rl_iterator):
+                        if (
+                            "total_losses" in metrics
+                            and "default" in metrics["total_losses"]
+                        ):
+                            rl_losses.append(metrics["total_losses"]["default"])
 
                 # SL Update
                 sl_batch = sl_buffer.sample(BATCH_SIZE)
@@ -309,15 +354,27 @@ def test_nfsp_leduc_regression():
                         def __iter__(self):
                             return self
 
-                    for _ in sl_learner.step(SimpleIterator(sl_batch)):
-                        pass
+                    for metrics in sl_learner.step(SimpleIterator(sl_batch)):
+                        if (
+                            "total_losses" in metrics
+                            and "default" in metrics["total_losses"]
+                        ):
+                            sl_losses.append(metrics["total_losses"]["default"])
 
         if episode % 1000 == 0:
             print(f"Episode {episode} completed. Total steps: {total_steps}")
 
-        if episode % 100 == 0:
             # Target network sync
             rl_target_network.load_state_dict(rl_network.state_dict())
+
+        # Periodic evaluation to get a cleaner score curve
+        if episode % 500 == 0:
+            # reuse evaluation logic but limited trials
+            eval_reward = evaluate_nfsp(
+                env, sl_network, num_eval_games=20, device=DEVICE
+            )
+            eval_score_history.append(eval_reward)
+            sl_network.train()
 
     # --- Evaluation ---
     print("\nEvaluating NFSP Average Policy against Random...")
@@ -356,6 +413,15 @@ def test_nfsp_leduc_regression():
 
     avg_reward = total_reward / num_eval_games
     print(f"Average Reward (Player 0) against Random: {avg_reward:.3f}")
+    eval_score_history.append(avg_reward)
+
+    # Plot results
+    plot_regression_results(
+        name="NFSP Leduc",
+        train_scores=training_scores,
+        test_scores=eval_score_history,
+        losses={"RL Loss": rl_losses, "SL Loss": sl_losses},
+    )
 
     # In Leduc, a basic strategy should always beat random (avg reward > 0)
     assert avg_reward > 0.3, f"NFSP failed! Avg reward: {avg_reward}"

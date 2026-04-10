@@ -12,6 +12,7 @@ from registries import (
     make_muzero_search_engine,
     make_muzero_replay_buffer,
     make_muzero_learner,
+    make_muzero_actor_engine,
 )
 from core import SingleBatchIterator
 from actors.action_selectors.selectors import CategoricalSelector
@@ -20,8 +21,10 @@ from utils.schedule import StepwiseSchedule
 from envs.factories.tictactoe import tictactoe_factory
 from actors.experts.tictactoe_expert import TicTacToeBestAgent
 from executors.torch_mp_executor import TorchMPExecutor
-from actors.workers.actors import PettingZooActor
+from runners.workers.actor_worker import ActorWorker
 from actors.workers.tester import Tester, VsAgentTest
+from utils.plotting import plot_regression_results
+
 
 # Module-level marker for regression tests
 pytestmark = [pytest.mark.regression, pytest.mark.slow]
@@ -111,6 +114,7 @@ def test_muzero_tictactoe_full_training():
         td_steps=TD_STEPS,
         discount_factor=DISCOUNT_FACTOR,
         num_players=2,
+        player_map={"player_1": 0, "player_2": 1},
     )
 
     # --- 4. Learner ---
@@ -128,23 +132,20 @@ def test_muzero_tictactoe_full_training():
     # --- 5. Executor Launch ---
     executor = TorchMPExecutor()
 
-    # Match BaseActor.__init__ positional arguments
-    launch_args = (
-        tictactoe_factory,
-        agent_network,
-        action_selector,
-        replay_buffer,
-        2,  # num_players
-        torch.device("cpu"),  # worker device
-        obs_dim,
-        num_actions,
-        "muzero_worker",
+    # Create Actor Engine
+    actor_engine = make_muzero_actor_engine(
+        env=tictactoe_factory(),
+        agent_network=agent_network,
+        search_engine=search_engine,
+        replay_buffer=replay_buffer,
+        obs_dim=obs_dim,
+        num_actions=num_actions,
+        num_players=2,
+        exploration=True,
+        device=torch.device("cpu"),
     )
-    launch_kwargs = {"search_engine": search_engine}
 
-    executor.launch(
-        PettingZooActor, launch_args, num_workers=NUM_WORKERS, **launch_kwargs
-    )
+    executor.launch(ActorWorker, (actor_engine,), num_workers=NUM_WORKERS)
 
     # Tester setup
     tester_launch_args = (
@@ -172,17 +173,28 @@ def test_muzero_tictactoe_full_training():
             ),
         ],
     )
-    executor.launch(Tester, tester_launch_args, num_workers=1, **launch_kwargs)
+    executor.launch(Tester, tester_launch_args, num_workers=1, search_engine=search_engine)
 
     # --- 6. Training Loop ---
     print(f"Starting MuZero Tic-Tac-Toe training for {TOTAL_TRAINING_STEPS} steps...")
     train_steps = 0
     to_play_losses = []
+    total_losses = []
+    training_scores = []
+    test_score_history = []
     while train_steps < TOTAL_TRAINING_STEPS:
+
         # 1. Data Collection
-        results, collect_stats = executor.collect_data(
-            min_samples=None, worker_type=PettingZooActor
-        )
+        results, _ = executor.collect_data(min_samples=None, worker_type=ActorWorker)
+        for res in results:
+            if "episode_score" in res:
+                # MuZero might return multiple players' scores or a mean
+                # For TicTacToe, score is usually per player
+                if isinstance(res["episode_score"], (list, tuple, np.ndarray)):
+                    training_scores.append(np.mean(res["episode_score"]))
+                else:
+                    training_scores.append(res["episode_score"])
+
 
         # 2. Learning
         if replay_buffer.size >= BATCH_SIZE:
@@ -194,6 +206,10 @@ def test_muzero_tictactoe_full_training():
 
                 if "to_play_loss" in metrics["losses"]:
                     to_play_losses.append(metrics["losses"]["to_play_loss"])
+                
+                if "default" in metrics["total_losses"]:
+                    total_losses.append(metrics["total_losses"]["default"])
+
 
             train_steps += 1
 
@@ -210,6 +226,12 @@ def test_muzero_tictactoe_full_training():
                     min_samples=None, worker_type=Tester
                 )
                 print(f"[Step {train_steps}] Test results: {test_results}")
+                if test_results:
+                    last_res = test_results[-1]
+                    p0 = last_res.get("vs_expert_p0", {}).get("score", 0.0)
+                    p1 = last_res.get("vs_expert_p1", {}).get("score", 0.0)
+                    test_score_history.append((p0 + p1) / 2)
+
 
     # Final Evaluation
     print("Performing final evaluation...")
@@ -225,6 +247,15 @@ def test_muzero_tictactoe_full_training():
 
     executor.stop()
     print(f"Final Test results: {test_results}")
+
+    # Plot results
+    plot_regression_results(
+        name="MuZero TicTacToe",
+        train_scores=training_scores,
+        test_scores=test_score_history,
+        losses={"Total Loss": total_losses, "To-Play Loss": to_play_losses}
+    )
+
 
     if test_results:
         # Take the most recent evaluation

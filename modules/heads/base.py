@@ -49,10 +49,12 @@ class BaseHead(nn.Module):
         return flat
 
     def reset_noise(self) -> None:
-        if hasattr(self.neck, "reset_noise"):
-            self.neck.reset_noise()
-        if self.output_layer is not None and hasattr(self.output_layer, "reset_noise"):
-            self.output_layer.reset_noise()
+        """Recursive reset_noise for all child modules."""
+        for module in self.modules():
+            if module is self:
+                continue
+            if hasattr(module, "reset_noise"):
+                module.reset_noise()
 
     def forward(
         self, x: Tensor, state: Optional[Dict[str, Any]] = None

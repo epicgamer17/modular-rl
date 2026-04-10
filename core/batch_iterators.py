@@ -14,6 +14,7 @@ import torch
 from data.storage.circular import ModularReplayBuffer
 
 
+# TODO: unify this with my standard blackboard iterators.
 class SingleBatchIterator:
     """Yields exactly one batch sampled from the replay buffer."""
 
@@ -93,10 +94,3 @@ class PPOEpochIterator:
                     for k, v in batch.items()
                 }
                 yield sub_batch
-
-
-# TODO: this feels somewhat hacky? should we have a buffer sampling component instead or something?
-def infinite_ticks() -> Iterator[Dict[str, Any]]:
-    """Yields empty dicts indefinitely for agents that don't need sampler data (e.g. inference only)."""
-    while True:
-        yield {}

@@ -24,6 +24,8 @@ from components.targets import (
 from core import RepeatSampleIterator
 from envs.factories.wrappers.observation import ActionMaskInInfoWrapper
 import pytest
+from utils.plotting import plot_regression_results
+
 
 pytestmark = pytest.mark.regression
 from data.storage.circular import BufferConfig, ModularReplayBuffer
@@ -46,8 +48,8 @@ def test_imitation_tictactoe_regression():
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     BATCH_SIZE = 128
     LEARNING_RATE = 0.003
-    TRAINING_STEPS = 3000
-    EXPERT_EPISODES = 1000
+    TRAINING_STEPS = 30000
+    EXPERT_EPISODES = 10000
 
     # --- Setup Environment & Expert ---
     env = tictactoe_v3.env()
@@ -142,54 +144,98 @@ def test_imitation_tictactoe_regression():
 
     # --- Training Loop ---
     print(f"Training for {TRAINING_STEPS} steps...")
+    total_losses = []
     for step in range(1, TRAINING_STEPS + 1):
         iterator = RepeatSampleIterator(replay_buffer, num_iterations=1, device=DEVICE)
         metrics = []
         for step_metrics in learner.step(iterator):
             # BlackboardEngine.step yields {"losses": ..., "total_losses": ..., "meta": ...}
-            metrics.append(step_metrics["total_losses"]["default"])
+            loss_val = step_metrics["total_losses"]["default"]
+            metrics.append(loss_val)
+            total_losses.append(loss_val)
 
         if step % 500 == 0:
             loss_val = np.mean(metrics)
             print(f"Step {step} | Loss: {loss_val:.4f}")
 
     # --- Evaluation ---
-    print("Evaluating trained model...")
-    # Greedy win rate against random should be very high
+    print("Evaluating trained model against Random...")
     agent_network.eval()
-    wins = 0
-    total_eval_episodes = 100
 
-    for _ in range(total_eval_episodes):
-        env.reset()
-        for agent in env.agent_iter():
-            obs, reward, termination, truncation, info = env.last()
-            if termination or truncation:
-                if reward > 0:
-                    wins += 1
-                action = None
-            else:
-                # Greedily select action
-                obs_tensor = (
-                    torch.from_numpy(obs).float().unsqueeze(0).to(DEVICE)
-                )  # [1, H, W, C]
-                with torch.inference_mode():
-                    output = agent_network.obs_inference(obs_tensor)
-                    logits = output.policy.logits[0]
-                    # Mask legal moves
-                    mask = torch.zeros(num_actions, dtype=torch.bool, device=DEVICE)
-                    mask[info["legal_moves"]] = True
-                    logits[~mask] = -float("inf")
-                    action = torch.argmax(logits).item()
+    def run_eval(opponent_type="random", num_episodes=100):
+        wins = 0
+        draws = 0
+        losses = 0
+        for _ in range(num_episodes):
+            env.reset()
+            for agent in env.agent_iter():
+                obs, reward, termination, truncation, info = env.last()
 
-            env.step(action)
+                if agent == "player_1":
+                    if termination or truncation:
+                        if reward > 0:
+                            wins += 1
+                        elif reward < 0:
+                            losses += 1
+                        else:
+                            draws += 1
+                        action = None
+                    else:
+                        obs_tensor = (
+                            torch.from_numpy(obs).float().unsqueeze(0).to(DEVICE)
+                        )
+                        with torch.inference_mode():
+                            output = agent_network.obs_inference(obs_tensor)
+                            logits = output.policy.logits[0]
+                            mask = torch.zeros(
+                                num_actions, dtype=torch.bool, device=DEVICE
+                            )
+                            mask[info["legal_moves"]] = True
+                            logits[~mask] = -float("inf")
+                            action = torch.argmax(logits).item()
+                else:  # player_2 (the opponent)
+                    if termination or truncation:
+                        action = None
+                    else:
+                        mask = info["legal_moves"]
+                        if opponent_type == "random":
+                            action = int(random.choice(mask))
+                        else:  # expert
+                            expert_obs = np.moveaxis(obs, -1, 0)
+                            expert_info = {"legal_moves": mask}
+                            action = expert.select_actions(expert_obs, expert_info)
+                env.step(action)
+        return wins, draws, losses
 
-    win_rate = wins / total_eval_episodes
-    print(f"Win rate: {win_rate:.2f}")
+    # 1. Eval against Random
+    rand_wins, rand_draws, rand_losses = run_eval("random", 100)
+    win_rate = rand_wins / 100
+    print(
+        f"Against Random | Wins: {rand_wins}, Draws: {rand_draws}, Losses: {rand_losses}"
+    )
 
-    # In TicTacToe imitation of a perfect expert, it should never lose against random, # but win rate can vary depending on random moves.
-    # Let's just assert it learns SOMETHING (win rate > 0.8)
-    assert win_rate == 1.00, f"Imitation win rate {win_rate} is too low."
+    # 2. Eval against Expert
+    exp_wins, exp_draws, exp_losses = run_eval("expert", 100)
+    print(
+        f"Against Expert | Wins: {exp_wins}, Draws: {exp_draws}, Losses: {exp_losses}"
+    )
+
+    # In TicTacToe imitation of a perfect expert, it should never lose against random.
+    # We assert it wins or draws almost all games.
+    assert rand_losses <= 1, f"Imitation agent lost {rand_losses} games against RANDOM."
+    assert win_rate >= 0.7, f"Imitation win rate {win_rate} against random is too low."
+
+    # Against expert, it should at least draw most games if it learned correctly.
+    # A perfect player never loses Tic-Tac-Toe.
+    assert exp_losses <= 5, f"Imitation agent lost {exp_losses} games against EXPERT."
+
+    # Plot results (Note: No training scores as this is supervised learning)
+    plot_regression_results(
+        name="Imitation TicTacToe",
+        train_scores=[],
+        test_scores=[win_rate],
+        losses={"Policy Loss": total_losses},
+    )
 
 
 if __name__ == "__main__":

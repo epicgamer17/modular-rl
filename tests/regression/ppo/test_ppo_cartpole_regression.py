@@ -10,10 +10,13 @@ from registries import (
     make_ppo_replay_buffer,
     make_ppo_learner,
 )
+from components.telemetry import TelemetryComponent
 from actors.action_selectors.selectors import CategoricalSelector
 from actors.action_selectors.decorators import PPODecorator
 from actors.action_selectors.policy_sources import NetworkPolicySource
 from core import PPOEpochIterator
+from utils.plotting import plot_regression_results
+
 
 # Module-level marker for regression tests
 # Declared just below imports as per README.md
@@ -38,7 +41,10 @@ def evaluate_agent(
 
                 result = policy_source.get_inference(obs=obs_tensor, info=info)
                 action, _ = action_selector.select_action(
-                    result=result, info=info, exploration=False, )
+                    result=result,
+                    info=info,
+                    exploration=False,
+                )
 
                 state, reward, terminated, truncated, info = env.step(action.item())
                 done = terminated or truncated
@@ -81,8 +87,8 @@ def test_ppo_cartpole_full_training():
     TOTAL_STEPS = 512000  # Enough to reach high average reliably (450+)
 
     from components.environment import (
-        SimpleEnvObservationComponent,
-        SimpleEnvStepComponent,
+        GymObservationComponent,
+        GymStepComponent,
     )
     from components.actor_logic import (
         NetworkInferenceComponent,
@@ -99,35 +105,55 @@ def test_ppo_cartpole_full_training():
 
     # --- Components ---
     agent_network = make_ppo_network(
-        obs_dim=obs_dim, num_actions=num_actions, hidden_widths=[64, 64], device=DEVICE, )
+        obs_dim=obs_dim,
+        num_actions=num_actions,
+        hidden_widths=[64, 64],
+        device=DEVICE,
+    )
 
     replay_buffer = make_ppo_replay_buffer(
-        obs_dim=obs_dim, num_actions=num_actions, steps_per_epoch=STEPS_PER_EPOCH, gamma=GAMMA, gae_lambda=GAE_LAMBDA, )
+        obs_dim=obs_dim,
+        num_actions=num_actions,
+        steps_per_epoch=STEPS_PER_EPOCH,
+        gamma=GAMMA,
+        gae_lambda=GAE_LAMBDA,
+    )
 
     optimizer = torch.optim.Adam(agent_network.parameters(), lr=LEARNING_RATE)
 
     learner = make_ppo_learner(
-        agent_network=agent_network, optimizer=optimizer, minibatch_size=STEPS_PER_EPOCH // NUM_MINIBATCHES, num_actions=num_actions, device=DEVICE, clip_param=CLIP_PARAM, entropy_coef=ENTROPY_COEF, value_coef=VALUE_COEF, max_grad_norm=0.5, target_kl=TARGET_KL, )
+        agent_network=agent_network,
+        optimizer=optimizer,
+        minibatch_size=STEPS_PER_EPOCH // NUM_MINIBATCHES,
+        num_actions=num_actions,
+        device=DEVICE,
+        clip_param=CLIP_PARAM,
+        entropy_coef=ENTROPY_COEF,
+        value_coef=VALUE_COEF,
+        max_grad_norm=0.5,
+        target_kl=TARGET_KL,
+    )
 
     # --- Collection Pipeline ---
-    obs_comp = SimpleEnvObservationComponent(env)
-    
+    obs_comp = GymObservationComponent(env)
+
     # Custom field map for PPO buffer keys
     ppo_field_map = {
-        "observations": "data.observations",
+        "observations": "data.obs",
         "actions": "meta.action",
-        "rewards": "data.rewards",
-        "dones": "data.dones",
+        "rewards": "data.reward",
+        "dones": "data.done",
         "values": "meta.action_metadata.value",
         "old_log_probs": "meta.action_metadata.log_prob",
     }
-    
+
     collection_components = [
         obs_comp,
         NetworkInferenceComponent(agent_network, obs_dim),
         CategoricalSelectorComponent(exploration=True),
         PPODecoratorComponent(),
-        SimpleEnvStepComponent(env, obs_comp),
+        GymStepComponent(env, obs_comp),
+        TelemetryComponent(name="ppo_regression"),
         BufferStoreComponent(replay_buffer, field_map=ppo_field_map),
     ]
     collector = BlackboardEngine(collection_components, device=DEVICE)
@@ -135,7 +161,12 @@ def test_ppo_cartpole_full_training():
     # --- Training Loop ---
     steps_collected = 0
     training_scores = []
+    test_score_history = []
+    total_losses = []
+    policy_losses = []
+    value_losses = []
     state, info = env.reset()
+
 
     print("Starting PPO training loop...")
     while steps_collected < TOTAL_STEPS:
@@ -147,11 +178,13 @@ def test_ppo_cartpole_full_training():
             meta = result["meta"]
             epoch_steps += 1
             steps_collected += 1
-            
+
             if "episode_score" in meta:
                 training_scores.append(meta["episode_score"])
                 if len(training_scores) % 50 == 0:
-                    print(f"Game {len(training_scores)} | Score: {meta['episode_score']} | Avg (L100): {np.mean(training_scores[-100:]):.2f} | Total Steps: {steps_collected}")
+                    print(
+                        f"Game {len(training_scores)} | Score: {meta['episode_score']} | Avg (L100): {np.mean(training_scores[-100:]):.2f} | Total Steps: {steps_collected}"
+                    )
 
             # PPO Trajectory Finishing Logic (at episode end or epoch end)
             if meta["done"] or epoch_steps == STEPS_PER_EPOCH:
@@ -163,11 +196,17 @@ def test_ppo_cartpole_full_training():
                         # Try to get final_observation from info (Gym standard for truncated episodes)
                         final_obs = meta.get("info", {}).get("final_observation")
                         if final_obs is not None:
-                            obs_t = torch.as_tensor(final_obs, dtype=torch.float32, device=DEVICE).unsqueeze(0)
+                            obs_t = torch.as_tensor(
+                                final_obs, dtype=torch.float32, device=DEVICE
+                            ).unsqueeze(0)
                         else:
                             # Fallback to the current observation in the env_state/obs_comp
-                            obs_t = torch.as_tensor(obs_comp.current_obs, dtype=torch.float32, device=DEVICE).unsqueeze(0)
-                            
+                            obs_t = obs_comp.state
+                            if not torch.is_tensor(obs_t):
+                                obs_t = torch.as_tensor(
+                                    obs_t, dtype=torch.float32, device=DEVICE
+                                ).unsqueeze(0)
+
                         out = agent_network.obs_inference(obs_t)
                         last_value = out.value.item()
 
@@ -176,11 +215,14 @@ def test_ppo_cartpole_full_training():
 
                 if trajectory_end_index > trajectory_start_index:
                     res = replay_buffer.input_processor.finish_trajectory(
-                        replay_buffer.buffers, trajectory_slice, last_value=last_value, )
+                        replay_buffer.buffers,
+                        trajectory_slice,
+                        last_value=last_value,
+                    )
                     if res:
                         for k, v in res.items():
                             replay_buffer.buffers[k][trajectory_slice] = v
-                
+
                 trajectory_start_index = trajectory_end_index
 
             if epoch_steps >= STEPS_PER_EPOCH:
@@ -188,16 +230,29 @@ def test_ppo_cartpole_full_training():
 
         # Learning Phase
         iterator = PPOEpochIterator(
-            replay_buffer=replay_buffer, num_epochs=TRAIN_POLICY_ITERATIONS, num_minibatches=NUM_MINIBATCHES, device=DEVICE, )
-        for _ in learner.step(iterator):
-            pass
+            replay_buffer=replay_buffer,
+            num_epochs=TRAIN_POLICY_ITERATIONS,
+            num_minibatches=NUM_MINIBATCHES,
+            device=DEVICE,
+        )
+        for metrics in learner.step(iterator):
+            if "total_losses" in metrics and "default" in metrics["total_losses"]:
+                total_losses.append(metrics["total_losses"]["default"])
+            if "losses" in metrics:
+                if "policy_loss" in metrics["losses"]:
+                    policy_losses.append(metrics["losses"]["policy_loss"])
+                if "value_loss" in metrics["losses"]:
+                    value_losses.append(metrics["losses"]["value_loss"])
+
         replay_buffer.clear()
 
         # Early break if solved (475+) to speed up test
         if len(training_scores) >= 100:
             avg_training_score = np.mean(training_scores[-100:])
-            if avg_training_score >= 475.0:
-                print(f"Solved! Final Avg Training Score (last 100): {avg_training_score:.2f}")
+            if avg_training_score >= 500.0:
+                print(
+                    f"Solved! Final Avg Training Score (last 100): {avg_training_score:.2f}"
+                )
                 break
 
     # --- Assertions ---
@@ -216,6 +271,19 @@ def test_ppo_cartpole_full_training():
         assert score == 500.0
 
     env.close()
+
+    # Plot results
+    plot_regression_results(
+        name="PPO CartPole",
+        train_scores=training_scores,
+        test_scores=test_scores,  # These are the final evaluation scores
+        losses={
+            "Total Loss": total_losses,
+            "Policy Loss": policy_losses,
+            "Value Loss": value_losses
+        }
+    )
+
 
 
 if __name__ == "__main__":

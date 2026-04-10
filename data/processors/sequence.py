@@ -32,10 +32,7 @@ class SequenceTensorProcessor(InputProcessor):
         if isinstance(player_id, int):
             return player_id
         if player_id not in self.player_id_mapping:
-            raise ValueError(
-                f"player_id '{player_id}' not found in player_id_mapping. "
-                f"Available keys: {list(self.player_id_mapping.keys())}"
-            )
+            raise KeyError(player_id)
         return self.player_id_mapping[player_id]
 
     def process_single(self, **kwargs):
@@ -50,55 +47,59 @@ class SequenceTensorProcessor(InputProcessor):
         n_transitions = len(sequence.action_history)
         if n_transitions + 1 != n_states:
             raise ValueError(
-                "observation_history must have exactly one more entry than action_history"
+                f"observation_history must have exactly one more entry than action_history: {n_states} vs {n_transitions}"
             )
-        if len(sequence.terminated_history) != n_states:
-            raise ValueError(
-                "Sequence terminated_history length must equal observation_history length"
-            )
-        if len(sequence.truncated_history) != n_states:
-            raise ValueError(
-                "Sequence truncated_history length must equal observation_history length"
-            )
-        if len(sequence.done_history) != n_states:
-            raise ValueError(
-                "Sequence done_history length must equal observation_history length"
-            )
-        obs_tensor = torch.from_numpy(np.stack(obs_history))  # .to(self.device)
 
-        # 2. Prepare transition-aligned tensors (no algorithm-specific padding here).
-        acts_t = torch.tensor(sequence.action_history, dtype=torch.float16)
-        rews_t = torch.tensor(sequence.rewards, dtype=torch.float32)
+        try:
+            obs_array = np.stack(obs_history)
+            if obs_array.dtype == object:
+                raise TypeError(
+                    f"Observations stacked into object array. Length: {len(obs_history)}"
+                )
+            obs_tensor = torch.from_numpy(obs_array)
+        except Exception as e:
+            raise RuntimeError(f"Failed to process observations: {e}")
+
+        # 2. Prepare transition-aligned tensors
+        try:
+            acts_t = torch.tensor(sequence.action_history, dtype=torch.float16)
+        except Exception as e:
+            raise RuntimeError(f"Failed to process actions: {e}")
+
+        try:
+            rews_t = torch.tensor(sequence.rewards, dtype=torch.float32)
+        except Exception as e:
+            raise RuntimeError(f"Failed to process rewards: {e}")
 
         if sequence.policy_history:
-            pols_t = (
-                torch.stack(
-                    [
-                        p.detach() if torch.is_tensor(p) else torch.as_tensor(p)
-                        for p in sequence.policy_history
-                    ]
+            try:
+                pols_t = (
+                    torch.stack(
+                        [
+                            p.detach() if torch.is_tensor(p) else torch.as_tensor(p)
+                            for p in sequence.policy_history
+                        ]
+                    )
+                    .cpu()
+                    .float()
                 )
-                .cpu()
-                .float()
-            )
+            except Exception as e:
+                raise RuntimeError(f"Failed to process policies: {e}")
         else:
             pols_t = torch.empty((0, self.num_actions), dtype=torch.float32)
 
-        # Values
         vals_t = torch.tensor(sequence.value_history, dtype=torch.float32)
 
         # To Plays
-        tps_t = torch.tensor(
-            [
-                (
-                    self._resolve_player_id(sequence.player_id_history[i])
-                    if i < len(sequence.player_id_history)
-                    else 0
-                )
-                for i in range(n_states)
-            ],
-            dtype=torch.int16,
-        )
+        t_plays = []
+        for i in range(n_states):
+            pid = (
+                sequence.player_id_history[i]
+                if i < len(sequence.player_id_history)
+                else 0
+            )
+            t_plays.append(self._resolve_player_id(pid))
+        tps_t = torch.tensor(t_plays, dtype=torch.int16)
 
         # Chances
         chance_t = torch.tensor(
@@ -110,21 +111,23 @@ class SequenceTensorProcessor(InputProcessor):
         ).unsqueeze(1)
 
         # Legal Moves Mask
-        legal_masks_t = torch.stack(
-            [
-                legal_moves_mask(
-                    self.num_actions,
-                    (
-                        sequence.legal_moves_history[i]
-                        if i < len(sequence.legal_moves_history)
-                        else []
-                    ),
-                )
-                for i in range(n_states)
-            ]
-        )
+        try:
+            legal_masks_t = torch.stack(
+                [
+                    legal_moves_mask(
+                        self.num_actions,
+                        (
+                            sequence.legal_moves_history[i]
+                            if i < len(sequence.legal_moves_history)
+                            else []
+                        ),
+                    )
+                    for i in range(n_states)
+                ]
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to process legal masks: {e}")
 
-        # Episode end signals per state
         terminated_t = torch.tensor(sequence.terminated_history, dtype=torch.bool)
         truncated_t = torch.tensor(sequence.truncated_history, dtype=torch.bool)
         dones_t = torch.tensor(sequence.done_history, dtype=torch.bool)

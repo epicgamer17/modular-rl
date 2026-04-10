@@ -1,0 +1,329 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.3, pytest-9.0.2, pluggy-1.6.0 -- /Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/.venv/bin/python
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff
+configfile: pytest.ini (WARNING: ignoring pytest config in pyproject.toml!)
+plugins: anyio-4.12.1, hypothesis-6.151.9, cov-7.0.0
+collecting ... collected 1 item
+
+tests/regression/ppo/test_ppo_cartpole_regression.py::test_ppo_cartpole_full_training FAILED [100%]/Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/.venv/lib/python3.12/site-packages/coverage/inorout.py:561: CoverageWarning: Module agents was never imported. (module-not-imported); see https://coverage.readthedocs.io/en/7.13.4/messages.html#warning-module-not-imported
+  self.warn(f"Module {pkg} was never imported.", slug="module-not-imported")
+/Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/.venv/lib/python3.12/site-packages/coverage/inorout.py:561: CoverageWarning: Module replay_buffers was never imported. (module-not-imported); see https://coverage.readthedocs.io/en/7.13.4/messages.html#warning-module-not-imported
+  self.warn(f"Module {pkg} was never imported.", slug="module-not-imported")
+/Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/.venv/lib/python3.12/site-packages/coverage/inorout.py:561: CoverageWarning: Module losses was never imported. (module-not-imported); see https://coverage.readthedocs.io/en/7.13.4/messages.html#warning-module-not-imported
+  self.warn(f"Module {pkg} was never imported.", slug="module-not-imported")
+/Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/.venv/lib/python3.12/site-packages/coverage/inorout.py:561: CoverageWarning: Module custom_gym_envs was never imported. (module-not-imported); see https://coverage.readthedocs.io/en/7.13.4/messages.html#warning-module-not-imported
+  self.warn(f"Module {pkg} was never imported.", slug="module-not-imported")
+
+
+=================================== FAILURES ===================================
+_______________________ test_ppo_cartpole_full_training ________________________
+
+    def test_ppo_cartpole_full_training():
+        """
+        Heavy full training test for PPO on CartPole-v1.
+        Asserts sample efficiency and final performance.
+        """
+        setup_seeds()
+    
+        # --- Hyperparameters ---
+        ENV_ID = "CartPole-v1"
+        DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+        STEPS_PER_EPOCH = 512
+        NUM_MINIBATCHES = 4
+        TRAIN_POLICY_ITERATIONS = 4
+        GAMMA = 0.99
+        GAE_LAMBDA = 0.95
+        CLIP_PARAM = 0.2
+        ENTROPY_COEF = 0.01
+        VALUE_COEF = 0.5
+        LEARNING_RATE = 2.5e-4
+        TARGET_KL = 0.02
+        TOTAL_STEPS = 512000  # Enough to reach high average reliably (450+)
+    
+        from components.environment import (
+            GymObservationComponent,
+            GymStepComponent,
+        )
+        from components.actor_logic import (
+            NetworkInferenceComponent,
+            CategoricalSelectorComponent,
+            PPODecoratorComponent,
+        )
+        from components.memory import BufferStoreComponent
+        from core import BlackboardEngine, infinite_ticks
+    
+        # --- Setup Environment ---
+        env = gym.make(ENV_ID)
+        obs_dim = env.observation_space.shape
+        num_actions = env.action_space.n
+    
+        # --- Components ---
+        agent_network = make_ppo_network(
+            obs_dim=obs_dim,
+            num_actions=num_actions,
+            hidden_widths=[64, 64],
+            device=DEVICE,
+        )
+    
+        replay_buffer = make_ppo_replay_buffer(
+            obs_dim=obs_dim,
+            num_actions=num_actions,
+            steps_per_epoch=STEPS_PER_EPOCH,
+            gamma=GAMMA,
+            gae_lambda=GAE_LAMBDA,
+        )
+    
+        optimizer = torch.optim.Adam(agent_network.parameters(), lr=LEARNING_RATE)
+    
+        learner = make_ppo_learner(
+            agent_network=agent_network,
+            optimizer=optimizer,
+            minibatch_size=STEPS_PER_EPOCH // NUM_MINIBATCHES,
+            num_actions=num_actions,
+            device=DEVICE,
+            clip_param=CLIP_PARAM,
+            entropy_coef=ENTROPY_COEF,
+            value_coef=VALUE_COEF,
+            max_grad_norm=0.5,
+            target_kl=TARGET_KL,
+        )
+    
+        # --- Collection Pipeline ---
+        obs_comp = GymObservationComponent(env)
+    
+        # Custom field map for PPO buffer keys
+        ppo_field_map = {
+            "observations": "data.obs",
+            "actions": "meta.action",
+            "rewards": "data.reward",
+            "dones": "data.done",
+            "values": "meta.action_metadata.value",
+            "old_log_probs": "meta.action_metadata.log_prob",
+        }
+    
+        collection_components = [
+            obs_comp,
+            NetworkInferenceComponent(agent_network, obs_dim),
+            CategoricalSelectorComponent(exploration=True),
+            PPODecoratorComponent(),
+            GymStepComponent(env, obs_comp),
+            TelemetryComponent(name="ppo_regression"),
+            BufferStoreComponent(replay_buffer, field_map=ppo_field_map),
+        ]
+        collector = BlackboardEngine(collection_components, device=DEVICE)
+    
+        # --- Training Loop ---
+        steps_collected = 0
+        training_scores = []
+        test_score_history = []
+        total_losses = []
+        policy_losses = []
+        value_losses = []
+        state, info = env.reset()
+    
+    
+        print("Starting PPO training loop...")
+        while steps_collected < TOTAL_STEPS:
+            epoch_steps = 0
+            trajectory_start_index = replay_buffer.size
+    
+            # Collection Phase
+>           for result in collector.step(infinite_ticks()):
+
+tests/regression/ppo/test_ppo_cartpole_regression.py:177: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <core.blackboard_engine.BlackboardEngine object at 0x1577d6870>
+batch_iterator = <generator object infinite_ticks at 0x15751a2c0>
+
+    def step(self, batch_iterator: Iterable[Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
+        t_last = time.perf_counter()
+    
+        for batch in batch_iterator:
+            # 1. Universal Time Mandate: Move Batch to Device explicitly here
+            device_batch = {
+                k: v.to(self.device) if torch.is_tensor(v) else v
+                for k, v in batch.items()
+            }
+            blackboard = Blackboard(data=device_batch)
+    
+            # 2. Sequential Pipeline Execution (Radical Transparency)
+            for component in self.components:
+>               component.execute(blackboard)
+
+core/blackboard_engine.py:30: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <components.environment.GymStepComponent object at 0x1577d6780>
+blackboard = Blackboard(data={'tick': 15, 'obs': tensor([[-0.0138, -0.0016, -0.0425, -0.0336]]), 'info': {}, 'terminated': True, 't... targets={}, losses={}, meta={'action': None, 'action_tensor': tensor(0), 'action_metadata': {'action_is_none': True}})
+
+    def execute(self, blackboard: Blackboard) -> None:
+        # Pull action from blackboard
+        if "action" in blackboard.meta:
+            action = blackboard.meta["action"]
+        elif "actions" in blackboard.predictions:
+            action = blackboard.predictions["actions"].item()
+        else:
+            raise KeyError("No action found in blackboard.meta['action'] or blackboard.predictions['actions']")
+    
+>       next_obs, reward, terminated, truncated, info = self.env.step(action)
+                                                        ^^^^^^^^^^^^^^^^^^^^^
+
+components/environment.py:72: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <TimeLimit<OrderEnforcing<PassiveEnvChecker<CartPoleEnv<CartPole-v1>>>>>
+action = None
+
+    def step(
+        self, action: ActType
+    ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+        """Steps through the environment and if the number of steps elapsed exceeds ``max_episode_steps`` then truncate.
+    
+        Args:
+            action: The environment step action
+    
+        Returns:
+            The environment step ``(observation, reward, terminated, truncated, info)`` with `truncated=True`
+            if the number of steps elapsed >= max episode steps
+    
+        """
+>       observation, reward, terminated, truncated, info = self.env.step(action)
+                                                           ^^^^^^^^^^^^^^^^^^^^^
+
+.venv/lib/python3.12/site-packages/gymnasium/wrappers/common.py:125: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <OrderEnforcing<PassiveEnvChecker<CartPoleEnv<CartPole-v1>>>>
+action = None
+
+    def step(self, action: ActType) -> tuple[ObsType, SupportsFloat, bool, bool, dict]:
+        """Steps through the environment."""
+        if not self._has_reset:
+            raise ResetNeeded("Cannot call env.step() before calling env.reset()")
+>       return super().step(action)
+               ^^^^^^^^^^^^^^^^^^^^
+
+.venv/lib/python3.12/site-packages/gymnasium/wrappers/common.py:393: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <OrderEnforcing<PassiveEnvChecker<CartPoleEnv<CartPole-v1>>>>
+action = None
+
+    def step(
+        self, action: WrapperActType
+    ) -> tuple[WrapperObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+        """Uses the :meth:`step` of the :attr:`env` that can be overwritten to change the returned data."""
+>       return self.env.step(action)
+               ^^^^^^^^^^^^^^^^^^^^^
+
+.venv/lib/python3.12/site-packages/gymnasium/core.py:327: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <PassiveEnvChecker<CartPoleEnv<CartPole-v1>>>, action = None
+
+    def step(
+        self, action: ActType
+    ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+        """Steps through the environment that on the first call will run the `passive_env_step_check`."""
+        if self.checked_step is False:
+            self.checked_step = True
+            return env_step_passive_checker(self.env, action)
+        else:
+>           return self.env.step(action)
+                   ^^^^^^^^^^^^^^^^^^^^^
+
+.venv/lib/python3.12/site-packages/gymnasium/wrappers/common.py:285: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <gymnasium.envs.classic_control.cartpole.CartPoleEnv object at 0x153f05a00>
+action = None
+
+    def step(self, action):
+>       assert self.action_space.contains(
+            action
+        ), f"{action!r} ({type(action)}) invalid"
+E       AssertionError: None (<class 'NoneType'>) invalid
+
+.venv/lib/python3.12/site-packages/gymnasium/envs/classic_control/cartpole.py:165: AssertionError
+----------------------------- Captured stdout call -----------------------------
+Starting PPO training loop...
+------------------------------ Captured log call -------------------------------
+WARNING  root:circular.py:140 Key 'info' from input processor not found in buffers.
+WARNING  root:circular.py:140 Key 'policy_dist' from input processor not found in buffers.
+WARNING  root:circular.py:140 Key 'policy' from input processor not found in buffers.
+WARNING  root:circular.py:140 Key 'value' from input processor not found in buffers.
+WARNING  root:circular.py:140 Key 'log_prob' from input processor not found in buffers.
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:65
+  /Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:65: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+    import pynvml  # type: ignore[import]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ tests coverage ================================
+_______________ coverage: platform darwin, python 3.12.3-final-0 _______________
+
+Name                                                 Stmts   Miss  Cover   Missing
+----------------------------------------------------------------------------------
+modules/agent_nets/base.py                              67     46    31%   30-65, 70-73, 78-82, 87, 94, 103, 110, 117-137
+modules/agent_nets/modular.py                          177    143    19%   47, 55-57, 72-83, 98, 100, 110-136, 146-347, 357-379, 391-411, 423-438
+modules/backbones/conv.py                               57     46    19%   23-58, 61-63, 79-108, 112-115, 118-120
+modules/backbones/identity.py                           13     13     0%   1-22
+modules/backbones/mlp.py                                28      2    93%   28, 51
+modules/backbones/mlp_resnet.py                         48     48     0%   1-92
+modules/backbones/recurrent.py                          19     19     0%   1-50
+modules/backbones/resnet.py                             24     16    33%   24-53, 56
+modules/backbones/transformer.py                        20     20     0%   1-52
+modules/distributions.py                                66     66     0%   1-122
+modules/embeddings/action_embedding.py                  47     39    17%   22-43, 57-64, 70-129, 133-135
+modules/heads/base.py                                   37      6    84%   32, 52-55, 69
+modules/heads/chance_probability.py                     12     12     0%   1-30
+modules/heads/continuation.py                           18     18     0%   1-52
+modules/heads/latent_consistency.py                     17     17     0%   1-49
+modules/heads/observation.py                            20     20     0%   1-61
+modules/heads/policy.py                                 12      0   100%
+modules/heads/q.py                                      61     46    25%   21-34, 39-41, 61-77, 86-92, 116-156, 161-179
+modules/heads/reward.py                                 57     44    23%   23, 31-36, 55-70, 81-153
+modules/heads/to_play.py                                25     16    36%   23-25, 33-35, 51-72
+modules/heads/value.py                                  11      0   100%
+modules/layers/noisy_linear.py                          67     48    28%   13, 23-45, 48-56, 61-63, 66-78, 82, 86-89, 92, 95, 109
+modules/layers/residual_block.py                        28     22    21%   24-64, 76-87
+modules/projectors/sim_siam.py                          10      5    50%   14-25, 33-34
+modules/utils.py                                       303    247    18%   17, 20, 29-31, 34-38, 43, 52-54, 57-60, 63-64, 68-73, 80-106, 124-155, 163-203, 216, 221-224, 229-232, 254-258, 271-282, 287-292, 296-332, 336-343, 350-396, 400-414, 419-424, 427-439, 459-465, 469, 473, 479-487, 495-525, 535-539, 545-546, 554-594
+modules/world_models/components/chance_encoder.py       22     16    27%   17-29, 38-56
+modules/world_models/components/dynamics.py             45     30    33%   20-46, 52-69, 80, 88-91, 102, 106-107
+modules/world_models/components/representation.py       13      6    54%   9-12, 15-17
+modules/world_models/inference_output.py               110     70    36%   27-64, 68-121
+modules/world_models/muzero_world_model.py             149    126    15%   43-59, 71-82, 87-89, 97-120, 153-176, 195-363, 376
+modules/world_models/world_model.py                     16      0   100%
+search/backends/aos_search/backpropogation.py           42     42     0%   26-242
+search/backends/aos_search/batched_mcts.py             342    342     0%   8-982
+search/backends/aos_search/dynamic_masking.py           60     60     0%   16-200
+search/backends/aos_search/functional_modifiers.py      39     39     0%   11-180
+search/backends/aos_search/min_max_stats.py             59     59     0%   7-214
+search/backends/aos_search/scoring.py                  117    117     0%   15-345
+search/backends/aos_search/search_algorithm.py          51     51     0%   1-198
+search/backends/aos_search/search_factories.py         141    141     0%   14-488
+search/backends/aos_search/search_output.py             84     84     0%   14-297
+search/backends/aos_search/tree.py                      36     36     0%   1-83
+search/backends/py_search/backpropogation.py            76     64    16%   25-26, 36-128, 145-244
+search/backends/py_search/initial_searchsets.py         21     11    48%   20, 28-50
+search/backends/py_search/min_max_stats.py              25     17    32%   15-17, 20-21, 27-42, 45
+search/backends/py_search/modular_search.py            724    689     5%   77-179, 186-211, 222-391, 414-621, 630-639, 649-681, 692-756, 759-878, 881, 897-1349, 1369-1714
+search/backends/py_search/nodes.py                     242    196    19%   21-44, 48, 52, 64-85, 91, 99-101, 105-121, 130-134, 138-141, 144-154, 166-182, 187-210, 224-242, 246, 250, 263-302, 309, 312-317, 321-339, 342-347, 353-354, 366-383, 401-427, 438-458, 462-476
+search/backends/py_search/prior_injectors.py            63     47    25%   27-29, 39-52, 62, 74-93, 109-152
+search/backends/py_search/pruners.py                    96     68    29%   34, 43, 52, 63-65, 68-81, 95-121, 124-141, 145-178, 182, 195, 205-235, 239
+search/backends/py_search/root_policies.py              31     16    48%   15-16, 37-42, 55-57, 60, 71-83
+search/backends/py_search/scoring_methods.py            90     53    41%   26-29, 36, 41, 52-103, 108-109, 118-127, 134, 139, 142, 149-150, 153, 156, 165-169, 179, 182, 195, 198
+search/backends/py_search/search_factories.py            3      3     0%   1-10
+search/backends/py_search/search_selectors.py           93     73    22%   40-41, 46-99, 108-128, 143-144, 147-185, 195-207
+search/backends/py_search/utils.py                      27     22    19%   7, 28-42, 47-77, 81-82
+----------------------------------------------------------------------------------
+TOTAL                                                 4061   3437    15%
+Required test coverage of 15% reached. Total coverage: 15.37%
+=========================== short test summary info ============================
+FAILED tests/regression/ppo/test_ppo_cartpole_regression.py::test_ppo_cartpole_full_training - AssertionError: None (<class 'NoneType'>) invalid
+======================== 1 failed, 1 warning in 15.02s =========================

@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 from typing import Any, Dict, Optional, TYPE_CHECKING
 from core import PipelineComponent
 from core import Blackboard
@@ -17,11 +18,11 @@ class BufferStoreComponent(PipelineComponent):
     ):
         self.replay_buffer = replay_buffer
         self.field_map = field_map or {
-            "observations": "data.observations",
+            "observations": "data.obs",
             "actions": "meta.action",
-            "rewards": "data.rewards",
-            "dones": "data.dones",
-            "next_observations": "data.next_observations",
+            "rewards": "data.reward",
+            "dones": "data.done",
+            "next_observations": "data.next_obs",
         }
 
     def _resolve(self, blackboard: Blackboard, path: str) -> Any:
@@ -79,51 +80,68 @@ class SequenceBufferComponent(PipelineComponent):
     def execute(self, blackboard: Blackboard) -> None:
         self._ensure_sequence()
 
-        obs = blackboard.data.get("observations")
-        done = blackboard.data.get("dones")
+        obs = blackboard.data.get("obs")
+        done = blackboard.data.get("done")
         metadata = blackboard.meta.get("action_metadata", {})
         next_info = blackboard.meta.get("next_info", {})
 
         # On the very first step, record the initial observation
         if len(self._sequence) == 0:
             initial_obs = obs.squeeze(0).cpu().numpy() if torch.is_tensor(obs) else obs
-            info = blackboard.meta.get("info", {})
+            info = blackboard.data.get("info", {})
             legal = info.get("legal_moves", [])
             self._sequence.append(initial_obs, terminated=False, truncated=False, legal_moves=legal)
 
         # Record the transition
-        next_obs = blackboard.data.get("next_observations")
+        next_obs = blackboard.data.get("next_obs")
+        if next_obs is None and obs is not None:
+             # Match shape of current obs if next_obs is missing (terminal state)
+             next_obs = torch.zeros_like(obs)
+        
         if torch.is_tensor(next_obs):
-            next_obs = next_obs.cpu().numpy()
+            next_obs = next_obs.squeeze(0).cpu().numpy()
 
         action = blackboard.meta.get("action")
-        reward = blackboard.data.get("rewards")
+        reward = blackboard.data.get("reward")
         if torch.is_tensor(reward):
             reward = reward.item()
 
-        terminated = blackboard.data.get("terminated")
+        terminated = blackboard.data.get("terminated", False)
         if torch.is_tensor(terminated):
             terminated = terminated.item()
-        truncated = blackboard.data.get("truncated")
+        truncated = blackboard.data.get("truncated", False)
         if torch.is_tensor(truncated):
             truncated = truncated.item()
 
         next_legal = next_info.get("legal_moves", [])
         policy = metadata.get("target_policies", metadata.get("policy"))
+        if policy is None:
+            policy = np.zeros(self.replay_buffer.buffers["policies"].shape[1:], dtype=np.float32)
+            
         value = metadata.get("value")
+        if value is None:
+            value = 0.0
+            
         player_id = blackboard.data.get("player_id") # MuZero needs this
 
-        self._sequence.append(
-            observation=next_obs,
-            terminated=terminated,
-            truncated=truncated,
-            action=action,
-            reward=reward,
-            policy=policy,
-            value=value,
-            player_id=player_id,
-            legal_moves=next_legal,
-        )
+        # If terminated/truncated are missing, use done
+        if terminated is None and truncated is None:
+            is_done = done.item() if torch.is_tensor(done) else done
+            terminated = is_done
+            truncated = False
+
+        if action is not None:
+            self._sequence.append(
+                observation=next_obs,
+                terminated=terminated,
+                truncated=truncated,
+                action=action,
+                reward=reward,
+                policy=policy,
+                value=value,
+                player_id=player_id,
+                legal_moves=next_legal,
+            )
 
         # Flush on episode end
         is_done = done.item() if torch.is_tensor(done) else done

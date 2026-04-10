@@ -81,6 +81,7 @@ class SharedCircularWriter(CircularWriter):
         self.max_size = max_size
         self._pointer = torch.zeros(1, dtype=torch.int64).share_memory_()
         self._size = torch.zeros(1, dtype=torch.int64).share_memory_()
+        self._lock = torch.multiprocessing.Lock()
 
     @property
     def pointer(self):
@@ -98,9 +99,21 @@ class SharedCircularWriter(CircularWriter):
     def size(self, value):
         self._size[0] = value
 
+    def store(self) -> int | None:
+        with self._lock:
+            idx = self.pointer
+            self.pointer = (self.pointer + 1) % self.max_size
+            self.size = min(self.size + 1, self.max_size)
+            return idx
+
+    def store_batch(self, batch_size: int) -> list[slice] | None:
+        with self._lock:
+            return super().store_batch(batch_size)
+
     def clear(self):
-        self.pointer = 0
-        self.size = 0
+        with self._lock:
+            self.pointer = 0
+            self.size = 0
 
 
 class ReservoirWriter(Writer):
