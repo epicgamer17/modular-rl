@@ -259,6 +259,7 @@ def make_muzero_replay_buffer(
 
 def make_muzero_learner(
     agent_network: ModularAgentNetwork,
+    replay_buffer: ModularReplayBuffer,
     optimizer: torch.optim.Optimizer,
     batch_size: int,
     unroll_steps: int,

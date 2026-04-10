@@ -122,6 +122,7 @@ def test_muzero_tictactoe_full_training():
 
     learner = make_muzero_learner(
         agent_network=agent_network,
+        replay_buffer=replay_buffer,
         optimizer=optimizer,
         batch_size=BATCH_SIZE,
         unroll_steps=UNROLL_STEPS,
