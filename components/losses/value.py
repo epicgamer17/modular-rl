@@ -3,6 +3,7 @@ import torch.nn.functional as F
 from typing import Any
 from core import PipelineComponent
 from core import Blackboard
+from core.path_resolver import resolve_blackboard_path
 from .infrastructure import apply_infrastructure
 
 
@@ -28,7 +29,7 @@ class ValueLoss(PipelineComponent):
 
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["values"]
-        targets = blackboard.targets[self.target_key]
+        targets = resolve_blackboard_path(blackboard, self.target_key)
 
         B, T = preds.shape[:2]
 
@@ -82,8 +83,8 @@ class ClippedValueLoss(PipelineComponent):
         values = blackboard.predictions.get(
             "values_expected", blackboard.predictions["values"]
         )
-        returns = blackboard.targets[self.target_key]
-        old_values = blackboard.targets[self.old_values_key]
+        returns = resolve_blackboard_path(blackboard, self.target_key)
+        old_values = resolve_blackboard_path(blackboard, self.old_values_key)
 
         # Ensure shapes match [B, T]
         if values.ndim == 3 and values.shape[-1] == 1:

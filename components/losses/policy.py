@@ -3,6 +3,7 @@ import torch.nn.functional as F
 from typing import Any
 from core import PipelineComponent
 from core import Blackboard
+from core.path_resolver import resolve_blackboard_path
 from .infrastructure import apply_infrastructure
 
 
@@ -32,7 +33,7 @@ class PolicyLoss(PipelineComponent):
 
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["policies"]
-        targets = blackboard.targets[self.target_key]
+        targets = resolve_blackboard_path(blackboard, self.target_key)
 
         B, T = preds.shape[:2]
 
@@ -74,18 +75,24 @@ class ClippedSurrogateLoss(PipelineComponent):
         clip_param: float,
         entropy_coefficient: float,
         mask_key: str = "policy_mask",
+        actions_key: str = "actions",
+        old_log_probs_key: str = "old_log_probs",
+        advantages_key: str = "advantages",
         name: str = "policy_loss",
     ):
         self.clip_param = clip_param
         self.entropy_coefficient = entropy_coefficient
         self.mask_key = mask_key
+        self.actions_key = actions_key
+        self.old_log_probs_key = old_log_probs_key
+        self.advantages_key = advantages_key
         self.name = name
 
     def execute(self, blackboard: Blackboard) -> None:
         policy_logits = blackboard.predictions["policies"]
-        actions = blackboard.targets["actions"]
-        old_log_probs = blackboard.targets["old_log_probs"]
-        advantages = blackboard.targets["advantages"]
+        actions = resolve_blackboard_path(blackboard, self.actions_key)
+        old_log_probs = resolve_blackboard_path(blackboard, self.old_log_probs_key)
+        advantages = resolve_blackboard_path(blackboard, self.advantages_key)
 
         dist = torch.distributions.Categorical(logits=policy_logits)
         log_probs = dist.log_prob(actions)

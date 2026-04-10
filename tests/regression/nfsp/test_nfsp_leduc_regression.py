@@ -23,7 +23,6 @@ from components.losses import LossAggregatorComponent, PolicyLoss
 from components.targets import TDTargetComponent
 from components.losses import QBootstrappingLoss
 from components.targets import (
-    PassThroughTargetComponent,
     UniversalInfrastructureComponent,
 )
 from core import RepeatSampleIterator
@@ -209,13 +208,12 @@ def test_nfsp_leduc_regression():
 
     # 2. SL Learner
     sl_optimizer = {"default": torch.optim.Adam(sl_network.parameters(), lr=LR_SL)}
-    sl_loss = PolicyLoss(loss_fn=F.cross_entropy, target_key="actions")
+    sl_loss = PolicyLoss(loss_fn=F.cross_entropy, target_key="data.actions")
 
     # SL target building components
     sl_learner = BlackboardEngine(
         components=[
             ForwardPassComponent(sl_network, None),
-            PassThroughTargetComponent(keys_to_keep=["policies", "actions"]),
             UniversalInfrastructureComponent(),
             sl_loss,
             LossAggregatorComponent(loss_weights={"policy_loss": 1.0}),

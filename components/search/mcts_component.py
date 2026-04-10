@@ -39,8 +39,11 @@ class MCTSSearchComponent(PipelineComponent):
         if "player" not in info:
             player_id = blackboard.data.get("player_id", 0)
             info = {**info, "player": player_id}
-        
-        # Run search and write directly to predictions
+
+        # Check for tournament end / terminal state
+        if blackboard.data.get("done") or blackboard.data.get("terminated") or blackboard.meta.get("done"):
+            blackboard.meta["stop_execution"] = True
+            return
         # Note: ModularSearch.run returns (root_value, exploratory_policy, target_policy, best_action, search_metadata)
         results = self.search_engine.run(obs, info, self.agent_network)
         

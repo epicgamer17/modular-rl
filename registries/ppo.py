@@ -33,7 +33,6 @@ from components.losses import (
     ShapeValidator,
 )
 from components.targets import (
-    PassThroughTargetComponent,
     TargetFormatterComponent,
     UniversalInfrastructureComponent,
 )
@@ -141,6 +140,9 @@ def make_ppo_learner(
     policy_loss = ClippedSurrogateLoss(
         clip_param=clip_param,
         entropy_coefficient=entropy_coef,
+        actions_key="data.actions",
+        old_log_probs_key="data.old_log_probs",
+        advantages_key="data.advantages",
     )
 
     value_loss = ClippedValueLoss(
@@ -151,10 +153,7 @@ def make_ppo_learner(
 
     components = [
         ForwardPassComponent(agent_network, shape_validator),
-        PassThroughTargetComponent(
-            ["values", "returns", "actions", "old_log_probs", "advantages"]
-        ),
-        TargetFormatterComponent({"values": val_rep, "returns": val_rep}),
+        TargetFormatterComponent({"data.values": val_rep, "data.returns": val_rep}),
         UniversalInfrastructureComponent(),
         policy_loss,
         value_loss,

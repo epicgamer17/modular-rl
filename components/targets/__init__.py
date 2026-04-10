@@ -1,5 +1,4 @@
 from .bootstrapping import TDTargetComponent, DistributionalTargetComponent
-from .passthrough import PassThroughTargetComponent
 from .sequence import (
     SequencePadderComponent,
     SequenceMaskComponent,

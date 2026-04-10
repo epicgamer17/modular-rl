@@ -87,9 +87,8 @@ class TDTargetComponent(PipelineComponent):
         # Write directly to the Universal targets dict
         # Force [B, T=1] dimension to satisfy the Universal Time Mandate
         blackboard.targets["values"] = target_q.unsqueeze(1)
-        blackboard.targets["rewards"] = rewards.unsqueeze(1)
-        blackboard.targets["dones"] = terminal_mask.float().unsqueeze(1)
-        blackboard.targets["actions"] = data["actions"].unsqueeze(1)
+        if self.online_network is not None:
+             blackboard.targets["next_actions"] = next_actions.unsqueeze(1)
 
 
 class DistributionalTargetComponent(PipelineComponent):
@@ -182,7 +181,4 @@ class DistributionalTargetComponent(PipelineComponent):
         )
 
         blackboard.targets["q_logits"] = target_distribution.unsqueeze(1)
-        blackboard.targets["rewards"] = rewards.unsqueeze(1)
-        blackboard.targets["actions"] = data["actions"].unsqueeze(1)
         blackboard.targets["next_actions"] = next_actions.unsqueeze(1)
-        blackboard.targets["dones"] = terminal_mask.float().unsqueeze(1)

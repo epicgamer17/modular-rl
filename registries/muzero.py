@@ -41,7 +41,7 @@ from modules.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
-from components.search import MCTSExtractorComponent, MCTSSearchComponent
+from components.search import MCTSSearchComponent
 from components.targets import SequencePadderComponent, SequenceMaskComponent, SequenceInfrastructureComponent, TargetFormatterComponent
 from components.losses import ShapeValidator
 from components.environments import PettingZooObservationComponent, PettingZooStepComponent, GymObservationComponent, GymStepComponent
@@ -286,8 +286,16 @@ def make_muzero_learner(
     learner = BlackboardEngine(
         components=[
             ForwardPassComponent(agent_network, shape_validator),
-            MCTSExtractorComponent(),
-            SequencePadderComponent(unroll_steps),
+            SequencePadderComponent(
+                unroll_steps,
+                keys=[
+                    "data.values",
+                    "data.rewards",
+                    "data.policies",
+                    "data.actions",
+                    "data.to_plays",
+                ],
+            ),
             SequenceMaskComponent(),
             SequenceInfrastructureComponent(unroll_steps),
             TargetFormatterComponent(

@@ -14,6 +14,7 @@ import torch
 from typing import Any, Dict
 
 from core import PipelineComponent, Blackboard
+from core.path_resolver import resolve_blackboard_path
 from modules.representations import BaseRepresentation, DiscreteSupportRepresentation
 from components.targets.formatters import TwoHotProjectionComponent
 
@@ -50,39 +51,36 @@ class TargetFormatterComponent(PipelineComponent):
         self._target_mapping: Dict[str, BaseRepresentation] = target_mapping
 
         # Pre-build one TwoHotProjectionComponent per discrete-support key.
-        # The component reads and writes the *same* key so callers see no
-        # change in the blackboard's key layout.
         self._projectors: Dict[str, TwoHotProjectionComponent] = {}
-        for key, rep in target_mapping.items():
+        for path, rep in target_mapping.items():
+            dest_key = path.split(".")[-1]
             if isinstance(rep, DiscreteSupportRepresentation):
-                self._projectors[key] = TwoHotProjectionComponent(
+                self._projectors[dest_key] = TwoHotProjectionComponent(
                     representation=rep,
-                    source_key=key,
-                    dest_key=key,
+                    source_key=dest_key,
+                    dest_key=dest_key,
                 )
 
     def execute(self, blackboard: Blackboard) -> None:
-        """Convert each registered target key into its loss-ready form.
+        """Convert each registered target key into its loss-ready form."""
+        for path, rep in self._target_mapping.items():
+            try:
+                # 1. Source explicitly from path
+                val = resolve_blackboard_path(blackboard, path)
+                dest_key = path.split(".")[-1]
+                
+                # 2. Place in targets for downstream loss components
+                blackboard.targets[dest_key] = val
 
-        Args:
-            blackboard: The shared pipeline blackboard.  Keys listed in the
-                ``target_mapping`` are read and overwritten in
-                ``blackboard.targets``.
-        """
-        for key, rep in self._target_mapping.items():
-            if key not in blackboard.targets:
+                # 3. Apply Representation-specific formatting
+                if dest_key in self._projectors:
+                    self._projectors[dest_key].execute(blackboard)
+                else:
+                    blackboard.targets[dest_key] = rep.format_target(
+                        blackboard.targets, target_key=dest_key
+                    )
+            except KeyError:
                 continue
-
-            if key in self._projectors:
-                # Discrete-support path: delegate to TwoHotProjectionComponent.
-                # The projector treats source_key == dest_key, so it reads and
-                # writes the same slot — transparent to callers.
-                self._projectors[key].execute(blackboard)
-            else:
-                # Fallback: scalar, classification, gaussian, identity, …
-                blackboard.targets[key] = rep.format_target(
-                    blackboard.targets, target_key=key
-                )
 
 
 class UniversalInfrastructureComponent(PipelineComponent):
@@ -95,19 +93,19 @@ class UniversalInfrastructureComponent(PipelineComponent):
     """
 
     def execute(self, blackboard: Blackboard) -> None:
-        """Populate masks, weights, and gradient scales from batch data.
-
-        Args:
-            blackboard: The shared pipeline blackboard.  Writes to
-                ``blackboard.targets`` (masks) and ``blackboard.meta``
-                (weights, gradient_scales) if the keys are not yet present.
-        """
-        if not blackboard.targets:
+        # Determine batch size and device from any available tensor
+        any_tensor = None
+        for section in [blackboard.targets, blackboard.data, blackboard.predictions]:
+            if section:
+                any_tensor = next((v for v in section.values() if torch.is_tensor(v)), None)
+                if any_tensor is not None:
+                    break
+        
+        if any_tensor is None:
             return
 
-        any_val = next(iter(blackboard.targets.values()))
-        batch_size = any_val.shape[0]
-        device = any_val.device
+        batch_size = any_tensor.shape[0]
+        device = any_tensor.device
 
         # 1. Generate Universal T=1 Masks if missing
         generic_mask = torch.ones((batch_size, 1), device=device, dtype=torch.bool)

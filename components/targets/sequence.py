@@ -1,21 +1,32 @@
 import torch
+from typing import List, Optional
 from core import PipelineComponent
 from core import Blackboard
+from core.path_resolver import resolve_blackboard_path
 
 
 class SequencePadderComponent(PipelineComponent):
     """Modifier: Pads transition-aligned data to state-aligned length."""
 
-    def __init__(self, unroll_steps: int):
+    def __init__(self, unroll_steps: int, keys: Optional[List[str]] = None):
         self.T = unroll_steps + 1
+        self.keys = keys or ["values", "rewards", "policies", "actions", "to_plays"]
 
     def execute(self, blackboard: Blackboard) -> None:
-        for key, v in blackboard.targets.items():
-            if torch.is_tensor(v) and v.ndim >= 2 and v.shape[1] == self.T - 1:
-                padding_shape = list(v.shape)
-                padding_shape[1] = 1
-                padding = torch.zeros(padding_shape, device=v.device, dtype=v.dtype)
-                blackboard.targets[key] = torch.cat([padding, v], dim=1)
+        for key in self.keys:
+            try:
+                v = resolve_blackboard_path(blackboard, key)
+                dest_key = key.split(".")[-1]
+                
+                if torch.is_tensor(v) and v.ndim >= 2 and v.shape[1] == self.T - 1:
+                    padding_shape = list(v.shape)
+                    padding_shape[1] = 1
+                    padding = torch.zeros(padding_shape, device=v.device, dtype=v.dtype)
+                    blackboard.targets[dest_key] = torch.cat([padding, v], dim=1)
+                else:
+                    blackboard.targets[dest_key] = v
+            except KeyError:
+                continue
 
 
 class SequenceMaskComponent(PipelineComponent):
@@ -43,11 +54,14 @@ class SequenceInfrastructureComponent(PipelineComponent):
 
     def execute(self, blackboard: Blackboard) -> None:
         data = blackboard.data
-        device = (
-            next(iter(blackboard.targets.values())).device
-            if blackboard.targets
-            else torch.device("cpu")
-        )
+        device = torch.device("cpu")
+        for section in [blackboard.targets, blackboard.data, blackboard.predictions]:
+            if section:
+                any_tensor = next((v for v in section.values() if torch.is_tensor(v)), None)
+                if any_tensor is not None:
+                    device = any_tensor.device
+                    break
+        
         B = data["actions"].shape[0]
 
         if "weights" not in blackboard.meta:

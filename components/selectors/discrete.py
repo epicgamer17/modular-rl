@@ -168,7 +168,7 @@ class ActionSelectorComponent(PipelineComponent):
 
         # Prepare metadata
         metadata = {
-            "value": value.detach().cpu() if value is not None else None,
+            "value": (value.detach().cpu() if hasattr(value, "detach") else value) if value is not None else None,
             "temperature": self.temperature,
         }
 

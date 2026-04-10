@@ -23,7 +23,8 @@ class NetworkInferenceComponent(PipelineComponent):
 
     def execute(self, blackboard: Blackboard) -> None:
         obs = blackboard.data["obs"]
-        if obs is None:
+        done = blackboard.data.get("done", False)
+        if obs is None or done:
             return
 
         # Ensure batch dimension [1, ...] if single observation

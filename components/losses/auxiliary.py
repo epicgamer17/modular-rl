@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from typing import Any
 from core import PipelineComponent
 from core import Blackboard
+from core.path_resolver import resolve_blackboard_path
 from .infrastructure import apply_infrastructure
 
 
@@ -15,16 +16,18 @@ class RewardLoss(PipelineComponent):
         loss_fn: Any,
         loss_factor: float = 1.0,
         mask_key: str = "reward_mask",
+        target_key: str = "rewards",
         name: str = "reward_loss",
     ):
         self.loss_fn = loss_fn
         self.loss_factor = loss_factor
         self.mask_key = mask_key
+        self.target_key = target_key
         self.name = name
 
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["rewards"]
-        targets = blackboard.targets["rewards"]
+        targets = resolve_blackboard_path(blackboard, self.target_key)
 
         B, T = preds.shape[:2]
 
@@ -49,16 +52,21 @@ class ToPlayLoss(PipelineComponent):
         loss_fn: Any = F.binary_cross_entropy_with_logits,
         loss_factor: float = 1.0,
         mask_key: str = "to_play_mask",
+        target_key: str = "to_plays",
         name: str = "to_play_loss",
     ):
         self.loss_fn = loss_fn
         self.loss_factor = loss_factor
         self.mask_key = mask_key
+        self.target_key = target_key
         self.name = name
 
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions.get("to_plays")
-        targets = blackboard.targets.get("to_plays")
+        try:
+            targets = resolve_blackboard_path(blackboard, self.target_key)
+        except KeyError:
+            targets = None
 
         if preds is None or targets is None:
             return
@@ -84,16 +92,22 @@ class ChanceQLoss(PipelineComponent):
         self,
         loss_factor: float = 1.0,
         mask_key: str = "afterstate_value_mask",
+        target_key: str = "chance_values_next",
         name: str = "chance_q_loss",
     ):
         self.loss_factor = loss_factor
         self.mask_key = mask_key
+        self.target_key = target_key
         self.name = name
 
     def execute(self, blackboard: Blackboard) -> None:
-        formatted_target = blackboard.targets.get("chance_values_next")
+        try:
+            formatted_target = resolve_blackboard_path(blackboard, self.target_key)
+        except KeyError:
+            formatted_target = None
+
         if formatted_target is None:
-            raise KeyError("ChanceQLoss requires 'chance_values_next' in targets.")
+            raise KeyError(f"ChanceQLoss requires '{self.target_key}' in targets or data.")
 
         pred = blackboard.predictions["chance_q_logits"]
         B, T = pred.shape[:2]
@@ -152,15 +166,20 @@ class SigmaLoss(PipelineComponent):
         self,
         loss_factor: float = 1.0,
         mask_key: str = "masks",
+        target_key: str = "sigmas",
         name: str = "sigma_loss",
     ):
         self.loss_factor = loss_factor
         self.mask_key = mask_key
+        self.target_key = target_key
         self.name = name
 
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions.get("sigma_logits")
-        targets = blackboard.targets.get("sigmas")
+        try:
+            targets = resolve_blackboard_path(blackboard, self.target_key)
+        except KeyError:
+            targets = None
 
         if preds is None or targets is None:
             return

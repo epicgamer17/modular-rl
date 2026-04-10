@@ -18,7 +18,6 @@ from components.losses import OptimizerStepComponent
 from components.losses import LossAggregatorComponent
 from components.losses import PolicyLoss
 from components.targets import (
-    PassThroughTargetComponent,
     UniversalInfrastructureComponent,
 )
 from core import RepeatSampleIterator
@@ -125,12 +124,12 @@ def test_imitation_tictactoe_regression():
     }
     imitation_loss = PolicyLoss(
         loss_fn=F.cross_entropy,
+        target_key="data.policies",
     )
 
     learner = BlackboardEngine(
         components=[
             ForwardPassComponent(agent_network, None),
-            PassThroughTargetComponent(keys_to_keep=["policies", "actions"]),
             UniversalInfrastructureComponent(),
             imitation_loss,
             LossAggregatorComponent(loss_weights={"policy_loss": 1.0}),

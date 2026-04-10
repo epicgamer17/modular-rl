@@ -95,10 +95,6 @@ class TorchMPExecutor(BaseExecutor):
                         params = param_queue.get_nowait()
                         if params is not None:
                             worker.update_parameters(params)
-                            if params.get("reset_noise") and hasattr(
-                                worker.agent_network, "reset_noise"
-                            ):
-                                worker.agent_network.reset_noise()
                             if hasattr(worker, "action_selector"):
                                 worker.action_selector.update_parameters(params)
                     except queue.Empty:
@@ -184,12 +180,6 @@ class TorchMPExecutor(BaseExecutor):
         # Actually, if they share memory, we don't need to load_state_dict here!
         # The main thread does step() on its model, which IS the shared model, since both are uncompiled originally.
         # However, to be safe, we just signal parameter updates.
-        if params is None:
-            params = {}
-
-        # Signal noise reset if this is a learning update
-        params["reset_noise"] = True
-
         # Send to all workers via the queue
         for _ in range(len(self.workers)):
             self.param_queue.put(params)

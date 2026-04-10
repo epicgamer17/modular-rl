@@ -1,8 +1,9 @@
 import torch
 import torch.nn.functional as F
-from typing import Any
+from typing import Any, Optional, Dict, Union, List
 from core import PipelineComponent
 from core import Blackboard
+from core.path_resolver import resolve_blackboard_path
 from .infrastructure import apply_infrastructure
 
 
@@ -14,11 +15,17 @@ class QBootstrappingLoss(PipelineComponent):
         is_categorical: bool = False,
         loss_fn: Any = None,
         mask_key: str = "value_mask",
+        actions_key: str = "actions",
+        target_key: Optional[str] = None,
         name: str = "q_loss",
     ):
         self.is_categorical = is_categorical
         self.pred_key = "q_logits" if is_categorical else "q_values"
-        self.target_key = "q_logits" if is_categorical else "values"
+        
+        if target_key:
+            self.target_key = target_key
+        else:
+            self.target_key = "q_logits" if is_categorical else "values"
 
         if loss_fn is None:
             self.loss_fn = F.cross_entropy if is_categorical else F.mse_loss
@@ -26,12 +33,13 @@ class QBootstrappingLoss(PipelineComponent):
             self.loss_fn = loss_fn
 
         self.mask_key = mask_key
+        self.actions_key = actions_key
         self.name = name
 
     def execute(self, blackboard: Blackboard) -> None:
         q_preds = blackboard.predictions[self.pred_key]
-        actions = blackboard.targets["actions"].long()
-        formatted_target = blackboard.targets[self.target_key]
+        actions = resolve_blackboard_path(blackboard, self.actions_key).long()
+        formatted_target = resolve_blackboard_path(blackboard, self.target_key)
 
         B, T = actions.shape[:2]
         num_actions = q_preds.shape[2]
