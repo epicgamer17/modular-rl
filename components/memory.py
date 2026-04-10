@@ -152,8 +152,12 @@ class SequenceBufferComponent(PipelineComponent):
             self._sequence = Sequence(self.num_players)
 
 
-class PriorityBufferUpdateComponent(PipelineComponent):
-    """Updates priorities in the replay buffer based on learner results."""
+class PriorityUpdateComponent(PipelineComponent):
+    """
+    Updates priorities in the replay buffer based on priorities stored in the blackboard.
+    This component is 'blind' to how priorities are computed; it simply reads
+    blackboard.meta['priorities'] and sends them to the buffer.
+    """
     def __init__(self, priority_update_fn: Any):
         self.priority_update_fn = priority_update_fn
 
@@ -165,26 +169,6 @@ class PriorityBufferUpdateComponent(PipelineComponent):
         if priorities is not None and indices is not None:
             # We must move to CPU before sending to the buffer
             self.priority_update_fn(indices, priorities.detach().cpu(), ids=ids)
-
-
-class PriorityUpdateComponent(PipelineComponent):
-    """Computes priorities based on stored elementwise losses."""
-
-    def __init__(self, priority_computer: Any):
-        self.priority_computer = priority_computer
-
-    def execute(self, blackboard: Blackboard) -> None:
-        elementwise_losses = blackboard.meta.get("elementwise_losses", {})
-        if not elementwise_losses:
-            return
-
-        priorities = self.priority_computer.compute(
-            elementwise_losses=elementwise_losses,
-            predictions=blackboard.predictions,
-            targets=blackboard.targets,
-        )
-
-        blackboard.meta["priorities"] = priorities.detach()
 
 
 class BetaScheduleComponent(PipelineComponent):

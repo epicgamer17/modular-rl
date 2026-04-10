@@ -28,17 +28,17 @@ from components.actor_logic import NetworkInferenceComponent, ArgmaxSelectorComp
 from core import BlackboardEngine
 from components.neural import ForwardPassComponent
 from components.math import OptimizerStepComponent
-from components.memory import PriorityBufferUpdateComponent, BetaScheduleComponent
+from components.memory import BetaScheduleComponent
 from components.routing import ResetNoiseComponent
 
 from components.math import LossAggregatorComponent
 from components.memory import PriorityUpdateComponent
+from components.priorities import MaxLossPriorityComponent
 from components.math import QBootstrappingLoss
 from components.targets import (
     DistributionalTargetComponent,
     UniversalInfrastructureComponent,
 )
-from learner.losses.priorities import MaxLossPriorityComputer
 from utils.schedule import Schedule, ConstantSchedule
 
 
@@ -192,9 +192,9 @@ def make_rainbow_learner(
     if per_beta_schedule is None:
         per_beta_schedule = ConstantSchedule(0.6)
 
-    priority_computer = MaxLossPriorityComputer(loss_key="q_loss")
     q_loss = QBootstrappingLoss(is_categorical=True, name="q_loss")
-    priority_comp = PriorityUpdateComponent(priority_computer=priority_computer)
+    priority_comp = MaxLossPriorityComponent(loss_key="q_loss")
+    buffer_update = PriorityUpdateComponent(priority_update_fn=replay_buffer.update_priorities)
 
     return BlackboardEngine(
         components=[
@@ -214,9 +214,7 @@ def make_rainbow_learner(
                 optimizers={"default": optimizer},
                 max_grad_norm=clip_norm,
             ),
-            PriorityBufferUpdateComponent(
-                priority_update_fn=replay_buffer.update_priorities,
-            ),
+            buffer_update,
             BetaScheduleComponent(
                 set_beta_fn=replay_buffer.set_beta,
                 per_beta_schedule=per_beta_schedule,

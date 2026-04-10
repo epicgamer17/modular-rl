@@ -35,6 +35,7 @@ from components.neural import ForwardPassComponent
 from components.math import OptimizerStepComponent
 from components.math import LossAggregatorComponent
 from components.memory import PriorityUpdateComponent
+from components.priorities import ExpectedValueErrorPriorityComponent
 from components.math import ValueLoss
 from components.math import PolicyLoss
 from components.math import RewardLoss
@@ -43,7 +44,6 @@ from learner.losses.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
-from learner.losses.priorities import ExpectedValueErrorPriorityComputer
 from components.search import MCTSExtractorComponent
 from components.targets import SequencePadderComponent, SequenceMaskComponent, SequenceInfrastructureComponent, TargetFormatterComponent
 from components.math import ShapeValidator
@@ -279,13 +279,13 @@ def make_muzero_learner(
         num_actions=num_actions,
         atom_size=1,
     )
-    priority_computer = ExpectedValueErrorPriorityComputer(value_representation=val_rep)
+    priority_comp = ExpectedValueErrorPriorityComponent(value_representation=val_rep)
+    buffer_update = PriorityUpdateComponent(priority_update_fn=replay_buffer.update_priorities)
 
     v_loss = ValueLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
     p_loss = PolicyLoss(loss_fn=nn.functional.cross_entropy, loss_factor=1.0)
     r_loss = RewardLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
     tp_loss = ToPlayLoss(loss_factor=1.0)
-    priority_comp = PriorityUpdateComponent(priority_computer=priority_computer)
 
     learner = BlackboardEngine(
         components=[
@@ -316,6 +316,7 @@ def make_muzero_learner(
                 }
             ),
             priority_comp,
+            buffer_update,
             OptimizerStepComponent(
                 agent_network=agent_network,
                 optimizers={"default": optimizer},
