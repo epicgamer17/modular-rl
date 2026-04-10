@@ -10,7 +10,7 @@ from modules.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
-from actors.action_selectors.selectors import CategoricalSelector
+from actors.action_selectors.selectors import ActionSelector
 from actors.action_selectors.decorators import PPODecorator
 from actors.action_selectors.policy_sources import NetworkPolicySource
 
@@ -44,7 +44,7 @@ from components.targets import (
 from components.environments import GymObservationComponent, GymStepComponent
 from components.selectors import (
     NetworkInferenceComponent,
-    CategoricalSelectorComponent,
+    ActionSelectorComponent,
     PPODecoratorComponent,
 )
 from components.memory import BufferStoreComponent
@@ -194,7 +194,7 @@ def make_ppo_actor_engine(
     components = [
         obs_component,
         NetworkInferenceComponent(agent_network, obs_dim),
-        CategoricalSelectorComponent(exploration=exploration),
+        ActionSelectorComponent(input_key="logits", temperature=1.0 if exploration else 0.0),
         PPODecoratorComponent(),
         step_component,
         TelemetryComponent(name="ppo_actor"),

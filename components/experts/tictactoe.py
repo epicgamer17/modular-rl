@@ -156,6 +156,11 @@ class TicTacToeExpertComponent(PipelineComponent):
         if obs_np.ndim == 4:
             obs_np = obs_np[0]
 
+        # Handle frame stacking: take the 2 most recent planes.
+        # Observation is [2*k + 1, 3, 3]. Planes 0,1 are the current frame.
+        if obs_np.shape[0] > 2:
+            obs_np = obs_np[:2]
+
         assert obs_np.ndim == 3 and obs_np.shape == (2, _BOARD_ROWS, _BOARD_COLS), (
             f"TicTacToeExpertComponent: expected obs shape (2, 3, 3) or (1, 2, 3, 3), "
             f"got {obs_np.shape}."
@@ -231,6 +236,11 @@ class TicTacToeBestAgent:
         # Strip optional batch dimension: [1, 2, 3, 3] → [2, 3, 3]
         if obs_np.ndim == 4:
             obs_np = obs_np[0]
+
+        # Handle frame stacking: take the 2 most recent planes.
+        # Observation is [2*k + 1, 3, 3]. Planes 0,1 are the current frame.
+        if obs_np.shape[0] > 2:
+            obs_np = obs_np[:2]
 
         assert obs_np.ndim == 3 and obs_np.shape == (2, _BOARD_ROWS, _BOARD_COLS), (
             f"TicTacToeBestAgent.select_actions: expected obs shape (2, 3, 3) or "

@@ -6,7 +6,7 @@ from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.q import QHead
 from modules.representations import ScalarRepresentation
-from actors.action_selectors.selectors import ArgmaxSelector
+from actors.action_selectors.selectors import ActionSelector
 
 from data.storage.circular import BufferConfig, ModularReplayBuffer, CircularWriter
 from data.concurrency import LocalBackend

@@ -11,7 +11,7 @@ from registries import (
     make_ppo_learner,
 )
 from components.telemetry import TelemetryComponent
-from actors.action_selectors.selectors import CategoricalSelector
+from actors.action_selectors.selectors import ActionSelector
 from actors.action_selectors.decorators import PPODecorator
 from actors.action_selectors.policy_sources import NetworkPolicySource
 from core import PPOEpochIterator
@@ -92,7 +92,7 @@ def test_ppo_cartpole_full_training():
     )
     from components.selectors import (
         NetworkInferenceComponent,
-        CategoricalSelectorComponent,
+        ActionSelectorComponent,
         PPODecoratorComponent,
     )
     from components.memory import BufferStoreComponent
@@ -150,7 +150,7 @@ def test_ppo_cartpole_full_training():
     collection_components = [
         obs_comp,
         NetworkInferenceComponent(agent_network, obs_dim),
-        CategoricalSelectorComponent(exploration=True),
+        ActionSelectorComponent(input_key="logits", temperature=1.0),
         PPODecoratorComponent(),
         GymStepComponent(env, obs_comp),
         TelemetryComponent(name="ppo_regression"),
@@ -262,7 +262,7 @@ def test_ppo_cartpole_full_training():
 
     # Evaluation
     policy_source = NetworkPolicySource(agent_network, obs_dim)
-    action_selector = CategoricalSelector()
+    action_selector = ActionSelector(input_key="logits", temperature=1.0)
     test_scores = evaluate_agent(
         env, agent_network, policy_source, action_selector, DEVICE, num_episodes=3
     )

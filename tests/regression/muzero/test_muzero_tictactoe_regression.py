@@ -15,8 +15,7 @@ from registries import (
     make_muzero_actor_engine,
 )
 from core import SingleBatchIterator
-from actors.action_selectors.selectors import CategoricalSelector
-from actors.action_selectors.decorators import TemperatureSelector
+from actors.action_selectors.selectors import ActionSelector
 from utils.schedule import StepwiseSchedule
 from envs.factories.tictactoe import tictactoe_factory
 from components.experts.tictactoe import TicTacToeBestAgent
@@ -98,9 +97,8 @@ def test_muzero_tictactoe_full_training():
         device=DEVICE,
     )
 
-    inner_selector = CategoricalSelector(exploration=True)
-    action_selector = TemperatureSelector(
-        inner_selector=inner_selector,
+    action_selector = ActionSelector(
+        input_key="logits",
         schedule=StepwiseSchedule(steps=[5, 10], values=[1.0, 0.5, 0.0]),
     )
 

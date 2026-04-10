@@ -13,7 +13,7 @@ from registries import (
     make_rainbow_replay_buffer,
     make_rainbow_learner,
 )
-from actors.action_selectors.selectors import ArgmaxSelector
+from actors.action_selectors.selectors import ActionSelector
 from core import RepeatSampleIterator
 from utils.schedule import LinearSchedule
 from utils.plotting import plot_regression_results
@@ -36,7 +36,7 @@ def evaluate_agent(env, agent_network, device, num_episodes=3):
     """Evaluate the agent on the environment using greedy actions."""
     scores = []
     agent_network.eval()
-    action_selector = ArgmaxSelector()
+    action_selector = ActionSelector(input_key="q_values", temperature=0.0)
     with torch.inference_mode():
         for _ in range(num_episodes):
             state, info = env.reset()
@@ -97,7 +97,7 @@ def test_rainbow_cartpole_full_training():
     from components.telemetry import TelemetryComponent
     from components.selectors import (
         NetworkInferenceComponent,
-        ArgmaxSelectorComponent,
+        ActionSelectorComponent,
     )
     from components.memory import BufferStoreComponent
     from core import BlackboardEngine, infinite_ticks
@@ -188,7 +188,7 @@ def test_rainbow_cartpole_full_training():
     collection_components = [
         obs_comp,
         NetworkInferenceComponent(agent_network, obs_dim),
-        ArgmaxSelectorComponent(),
+        ActionSelectorComponent(input_key="q_values", temperature=0.0),
         GymStepComponent(env, obs_comp),
         TelemetryComponent(name="rainbow_regression"),
         BufferStoreComponent(replay_buffer, field_map=rainbow_field_map),
@@ -200,7 +200,7 @@ def test_rainbow_cartpole_full_training():
     eval_components = [
         eval_obs_comp,
         NetworkInferenceComponent(agent_network, obs_dim),
-        ArgmaxSelectorComponent(),
+        ActionSelectorComponent(input_key="q_values", temperature=0.0),
         GymStepComponent(env, eval_obs_comp),
         TelemetryComponent(name="rainbow_eval"),
     ]

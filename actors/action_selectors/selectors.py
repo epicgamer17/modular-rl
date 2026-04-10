@@ -1,7 +1,8 @@
-from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Tuple, Union
 import torch
 import numpy as np
+from abc import ABC, abstractmethod
+from typing import Any, Dict, Optional, Tuple, Union
+from utils.schedule import Schedule
 
 # Constant for default epsilon
 DEFAULT_EPSILON = 0.05
@@ -90,57 +91,132 @@ class BaseActionSelector(ABC):
         pass  # pragma: no cover
 
 
-class CategoricalSelector(BaseActionSelector):
-    def __init__(self, exploration: bool = True):
+class ActionSelector(BaseActionSelector):
+    """
+    Unified action selector for discrete action spaces.
+
+    Combines categorical sampling, temperature scaling, and greedy (argmax) selection.
+
+    Logic:
+    - If temperature > 0: Samples from a Categorical distribution scaled by temperature.
+    - If temperature == 0: Selects the action with the highest logit/value (Argmax).
+    """
+
+    LOG_EPSILON = 1e-10
+
+    def __init__(
+        self,
+        input_key: str,
+        temperature: float = 1.0,
+        schedule: Optional[Schedule] = None,
+        use_training_steps: bool = False,
+    ):
         super().__init__()
-        self.default_exploration = exploration
+        self.input_key = input_key
+        self.temperature = temperature
+        self.schedule = schedule
+        self.use_training_steps = use_training_steps
+        self._last_step = -1
+
+    def _get_temperature(self, current_step: int, exploration: Optional[bool]) -> float:
+        """Advances the schedule and returns the current temperature."""
+        if exploration is False:
+            return 0.0
+
+        if self.schedule is None:
+            return self.temperature
+
+        if current_step != self._last_step:
+            if current_step > self._last_step:
+                self.schedule.step(
+                    max(1, current_step - self._last_step)
+                    if self._last_step >= 0
+                    else current_step
+                )
+            else:
+                self.schedule.reset()
+                self.schedule.step(current_step)
+            self._last_step = current_step
+
+        return self.schedule.get_value()
 
     def select_action(
         self,
-        predictions: Dict[str, torch.Tensor],
+        result: "InferenceOutput",
         info: Dict[str, Any],
         exploration: Optional[bool] = None,
         **kwargs,
-    ):
-        # Resolve exploration flag
-        should_explore = (
-            exploration if exploration is not None else self.default_exploration
-        )
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        """
+        Samples an action based on temperature.
+        """
+        if self.use_training_steps:
+            current_step = kwargs.get("training_step", self._last_step)
+        else:
+            current_step = kwargs.get("episode_step", 0)
 
-        metadata = {}
+        temp = self._get_temperature(current_step, exploration)
+
+        # Resolve values from result based on input_key
+        # result can be a dictionary (from PolicySource) or an InferenceOutput object
+        values = None
+        if isinstance(result, dict):
+            values = result.get(self.input_key)
+            if values is None and "extra_metadata" in result:
+                values = result["extra_metadata"].get(self.input_key)
+        else:
+            if hasattr(result, self.input_key):
+                values = getattr(result, self.input_key)
+            elif hasattr(result, "extras") and result.extras and self.input_key in result.extras:
+                values = result.extras[self.input_key]
+            elif hasattr(result, "metadata") and result.metadata and self.input_key in result.metadata:
+                # Legacy support for 'metadata' field if it exists in some custom objects
+                values = result.metadata[self.input_key]
+
+        if values is None:
+            available = list(result.keys()) if isinstance(result, dict) else dir(result)
+            raise KeyError(f"Key '{self.input_key}' not found in result. Available: {available}")
+
+        if values is None:
+            raise ValueError(f"Values for key '{self.input_key}' are None")
+
+        is_prob = self.input_key == "probs"
 
         mask = info.get("legal_moves_mask", info.get("legal_moves"))
 
-        from torch.distributions import Categorical
-
-        logits = predictions.get("logits")
-        probs = predictions.get("probs")
-
-        if logits is not None:
-            if mask is not None:
-                logits = self.mask_actions(
-                    logits, mask, mask_value=-float("inf"), device=logits.device
-                )
-            policy = Categorical(logits=logits)
+        # Apply masking
+        if is_prob:
+            masked_values = self.mask_actions(values, mask, mask_value=0.0)
         else:
-            assert (
-                probs is not None
-            ), "CategoricalSelector requires logits or probs in predictions"
-            if mask is not None:
-                probs = probs * mask.float()
-                probs = probs / probs.sum(dim=-1, keepdim=True).clamp(min=1e-8)
-            policy = Categorical(probs=probs)
+            masked_values = self.mask_actions(values, mask, mask_value=-float("inf"))
 
-        # Use 'policy_dist' for decorators (like PPODecorator)
-        # Use 'policy' for the replay buffer (must be a tensor/numpy)
-        metadata["policy_dist"] = policy
-        metadata["policy"] = policy.probs.detach()
-
-        if should_explore:
-            action = policy.sample()
+        if temp <= 0.0:
+            # Greedy / Argmax selection
+            action = torch.argmax(masked_values, dim=-1)
+            dist = None
         else:
-            # policy.logits is the canonical form for argmax (log-scale preserves ordering)
-            action = torch.argmax(policy.logits, dim=-1)
+            # Categorical sampling
+            from torch.distributions import Categorical
+            if is_prob:
+                temp_logits = torch.log(masked_values + self.LOG_EPSILON)
+                dist = Categorical(logits=temp_logits / temp)
+            else:
+                dist = Categorical(logits=masked_values / temp)
+            action = dist.sample()
+
+        # Prepare metadata
+        metadata = {"temperature": temp}
+        if dist is not None:
+            metadata["policy_dist"] = dist
+            metadata["policy"] = dist.probs.detach()
+        elif is_prob:
+            metadata["policy"] = masked_values.detach()
+        else:
+            metadata["policy"] = (
+                torch.nn.functional.one_hot(action, num_classes=values.shape[-1])
+                .float()
+                .detach()
+            )
 
         return action, metadata
 
@@ -233,38 +309,6 @@ class EpsilonGreedySelector(BaseActionSelector):
             self.epsilon = float(params["epsilon"])
 
 
-class ArgmaxSelector(BaseActionSelector):
-    """
-    Selects the action with the highest value/logit.
-    Essentially EpsilonGreedy with epsilon=0.
-    """
-
-    def select_action(
-        self,
-        predictions: Dict[str, torch.Tensor],
-        info: Dict[str, Any],
-        exploration: Optional[bool] = None,
-        **kwargs,
-    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-
-        mask = info.get("legal_moves_mask", info.get("legal_moves"))
-
-        # Prefer q_values, fall back to logits or probs
-        values = predictions.get("q_values")
-        if values is None:
-            values = predictions.get("logits")
-            if values is None:
-                values = predictions.get("probs")
-        
-        assert (
-            values is not None
-        ), "ArgmaxSelector requires q_values, logits, or probs in predictions"
-
-        if mask is not None:
-            values = self.mask_actions(values, mask)
-
-        action = torch.argmax(values, dim=-1)
-        return action, {}
 
 
 class NFSPSelector(BaseActionSelector):
@@ -275,12 +319,12 @@ class NFSPSelector(BaseActionSelector):
 
     def __init__(
         self,
-        br_selector: BaseActionSelector,
-        avg_selector: BaseActionSelector,
+        br_selector: Optional[BaseActionSelector] = None,
+        avg_selector: Optional[BaseActionSelector] = None,
         eta: float = 0.1,
     ):
-        self.br_selector = br_selector
-        self.avg_selector = avg_selector
+        self.br_selector = br_selector or ActionSelector(input_key="q_values", temperature=0.0)
+        self.avg_selector = avg_selector or ActionSelector(input_key="logits", temperature=0.0)
         self.eta = eta
 
     def select_action(

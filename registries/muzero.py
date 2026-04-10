@@ -20,8 +20,7 @@ from actors.action_selectors.policy_sources import (
     NetworkPolicySource,
     SearchPolicySource,
 )
-from actors.action_selectors.selectors import CategoricalSelector
-from actors.action_selectors.decorators import TemperatureSelector
+from actors.action_selectors.selectors import ActionSelector
 from utils.schedule import StepwiseSchedule
 
 from data.storage.circular import BufferConfig, ModularReplayBuffer
@@ -50,8 +49,7 @@ from components.losses import ShapeValidator
 from components.environments import PettingZooObservationComponent, PettingZooStepComponent, GymObservationComponent, GymStepComponent
 from components.selectors import (
     SearchInferenceComponent,
-    CategoricalSelectorComponent,
-    TemperatureComponent,
+    ActionSelectorComponent,
 )
 from components.memory import SequenceBufferComponent
 from components.telemetry import TelemetryComponent
@@ -364,10 +362,14 @@ def make_muzero_actor_engine(
         ),
     ]
 
-    if temperature_schedule is not None:
-        components.append(TemperatureComponent(schedule=temperature_schedule, schedule_source="episode"))
-
-    components.append(CategoricalSelectorComponent(exploration=exploration))
+    components.append(
+        ActionSelectorComponent(
+            input_key="probs",
+            temperature=1.0 if exploration else 0.0,
+            schedule=temperature_schedule,
+            schedule_source="episode",
+        )
+    )
     
     # Step the environment AFTER action selection
     components.append(step_component)

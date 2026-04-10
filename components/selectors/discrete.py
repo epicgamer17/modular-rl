@@ -1,7 +1,10 @@
 import torch
 import numpy as np
-from typing import Any, Dict
+from typing import Any, Dict, Optional, TYPE_CHECKING
 from core import PipelineComponent, Blackboard
+
+if TYPE_CHECKING:
+    from utils.schedule import Schedule
 
 
 def mask_actions(
@@ -16,7 +19,9 @@ def mask_actions(
         mask = info.get("action_mask", info.get("legal_moves_mask"))
         if mask is not None:
             if isinstance(mask, np.ndarray):
-                if mask.dtype == bool or (mask.ndim == 1 and np.all((mask == 0) | (mask == 1))):
+                if mask.dtype == bool or (
+                    mask.ndim == 1 and np.all((mask == 0) | (mask == 1))
+                ):
                     legal_moves = np.where(mask)[0].tolist()
                 else:
                     legal_moves = mask.tolist()
@@ -79,11 +84,32 @@ def write_to_blackboard(
     blackboard.meta["action_metadata"] = metadata
 
 
-class CategoricalSelectorComponent(PipelineComponent):
-    """Selects action by sampling from a Categorical distribution."""
+class ActionSelectorComponent(PipelineComponent):
+    """
+    Unified action selector for discrete action spaces.
 
-    def __init__(self, exploration: bool = True):
-        self.exploration = exploration
+    Combines categorical sampling, temperature scaling, and greedy (argmax) selection
+    into a single component.
+
+    Logic:
+    - If temperature > 0: Samples from a Categorical distribution scaled by temperature.
+    - If temperature == 0: Selects the action with the highest logit/value (Argmax).
+    """
+
+    LOG_EPSILON = 1e-10
+
+    def __init__(
+        self,
+        input_key: str,
+        temperature: float = 1.0,
+        schedule: Optional["Schedule"] = None,
+        schedule_source: str = "episode",
+    ):
+        self.input_key = input_key
+        self.temperature = temperature
+        self.schedule = schedule
+        self.schedule_source = schedule_source
+        self._last_step = -1
 
     def execute(self, blackboard: Blackboard) -> None:
         if blackboard.data.get("done", False):
@@ -91,47 +117,75 @@ class CategoricalSelectorComponent(PipelineComponent):
             blackboard.meta["action"] = None
             return
 
+        # Update temperature from schedule if provided
+        if self.schedule is not None:
+            if self.schedule_source == "episode":
+                self._update_from_episode(blackboard)
+            elif self.schedule_source == "training":
+                self._update_from_training(blackboard)
+
         info = blackboard.meta.get("info", blackboard.data.get("info", {}))
 
         from torch.distributions import Categorical
 
         logits = blackboard.predictions.get("logits")
         probs = blackboard.predictions.get("probs")
+        q_values = blackboard.predictions.get("q_values")
         value = blackboard.predictions.get("value")
 
-        if logits is not None:
-            logits = mask_actions(logits, info)
-            dist = Categorical(logits=logits)
-        elif probs is not None:
-            dummy_masked = mask_actions(torch.ones_like(probs), info, mask_value=0.0)
-            mask_tensor = (dummy_masked == 1.0)
+        # Select the source of action values using the required input_key
+        values = blackboard.predictions.get(self.input_key)
+        if values is None:
+            raise KeyError(
+                f"ActionSelectorComponent: '{self.input_key}' not found in blackboard.predictions. "
+                f"Available keys: {list(blackboard.predictions.keys())}"
+            )
+            
+        is_prob = self.input_key == "probs"
 
-            probs = probs * mask_tensor.float()
-            probs_sum = probs.sum(dim=-1, keepdim=True)
+        # Apply masking
+        if is_prob:
+            # For probabilities, we mask with 0 and re-normalize later if needed
+            masked_values = mask_actions(values, info, mask_value=0.0)
+        else:
+            masked_values = mask_actions(values, info, mask_value=-float("inf"))
 
-            if torch.isnan(probs).any() or (probs_sum < 1e-9).any():
-                valid_mask = mask_tensor.float()
-                if valid_mask.sum() < 1e-9:
-                    valid_mask = torch.ones_like(probs)
-                probs = valid_mask / valid_mask.sum(dim=-1, keepdim=True)
+        if self.temperature <= 0.0:
+            # Greedy / Argmax selection
+            action = torch.argmax(masked_values, dim=-1)
+            dist = None
+        else:
+            # Categorical sampling
+            if is_prob:
+                # If we only have probs, convert to logits for temperature scaling
+                # probs^(1/T) / sum(probs^(1/T))
+                # We use LOG_EPSILON to avoid log(0)
+                temp_logits = torch.log(masked_values + self.LOG_EPSILON)
+                dist = Categorical(logits=temp_logits / self.temperature)
             else:
-                probs = probs / probs_sum
-
-            dist = Categorical(probs=probs)
-        else:
-            blackboard.meta["action"] = None
-            return
-
-        if self.exploration:
+                dist = Categorical(logits=masked_values / self.temperature)
             action = dist.sample()
-        else:
-            action = torch.argmax(dist.probs, dim=-1)
 
+        # Prepare metadata
         metadata = {
-            "policy_dist": dist,
-            "policy": dist.probs.detach().cpu(),
             "value": value.detach().cpu() if value is not None else None,
+            "temperature": self.temperature,
         }
+
+        if dist is not None:
+            metadata["policy_dist"] = dist
+            metadata["policy"] = dist.probs.detach().cpu()
+        elif is_prob:
+            metadata["policy"] = masked_values.detach().cpu()
+        else:
+            # For argmax without probs/logits, we can't easily provide a policy dist
+            # but we can provide the "greedy" policy as a one-hot
+            metadata["policy"] = (
+                torch.nn.functional.one_hot(action, num_classes=values.shape[-1])
+                .float()
+                .detach()
+                .cpu()
+            )
 
         # Handle search metadata if present
         extra = blackboard.predictions.get("extra_metadata")
@@ -140,42 +194,30 @@ class CategoricalSelectorComponent(PipelineComponent):
 
         write_to_blackboard(blackboard, action, metadata)
 
+    def _update_from_episode(self, blackboard: Blackboard) -> None:
+        """Update temperature from episode step schedule."""
+        info = blackboard.meta.get("info", {})
+        step = info.get("episode_step", 0)
 
-class ArgmaxSelectorComponent(PipelineComponent):
-    """Selects the action with the highest value/logit (Greedy)."""
+        if step != self._last_step:
+            self.schedule.step(
+                max(1, step - self._last_step) if self._last_step >= 0 else step
+            )
+            self._last_step = step
+            if step == 0:
+                self.schedule.reset()
 
-    def execute(self, blackboard: Blackboard) -> None:
-        if blackboard.data.get("done", False):
-            write_to_blackboard(blackboard, torch.tensor([0]), {"action_is_none": True})
-            blackboard.meta["action"] = None
-            return
+        self.temperature = self.schedule.get_value()
 
-        info = blackboard.meta.get("info", blackboard.data.get("info", {}))
+    def _update_from_training(self, blackboard: Blackboard) -> None:
+        """Update temperature from global training step."""
+        step = blackboard.meta.get("training_step", 0)
 
-        q_values = blackboard.predictions.get("q_values")
-        logits = blackboard.predictions.get("logits")
-        probs = blackboard.predictions.get("probs")
-        value = blackboard.predictions.get("value")
+        if step > self._last_step:
+            self.schedule.step(step - self._last_step)
+            self._last_step = step
 
-        values = q_values if q_values is not None else (logits if logits is not None else probs)
-        
-        if values is None:
-            blackboard.meta["action"] = None
-            return
-
-        values = mask_actions(values, info)
-        action = torch.argmax(values, dim=-1)
-
-        metadata = {
-            "value": value.detach().cpu() if value is not None else None,
-            "policy": probs.detach().cpu() if probs is not None else None,
-        }
-        
-        extra = blackboard.predictions.get("extra_metadata")
-        if extra:
-            metadata.update(extra)
-
-        write_to_blackboard(blackboard, action, metadata)
+        self.temperature = self.schedule.get_value()
 
 
 class EpsilonGreedySelectorComponent(PipelineComponent):
@@ -194,7 +236,7 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
 
         q_values = blackboard.predictions.get("q_values")
         probs = blackboard.predictions.get("probs")
-        
+
         if q_values is None:
             blackboard.meta["action"] = None
             return
@@ -213,11 +255,19 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
 
         if batch_size == 1:
             if explore_mask.item():
-                legal_moves_dummy = mask_actions(torch.zeros_like(q_values), info, mask_value=1.0)
-                legal_indices = torch.where(legal_moves_dummy == 1.0)[1] if q_values.dim() == 2 else torch.where(legal_moves_dummy == 1.0)[0]
+                legal_moves_dummy = mask_actions(
+                    torch.zeros_like(q_values), info, mask_value=1.0
+                )
+                legal_indices = (
+                    torch.where(legal_moves_dummy == 1.0)[1]
+                    if q_values.dim() == 2
+                    else torch.where(legal_moves_dummy == 1.0)[0]
+                )
 
                 if len(legal_indices) > 0:
-                    idx = torch.randint(0, len(legal_indices), (1,), device=q_values.device)
+                    idx = torch.randint(
+                        0, len(legal_indices), (1,), device=q_values.device
+                    )
                     action = legal_indices[idx]
                 else:
                     action = torch.argmax(q_values, dim=-1)
@@ -232,7 +282,7 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
             "policy": probs.detach().cpu() if probs is not None else None,
             "epsilon": epsilon,
         }
-        
+
         extra = blackboard.predictions.get("extra_metadata")
         if extra:
             metadata.update(extra)
@@ -255,8 +305,10 @@ class NFSPSelectorComponent(PipelineComponent):
         self.br_prefix = br_prefix
         self.avg_prefix = avg_prefix
         self.eta = eta
-        self.br_selector = ArgmaxSelectorComponent()
-        self.avg_selector = ArgmaxSelectorComponent()
+        self.br_selector = ActionSelectorComponent(
+            input_key="q_values", temperature=0.0
+        )
+        self.avg_selector = ActionSelectorComponent(input_key="logits", temperature=0.0)
 
     def execute(self, blackboard: Blackboard) -> None:
         import random
@@ -271,7 +323,7 @@ class NFSPSelectorComponent(PipelineComponent):
                 prefixed_key = self.br_prefix + key
                 if prefixed_key in original_preds:
                     blackboard.predictions[key] = original_preds[prefixed_key]
-            
+
             self.br_selector.execute(blackboard)
             blackboard.predictions = original_preds
         else:
@@ -281,6 +333,6 @@ class NFSPSelectorComponent(PipelineComponent):
                 prefixed_key = self.avg_prefix + key
                 if prefixed_key in original_preds:
                     blackboard.predictions[key] = original_preds[prefixed_key]
-            
+
             self.avg_selector.execute(blackboard)
             blackboard.predictions = original_preds

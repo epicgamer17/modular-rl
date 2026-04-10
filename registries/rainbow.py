@@ -6,7 +6,7 @@ from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.q import QHead, DuelingQHead
 from modules.representations import C51Representation
-from actors.action_selectors.selectors import ArgmaxSelector
+from actors.action_selectors.selectors import ActionSelector
 
 from data.storage.circular import BufferConfig, ModularReplayBuffer, CircularWriter
 from data.samplers.prioritized import PrioritizedSampler
@@ -23,7 +23,7 @@ from data.writers import SharedCircularWriter
 from components.environments import GymObservationComponent, GymStepComponent
 from components.telemetry import TelemetryComponent
 from components.memory import BufferStoreComponent
-from components.selectors import NetworkInferenceComponent, ArgmaxSelectorComponent
+from components.selectors import NetworkInferenceComponent, ActionSelectorComponent
 
 from core import BlackboardEngine
 from components.neural import ForwardPassComponent
@@ -164,7 +164,7 @@ def make_rainbow_actor_engine(
         obs_component,
         ResetNoiseComponent(agent_network),
         NetworkInferenceComponent(agent_network, obs_dim),
-        ArgmaxSelectorComponent(),
+        ActionSelectorComponent(input_key="q_values", temperature=0.0),
         step_component,
         TelemetryComponent(name="rainbow_actor"),
     ]

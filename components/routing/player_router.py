@@ -53,13 +53,13 @@ class PlayerRoutingComponent(PipelineComponent):
 
     Example usage (two-player TicTacToe)::
 
-        from components.selectors import CategoricalSelectorComponent
+        from components.selectors import ActionSelectorComponent
         from components.experts.tictactoe import TicTacToeExpertComponent
         from components.routing.player_router import PlayerRoutingComponent
 
         router = PlayerRoutingComponent(
             player_components={
-                0: [NetworkInferenceComponent(agent), CategoricalSelectorComponent()],
+                0: [NetworkInferenceComponent(agent), ActionSelectorComponent(input_key="logits")],
                 1: [TicTacToeExpertComponent()],
             }
         )
