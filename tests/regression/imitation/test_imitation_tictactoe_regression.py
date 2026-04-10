@@ -30,7 +30,7 @@ from utils.plotting import plot_regression_results
 pytestmark = pytest.mark.regression
 from data.storage.circular import BufferConfig, ModularReplayBuffer
 from data.samplers.prioritized import UniformSampler
-from actors.experts.tictactoe_expert import TicTacToeBestAgent
+from components.experts.tictactoe import TicTacToeBestAgent
 from pettingzoo.classic import tictactoe_v3
 
 

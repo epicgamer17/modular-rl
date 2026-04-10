@@ -9,3 +9,4 @@ from .discrete import (
 )
 from .temperature import TemperatureComponent
 from .decorators import PPODecoratorComponent
+from .random import RandomSelectorComponent
