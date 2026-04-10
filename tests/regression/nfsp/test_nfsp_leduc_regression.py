@@ -22,9 +22,6 @@ from components.losses import OptimizerStepComponent
 from components.losses import LossAggregatorComponent, PolicyLoss
 from components.targets import TDTargetComponent
 from components.losses import QBootstrappingLoss
-from components.targets import (
-    UniversalInfrastructureComponent,
-)
 from core import RepeatSampleIterator
 import pytest
 
@@ -195,7 +192,6 @@ def test_nfsp_leduc_regression():
                 gamma=1.0,
                 n_step=1,
             ),
-            UniversalInfrastructureComponent(),
             rl_loss,
             LossAggregatorComponent(loss_weights={"q_loss": 1.0}),
             OptimizerStepComponent(
@@ -214,7 +210,6 @@ def test_nfsp_leduc_regression():
     sl_learner = BlackboardEngine(
         components=[
             ForwardPassComponent(sl_network, None),
-            UniversalInfrastructureComponent(),
             sl_loss,
             LossAggregatorComponent(loss_weights={"policy_loss": 1.0}),
             OptimizerStepComponent(

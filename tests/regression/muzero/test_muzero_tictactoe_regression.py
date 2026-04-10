@@ -18,7 +18,7 @@ from core import SingleBatchIterator
 from actors.action_selectors.selectors import ActionSelector
 from utils.schedule import StepwiseSchedule
 from envs.factories.tictactoe import tictactoe_factory
-from components.experts.tictactoe import TicTacToeBestAgent
+from components.experts.tictactoe import TicTacToeBestAgent, TicTacToeRandomAgent
 from executors.torch_mp_executor import TorchMPExecutor
 from executors.workers.actor_worker import ActorWorker
 from actors.workers.tester import Tester, VsAgentTest
@@ -97,10 +97,7 @@ def test_muzero_tictactoe_full_training():
         device=DEVICE,
     )
 
-    action_selector = ActionSelector(
-        input_key="probs",
-        schedule=StepwiseSchedule(steps=[5, 10], values=[1.0, 0.5, 0.0]),
-    )
+    temperature_schedule = StepwiseSchedule(steps=[5, 10], values=[1.0, 0.5, 0.0])
 
     # --- 3. Replay Buffer ---
     replay_buffer = make_muzero_replay_buffer(
@@ -129,6 +126,9 @@ def test_muzero_tictactoe_full_training():
     )
 
     # --- 5. Executor Launch ---
+    # Share model parameters across processes so optimizer updates are visible to workers
+    agent_network.share_memory()
+
     executor = TorchMPExecutor()
 
     # Create Actor Engine
@@ -140,17 +140,19 @@ def test_muzero_tictactoe_full_training():
         obs_dim=obs_dim,
         num_actions=num_actions,
         num_players=2,
+        temperature_schedule=temperature_schedule,
         exploration=True,
         device=torch.device("cpu"),
     )
 
     executor.launch(ActorWorker, (actor_engine,), num_workers=NUM_WORKERS)
 
-    # Tester setup
+    # Tester setup (greedy selector for evaluation - exploration=False forces temp=0)
+    test_selector = ActionSelector(input_key="probs")
     tester_launch_args = (
         tictactoe_factory,
         agent_network,
-        action_selector,
+        test_selector,
         None,  # replay_buffer
         2,
         torch.device("cpu"),
@@ -168,6 +170,18 @@ def test_muzero_tictactoe_full_training():
                 name="vs_expert_p1",
                 num_trials=100,
                 opponent=TicTacToeBestAgent(),
+                player_idx=1,
+            ),
+            VsAgentTest(
+                name="vs_random_p0",
+                num_trials=100,
+                opponent=TicTacToeRandomAgent(),
+                player_idx=0,
+            ),
+            VsAgentTest(
+                name="vs_random_p1",
+                num_trials=100,
+                opponent=TicTacToeRandomAgent(),
                 player_idx=1,
             ),
         ],
@@ -212,9 +226,11 @@ def test_muzero_tictactoe_full_training():
 
             train_steps += 1
 
-            # Update weights
+            # Update weights and hyperparameters
             if train_steps % TRANSFER_INTERVAL == 0:
-                executor.update_weights(agent_network.state_dict())
+                executor.update_weights(
+                    agent_network.state_dict(), params={"training_step": train_steps}
+                )
 
             # Periodic Testing
             if train_steps % TEST_INTERVAL == 0:
@@ -230,6 +246,10 @@ def test_muzero_tictactoe_full_training():
                     p0 = last_res.get("vs_expert_p0", {}).get("score", 0.0)
                     p1 = last_res.get("vs_expert_p1", {}).get("score", 0.0)
                     test_score_history.append((p0 + p1) / 2)
+
+                    r0 = last_res.get("vs_random_p0", {}).get("score", 0.0)
+                    r1 = last_res.get("vs_random_p1", {}).get("score", 0.0)
+                    print(f"[Step {train_steps}] Vs Expert: {(p0+p1)/2:.2f} | Vs Random: {(r0+r1)/2:.2f}")
 
     # Final Evaluation
     print("Performing final evaluation...")
@@ -260,10 +280,17 @@ def test_muzero_tictactoe_full_training():
         p0_score = last_res.get("vs_expert_p0", {}).get("score", -1.0)
         p1_score = last_res.get("vs_expert_p1", {}).get("score", -1.0)
         mean_score = (p0_score + p1_score) / 2
-        print(f"Final Mean Score: {mean_score:.4f}")
+        
+        r0_score = last_res.get("vs_random_p0", {}).get("score", -1.0)
+        r1_score = last_res.get("vs_random_p1", {}).get("score", -1.0)
+        mean_random_score = (r0_score + r1_score) / 2
+        
+        print(f"Final Mean Score vs Expert: {mean_score:.4f}")
+        print(f"Final Mean Score vs Random: {mean_random_score:.4f}")
     else:
         print("MuZero Regression Training complete, but no test results collected!")
         p0_score = p1_score = mean_score = -1.0
+        r0_score = r1_score = mean_random_score = -1.0
 
     # assert to play loss is very very close to 0 (like maybe the mean of last 100 or 1000 is < 0.01)
     if to_play_losses:
@@ -275,10 +302,19 @@ def test_muzero_tictactoe_full_training():
 
     assert (
         mean_score > 0.15
-    ), f"Performance too low! Final mean score {mean_score:.4f} is below threshold 0.0"
+    ), f"Performance vs Expert too low! Final mean score {mean_score:.4f} is below threshold 0.15"
     assert (
         p0_score > 0.35 and p1_score > -0.05
-    ), f"Performance too low! Final p0_score {p0_score:.4f} or p1_score {p1_score:.4f} is below threshold"
+    ), f"Performance vs Expert too low! Final p0_score {p0_score:.4f} or p1_score {p1_score:.4f} is below threshold"
+    
+    # Random Agent Assertions
+    assert (
+        mean_random_score > 0.8
+    ), f"Performance vs Random too low! Final mean score {mean_random_score:.4f} is below threshold 0.8"
+    assert (
+        r0_score >= 0 and r1_score >= 0
+    ), f"Agent lost to Random! p0_score: {r0_score}, p1_score: {r1_score}"
+    
     print("MuZero Regression Training complete and PASSED!")
 
     env.close()

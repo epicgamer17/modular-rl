@@ -192,6 +192,11 @@ class ActionSelectorComponent(PipelineComponent):
         if extra:
             metadata.update(extra)
 
+        # Propagate target_policy from MCTS for buffer storage
+        target_policy = blackboard.predictions.get("target_policy")
+        if target_policy is not None:
+            metadata["target_policies"] = target_policy.detach().cpu() if hasattr(target_policy, "detach") else target_policy
+
         write_to_blackboard(blackboard, action, metadata)
 
     def _update_from_episode(self, blackboard: Blackboard) -> None:

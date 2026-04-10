@@ -33,7 +33,6 @@ from components.losses import (
     ShapeValidator,
 )
 from components.targets import (
-    UniversalInfrastructureComponent,
     ScalarFormatterComponent,
 )
 from components.environments import GymObservationComponent, GymStepComponent
@@ -155,7 +154,6 @@ def make_ppo_learner(
         ForwardPassComponent(agent_network, shape_validator),
         ScalarFormatterComponent(source_key="data.values", dest_key="values", representation=val_rep),
         ScalarFormatterComponent(source_key="data.returns", dest_key="returns", representation=val_rep),
-        UniversalInfrastructureComponent(),
         policy_loss,
         value_loss,
         LossAggregatorComponent(loss_weights={"policy_loss": 1.0, "value_loss": 1.0}),

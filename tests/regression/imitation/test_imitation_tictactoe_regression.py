@@ -18,7 +18,7 @@ from components.losses import OptimizerStepComponent
 from components.losses import LossAggregatorComponent
 from components.losses import PolicyLoss
 from components.targets import (
-    UniversalInfrastructureComponent,
+    ClassificationFormatterComponent,
 )
 from core import RepeatSampleIterator
 from envs.factories.wrappers.observation import ActionMaskInInfoWrapper
@@ -130,7 +130,6 @@ def test_imitation_tictactoe_regression():
     learner = BlackboardEngine(
         components=[
             ForwardPassComponent(agent_network, None),
-            UniversalInfrastructureComponent(),
             imitation_loss,
             LossAggregatorComponent(loss_weights={"policy_loss": 1.0}),
             OptimizerStepComponent(

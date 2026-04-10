@@ -37,7 +37,6 @@ from components.losses import LossPriorityComponent
 from components.losses import QBootstrappingLoss
 from components.targets import (
     DistributionalTargetComponent,
-    UniversalInfrastructureComponent,
 )
 from utils.schedule import Schedule, ConstantSchedule
 
@@ -205,7 +204,6 @@ def make_rainbow_learner(
                 gamma=gamma,
                 n_step=n_step,
             ),
-            UniversalInfrastructureComponent(),
             q_loss,
             LossAggregatorComponent(loss_weights={"q_loss": 1.0}),
             priority_comp,

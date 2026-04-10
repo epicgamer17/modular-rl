@@ -48,26 +48,31 @@ def apply_infrastructure(
     3. Masking
     4. Reduction to Mean Scalar
     """
-    # 1. Secure Weights & Gradient Scales from Meta (Truth Source)
-    weights = blackboard.meta.get("weights")
-    gradient_scales = blackboard.meta.get("gradient_scales")
-    masks = blackboard.targets.get(mask_key)
+    # 1. Weights from data (yielded by Sampler) or meta (Truth Source)
+    weights = blackboard.data.get("weights")
+    if weights is None:
+        weights = blackboard.meta.get("weights")
 
-    if weights is None or gradient_scales is None or masks is None:
-        # Fallback for simple environments or missing infra
-        B, T = elementwise_loss.shape[:2]
-        device = elementwise_loss.device
-        weights = weights if weights is not None else torch.ones(B, device=device)
-        gradient_scales = (
-            gradient_scales
-            if gradient_scales is not None
-            else torch.ones((1, T), device=device)
-        )
-        masks = (
-            masks
-            if masks is not None
-            else torch.ones((B, T), device=device, dtype=torch.bool)
-        )
+    # 2. Gradient scales from meta
+    gradient_scales = blackboard.meta.get("gradient_scales")
+
+    # 3. Masks from targets (e.g. PivotComponent) or data (Sampler)
+    masks = blackboard.targets.get(mask_key)
+    if masks is None:
+        masks = blackboard.data.get(mask_key)
+
+    B, T = elementwise_loss.shape[:2]
+    device = elementwise_loss.device
+
+    # Graceful Defaults (No longer using UniversalInfrastructureComponent)
+    if weights is None:
+        weights = torch.ones(B, device=device)
+    if gradient_scales is None:
+        # Default to no gradient scaling
+        gradient_scales = torch.ones((1, T), device=device)
+    if masks is None:
+        # Default to full tensor if no mask is found
+        masks = torch.ones((B, T), device=device, dtype=torch.bool)
 
     B = weights.shape[0]
     T = gradient_scales.shape[1]

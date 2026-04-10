@@ -30,20 +30,46 @@ class SequencePadderComponent(PipelineComponent):
 
 
 class SequenceMaskComponent(PipelineComponent):
-    """Modifier: Generates Universal [B, T] sequence masks."""
+    """Modifier: Generates or moves [B, T] sequence masks to blackboard.targets.
+    
+    If masks already exist in blackboard.data (e.g. from NStepUnrollProcessor),
+    it moves them to blackboard.targets. Otherwise, it generates them from is_same_game.
+    """
 
     def execute(self, blackboard: Blackboard) -> None:
         data = blackboard.data
-        blackboard.targets["value_mask"] = data["is_same_game"].clone()
-        blackboard.targets["masks"] = data["is_same_game"].clone()
-        blackboard.targets["policy_mask"] = data["has_valid_obs_mask"].clone()
-        blackboard.targets["policy_mask"] &= ~data["dones"]
+        
+        # 1. Handle Value Mask (States)
+        if "value_mask" in data:
+            blackboard.targets["value_mask"] = data["value_mask"].clone()
+        elif "is_same_game" in data:
+            blackboard.targets["value_mask"] = data["is_same_game"].clone()
+        
+        # 2. Handle Reward Mask (Transitions)
+        if "reward_mask" in data:
+            blackboard.targets["reward_mask"] = data["reward_mask"].clone()
+        elif "is_same_game" in data:
+            blackboard.targets["reward_mask"] = data["is_same_game"].clone()
+            blackboard.targets["reward_mask"][:, 0] = False
+        
+        # Ensure index 0 is masked for rewards if it wasn't already
+        if "reward_mask" in blackboard.targets:
+            blackboard.targets["reward_mask"][:, 0] = False
 
-        blackboard.targets["reward_mask"] = data["is_same_game"].clone()
-        blackboard.targets["reward_mask"][:, 0] = False
+        # 3. Handle ToPlay Mask
+        if "to_play_mask" in data:
+            blackboard.targets["to_play_mask"] = data["to_play_mask"].clone()
+        elif "is_same_game" in data:
+            blackboard.targets["to_play_mask"] = data["is_same_game"].clone()
+            blackboard.targets["to_play_mask"][:, 0] = False
 
-        blackboard.targets["to_play_mask"] = data["is_same_game"].clone()
-        blackboard.targets["to_play_mask"][:, 0] = False
+        # 4. Handle Policy Mask
+        if "policy_mask" in data:
+            blackboard.targets["policy_mask"] = data["policy_mask"].clone()
+        elif "has_valid_obs_mask" in data:
+            blackboard.targets["policy_mask"] = data["has_valid_obs_mask"].clone()
+            if "dones" in data:
+                blackboard.targets["policy_mask"] &= ~data["dones"]
 
 
 class SequenceInfrastructureComponent(PipelineComponent):

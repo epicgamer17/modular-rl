@@ -254,3 +254,55 @@ class TicTacToeBestAgent:
             legal_moves = list(range(_NUM_CELLS))
 
         return _select_tictactoe_action(board, legal_moves)
+
+
+class TicTacToeRandomAgent:
+    """
+    Random agent for TicTacToe that chooses legal moves uniformly at random.
+    Preserves the legacy ``agent.predict(obs, info)`` → ``agent.select_actions(prediction, info)``
+    interface for compatibility with ``Tester``.
+
+    Args:
+        name: Optional display name (unused internally).
+    """
+
+    def __init__(self, name: str = "tictactoe_random") -> None:
+        self.name = name
+
+    def predict(self, observation: np.ndarray, info: dict, env=None, *args, **kwargs):
+        """
+        Pass-through prediction step.
+
+        Returns:
+            Tuple of ``(observation, info)`` unchanged.
+        """
+        return observation, info
+
+    def select_actions(self, prediction, info: dict, *args, **kwargs) -> int:
+        """
+        Select a random legal action.
+
+        Args:
+            prediction: Value returned by ``predict()``.
+            info:       Info dict containing ``"legal_moves"``.
+
+        Returns:
+            Integer flat cell index in ``[0, 9)``.
+        """
+        legal_moves: list = info.get("legal_moves", [])
+        if not legal_moves:
+            # Fallback if legal_moves is missing from info
+            obs = prediction[0] if isinstance(prediction, (tuple, list)) else prediction
+            obs_np = np.asanyarray(obs)
+            # Find zeros in the board
+            if obs_np.ndim == 4:
+                obs_np = obs_np[0]
+            if obs_np.shape[0] > 2:
+                obs_np = obs_np[:2]
+            board = obs_np[0] - obs_np[1]
+            legal_moves = np.where(board.flatten() == 0)[0].tolist()
+
+        if not legal_moves:
+            return 0  # Should not happen in TicTacToe unless board is full
+
+        return int(random.choice(legal_moves))

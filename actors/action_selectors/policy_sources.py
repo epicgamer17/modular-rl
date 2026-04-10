@@ -22,19 +22,3 @@ class BasePolicySource(ABC):
         Computes or retrieves predictions for the given observation.
         """
         pass
-
-
-class BasePolicySource(ABC):
-    """
-    Abstract base class for providing inference predictions to ActionSelectors.
-    Encapsulates the difference between raw network inference and search-based (MCTS) policy.
-    """
-
-    @abstractmethod
-    def get_inference(
-        self, obs: torch.Tensor, info: Dict[str, Any], **kwargs
-    ) -> Dict[str, torch.Tensor]:
-        """
-        Computes or retrieves predictions for the given observation.
-        """
-        pass

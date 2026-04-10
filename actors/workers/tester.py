@@ -88,16 +88,13 @@ class NetworkAgent:
                     mask[0, legal] = True
                 info["legal_moves_mask"] = mask
 
-            output = self.action_selector.select_action(
+            action, metadata = self.action_selector.select_action(
                 predictions=result,
                 info=info,
                 exploration=False,
                 actor_state=self.actor_state,
             )
-            if isinstance(output, tuple) and len(output) == 2:
-                action, self.actor_state = output
-            else:
-                action = output
+            # metadata is currently unused for testing/logging in this helper
             return action
 
 
@@ -397,17 +394,12 @@ class Tester:
                     mask[0, legal] = True
                 info["legal_moves_mask"] = mask
 
-            output = self.action_selector.select_action(
+            action, metadata = self.action_selector.select_action(
                 predictions=result,
                 info=info,
                 exploration=False,
                 actor_state=self.actor_state,
             )
-
-            if isinstance(output, tuple) and len(output) == 2:
-                action, self.actor_state = output
-            else:
-                action = output
             return action
 
     def play_sequence(self) -> Dict[str, Any]:

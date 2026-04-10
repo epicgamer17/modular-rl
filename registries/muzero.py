@@ -40,15 +40,16 @@ from components.losses import ToPlayLoss
 from modules.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
+    DiscreteSupportRepresentation,
 )
 from components.search import MCTSSearchComponent
 from components.targets import (
     SequencePadderComponent,
-    SequenceMaskComponent,
     SequenceInfrastructureComponent,
     TwoHotProjectionComponent,
     ClassificationFormatterComponent,
     ScalarFormatterComponent,
+    SequenceMaskComponent,
 )
 from components.losses import ShapeValidator
 from components.environments import PettingZooObservationComponent, PettingZooStepComponent, GymObservationComponent, GymStepComponent
@@ -288,7 +289,7 @@ def make_muzero_learner(
     v_loss = ValueLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
     p_loss = PolicyLoss(loss_fn=nn.functional.cross_entropy, loss_factor=1.0)
     r_loss = RewardLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
-    tp_loss = ToPlayLoss(loss_factor=1.0)
+    tp_loss = ToPlayLoss(loss_fn=nn.functional.cross_entropy, loss_factor=1.0)
 
     learner = BlackboardEngine(
         components=[
@@ -303,16 +304,28 @@ def make_muzero_learner(
                     "data.to_plays",
                 ],
             ),
-            SequenceMaskComponent(),
             SequenceInfrastructureComponent(unroll_steps),
+            SequenceMaskComponent(),
             TwoHotProjectionComponent(
-                source_key="data.values", dest_key="values", representation=val_rep
+                source_key="data.values",
+                dest_key="values",
+                representation=val_rep,
+            ) if isinstance(val_rep, DiscreteSupportRepresentation) else ScalarFormatterComponent(
+                source_key="data.values",
+                dest_key="values",
+                representation=val_rep,
             ),
             ClassificationFormatterComponent(
                 source_key="data.policies", dest_key="policies", representation=pol_rep
             ),
-            ScalarFormatterComponent(
-                source_key="data.rewards", dest_key="rewards", representation=rew_rep
+            TwoHotProjectionComponent(
+                source_key="data.rewards",
+                dest_key="rewards",
+                representation=rew_rep,
+            ) if isinstance(rew_rep, DiscreteSupportRepresentation) else ScalarFormatterComponent(
+                source_key="data.rewards",
+                dest_key="rewards",
+                representation=rew_rep,
             ),
             ScalarFormatterComponent(
                 source_key="data.to_plays", dest_key="to_plays", representation=tp_rep

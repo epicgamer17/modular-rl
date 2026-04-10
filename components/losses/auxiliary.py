@@ -31,9 +31,16 @@ class RewardLoss(PipelineComponent):
 
         B, T = preds.shape[:2]
 
+        # Handle scalar vs distributional heads
+        # If preds is [B, T, 1] and targets is [B, T], we must align
+        # TODO: handle this better, enforce a contract
+        if preds.ndim == 3 and targets.ndim == 2:
+            targets = targets.unsqueeze(-1)
+
         raw_loss = self.loss_fn(
             preds.flatten(0, 1), targets.flatten(0, 1), reduction="none"
         )
+
         if raw_loss.ndim > 1:
             raw_loss = raw_loss.sum(dim=-1)
         elementwise_loss = raw_loss.reshape(B, T) * self.loss_factor
@@ -45,11 +52,11 @@ class RewardLoss(PipelineComponent):
 
 
 class ToPlayLoss(PipelineComponent):
-    """To-play prediction loss module."""
+    """To-play prediction loss module (classification)."""
 
     def __init__(
         self,
-        loss_fn: Any = F.binary_cross_entropy_with_logits,
+        loss_fn: Any = F.cross_entropy,
         loss_factor: float = 1.0,
         mask_key: str = "to_play_mask",
         target_key: str = "to_plays",
@@ -72,6 +79,10 @@ class ToPlayLoss(PipelineComponent):
             return
 
         B, T = preds.shape[:2]
+
+        # F.cross_entropy expects [N, C] and [N, C] (soft targets)
+        # or [N, C] and [N] (class indices).
+        # targets is already [B, T, C] (projections or one-hots)
         raw_loss = self.loss_fn(
             preds.flatten(0, 1), targets.flatten(0, 1), reduction="none"
         )
@@ -107,7 +118,9 @@ class ChanceQLoss(PipelineComponent):
             formatted_target = None
 
         if formatted_target is None:
-            raise KeyError(f"ChanceQLoss requires '{self.target_key}' in targets or data.")
+            raise KeyError(
+                f"ChanceQLoss requires '{self.target_key}' in targets or data."
+            )
 
         pred = blackboard.predictions["chance_q_logits"]
         B, T = pred.shape[:2]

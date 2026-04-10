@@ -286,9 +286,7 @@ class NStepUnrollProcessor(OutputProcessor):
 
             if u < self.unroll_steps:
                 target_actions[:, u] = raw_actions[:, u].long()
-                target_actions[~is_consistent, u] = int(
-                    np.random.randint(0, self.num_actions)
-                )
+                target_actions[~is_consistent, u] = 0
 
         # 7. Unroll Observations
         obs_indices = all_indices[:, : self.unroll_steps + 1]
@@ -304,11 +302,22 @@ class NStepUnrollProcessor(OutputProcessor):
                     is_absorbing, step - 1
                 ]
 
+        # Rename to canonical names for radical transparency
+        value_mask = obs_valid_mask
+        policy_mask = dynamics_mask[:, : self.unroll_steps + 1]
+        reward_mask = policy_mask.clone()
+        reward_mask[:, 0] = False  # No reward at root
+        to_play_mask = policy_mask.clone()
+        to_play_mask[:, 0] = False  # No to-play at root (usually)
+
         return dict(
             observations=buffers["observations"][indices_tensor],
             unroll_observations=unroll_observations,
-            has_valid_obs_mask=obs_valid_mask,
-            has_valid_action_mask=dynamics_mask[:, : self.unroll_steps + 1],
+            value_mask=value_mask,
+            policy_mask=policy_mask,
+            reward_mask=reward_mask,
+            to_play_mask=to_play_mask,
+            masks=obs_valid_mask,  # Generic fallback
             rewards=target_rewards,
             policies=target_policies,
             values=target_values,

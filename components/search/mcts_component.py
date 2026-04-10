@@ -49,13 +49,16 @@ class MCTSSearchComponent(PipelineComponent):
         
         if len(results) == 5:
             root_value, exploratory_policy, target_policy, best_action, search_meta = results
-            policy = target_policy
+            policy = exploratory_policy
             value = root_value
+            # Store target_policy so SequenceBufferComponent can use it as the
+            # clean learning target (it checks for "target_policies" in metadata).
+            blackboard.predictions["target_policy"] = target_policy
         elif len(results) == 3:
             policy, value, search_meta = results
         else:
             raise ValueError(f"Unexpected number of return values from search_engine.run: {len(results)}")
-            
+
         blackboard.predictions["policy"] = policy
         blackboard.predictions["probs"] = policy  # For ActionSelector compatibility
         blackboard.predictions["value"] = value

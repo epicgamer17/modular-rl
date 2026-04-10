@@ -101,7 +101,6 @@ def test_rainbow_cartpole_full_training():
     )
     from components.memory import BufferStoreComponent
     from core import BlackboardEngine, infinite_ticks
-    from actors.action_selectors.policy_sources import NetworkPolicySource
 
     # --- Setup Environment ---
     env = gym.make(ENV_ID)

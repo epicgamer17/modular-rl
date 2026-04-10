@@ -5,7 +5,6 @@ from .sequence import (
     SequenceInfrastructureComponent,
     ChanceTargetComponent,
 )
-from .formatting import UniversalInfrastructureComponent
 from .formatters import (
     TwoHotProjectionComponent,
     ExpectedValueComponent,

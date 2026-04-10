@@ -26,7 +26,7 @@ from components.neural import ForwardPassComponent
 from components.losses import OptimizerStepComponent
 from components.losses import LossAggregatorComponent
 from components.losses import QBootstrappingLoss
-from components.targets import TDTargetComponent, UniversalInfrastructureComponent
+from components.targets import TDTargetComponent
 
 
 def make_dqn_network(
@@ -149,7 +149,6 @@ def make_dqn_learner(
                 target_network=target_network,
                 gamma=gamma,
             ),
-            UniversalInfrastructureComponent(),
             q_loss,
             LossAggregatorComponent(loss_weights={"q_loss": 1.0}),
             OptimizerStepComponent(
