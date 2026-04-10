@@ -30,10 +30,16 @@ class ValueLoss(PipelineComponent):
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["values"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
+        # TODO: enforce always time dimension some how.
+        # 1. Align targets to predictions time dimension if missing
+        if targets.ndim == preds.ndim - 1:
+            targets = targets.unsqueeze(1)
 
-        B, T = preds.shape[:2]
+        # 2. Ensure feature dimension matches if preds is [B, T, 1] and targets is [B, T]
+        if preds.ndim == 3 and targets.ndim == 2:
+            targets = targets.unsqueeze(-1)
 
-        # Flatten B, T for loss function
+        # 3. Flatten B, T for loss function
         raw_loss = self.loss_fn(
             preds.flatten(0, 1), targets.flatten(0, 1), reduction="none"
         )
@@ -41,6 +47,7 @@ class ValueLoss(PipelineComponent):
         # Reshape to [B, T]
         if raw_loss.ndim > 1:
             raw_loss = raw_loss.sum(dim=-1)
+        B, T = preds.shape[:2]
         elementwise_loss = raw_loss.reshape(B, T) * self.loss_factor
 
         # Pass through infrastructure

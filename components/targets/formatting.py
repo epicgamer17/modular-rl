@@ -19,69 +19,6 @@ from modules.representations import BaseRepresentation, DiscreteSupportRepresent
 from components.targets.formatters import TwoHotProjectionComponent
 
 
-class TargetFormatterComponent(PipelineComponent):
-    """Formats every registered target key using its paired representation.
-
-    For each ``(key, representation)`` pair provided at construction time the
-    component converts the raw scalar or distribution stored at
-    ``blackboard.targets[key]`` into the representation expected by the loss
-    engine.
-
-    For :class:`~learner.losses.representations.DiscreteSupportRepresentation`
-    targets (MuZero values, C51, …) the conversion is **delegated** to a
-    :class:`~components.targets.formatters.TwoHotProjectionComponent` so the
-    projection maths live in exactly one place.
-
-    For all other :class:`~learner.losses.representations.BaseRepresentation`
-    subclasses the component falls back to ``representation.format_target``,
-    preserving backward-compatibility with policy / to-play heads that use
-    ``ClassificationRepresentation`` etc.
-
-    Args:
-        target_mapping: A dict mapping blackboard target key → representation.
-            Example::
-
-                {
-                    "values":   DiscreteSupportRepresentation(-10, 10, 21),
-                    "policies": ClassificationRepresentation(num_actions),
-                }
-    """
-
-    def __init__(self, target_mapping: Dict[str, BaseRepresentation]) -> None:
-        self._target_mapping: Dict[str, BaseRepresentation] = target_mapping
-
-        # Pre-build one TwoHotProjectionComponent per discrete-support key.
-        self._projectors: Dict[str, TwoHotProjectionComponent] = {}
-        for path, rep in target_mapping.items():
-            dest_key = path.split(".")[-1]
-            if isinstance(rep, DiscreteSupportRepresentation):
-                self._projectors[dest_key] = TwoHotProjectionComponent(
-                    representation=rep,
-                    source_key=dest_key,
-                    dest_key=dest_key,
-                )
-
-    def execute(self, blackboard: Blackboard) -> None:
-        """Convert each registered target key into its loss-ready form."""
-        for path, rep in self._target_mapping.items():
-            try:
-                # 1. Source explicitly from path
-                val = resolve_blackboard_path(blackboard, path)
-                dest_key = path.split(".")[-1]
-                
-                # 2. Place in targets for downstream loss components
-                blackboard.targets[dest_key] = val
-
-                # 3. Apply Representation-specific formatting
-                if dest_key in self._projectors:
-                    self._projectors[dest_key].execute(blackboard)
-                else:
-                    blackboard.targets[dest_key] = rep.format_target(
-                        blackboard.targets, target_key=dest_key
-                    )
-            except KeyError:
-                continue
-
 
 class UniversalInfrastructureComponent(PipelineComponent):
     """Standard Infrastructure Component for single-step learners.

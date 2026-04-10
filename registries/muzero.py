@@ -42,7 +42,14 @@ from modules.representations import (
     ScalarRepresentation,
 )
 from components.search import MCTSSearchComponent
-from components.targets import SequencePadderComponent, SequenceMaskComponent, SequenceInfrastructureComponent, TargetFormatterComponent
+from components.targets import (
+    SequencePadderComponent,
+    SequenceMaskComponent,
+    SequenceInfrastructureComponent,
+    TwoHotProjectionComponent,
+    ClassificationFormatterComponent,
+    ScalarFormatterComponent,
+)
 from components.losses import ShapeValidator
 from components.environments import PettingZooObservationComponent, PettingZooStepComponent, GymObservationComponent, GymStepComponent
 from components.selectors import (
@@ -298,13 +305,17 @@ def make_muzero_learner(
             ),
             SequenceMaskComponent(),
             SequenceInfrastructureComponent(unroll_steps),
-            TargetFormatterComponent(
-                {
-                    "values": val_rep,
-                    "policies": pol_rep,
-                    "rewards": rew_rep,
-                    "to_plays": tp_rep,
-                }
+            TwoHotProjectionComponent(
+                source_key="data.values", dest_key="values", representation=val_rep
+            ),
+            ClassificationFormatterComponent(
+                source_key="data.policies", dest_key="policies", representation=pol_rep
+            ),
+            ScalarFormatterComponent(
+                source_key="data.rewards", dest_key="rewards", representation=rew_rep
+            ),
+            ScalarFormatterComponent(
+                source_key="data.to_plays", dest_key="to_plays", representation=tp_rep
             ),
             v_loss,
             p_loss,

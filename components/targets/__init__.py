@@ -5,5 +5,10 @@ from .sequence import (
     SequenceInfrastructureComponent,
     ChanceTargetComponent,
 )
-from .formatting import TargetFormatterComponent, UniversalInfrastructureComponent
-from .formatters import TwoHotProjectionComponent, ExpectedValueComponent
+from .formatting import UniversalInfrastructureComponent
+from .formatters import (
+    TwoHotProjectionComponent,
+    ExpectedValueComponent,
+    ClassificationFormatterComponent,
+    ScalarFormatterComponent,
+)

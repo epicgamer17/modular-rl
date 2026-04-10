@@ -14,9 +14,10 @@ Blackboard key conventions:
 from __future__ import annotations
 
 import torch
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from core import PipelineComponent, Blackboard
+from core.path_resolver import resolve_blackboard_path
 from modules.representations import BaseRepresentation, DiscreteSupportRepresentation
 
 if TYPE_CHECKING:
@@ -37,29 +38,37 @@ _PROJECTED_VALUES_KEY: str = "projected_values"
 class TwoHotProjectionComponent(PipelineComponent):
     """Projects scalar targets onto a discrete support via two-hot encoding.
 
-    Reads  ``blackboard.targets['raw_values']`` (shape ``[B, T]`` or ``[B]``)
-    and writes ``blackboard.targets['projected_values']`` (shape ``[B, T, bins]``).
+    Reads from a source (path or key) and writes a [B, T, bins] distribution to 
+    ``blackboard.targets[dest_key]``.
 
     This is the canonical two-hot (categorical-support) projection used by
-    MuZero-style algorithms.  All maths are delegated to
-    :class:`~learner.losses.representations.DiscreteSupportRepresentation` so
-    that the support geometry is defined in exactly one place.
+    MuZero-style algorithms. All maths are delegated to
+    :class:`~learner.losses.representations.DiscreteSupportRepresentation`.
 
     Args:
-        representation: A :class:`~learner.losses.representations.DiscreteSupportRepresentation`
-            (or any subclass) that defines ``vmin``, ``vmax``, and ``bins``.
-        source_key: Blackboard key to read scalar targets from (default
-            ``"raw_values"``).
-        dest_key: Blackboard key to write the projected distribution to (default
-            ``"projected_values"``).
+        source_key: Blackboard key or path to read scalar targets from.
+        dest_key: Blackboard key to write the projected distribution to.
+        representation: Optional discrete support representation.
+        v_min: Optional min value for support (used if representation is None).
+        v_max: Optional max value for support (used if representation is None).
+        bins: Optional number of bins for support (used if representation is None).
     """
 
     def __init__(
         self,
-        representation: DiscreteSupportRepresentation,
-        source_key: str = _RAW_VALUES_KEY,
-        dest_key: str = _PROJECTED_VALUES_KEY,
+        source_key: str,
+        dest_key: str,
+        representation: Optional[DiscreteSupportRepresentation] = None,
+        v_min: Optional[float] = None,
+        v_max: Optional[float] = None,
+        bins: Optional[int] = None,
     ) -> None:
+        if representation is None:
+            assert v_min is not None and v_max is not None and bins is not None, (
+                "TwoHotProjectionComponent requires either a representation or v_min, v_max, and bins."
+            )
+            representation = DiscreteSupportRepresentation(v_min, v_max, bins)
+        
         assert isinstance(representation, DiscreteSupportRepresentation), (
             f"TwoHotProjectionComponent requires a DiscreteSupportRepresentation, "
             f"got {type(representation).__name__}"
@@ -69,30 +78,98 @@ class TwoHotProjectionComponent(PipelineComponent):
         self._dest_key = dest_key
 
     def execute(self, blackboard: Blackboard) -> None:
-        """Project scalar targets to two-hot distributions and write back.
-
-        Args:
-            blackboard: The shared pipeline blackboard.  The component will
-                read ``targets[source_key]`` and write
-                ``targets[dest_key]``.
-
-        Raises:
-            AssertionError: If ``source_key`` is missing from
-                ``blackboard.targets``.
-        """
-        assert self._source_key in blackboard.targets, (
-            f"TwoHotProjectionComponent: expected '{self._source_key}' in "
-            f"blackboard.targets, but found keys: {list(blackboard.targets.keys())}"
-        )
-
-        raw: torch.Tensor = blackboard.targets[self._source_key]  # [B, T] or [B]
-
-        # Delegate all projection maths to the representation.
-        # to_representation handles arbitrary leading dims and returns [..., bins].
-        projected: torch.Tensor = self._representation.to_representation(raw)
+        """Project scalar targets to two-hot distributions and write back."""
+        raw = resolve_blackboard_path(blackboard, self._source_key)
+        
         # projected: [B, T, bins] (or [B, bins] if raw was 1-D)
+        projected: torch.Tensor = self._representation.to_representation(raw)
 
         blackboard.targets[self._dest_key] = projected
+
+
+# ---------------------------------------------------------------------------
+# ClassificationFormatterComponent
+# ---------------------------------------------------------------------------
+
+
+class ClassificationFormatterComponent(PipelineComponent):
+    """Formats classification targets (e.g. policies).
+
+    If the target is already a distribution (ndim > 1), it passes through.
+    Otherwise, it converts class indices into one-hot vectors.
+
+    Args:
+        source_key: Blackboard key or path to read targets from.
+        dest_key: Blackboard key to write final targets to.
+        representation: Optional ClassificationRepresentation.
+    """
+
+    def __init__(
+        self,
+        source_key: str,
+        dest_key: str,
+        representation: Optional[BaseRepresentation] = None,
+    ) -> None:
+        self._source_key = source_key
+        self._dest_key = dest_key
+        self._representation = representation
+
+    def execute(self, blackboard: Blackboard) -> None:
+        val = resolve_blackboard_path(blackboard, self._source_key)
+        
+        if self._representation is not None:
+            formatted = self._representation.format_target(
+                {self._dest_key: val}, target_key=self._dest_key
+            )
+        else:
+            # Simple identity fallback if no representation is provided
+            formatted = val
+            
+        blackboard.targets[self._dest_key] = formatted
+
+
+# ---------------------------------------------------------------------------
+# ScalarFormatterComponent
+# ---------------------------------------------------------------------------
+
+
+class ScalarFormatterComponent(PipelineComponent):
+    """Formats scalar targets (e.g. rewards, to-play).
+
+    Useful for ensuring targets have the correct canonical shape [B, T, 1] 
+    and are placed in the targets container.
+
+    Args:
+        source_key: Blackboard key or path to read targets from.
+        dest_key: Blackboard key to write final targets to.
+        representation: Optional ScalarRepresentation.
+    """
+
+    def __init__(
+        self,
+        source_key: str,
+        dest_key: str,
+        representation: Optional[BaseRepresentation] = None,
+    ) -> None:
+        self._source_key = source_key
+        self._dest_key = dest_key
+        self._representation = representation
+
+    def execute(self, blackboard: Blackboard) -> None:
+        val = resolve_blackboard_path(blackboard, self._source_key)
+        
+        if self._representation is not None:
+            formatted = self._representation.format_target(
+                {self._dest_key: val}, target_key=self._dest_key
+            )
+        else:
+            # Canonical [B, T] -> [B, T, 1] if it's not already
+            if torch.is_tensor(val) and val.ndim == 2:
+                formatted = val.unsqueeze(-1)
+            else:
+                formatted = val
+
+        blackboard.targets[self._dest_key] = formatted
 
 
 # ---------------------------------------------------------------------------
@@ -132,17 +209,7 @@ class ExpectedValueComponent(PipelineComponent):
         self._dest_key = dest_key
 
     def execute(self, blackboard: Blackboard) -> None:
-        """Compute expected value from logits and write to targets.
-
-        Args:
-            blackboard: The shared pipeline blackboard.  The component reads
-                ``predictions[logits_key]`` and writes
-                ``targets[dest_key]``.
-
-        Raises:
-            AssertionError: If ``logits_key`` is missing from
-                ``blackboard.predictions``.
-        """
+        """Compute expected value from logits and write to targets."""
         assert self._logits_key in blackboard.predictions, (
             f"ExpectedValueComponent: expected '{self._logits_key}' in "
             f"blackboard.predictions, but found keys: "

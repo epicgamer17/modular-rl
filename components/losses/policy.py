@@ -34,21 +34,27 @@ class PolicyLoss(PipelineComponent):
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["policies"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
+        # TODO: enforce always time dimension some how.
 
-        B, T = preds.shape[:2]
+        # 2. Align targets to predictions time dimension if missing (e.g. from flat buffer)
+        if targets.ndim == preds.ndim - 1:
+            targets = targets.unsqueeze(1)
 
-        # Handle shape mismatch: if targets aren't the same shape as preds,
+        # 3. Handle shape mismatch: if targets aren't the same shape as preds,
         # treat them as class indices (e.g. imitation learning / behavioral cloning)
         if targets.shape == preds.shape:
             flat_targets = targets.flatten(0, 1)
         else:
             flat_targets = targets.flatten(0, 1).long()
+            # If targets were [B, T, 1], flatten(0, 1) is [B*T, 1].
+            # Cross entropy expects [B*T] for indices.
+            if flat_targets.ndim == 2 and flat_targets.shape[-1] == 1:
+                flat_targets = flat_targets.squeeze(-1)
 
-        raw_loss = self.loss_fn(
-            preds.flatten(0, 1), flat_targets, reduction="none"
-        )
+        raw_loss = self.loss_fn(preds.flatten(0, 1), flat_targets, reduction="none")
         if raw_loss.ndim > 1:
             raw_loss = raw_loss.sum(dim=-1)
+        B, T = preds.shape[:2]
         elementwise_loss = raw_loss.reshape(B, T) * self.loss_factor
 
         # Pass through infrastructure
