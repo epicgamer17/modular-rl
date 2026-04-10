@@ -15,7 +15,7 @@ from registries import (
 )
 from actors.action_selectors.selectors import ArgmaxSelector
 from core import RepeatSampleIterator
-from utils.schedule import ConstantSchedule
+from utils.schedule import LinearSchedule
 from utils.plotting import plot_regression_results
 
 
@@ -154,7 +154,9 @@ def test_rainbow_cartpole_full_training():
         weight_decay=WEIGHT_DECAY,
     )
 
-    per_beta_schedule = ConstantSchedule(PER_BETA)
+    per_beta_schedule = LinearSchedule(
+        initial=PER_BETA, final=1.0, decay_steps=TRAINING_STEPS
+    )
 
     learner = make_rainbow_learner(
         agent_network=agent_network,
@@ -231,9 +233,9 @@ def test_rainbow_cartpole_full_training():
             if "episode_score" in result["meta"]:
                 training_scores.append(result["meta"]["episode_score"])
 
-            # Target Network Sync (based on global_step)
-            if global_step % TRANSFER_INTERVAL == 0:
-                target_network.load_state_dict(agent_network.state_dict())
+        # Target Network Sync (based on learning_step)
+        if learning_step % TRANSFER_INTERVAL == 0:
+            target_network.load_state_dict(agent_network.state_dict())
 
         # Perform 1 learning step
         iterator = RepeatSampleIterator(replay_buffer, num_iterations=1, device=DEVICE)

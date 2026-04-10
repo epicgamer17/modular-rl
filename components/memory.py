@@ -194,4 +194,5 @@ class BetaScheduleComponent(PipelineComponent):
         self.set_beta_fn = set_beta_fn
 
     def execute(self, blackboard: Blackboard) -> None:
-        self.set_beta_fn(self.per_beta_schedule.get_value())
+        step = blackboard.meta.get("training_step")
+        self.set_beta_fn(self.per_beta_schedule.get_value(step=step))

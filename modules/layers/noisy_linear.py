@@ -79,14 +79,17 @@ class NoisyLinear(nn.Module):
 
     @property
     def weight(self) -> Tensor:
-        return self.mu_w + self.sigma_w * self.eps_w
+        if self.training:
+            return self.mu_w + self.sigma_w * self.eps_w
+        return self.mu_w
 
     @property
     def bias(self) -> Tensor | None:
         if self.use_bias:
-            return self.mu_b + self.sigma_b * self.eps_b
-        else:
-            return None
+            if self.training:
+                return self.mu_b + self.sigma_b * self.eps_b
+            return self.mu_b
+        return None
 
     def forward(self, input: Tensor) -> Tensor:
         return functional.F.linear(input, self.weight, self.bias)
