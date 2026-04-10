@@ -10,7 +10,7 @@ from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.policy import PolicyHead
 from modules.heads.q import QHead
-from learner.losses.representations import (
+from modules.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )

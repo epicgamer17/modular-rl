@@ -7,3 +7,4 @@ from .sequence import (
     ChanceTargetComponent,
 )
 from .formatting import TargetFormatterComponent, UniversalInfrastructureComponent
+from .formatters import TwoHotProjectionComponent, ExpectedValueComponent

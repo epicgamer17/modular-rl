@@ -5,7 +5,7 @@ from core import Blackboard
 
 if TYPE_CHECKING:
     from modules.agent_nets.base import BaseAgentNetwork
-    from learner.losses.shape_validator import ShapeValidator
+    from components.losses.infrastructure import ShapeValidator
 
 
 class ForwardPassComponent(PipelineComponent):

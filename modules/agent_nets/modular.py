@@ -11,7 +11,7 @@ from modules.world_models.muzero_world_model import MuzeroWorldModel
 from modules.heads.policy import PolicyHead
 from modules.heads.value import ValueHead
 from modules.heads.q import QHead, DuelingQHead
-from learner.losses.representations import get_representation
+from modules.representations import get_representation
 from modules.projectors.sim_siam import Projector
 from components.losses import ShapeValidator
 

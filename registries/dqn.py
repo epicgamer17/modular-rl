@@ -5,7 +5,7 @@ from typing import Tuple, Dict, Any, List, Optional
 from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.q import QHead
-from learner.losses.representations import ScalarRepresentation
+from modules.representations import ScalarRepresentation
 from actors.action_selectors.selectors import ArgmaxSelector
 
 from data.storage.circular import BufferConfig, ModularReplayBuffer, CircularWriter

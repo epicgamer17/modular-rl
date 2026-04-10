@@ -9,7 +9,7 @@ from typing import Dict, Any
 from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.policy import PolicyHead
-from learner.losses.representations import ClassificationRepresentation
+from modules.representations import ClassificationRepresentation
 from core import BlackboardEngine
 from components.neural import ForwardPassComponent
 from components.losses import OptimizerStepComponent

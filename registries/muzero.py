@@ -40,7 +40,7 @@ from components.losses import ValueLoss
 from components.losses import PolicyLoss
 from components.losses import RewardLoss
 from components.losses import ToPlayLoss
-from learner.losses.representations import (
+from modules.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )

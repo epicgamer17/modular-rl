@@ -1,7 +1,7 @@
 from typing import Tuple, Optional, Dict, Any
 from torch import nn, Tensor
 from .base import BaseHead
-from learner.losses.representations import BaseRepresentation
+from modules.representations import BaseRepresentation
 
 
 class ValueHead(BaseHead):
