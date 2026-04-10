@@ -12,11 +12,11 @@ from modules.heads.policy import PolicyHead
 from learner.losses.representations import ClassificationRepresentation
 from core import BlackboardEngine
 from components.neural import ForwardPassComponent
-from components.math import OptimizerStepComponent
+from components.losses import OptimizerStepComponent
 
 
-from components.math import LossAggregatorComponent
-from components.math import ImitationLoss
+from components.losses import LossAggregatorComponent
+from components.losses import ImitationLoss
 from components.targets import (
     PassThroughTargetComponent,
     UniversalInfrastructureComponent,

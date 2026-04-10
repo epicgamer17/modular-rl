@@ -20,21 +20,21 @@ from data.processors import (
     StandardOutputProcessor,
 )
 from data.writers import SharedCircularWriter
-from components.environment import GymObservationComponent, GymStepComponent
+from components.environments import GymObservationComponent, GymStepComponent
 from components.telemetry import TelemetryComponent
 from components.memory import BufferStoreComponent
-from components.actor_logic import NetworkInferenceComponent, ArgmaxSelectorComponent
+from components.selectors import NetworkInferenceComponent, ArgmaxSelectorComponent
 
 from core import BlackboardEngine
 from components.neural import ForwardPassComponent
-from components.math import OptimizerStepComponent
+from components.losses import OptimizerStepComponent
 from components.memory import BetaScheduleComponent
 from components.routing import ResetNoiseComponent
 
-from components.math import LossAggregatorComponent
+from components.losses import LossAggregatorComponent
 from components.memory import PriorityUpdateComponent
-from components.priorities import MaxLossPriorityComponent
-from components.math import QBootstrappingLoss
+from components.losses import MaxLossPriorityComponent
+from components.losses import QBootstrappingLoss
 from components.targets import (
     DistributionalTargetComponent,
     UniversalInfrastructureComponent,

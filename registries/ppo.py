@@ -28,7 +28,7 @@ from data.samplers.prioritized import WholeBufferSampler
 from core import BlackboardEngine
 from components.telemetry import TelemetryComponent
 from components.neural import ForwardPassComponent
-from components.math import (
+from components.losses import (
     OptimizerStepComponent,
     MetricEarlyStopComponent,
     LossAggregatorComponent,
@@ -41,8 +41,8 @@ from components.targets import (
     TargetFormatterComponent,
     UniversalInfrastructureComponent,
 )
-from components.environment import GymObservationComponent, GymStepComponent
-from components.actor_logic import (
+from components.environments import GymObservationComponent, GymStepComponent
+from components.selectors import (
     NetworkInferenceComponent,
     CategoricalSelectorComponent,
     PPODecoratorComponent,

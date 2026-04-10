@@ -16,12 +16,12 @@ from learner.losses.representations import (
 )
 from core import BlackboardEngine
 from components.neural import ForwardPassComponent
-from components.math import OptimizerStepComponent
+from components.losses import OptimizerStepComponent
 
 
-from components.math import LossAggregatorComponent, ImitationLoss
+from components.losses import LossAggregatorComponent, ImitationLoss
 from components.targets import TDTargetComponent
-from components.math import QBootstrappingLoss
+from components.losses import QBootstrappingLoss
 from components.targets import (
     PassThroughTargetComponent,
     UniversalInfrastructureComponent,

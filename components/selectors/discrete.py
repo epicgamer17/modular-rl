@@ -1,176 +1,7 @@
 import torch
-import time
 import numpy as np
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict
 from core import PipelineComponent, Blackboard
-from actors.action_selectors.types import InferenceResult
-
-if TYPE_CHECKING:
-    from modules.agent_nets.base import BaseAgentNetwork
-    from utils.schedule import Schedule
-
-
-class NetworkInferenceComponent(PipelineComponent):
-    """
-    Performs neural network inference for an actor.
-    Reads 'obs' from data, writes results to the specified output key in predictions.
-    """
-
-    def __init__(
-        self,
-        agent_network: "BaseAgentNetwork",
-        input_shape: Tuple[int, ...],
-        output_key: str = "inference_result",
-    ):
-        self.agent_network = agent_network
-        self.input_shape = input_shape
-        self.output_key = output_key
-
-    def execute(self, blackboard: Blackboard) -> None:
-        obs = blackboard.data["obs"]
-        if obs is None:
-            return
-
-        # Ensure batch dimension [1, ...] if single observation
-        if obs.dim() == len(self.input_shape):
-            obs = obs.unsqueeze(0)
-
-        with torch.inference_mode():
-            output = self.agent_network.obs_inference(obs)
-            result = InferenceResult.from_inference_output(output)
-
-        blackboard.predictions[self.output_key] = result
-        # Also set default keys for single-inference components
-        if self.output_key == "inference_result":
-            blackboard.predictions["logits"] = result.logits
-            blackboard.predictions["value"] = result.value
-
-
-
-
-
-class SearchInferenceComponent(PipelineComponent):
-    """
-    Performs MCTS-based search inference for an actor.
-    """
-
-    def __init__(
-        self,
-        search_engine: Any,
-        agent_network: Optional["BaseAgentNetwork"],
-        input_shape: Tuple[int, ...],
-        num_actions: int,
-        exploration: bool = True,
-    ):
-        self.search = search_engine
-        self.agent_network = agent_network
-        self.input_shape = input_shape
-        self.num_actions = num_actions
-        self.exploration = exploration
-
-    def execute(self, blackboard: Blackboard) -> None:
-        obs = blackboard.data["obs"]
-        done = blackboard.data.get("done", False)
-        if obs is None or done:
-            return
-        info = blackboard.data.get("info", {})
-        
-        # Determine player_id/to_play
-        # PettingZooObservationComponent provides 'player_id'
-        player_id = blackboard.data.get("player_id", 0)
-        if "player" not in info:
-            info = {**info, "player": player_id}
-
-        start_time = time.time()
-
-        # Handle batched vs non-batched search
-        is_batched = obs.dim() > len(self.input_shape) and obs.shape[0] > 1
-
-        with torch.inference_mode():
-            if is_batched:
-                res = self.search.run_vectorized(obs, info, self.agent_network)
-                (
-                    root_values,
-                    exploratory_policies,
-                    target_policies,
-                    best_actions,
-                    sm_list,
-                ) = res
-
-                probs = torch.stack(
-                    [
-                        torch.as_tensor(p, device=obs.device, dtype=torch.float32)
-                        for p in exploratory_policies
-                    ]
-                )
-                values = torch.as_tensor(
-                    root_values, device=obs.device, dtype=torch.float32
-                )
-                if values.dim() == 1:
-                    values = values.unsqueeze(-1)
-
-                result = InferenceResult(
-                    probs=probs,
-                    value=values,
-                    extra_metadata={
-                        "target_policies": torch.stack(
-                            [
-                                torch.as_tensor(
-                                    p, device=obs.device, dtype=torch.float32
-                                )
-                                for p in target_policies
-                            ]
-                        ),
-                        "search_duration": time.time() - start_time,
-                        "search_metadata": sm_list,
-                        "best_actions": torch.as_tensor(
-                            best_actions, device=obs.device, dtype=torch.long
-                        ),
-                        "value": values.squeeze(-1),
-                        "root_value": values.squeeze(-1),
-                    },
-                )
-            else:
-                res = self.search.run(
-                    obs, info, self.agent_network, exploration=self.exploration
-                )
-                (
-                    root_value,
-                    exploratory_policy,
-                    target_policy,
-                    best_action,
-                    search_metadata,
-                ) = res
-
-                probs = exploratory_policy.to(obs.device)
-                value = torch.tensor(
-                    [root_value], device=obs.device, dtype=torch.float32
-                )
-
-                if obs.dim() > len(self.input_shape):
-                    probs = probs.unsqueeze(0)
-                    target_policies_out = target_policy.unsqueeze(0).to(obs.device)
-                    best_actions_out = torch.tensor([best_action], device=obs.device)
-                else:
-                    target_policies_out = target_policy.to(obs.device)
-                    best_actions_out = torch.tensor(best_action, device=obs.device)
-
-                result = InferenceResult(
-                    probs=probs,
-                    value=value,
-                    extra_metadata={
-                        "target_policies": target_policies_out,
-                        "search_duration": time.time() - start_time,
-                        "search_metadata": search_metadata,
-                        "best_actions": best_actions_out,
-                        "value": value.squeeze(0),
-                        "root_value": value.squeeze(0),
-                    },
-                )
-
-        blackboard.predictions["logits"] = result.logits
-        blackboard.predictions["value"] = result.value
-        blackboard.predictions["inference_result"] = result
 
 
 class BaseSelectorComponent(PipelineComponent):
@@ -298,10 +129,10 @@ class CategoricalSelectorComponent(BaseSelectorComponent):
                 # If no legal moves indices were found, we want mask_tensor to be ALL TRUE
                 dummy_masked = self.mask_actions(torch.ones_like(probs), info, mask_value=0.0)
                 mask_tensor = (dummy_masked == 1.0)
-                
+
                 probs = probs * mask_tensor.float()
                 probs_sum = probs.sum(dim=-1, keepdim=True)
-                
+
                 # Check for NaNs or all-zeros
                 if torch.isnan(probs).any() or (probs_sum < 1e-9).any():
                     # Fallback to uniform over legal moves
@@ -311,16 +142,16 @@ class CategoricalSelectorComponent(BaseSelectorComponent):
                     probs = valid_mask / valid_mask.sum(dim=-1, keepdim=True)
                 else:
                     probs = probs / probs_sum
-                
+
                 dist = Categorical(probs=probs)
-            
+
             value = result.value
         else:
             # Try direct keys
             logits = blackboard.predictions.get("logits")
             value = blackboard.predictions.get("value")
             probs = blackboard.predictions.get("probs")
-            
+
             if logits is not None:
                 logits = self.mask_actions(logits, info)
                 dist = Categorical(logits=logits)
@@ -386,7 +217,6 @@ class ArgmaxSelectorComponent(BaseSelectorComponent):
         self.write_to_blackboard(blackboard, action, metadata)
 
 
-
 class EpsilonGreedySelectorComponent(BaseSelectorComponent):
     """
     Selects action using epsilon-greedy strategy.
@@ -430,7 +260,7 @@ class EpsilonGreedySelectorComponent(BaseSelectorComponent):
                 # Random action from legal moves
                 legal_moves_dummy = self.mask_actions(torch.zeros_like(q_values), info, mask_value=1.0)
                 legal_indices = torch.where(legal_moves_dummy == 1.0)[1] if q_values.dim() == 2 else torch.where(legal_moves_dummy == 1.0)[0]
-                
+
                 if len(legal_indices) > 0:
                     idx = torch.randint(0, len(legal_indices), (1,), device=q_values.device)
                     action = legal_indices[idx]
@@ -496,110 +326,3 @@ class NFSPSelectorComponent(BaseSelectorComponent):
             ]
             self.avg_selector.execute(blackboard)
             blackboard.predictions["inference_result"] = old_result
-
-
-class PPODecoratorComponent(PipelineComponent):
-    """
-    Sequential decorator that adds log_prob to the action_metadata.
-    MUST be placed after a selector that provides 'policy_dist' in metadata.
-    """
-
-    def execute(self, blackboard: Blackboard) -> None:
-        action = blackboard.meta["action_tensor"]
-        metadata = blackboard.meta["action_metadata"]
-
-        dist = metadata.get("policy_dist")
-        if dist is not None:
-            # We assume action and dist are compatible in shape (handled by selector)
-            metadata["log_prob"] = dist.log_prob(action).detach().cpu()
-
-        # 'value' is already added by the selectors from result.value
-
-
-class TemperatureComponent(PipelineComponent):
-    """
-    Pure temperature scaling component.
-    Modifies inference_result.logits in predictions.
-    """
-
-    def __init__(self, temperature: float = 1.0):
-        self.temperature = temperature
-
-    def execute(self, blackboard: Blackboard) -> None:
-        if self.temperature == 1.0:
-            return
-
-        result = blackboard.predictions["inference_result"]
-
-        # Ensure we have logits
-        if result.logits is None:
-            if result.probs is not None:
-                result.logits = torch.log(result.probs + 1e-8)
-            elif result.q_values is not None:
-                result.logits = result.q_values
-            else:
-                return
-
-        if self.temperature == 0.0:
-            # Collapses to argmax
-            best = torch.argmax(result.logits, dim=-1)
-            result.logits = torch.full_like(result.logits, -float("inf"))
-            result.logits.scatter_(-1, best.unsqueeze(-1), 0.0)
-        else:
-            result.logits = result.logits / self.temperature
-
-        # Clear probs so selector is forced to use heat-treated logits
-        result.probs = None
-
-
-class EpisodeTemperatureComponent(TemperatureComponent):
-    """
-    Temperature component that uses a schedule based on episode steps.
-    """
-
-    def __init__(self, schedule: "Schedule"):
-        super().__init__(temperature=1.0)
-        self.schedule = schedule
-        self._last_episode_step = -1
-
-    def execute(self, blackboard: Blackboard) -> None:
-        info = blackboard.meta.get("info", {})
-        # Episode step tracking depends on environment/wrapper providing it
-        # or we can track it here if we know when reset() happens.
-        # Typically info['episode_step']
-        step = info.get("episode_step", 0)
-
-        if step != self._last_episode_step:
-            self.schedule.step(
-                max(1, step - self._last_episode_step)
-                if self._last_episode_step >= 0
-                else step
-            )
-            self._last_episode_step = step
-            if step == 0:
-                self.schedule.reset()
-
-        self.temperature = self.schedule.get_value()
-        super().execute(blackboard)
-
-
-class TrainingStepTemperatureComponent(TemperatureComponent):
-    """
-    Temperature component that uses a schedule based on global training steps.
-    """
-
-    def __init__(self, schedule: "Schedule"):
-        super().__init__(temperature=1.0)
-        self.schedule = schedule
-        self._last_training_step = -1
-
-    def execute(self, blackboard: Blackboard) -> None:
-        # Training step is often broadcasted via blackboard.meta or results
-        step = blackboard.meta.get("training_step", 0)
-
-        if step > self._last_training_step:
-            self.schedule.step(step - self._last_training_step)
-            self._last_training_step = step
-
-        self.temperature = self.schedule.get_value()
-        super().execute(blackboard)

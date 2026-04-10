@@ -32,23 +32,23 @@ from data.concurrency import TorchMPBackend
 
 from core import BlackboardEngine
 from components.neural import ForwardPassComponent
-from components.math import OptimizerStepComponent
-from components.math import LossAggregatorComponent
+from components.losses import OptimizerStepComponent
+from components.losses import LossAggregatorComponent
 from components.memory import PriorityUpdateComponent
-from components.priorities import ExpectedValueErrorPriorityComponent
-from components.math import ValueLoss
-from components.math import PolicyLoss
-from components.math import RewardLoss
-from components.math import ToPlayLoss
+from components.losses import ExpectedValueErrorPriorityComponent
+from components.losses import ValueLoss
+from components.losses import PolicyLoss
+from components.losses import RewardLoss
+from components.losses import ToPlayLoss
 from learner.losses.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
 from components.search import MCTSExtractorComponent
 from components.targets import SequencePadderComponent, SequenceMaskComponent, SequenceInfrastructureComponent, TargetFormatterComponent
-from components.math import ShapeValidator
-from components.environment import PettingZooObservationComponent, PettingZooStepComponent, GymObservationComponent, GymStepComponent
-from components.actor_logic import (
+from components.losses import ShapeValidator
+from components.environments import PettingZooObservationComponent, PettingZooStepComponent, GymObservationComponent, GymStepComponent
+from components.selectors import (
     SearchInferenceComponent,
     CategoricalSelectorComponent,
     EpisodeTemperatureComponent,

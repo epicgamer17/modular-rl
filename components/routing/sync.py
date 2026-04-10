@@ -1,5 +1,5 @@
 import torch
-from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
+from typing import Callable, TYPE_CHECKING
 from core import PipelineComponent
 from core import Blackboard
 
@@ -63,23 +63,3 @@ class WeightBroadcastComponent(PipelineComponent):
 
     def execute(self, blackboard: Blackboard) -> None:
         self.weight_broadcast_fn(self.agent_network.state_dict())
-
-
-class ResetNoiseComponent(PipelineComponent):
-    """Resets noisy network parameters after each execution."""
-
-    def __init__(self, agent_network: torch.nn.Module):
-        self.agent_network = agent_network
-
-    def execute(self, blackboard: Blackboard) -> None:
-        if hasattr(self.agent_network, "reset_noise"):
-            self.agent_network.reset_noise()
-
-
-class MultiplexerComponent(PipelineComponent):
-    """
-    Placeholder for multi-agent routing.
-    Routes blackboard data to specific agent sub-pipelines.
-    """
-    def execute(self, blackboard: Blackboard) -> None:
-        pass

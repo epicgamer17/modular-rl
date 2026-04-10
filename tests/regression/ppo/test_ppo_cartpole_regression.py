@@ -86,11 +86,11 @@ def test_ppo_cartpole_full_training():
     TARGET_KL = 0.02
     TOTAL_STEPS = 512000  # Enough to reach high average reliably (450+)
 
-    from components.environment import (
+    from components.environments import (
         GymObservationComponent,
         GymStepComponent,
     )
-    from components.actor_logic import (
+    from components.selectors import (
         NetworkInferenceComponent,
         CategoricalSelectorComponent,
         PPODecoratorComponent,

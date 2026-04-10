@@ -30,7 +30,7 @@ class BufferStoreComponent(PipelineComponent):
         parts = path.split(".")
         # Start at the blackboard root using the first part as a section name (e.g., 'meta', 'data')
         container = getattr(blackboard, parts[0])
-        
+
         # Traverse remaining parts as dictionary keys
         for key in parts[1:]:
             container = container[key]
@@ -97,7 +97,7 @@ class SequenceBufferComponent(PipelineComponent):
         if next_obs is None and obs is not None:
              # Match shape of current obs if next_obs is missing (terminal state)
              next_obs = torch.zeros_like(obs)
-        
+
         if torch.is_tensor(next_obs):
             next_obs = next_obs.squeeze(0).cpu().numpy()
 
@@ -117,11 +117,11 @@ class SequenceBufferComponent(PipelineComponent):
         policy = metadata.get("target_policies", metadata.get("policy"))
         if policy is None:
             policy = np.zeros(self.replay_buffer.buffers["policies"].shape[1:], dtype=np.float32)
-            
+
         value = metadata.get("value")
         if value is None:
             value = 0.0
-            
+
         player_id = blackboard.data.get("player_id") # MuZero needs this
 
         # If terminated/truncated are missing, use done
@@ -150,33 +150,3 @@ class SequenceBufferComponent(PipelineComponent):
             # Reset for next episode
             from data.samplers.sequence import Sequence
             self._sequence = Sequence(self.num_players)
-
-
-class PriorityUpdateComponent(PipelineComponent):
-    """
-    Updates priorities in the replay buffer based on priorities stored in the blackboard.
-    This component is 'blind' to how priorities are computed; it simply reads
-    blackboard.meta['priorities'] and sends them to the buffer.
-    """
-    def __init__(self, priority_update_fn: Any):
-        self.priority_update_fn = priority_update_fn
-
-    def execute(self, blackboard: Blackboard) -> None:
-        priorities = blackboard.meta.get("priorities")
-        indices = blackboard.data.get("indices")
-        ids = blackboard.data.get("ids")
-        
-        if priorities is not None and indices is not None:
-            # We must move to CPU before sending to the buffer
-            self.priority_update_fn(indices, priorities.detach().cpu(), ids=ids)
-
-
-class BetaScheduleComponent(PipelineComponent):
-    """Steps the PER beta schedule."""
-    def __init__(self, per_beta_schedule: Any, set_beta_fn: Any):
-        self.per_beta_schedule = per_beta_schedule
-        self.set_beta_fn = set_beta_fn
-
-    def execute(self, blackboard: Blackboard) -> None:
-        step = blackboard.meta.get("training_step")
-        self.set_beta_fn(self.per_beta_schedule.get_value(step=step))

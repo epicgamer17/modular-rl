@@ -90,12 +90,12 @@ def test_rainbow_cartpole_full_training():
     REPLAY_BUFFER_SIZE = 5000
     MIN_REPLAY_SIZE = MINIBATCH_SIZE + N_STEP
 
-    from components.environment import (
+    from components.environments import (
         GymObservationComponent,
         GymStepComponent,
     )
     from components.telemetry import TelemetryComponent
-    from components.actor_logic import (
+    from components.selectors import (
         NetworkInferenceComponent,
         ArgmaxSelectorComponent,
     )

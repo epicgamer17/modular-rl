@@ -16,16 +16,16 @@ from data.processors import (
     LegalMovesMaskProcessor,
 )
 from data.writers import SharedCircularWriter
-from components.environment import GymObservationComponent, GymStepComponent
+from components.environments import GymObservationComponent, GymStepComponent
 from components.telemetry import TelemetryComponent
 from components.memory import BufferStoreComponent
-from components.actor_logic import NetworkInferenceComponent, EpsilonGreedySelectorComponent
+from components.selectors import NetworkInferenceComponent, EpsilonGreedySelectorComponent
 
 from core import BlackboardEngine
 from components.neural import ForwardPassComponent
-from components.math import OptimizerStepComponent
-from components.math import LossAggregatorComponent
-from components.math import QBootstrappingLoss
+from components.losses import OptimizerStepComponent
+from components.losses import LossAggregatorComponent
+from components.losses import QBootstrappingLoss
 from components.targets import TDTargetComponent, UniversalInfrastructureComponent
 
 
