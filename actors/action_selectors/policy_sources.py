@@ -4,23 +4,22 @@ import torch
 import time
 import numpy as np
 
-from actors.action_selectors.types import InferenceResult
 from modules.agent_nets.base import BaseAgentNetwork
 from modules.world_models.inference_output import InferenceOutput
 
 
 class BasePolicySource(ABC):
     """
-    Abstract base class for providing InferenceResults to ActionSelectors.
+    Abstract base class for providing inference predictions to ActionSelectors.
     Encapsulates the difference between raw network inference and search-based (MCTS) policy.
     """
 
     @abstractmethod
     def get_inference(
         self, obs: torch.Tensor, info: Dict[str, Any], **kwargs
-    ) -> InferenceResult:
+    ) -> Dict[str, torch.Tensor]:
         """
-        Computes or retrieves an InferenceResult for the given observation.
+        Computes or retrieves predictions for the given observation.
         """
         pass
 
@@ -36,22 +35,62 @@ class NetworkPolicySource(BasePolicySource):
 
     def get_inference(
         self, obs: torch.Tensor, info: Dict[str, Any], **kwargs
-    ) -> InferenceResult:
+    ) -> Dict[str, torch.Tensor]:
         """
-        Runs obs_inference on the network and converts the result to an InferenceResult.
+        Runs obs_inference on the network and returns the result as a dictionary.
         """
         # Ensure batch dimension
         if obs.dim() == len(self.input_shape):
             obs = obs.unsqueeze(0)
 
         output = self.agent_network.obs_inference(obs)
-        return InferenceResult.from_inference_output(output)
+        
+        # Convert InferenceOutput to dict
+        preds = {}
+        
+        q_values = getattr(output, "q_values", None)
+        if q_values is not None:
+            preds["q_values"] = q_values
+            
+        policy = getattr(output, "policy", None)
+        if policy is not None:
+            logits = getattr(policy, "logits", None)
+            if logits is not None:
+                preds["logits"] = logits
+            else:
+                probs = getattr(policy, "probs", None)
+                if probs is not None:
+                    preds["probs"] = probs
+
+        value = getattr(output, "value", None)
+        if value is not None:
+            if not isinstance(value, torch.Tensor):
+                value = torch.as_tensor([value], device=obs.device)
+            preds["value"] = value
+
+        reward = getattr(output, "reward", None)
+        if reward is not None:
+            if not isinstance(reward, torch.Tensor):
+                reward = torch.as_tensor([reward], device=obs.device)
+            preds["reward"] = reward
+
+        to_play = getattr(output, "to_play", None)
+        if to_play is not None:
+            if not isinstance(to_play, torch.Tensor):
+                to_play = torch.as_tensor([to_play], device=obs.device, dtype=torch.long)
+            preds["to_play"] = to_play
+
+        extras = getattr(output, "extras", None) or {}
+        if extras:
+            preds["extra_metadata"] = extras
+
+        return preds
 
 
 class SearchPolicySource(BasePolicySource):
     """
     Policy source that wraps an MCTS search engine.
-    Maps search visit counts (exploratory policy) to the InferenceResult contract.
+    Maps search visit counts (exploratory policy) to the predictions contract.
 
     Accepts agent_network via kwargs at inference time so callers can pass
     the current (potentially updated) network without storing it here.
@@ -71,9 +110,9 @@ class SearchPolicySource(BasePolicySource):
 
     def get_inference(
         self, obs: torch.Tensor, info: Dict[str, Any], **kwargs
-    ) -> InferenceResult:
+    ) -> Dict[str, torch.Tensor]:
         """
-        Runs MCTS and wraps results into an InferenceResult.
+        Runs MCTS and returns results in a dictionary.
 
         Accepts agent_network via kwargs (takes precedence over self.agent_network).
         Accepts to_play via kwargs to populate info["player"] if not already set.
@@ -134,10 +173,10 @@ class SearchPolicySource(BasePolicySource):
                 best_actions, device=obs.device, dtype=torch.long
             )
 
-            return InferenceResult(
-                probs=probs,
-                value=values,
-                extra_metadata={
+            return {
+                "probs": probs,
+                "value": values,
+                "extra_metadata": {
                     "target_policies": target_policies_tensor,
                     "search_duration": search_duration,
                     "search_metadata": sm_list,
@@ -145,7 +184,7 @@ class SearchPolicySource(BasePolicySource):
                     "value": values.squeeze(-1),  # Tensor for consistency
                     "root_value": values.squeeze(-1),
                 },
-            )
+            }
         else:
             res = self.search.run(obs, info, agent_network, exploration=exploration)
             (
@@ -170,10 +209,10 @@ class SearchPolicySource(BasePolicySource):
                 target_policies_out = target_policy.to(obs.device)
                 best_actions_out = torch.tensor(best_action, device=obs.device)
 
-            return InferenceResult(
-                probs=probs,
-                value=value,
-                extra_metadata={
+            return {
+                "probs": probs,
+                "value": value,
+                "extra_metadata": {
                     "target_policies": target_policies_out,
                     "search_duration": search_duration,
                     "search_metadata": search_metadata,
@@ -181,11 +220,11 @@ class SearchPolicySource(BasePolicySource):
                     "value": value.squeeze(0),
                     "root_value": value.squeeze(0),
                 },
-            )
+            }
 
 
 class NFSPNetworkPolicySource(BasePolicySource):
-    """Combines two networks into one InferenceResult for NFSP.
+    """Combines two networks into one predictions dictionary for NFSP.
 
     Returns BR information in `q_values` and AVG information in `logits`/`probs`,
     so an `NFSPSelector` can choose between `EpsilonGreedySelector` and
@@ -202,28 +241,31 @@ class NFSPNetworkPolicySource(BasePolicySource):
 
     def get_inference(
         self, obs: torch.Tensor, info: Dict[str, Any], **kwargs
-    ) -> InferenceResult:
-        br_output = self.best_response_network.obs_inference(obs)
-        avg_output = self.average_network.obs_inference(obs)
+    ) -> Dict[str, torch.Tensor]:
+        br_preds = NetworkPolicySource(self.best_response_network, (0,)).get_inference(obs, info)
+        avg_preds = NetworkPolicySource(self.average_network, (0,)).get_inference(obs, info)
 
-        br_result = InferenceResult.from_inference_output(br_output)
-        avg_result = InferenceResult.from_inference_output(avg_output)
+        preds = {
+            "value": br_preds.get("value") if br_preds.get("value") is not None else avg_preds.get("value"),
+            "q_values": br_preds.get("q_values"),
+            "logits": avg_preds.get("logits"),
+            "probs": avg_preds.get("probs"),
+            "reward": (
+                br_preds.get("reward") if br_preds.get("reward") is not None else avg_preds.get("reward")
+            ),
+            "to_play": (
+                br_preds.get("to_play")
+                if br_preds.get("to_play") is not None
+                else avg_preds.get("to_play")
+            ),
+        }
+        
+        # Merge metadata
+        extra_metadata = {
+            **(br_preds.get("extra_metadata", {})),
+            **(avg_preds.get("extra_metadata", {})),
+        }
+        if extra_metadata:
+            preds["extra_metadata"] = extra_metadata
 
-        return InferenceResult(
-            value=br_result.value if br_result.value is not None else avg_result.value,
-            q_values=br_result.q_values,
-            logits=avg_result.logits,
-            probs=avg_result.probs,
-            reward=(
-                br_result.reward if br_result.reward is not None else avg_result.reward
-            ),
-            to_play=(
-                br_result.to_play
-                if br_result.to_play is not None
-                else avg_result.to_play
-            ),
-            extra_metadata={
-                **(br_result.extra_metadata or {}),
-                **(avg_result.extra_metadata or {}),
-            },
-        )
+        return preds

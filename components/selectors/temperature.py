@@ -40,27 +40,32 @@ class TemperatureComponent(PipelineComponent):
         if self.temperature == 1.0:
             return
 
-        result = blackboard.predictions["inference_result"]
+        logits = blackboard.predictions.get("logits")
+        probs = blackboard.predictions.get("probs")
+        q_values = blackboard.predictions.get("q_values")
 
-        # Ensure we have logits
-        if result.logits is None:
-            if result.probs is not None:
-                result.logits = torch.log(result.probs + 1e-8)
-            elif result.q_values is not None:
-                result.logits = result.q_values
+        # Ensure we have logits or derive them
+        if logits is None:
+            if probs is not None:
+                logits = torch.log(probs + 1e-8)
+            elif q_values is not None:
+                logits = q_values
             else:
                 return
 
         if self.temperature == 0.0:
             # Collapses to argmax
-            best = torch.argmax(result.logits, dim=-1)
-            result.logits = torch.full_like(result.logits, -float("inf"))
-            result.logits.scatter_(-1, best.unsqueeze(-1), 0.0)
+            best = torch.argmax(logits, dim=-1)
+            new_logits = torch.full_like(logits, -float("inf"))
+            new_logits.scatter_(-1, best.unsqueeze(-1), 0.0)
+            logits = new_logits
         else:
-            result.logits = result.logits / self.temperature
+            logits = logits / self.temperature
 
+        blackboard.predictions["logits"] = logits
         # Clear probs so selector is forced to use heat-treated logits
-        result.probs = None
+        if "probs" in blackboard.predictions:
+            blackboard.predictions["probs"] = None
 
     def _update_from_episode(self, blackboard: Blackboard) -> None:
         """Update temperature from episode step schedule."""

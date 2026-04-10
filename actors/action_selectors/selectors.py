@@ -2,8 +2,6 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Tuple, Union
 import torch
 import numpy as np
-from modules.world_models.inference_output import InferenceOutput
-from actors.action_selectors.types import InferenceResult
 
 # Constant for default epsilon
 DEFAULT_EPSILON = 0.05
@@ -16,7 +14,7 @@ class BaseActionSelector(ABC):
     @abstractmethod
     def select_action(
         self,
-        result: InferenceResult,
+        predictions: Dict[str, torch.Tensor],
         info: Dict[str, Any],
         exploration: Optional[bool] = None,
         **kwargs,
@@ -99,7 +97,7 @@ class CategoricalSelector(BaseActionSelector):
 
     def select_action(
         self,
-        result: InferenceResult,
+        predictions: Dict[str, torch.Tensor],
         info: Dict[str, Any],
         exploration: Optional[bool] = None,
         **kwargs,
@@ -115,8 +113,10 @@ class CategoricalSelector(BaseActionSelector):
 
         from torch.distributions import Categorical
 
-        if result.logits is not None:
-            logits = result.logits
+        logits = predictions.get("logits")
+        probs = predictions.get("probs")
+
+        if logits is not None:
             if mask is not None:
                 logits = self.mask_actions(
                     logits, mask, mask_value=-float("inf"), device=logits.device
@@ -124,9 +124,8 @@ class CategoricalSelector(BaseActionSelector):
             policy = Categorical(logits=logits)
         else:
             assert (
-                result.probs is not None
-            ), "CategoricalSelector requires result.logits or result.probs"
-            probs = result.probs
+                probs is not None
+            ), "CategoricalSelector requires logits or probs in predictions"
             if mask is not None:
                 probs = probs * mask.float()
                 probs = probs / probs.sum(dim=-1, keepdim=True).clamp(min=1e-8)
@@ -153,15 +152,15 @@ class EpsilonGreedySelector(BaseActionSelector):
 
     def select_action(
         self,
-        result: InferenceResult,
+        predictions: Dict[str, torch.Tensor],
         info: Dict[str, Any],
         exploration: Optional[bool] = None,
         **kwargs,
     ):
+        q_values = predictions.get("q_values")
         assert (
-            result.q_values is not None
-        ), "EpsilonGreedySelector requires result.q_values"
-        q_values = result.q_values
+            q_values is not None
+        ), "EpsilonGreedySelector requires q_values in predictions"
         batch_size = q_values.shape[0] if q_values.dim() == 2 else 1
 
         # Check if legal moves are provided
@@ -242,7 +241,7 @@ class ArgmaxSelector(BaseActionSelector):
 
     def select_action(
         self,
-        result: InferenceResult,
+        predictions: Dict[str, torch.Tensor],
         info: Dict[str, Any],
         exploration: Optional[bool] = None,
         **kwargs,
@@ -251,12 +250,15 @@ class ArgmaxSelector(BaseActionSelector):
         mask = info.get("legal_moves_mask", info.get("legal_moves"))
 
         # Prefer q_values, fall back to logits or probs
-        values = result.q_values
+        values = predictions.get("q_values")
         if values is None:
-            values = result.logits if result.logits is not None else result.probs
+            values = predictions.get("logits")
+            if values is None:
+                values = predictions.get("probs")
+        
         assert (
             values is not None
-        ), "ArgmaxSelector requires result.q_values, result.logits, or result.probs"
+        ), "ArgmaxSelector requires q_values, logits, or probs in predictions"
 
         if mask is not None:
             values = self.mask_actions(values, mask)
@@ -283,7 +285,7 @@ class NFSPSelector(BaseActionSelector):
 
     def select_action(
         self,
-        result: InferenceResult,
+        predictions: Dict[str, torch.Tensor],
         info: Dict[str, Any],
         exploration: Optional[bool] = None,
         **kwargs,
@@ -299,13 +301,13 @@ class NFSPSelector(BaseActionSelector):
 
         if should_use_br:
             action, inner_metadata = self.br_selector.select_action(
-                result, info, exploration=exploration, **kwargs
+                predictions, info, exploration=exploration, **kwargs
             )
             metadata.update(inner_metadata)
             metadata["policy_used"] = "best_response"
         else:
             action, inner_metadata = self.avg_selector.select_action(
-                result, info, exploration=exploration, **kwargs
+                predictions, info, exploration=exploration, **kwargs
             )
             metadata.update(inner_metadata)
             metadata["policy_used"] = "average_strategy"

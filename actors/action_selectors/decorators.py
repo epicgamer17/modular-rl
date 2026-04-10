@@ -1,7 +1,6 @@
 from typing import Any, Dict, Optional, Tuple
 import torch
 from actors.action_selectors.selectors import BaseActionSelector
-from actors.action_selectors.types import InferenceResult
 from torch.distributions import Categorical
 from utils.schedule import create_schedule, Schedule, ScheduleConfig
 
@@ -17,7 +16,7 @@ class PPODecorator(BaseActionSelector):
 
     def select_action(
         self,
-        result: InferenceResult,
+        predictions: Dict[str, torch.Tensor],
         info: Dict[str, Any],
         exploration: Optional[bool] = None,
         **kwargs,
@@ -25,7 +24,7 @@ class PPODecorator(BaseActionSelector):
 
         # 1. Delegate selection to the inner selector
         action, metadata = self.inner_selector.select_action(
-            result,
+            predictions,
             info,
             exploration=exploration,
             **kwargs,
@@ -36,7 +35,9 @@ class PPODecorator(BaseActionSelector):
         if dist is not None:
             metadata["log_prob"] = dist.log_prob(action).cpu()
 
-        metadata["value"] = result.value.cpu()
+        value = predictions.get("value")
+        if value is not None:
+            metadata["value"] = value.cpu()
 
         return action, metadata
 
@@ -96,14 +97,14 @@ class TemperatureSelector(BaseActionSelector):
 
     def select_action(
         self,
-        result: InferenceResult,
+        predictions: Dict[str, torch.Tensor],
         info: Dict[str, Any],
         exploration: Optional[bool] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
         """
-        Applies temperature scaling to result.logits / result.probs / result.q_values,
-        writes the heated logits back to result.logits, then delegates to inner_selector.
+        Applies temperature scaling to logits / probs / q_values,
+        writes the heated logits back to predictions['logits'], then delegates to inner_selector.
         """
         if self.use_training_steps:
             current_step = kwargs.get("training_step", self._last_step)
@@ -112,17 +113,21 @@ class TemperatureSelector(BaseActionSelector):
 
         temp = self._get_temperature(current_step, exploration)
 
+        pred_logits = predictions.get("logits")
+        pred_probs = predictions.get("probs")
+        pred_q_values = predictions.get("q_values")
+
         # Resolve to logits (temperature only makes sense on logits)
-        if result.logits is not None:
-            logits = result.logits
-        elif result.probs is not None:
-            logits = torch.log(result.probs + 1e-8)
-            logits = logits.masked_fill(result.probs == 0.0, -float("inf"))
-        elif result.q_values is not None:
-            logits = result.q_values  # Boltzmann exploration on Q-values
+        if pred_logits is not None:
+            logits = pred_logits
+        elif pred_probs is not None:
+            logits = torch.log(pred_probs + 1e-8)
+            logits = logits.masked_fill(pred_probs == 0.0, -float("inf"))
+        elif pred_q_values is not None:
+            logits = pred_q_values  # Boltzmann exploration on Q-values
         else:
             raise ValueError(
-                "TemperatureSelector requires result.logits, result.probs, or result.q_values"
+                "TemperatureSelector requires logits, probs, or q_values in predictions"
             )
 
         # Apply temperature
@@ -134,16 +139,20 @@ class TemperatureSelector(BaseActionSelector):
                 logits = self.mask_actions(logits, mask)
             best_actions = logits.argmax(dim=-1)
             logits = torch.full_like(logits, -float("inf"))
-            logits.scatter_(1, best_actions.unsqueeze(1), 0.0)
+            if logits.dim() == 1:
+                logits[best_actions] = 0.0
+            else:
+                logits.scatter_(1, best_actions.unsqueeze(1), 0.0)
         elif temp != 1.0:
             logits = logits / temp
 
         # Write heated logits back; clear probs so downstream selector uses the new values
-        result.logits = logits
-        result.probs = None
+        predictions["logits"] = logits
+        if "probs" in predictions:
+            predictions["probs"] = None
 
         return self.inner_selector.select_action(
-            result, info, exploration=exploration, **kwargs
+            predictions, info, exploration=exploration, **kwargs
         )
 
     def mask_actions(

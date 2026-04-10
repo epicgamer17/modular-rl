@@ -1,10 +1,3 @@
-"""
-PufferActor Module
-
-This module defines the PufferActor subclasses, which are 'Fat Workers' that run PufferLib
-and pivot the data from horizontal batches back into vertical, chronological Sequence objects.
-"""
-
 import numpy as np
 import torch
 import time
@@ -18,7 +11,6 @@ from utils.wrappers import AECSequentialWrapper
 from data.storage.circular import ModularReplayBuffer
 from modules.agent_nets.modular import ModularAgentNetwork
 from actors.action_selectors.selectors import BaseActionSelector
-from actors.action_selectors.types import InferenceResult
 from actors.action_selectors.policy_sources import (
     BasePolicySource,
     NetworkPolicySource,
@@ -184,13 +176,15 @@ class BasePufferActor(BaseActor):
             )
 
             actions_tensor, metadata = self.selector.select_action(
-                result=result,
+                predictions=result,
                 info=batched_info,
                 exploration=True,
             )
-            # Merge search_metadata (and other extras) from the policy source result
-            if result.extra_metadata:
-                metadata.update(result.extra_metadata)
+            
+            # Merge extra metadata from PolicySource if present
+            extra_meta = result.get("extra_metadata")
+            if extra_meta:
+                metadata.update(extra_meta)
             actions = actions_tensor.cpu().numpy()
 
             # Collect MCTS metrics from search metadata (list for batched, dict for single)
@@ -210,10 +204,10 @@ class BasePufferActor(BaseActor):
 
             # 3. Pivot Batch to Chronological Sequences
             policies = metadata.get("target_policies", metadata.get("policy"))
-            # Fallback: CategoricalSelector/TemperatureSelector don't set "value"; use MCTS root.
+            # Fallback: CategoricalSelector/TemperatureSelector don't set "value"; use result.
             values = metadata.get("value")
-            if values is None and result.value is not None:
-                values = result.value
+            if values is None:
+                values = result.get("value")
 
             for i in range(self.num_envs):
                 # Robustly get current and next info

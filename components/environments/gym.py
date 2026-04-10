@@ -1,10 +1,6 @@
 import torch
-from typing import TYPE_CHECKING
 from core import PipelineComponent
 from core import Blackboard
-
-if TYPE_CHECKING:
-    from actors.action_selectors.selectors import BaseActionSelector
 
 
 class GymObservationComponent(PipelineComponent):
@@ -38,10 +34,10 @@ class GymObservationComponent(PipelineComponent):
 
         # Convert to tensor and ensure batch dimension [1, ...]
         obs_tensor = torch.as_tensor(self.state, dtype=torch.float32)
-        if obs_tensor.dim() > 0: # Only if not a scalar
-             # We don't have input_shape here easily, but we can assume we want [1, ...]
-             # for a single environment loop.
-             obs_tensor = obs_tensor.unsqueeze(0)
+        if obs_tensor.dim() > 0:  # Only if not a scalar
+            # We don't have input_shape here easily, but we can assume we want [1, ...]
+            # for a single environment loop.
+            obs_tensor = obs_tensor.unsqueeze(0)
 
         blackboard.data["obs"] = obs_tensor
         blackboard.data["info"] = self.info
@@ -67,7 +63,9 @@ class GymStepComponent(PipelineComponent):
         elif "actions" in blackboard.predictions:
             action = blackboard.predictions["actions"].item()
         else:
-            raise KeyError("No action found in blackboard.meta['action'] or blackboard.predictions['actions']")
+            raise KeyError(
+                "No action found in blackboard.meta['action'] or blackboard.predictions['actions']"
+            )
 
         next_obs, reward, terminated, truncated, info = self.env.step(action)
         done = terminated or truncated

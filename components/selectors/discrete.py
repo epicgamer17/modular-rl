@@ -62,14 +62,6 @@ def write_to_blackboard(
     blackboard: Blackboard, action: torch.Tensor, metadata: Dict[str, Any]
 ) -> None:
     """Writes action selection results to the blackboard."""
-    result = blackboard.predictions.get("inference_result")
-
-    # Merge extra metadata from search/network
-    if result is not None and result.extra_metadata:
-        for k, v in result.extra_metadata.items():
-            if k not in metadata:
-                metadata[k] = v
-
     # Squeeze for single-actor consistency
     if action.dim() > 0 and action.shape[0] == 1:
         raw_action = action.item()
@@ -99,47 +91,36 @@ class CategoricalSelectorComponent(PipelineComponent):
             blackboard.meta["action"] = None
             return
 
-        result = blackboard.predictions.get("inference_result")
         info = blackboard.meta.get("info", blackboard.data.get("info", {}))
 
         from torch.distributions import Categorical
 
-        if result is not None:
-            if result.logits is not None:
-                logits = mask_actions(result.logits, info)
-                dist = Categorical(logits=logits)
+        logits = blackboard.predictions.get("logits")
+        probs = blackboard.predictions.get("probs")
+        value = blackboard.predictions.get("value")
+
+        if logits is not None:
+            logits = mask_actions(logits, info)
+            dist = Categorical(logits=logits)
+        elif probs is not None:
+            dummy_masked = mask_actions(torch.ones_like(probs), info, mask_value=0.0)
+            mask_tensor = (dummy_masked == 1.0)
+
+            probs = probs * mask_tensor.float()
+            probs_sum = probs.sum(dim=-1, keepdim=True)
+
+            if torch.isnan(probs).any() or (probs_sum < 1e-9).any():
+                valid_mask = mask_tensor.float()
+                if valid_mask.sum() < 1e-9:
+                    valid_mask = torch.ones_like(probs)
+                probs = valid_mask / valid_mask.sum(dim=-1, keepdim=True)
             else:
-                probs = result.probs
-                dummy_masked = mask_actions(torch.ones_like(probs), info, mask_value=0.0)
-                mask_tensor = (dummy_masked == 1.0)
+                probs = probs / probs_sum
 
-                probs = probs * mask_tensor.float()
-                probs_sum = probs.sum(dim=-1, keepdim=True)
-
-                if torch.isnan(probs).any() or (probs_sum < 1e-9).any():
-                    valid_mask = mask_tensor.float()
-                    if valid_mask.sum() < 1e-9:
-                        valid_mask = torch.ones_like(probs)
-                    probs = valid_mask / valid_mask.sum(dim=-1, keepdim=True)
-                else:
-                    probs = probs / probs_sum
-
-                dist = Categorical(probs=probs)
-
-            value = result.value
+            dist = Categorical(probs=probs)
         else:
-            logits = blackboard.predictions.get("logits")
-            value = blackboard.predictions.get("value")
-            probs = blackboard.predictions.get("probs")
-
-            if logits is not None:
-                logits = mask_actions(logits, info)
-                dist = Categorical(logits=logits)
-            elif probs is not None:
-                dist = Categorical(probs=probs)
-            else:
-                blackboard.meta["action"] = None
-                return
+            blackboard.meta["action"] = None
+            return
 
         if self.exploration:
             action = dist.sample()
@@ -151,6 +132,11 @@ class CategoricalSelectorComponent(PipelineComponent):
             "policy": dist.probs.detach().cpu(),
             "value": value.detach().cpu() if value is not None else None,
         }
+
+        # Handle search metadata if present
+        extra = blackboard.predictions.get("extra_metadata")
+        if extra:
+            metadata.update(extra)
 
         write_to_blackboard(blackboard, action, metadata)
 
@@ -164,21 +150,18 @@ class ArgmaxSelectorComponent(PipelineComponent):
             blackboard.meta["action"] = None
             return
 
-        result = blackboard.predictions.get("inference_result")
         info = blackboard.meta.get("info", blackboard.data.get("info", {}))
 
-        if result is not None:
-            values = (
-                result.q_values
-                if result.q_values is not None
-                else (result.logits if result.logits is not None else result.probs)
-            )
-            value = result.value
-            probs = result.probs
-        else:
-            values = blackboard.predictions.get("logits", blackboard.predictions.get("probs"))
-            value = blackboard.predictions.get("value")
-            probs = blackboard.predictions.get("probs")
+        q_values = blackboard.predictions.get("q_values")
+        logits = blackboard.predictions.get("logits")
+        probs = blackboard.predictions.get("probs")
+        value = blackboard.predictions.get("value")
+
+        values = q_values if q_values is not None else (logits if logits is not None else probs)
+        
+        if values is None:
+            blackboard.meta["action"] = None
+            return
 
         values = mask_actions(values, info)
         action = torch.argmax(values, dim=-1)
@@ -187,6 +170,10 @@ class ArgmaxSelectorComponent(PipelineComponent):
             "value": value.detach().cpu() if value is not None else None,
             "policy": probs.detach().cpu() if probs is not None else None,
         }
+        
+        extra = blackboard.predictions.get("extra_metadata")
+        if extra:
+            metadata.update(extra)
 
         write_to_blackboard(blackboard, action, metadata)
 
@@ -203,15 +190,14 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
             blackboard.meta["action"] = None
             return
 
-        result = blackboard.predictions.get("inference_result")
         info = blackboard.meta.get("info", blackboard.data.get("info", {}))
 
-        if result is not None:
-            q_values = result.q_values
-            probs = result.probs
-        else:
-            q_values = blackboard.predictions.get("q_values")
-            probs = blackboard.predictions.get("probs")
+        q_values = blackboard.predictions.get("q_values")
+        probs = blackboard.predictions.get("probs")
+        
+        if q_values is None:
+            blackboard.meta["action"] = None
+            return
 
         if q_values.dim() == 2:
             batch_size = q_values.shape[0]
@@ -246,6 +232,10 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
             "policy": probs.detach().cpu() if probs is not None else None,
             "epsilon": epsilon,
         }
+        
+        extra = blackboard.predictions.get("extra_metadata")
+        if extra:
+            metadata.update(extra)
 
         write_to_blackboard(blackboard, action, metadata)
 
@@ -253,17 +243,17 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
 class NFSPSelectorComponent(PipelineComponent):
     """
     Manages selection between Best Response and Average Strategy for NFSP.
-    Expects two inference results in the blackboard.
+    Expects two sets of inference results in the blackboard.
     """
 
     def __init__(
         self,
-        br_key: str = "br_inference",
-        avg_key: str = "avg_inference",
+        br_prefix: str = "br_",
+        avg_prefix: str = "avg_",
         eta: float = 0.1,
     ):
-        self.br_key = br_key
-        self.avg_key = avg_key
+        self.br_prefix = br_prefix
+        self.avg_prefix = avg_prefix
         self.eta = eta
         self.br_selector = ArgmaxSelectorComponent()
         self.avg_selector = ArgmaxSelectorComponent()
@@ -275,13 +265,22 @@ class NFSPSelectorComponent(PipelineComponent):
 
         if random.random() < eta:
             blackboard.meta["policy_used"] = "best_response"
-            old_result = blackboard.predictions.get("inference_result")
-            blackboard.predictions["inference_result"] = blackboard.predictions[self.br_key]
+            # Swap prefixed keys to standard keys for the child selector
+            original_preds = blackboard.predictions.copy()
+            for key in ["logits", "probs", "q_values", "value", "extra_metadata"]:
+                prefixed_key = self.br_prefix + key
+                if prefixed_key in original_preds:
+                    blackboard.predictions[key] = original_preds[prefixed_key]
+            
             self.br_selector.execute(blackboard)
-            blackboard.predictions["inference_result"] = old_result
+            blackboard.predictions = original_preds
         else:
             blackboard.meta["policy_used"] = "average_strategy"
-            old_result = blackboard.predictions.get("inference_result")
-            blackboard.predictions["inference_result"] = blackboard.predictions[self.avg_key]
+            original_preds = blackboard.predictions.copy()
+            for key in ["logits", "probs", "q_values", "value", "extra_metadata"]:
+                prefixed_key = self.avg_prefix + key
+                if prefixed_key in original_preds:
+                    blackboard.predictions[key] = original_preds[prefixed_key]
+            
             self.avg_selector.execute(blackboard)
-            blackboard.predictions["inference_result"] = old_result
+            blackboard.predictions = original_preds

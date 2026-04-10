@@ -2,7 +2,6 @@ import torch
 import time
 from typing import Any, Optional, Tuple, TYPE_CHECKING
 from core import PipelineComponent, Blackboard
-from actors.action_selectors.types import InferenceResult
 
 if TYPE_CHECKING:
     from modules.agent_nets.base import BaseAgentNetwork
@@ -11,18 +10,16 @@ if TYPE_CHECKING:
 class NetworkInferenceComponent(PipelineComponent):
     """
     Performs neural network inference for an actor.
-    Reads 'obs' from data, writes results to the specified output key in predictions.
+    Reads 'obs' from data, writes results to predictions.
     """
 
     def __init__(
         self,
         agent_network: "BaseAgentNetwork",
         input_shape: Tuple[int, ...],
-        output_key: str = "inference_result",
     ):
         self.agent_network = agent_network
         self.input_shape = input_shape
-        self.output_key = output_key
 
     def execute(self, blackboard: Blackboard) -> None:
         obs = blackboard.data["obs"]
@@ -35,13 +32,43 @@ class NetworkInferenceComponent(PipelineComponent):
 
         with torch.inference_mode():
             output = self.agent_network.obs_inference(obs)
-            result = InferenceResult.from_inference_output(output)
+            
+            # Write results directly to blackboard
+            q_values = getattr(output, "q_values", None)
+            if q_values is not None:
+                blackboard.predictions["q_values"] = q_values
+                
+            policy = getattr(output, "policy", None)
+            if policy is not None:
+                logits = getattr(policy, "logits", None)
+                if logits is not None:
+                    blackboard.predictions["logits"] = logits
+                else:
+                    probs = getattr(policy, "probs", None)
+                    if probs is not None:
+                        blackboard.predictions["probs"] = probs
 
-        blackboard.predictions[self.output_key] = result
-        # Also set default keys for single-inference components
-        if self.output_key == "inference_result":
-            blackboard.predictions["logits"] = result.logits
-            blackboard.predictions["value"] = result.value
+            value = getattr(output, "value", None)
+            if value is not None:
+                if not isinstance(value, torch.Tensor):
+                    value = torch.as_tensor([value], device=obs.device)
+                blackboard.predictions["value"] = value
+
+            reward = getattr(output, "reward", None)
+            if reward is not None:
+                if not isinstance(reward, torch.Tensor):
+                    reward = torch.as_tensor([reward], device=obs.device)
+                blackboard.predictions["reward"] = reward
+
+            to_play = getattr(output, "to_play", None)
+            if to_play is not None:
+                if not isinstance(to_play, torch.Tensor):
+                    to_play = torch.as_tensor([to_play], device=obs.device, dtype=torch.long)
+                blackboard.predictions["to_play"] = to_play
+
+            extras = getattr(output, "extras", None) or {}
+            if extras:
+                blackboard.predictions["extra_metadata"] = extras
 
 
 class SearchInferenceComponent(PipelineComponent):
@@ -104,27 +131,25 @@ class SearchInferenceComponent(PipelineComponent):
                 if values.dim() == 1:
                     values = values.unsqueeze(-1)
 
-                result = InferenceResult(
-                    probs=probs,
-                    value=values,
-                    extra_metadata={
-                        "target_policies": torch.stack(
-                            [
-                                torch.as_tensor(
-                                    p, device=obs.device, dtype=torch.float32
-                                )
-                                for p in target_policies
-                            ]
-                        ),
-                        "search_duration": time.time() - start_time,
-                        "search_metadata": sm_list,
-                        "best_actions": torch.as_tensor(
-                            best_actions, device=obs.device, dtype=torch.long
-                        ),
-                        "value": values.squeeze(-1),
-                        "root_value": values.squeeze(-1),
-                    },
-                )
+                blackboard.predictions["probs"] = probs
+                blackboard.predictions["value"] = values
+                blackboard.predictions["extra_metadata"] = {
+                    "target_policies": torch.stack(
+                        [
+                            torch.as_tensor(
+                                p, device=obs.device, dtype=torch.float32
+                            )
+                            for p in target_policies
+                        ]
+                    ),
+                    "search_duration": time.time() - start_time,
+                    "search_metadata": sm_list,
+                    "best_actions": torch.as_tensor(
+                        best_actions, device=obs.device, dtype=torch.long
+                    ),
+                    "value": values.squeeze(-1),
+                    "root_value": values.squeeze(-1),
+                }
             else:
                 res = self.search.run(
                     obs, info, self.agent_network, exploration=self.exploration
@@ -150,19 +175,13 @@ class SearchInferenceComponent(PipelineComponent):
                     target_policies_out = target_policy.to(obs.device)
                     best_actions_out = torch.tensor(best_action, device=obs.device)
 
-                result = InferenceResult(
-                    probs=probs,
-                    value=value,
-                    extra_metadata={
-                        "target_policies": target_policies_out,
-                        "search_duration": time.time() - start_time,
-                        "search_metadata": search_metadata,
-                        "best_actions": best_actions_out,
-                        "value": value.squeeze(0),
-                        "root_value": value.squeeze(0),
-                    },
-                )
-
-        blackboard.predictions["logits"] = result.logits
-        blackboard.predictions["value"] = result.value
-        blackboard.predictions["inference_result"] = result
+                blackboard.predictions["probs"] = probs
+                blackboard.predictions["value"] = value
+                blackboard.predictions["extra_metadata"] = {
+                    "target_policies": target_policies_out,
+                    "search_duration": time.time() - start_time,
+                    "search_metadata": search_metadata,
+                    "best_actions": best_actions_out,
+                    "value": value.squeeze(0),
+                    "root_value": value.squeeze(0),
+                }

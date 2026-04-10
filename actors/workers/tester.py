@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional, Union, Tuple, Callable
 
 from modules.agent_nets.modular import ModularAgentNetwork
 from actors.action_selectors.selectors import BaseActionSelector
-from actors.action_selectors.types import InferenceResult
 from actors.action_selectors.policy_sources import (
     BasePolicySource,
     NetworkPolicySource,
@@ -72,10 +71,11 @@ class NetworkAgent:
             if info is None:
                 info = {}
             if "legal_moves" in info and "legal_moves_mask" not in info:
-                action_tensor = result.action_dim
+                # Find available action tensor for shape query
+                action_tensor = result.get("q_values", result.get("logits", result.get("probs")))
                 assert (
                     action_tensor is not None
-                ), "InferenceResult has no action tensor for mask shape"
+                ), "Predictions have no action tensor for mask shape"
                 mask = torch.zeros(
                     action_tensor.shape, dtype=torch.bool, device=self.device
                 )
@@ -85,7 +85,7 @@ class NetworkAgent:
                 info["legal_moves_mask"] = mask
 
             output = self.action_selector.select_action(
-                result=result,
+                predictions=result,
                 info=info,
                 exploration=False,
                 actor_state=self.actor_state,
@@ -374,10 +374,10 @@ class Tester:
             if info is None:
                 info = {}
             if "legal_moves" in info and "legal_moves_mask" not in info:
-                action_tensor = result.action_dim
+                action_tensor = result.get("q_values", result.get("logits", result.get("probs")))
                 assert (
                     action_tensor is not None
-                ), "InferenceResult has no action tensor for mask shape"
+                ), "Predictions have no action tensor for mask shape"
                 mask = torch.zeros(
                     action_tensor.shape, dtype=torch.bool, device=self.device
                 )
@@ -387,7 +387,7 @@ class Tester:
                 info["legal_moves_mask"] = mask
 
             output = self.action_selector.select_action(
-                result=result,
+                predictions=result,
                 info=info,
                 exploration=False,
                 actor_state=self.actor_state,
