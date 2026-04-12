@@ -307,28 +307,28 @@ def make_muzero_learner(
             SequenceInfrastructureComponent(unroll_steps),
             SequenceMaskComponent(),
             TwoHotProjectionComponent(
-                source_key="data.values",
+                source_key="targets.values",
                 dest_key="values",
                 representation=val_rep,
             ) if isinstance(val_rep, DiscreteSupportRepresentation) else ScalarFormatterComponent(
-                source_key="data.values",
+                source_key="targets.values",
                 dest_key="values",
                 representation=val_rep,
             ),
             ClassificationFormatterComponent(
-                source_key="data.policies", dest_key="policies", representation=pol_rep
+                source_key="targets.policies", dest_key="policies", representation=pol_rep
             ),
             TwoHotProjectionComponent(
-                source_key="data.rewards",
+                source_key="targets.rewards",
                 dest_key="rewards",
                 representation=rew_rep,
             ) if isinstance(rew_rep, DiscreteSupportRepresentation) else ScalarFormatterComponent(
-                source_key="data.rewards",
+                source_key="targets.rewards",
                 dest_key="rewards",
                 representation=rew_rep,
             ),
             ScalarFormatterComponent(
-                source_key="data.to_plays", dest_key="to_plays", representation=tp_rep
+                source_key="targets.to_plays", dest_key="to_plays", representation=tp_rep
             ),
             v_loss,
             p_loss,

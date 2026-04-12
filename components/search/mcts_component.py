@@ -49,22 +49,33 @@ class MCTSSearchComponent(PipelineComponent):
         
         if len(results) == 5:
             root_value, exploratory_policy, target_policy, best_action, search_meta = results
-            policy = exploratory_policy
-            value = root_value
-            # Store target_policy so SequenceBufferComponent can use it as the
-            # clean learning target (it checks for "target_policies" in metadata).
+            
+            # --- 1. ROUTE TO ACTOR (Exploration) ---
+            # The ActionSelectorComponent looks for "probs" to pick the actual environment action.
+            blackboard.predictions["probs"] = exploratory_policy
+            blackboard.predictions["policy"] = exploratory_policy 
+            
+            # --- 2. ROUTE TO REPLAY BUFFER (Training Target) ---
+            # The SequenceBufferComponent looks for "policies" to save for the loss function.
+            # We also keep "target_policy" for backward compatibility with ActionSelector
+            blackboard.predictions["policies"] = target_policy 
             blackboard.predictions["target_policy"] = target_policy
+            
+            value = root_value
         elif len(results) == 3:
             policy, value, search_meta = results
+            # Fallback if the search engine doesn't split them
+            blackboard.predictions["probs"] = policy
+            blackboard.predictions["policy"] = policy
+            blackboard.predictions["policies"] = policy
+            blackboard.predictions["target_policy"] = policy
         else:
             raise ValueError(f"Unexpected number of return values from search_engine.run: {len(results)}")
 
-        blackboard.predictions["policy"] = policy
-        blackboard.predictions["probs"] = policy  # For ActionSelector compatibility
         blackboard.predictions["value"] = value
         
-        # Also write to logits if preferred by selector (MCTS uses probs, but we can set logits to probs for convenience)
-        blackboard.predictions["logits"] = torch.log(policy + 1e-8)
+        # Also write to logits if preferred by selector
+        blackboard.predictions["logits"] = torch.log(blackboard.predictions["probs"] + 1e-8)
         if isinstance(search_meta, dict) and "simulations" in search_meta:
             blackboard.meta["mcts_simulations"] = search_meta["simulations"]
         elif isinstance(search_meta, dict) and "num_simulations" in search_meta:

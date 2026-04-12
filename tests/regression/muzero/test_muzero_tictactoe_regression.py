@@ -216,7 +216,8 @@ def test_muzero_tictactoe_full_training():
             for metrics in learner.step(iterator):
                 if train_steps % 1000 == 0:
                     loss_val = metrics["total_losses"].get("default")
-                    print(f"Step {train_steps} | Loss: {loss_val:.4f}")
+                    individual_losses = ", ".join([f"{k}: {v:.4f}" for k, v in metrics["losses"].items()])
+                    print(f"Step {train_steps} | Total Loss: {loss_val:.4f} | {individual_losses}")
 
                 if "to_play_loss" in metrics["losses"]:
                     to_play_losses.append(metrics["losses"]["to_play_loss"])

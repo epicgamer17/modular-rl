@@ -173,7 +173,7 @@ class TwoPlayerPlayerPlaneWrapper(BaseWrapper):
         obs = self.env.observe(agent)
         if isinstance(obs, dict) and "observation" in obs:
             obs = obs["observation"]
-        plane_val = 0 if agent == self.env.agents[0] else 1
+        plane_val = 0 if agent == self.env.possible_agents[0] else 1
         if isinstance(obs, np.ndarray) and obs.ndim == 3:
             if self.channel_first:
                 h, w = obs.shape[1], obs.shape[2]
