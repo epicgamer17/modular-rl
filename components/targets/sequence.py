@@ -10,7 +10,7 @@ class SequencePadderComponent(PipelineComponent):
 
     def __init__(self, unroll_steps: int, keys: Optional[List[str]] = None):
         self.T = unroll_steps + 1
-        self.keys = keys or ["values", "rewards", "policies", "actions", "to_plays"]
+        self.keys = keys or ["values", "rewards", "policies", "actions", "to_plays", "reward_mask", "to_play_mask", "action_mask"]
 
     def execute(self, blackboard: Blackboard) -> None:
         for key in self.keys:
@@ -18,11 +18,22 @@ class SequencePadderComponent(PipelineComponent):
                 v = resolve_blackboard_path(blackboard, key)
                 dest_key = key.split(".")[-1]
                 
-                if torch.is_tensor(v) and v.ndim >= 2 and v.shape[1] == self.T - 1:
-                    padding_shape = list(v.shape)
-                    padding_shape[1] = 1
-                    padding = torch.zeros(padding_shape, device=v.device, dtype=v.dtype)
-                    blackboard.targets[dest_key] = torch.cat([padding, v], dim=1)
+                if torch.is_tensor(v) and v.ndim >= 2:
+                    current_len = v.shape[1]
+                    if current_len == self.T - 1:
+                        # Case 1: Unpadded sequence (length K). Pad index 0.
+                        padding_shape = list(v.shape)
+                        padding_shape[1] = 1
+                        padding = torch.zeros(padding_shape, device=v.device, dtype=v.dtype)
+                        blackboard.targets[dest_key] = torch.cat([padding, v], dim=1)
+                    elif current_len == self.T:
+                        # Case 2: Already state-aligned (length K+1). Preserve as is.
+                        blackboard.targets[dest_key] = v
+                    else:
+                        raise AssertionError(
+                            f"K+1 Indexing Contract violation on '{key}': "
+                            f"Expected length {self.T-1} or {self.T}, got {current_len}"
+                        )
                 else:
                     blackboard.targets[dest_key] = v
             except KeyError:
@@ -38,38 +49,48 @@ class SequenceMaskComponent(PipelineComponent):
 
     def execute(self, blackboard: Blackboard) -> None:
         data = blackboard.data
+        targets = blackboard.targets
         
         # 1. Handle Value Mask (States)
-        if "value_mask" in data:
-            blackboard.targets["value_mask"] = data["value_mask"].clone()
-        elif "is_same_game" in data:
-            blackboard.targets["value_mask"] = data["is_same_game"].clone()
+        if "value_mask" not in targets:
+            if "value_mask" in data:
+                targets["value_mask"] = data["value_mask"].clone()
+            elif "is_same_game" in data:
+                targets["value_mask"] = data["is_same_game"].clone()
         
         # 2. Handle Reward Mask (Transitions)
-        if "reward_mask" in data:
-            blackboard.targets["reward_mask"] = data["reward_mask"].clone()
-        elif "is_same_game" in data:
-            blackboard.targets["reward_mask"] = data["is_same_game"].clone()
-            blackboard.targets["reward_mask"][:, 0] = False
+        # Shifted by Padder: blackboard.targets["reward_mask"] should already exist if padded.
+        if "reward_mask" not in targets:
+            if "reward_mask" in data:
+                targets["reward_mask"] = data["reward_mask"].clone()
+            elif "is_same_game" in data:
+                targets["reward_mask"] = data["is_same_game"].clone()
         
-        # Ensure index 0 is masked for rewards if it wasn't already
-        if "reward_mask" in blackboard.targets:
-            blackboard.targets["reward_mask"][:, 0] = False
+        # Ensure index 0 is masked for rewards ALWAYS
+        if "reward_mask" in targets:
+            targets["reward_mask"][:, 0] = False
+            assert not targets["reward_mask"][:, 0].any(), "reward_mask[0] must be False"
 
         # 3. Handle ToPlay Mask
-        if "to_play_mask" in data:
-            blackboard.targets["to_play_mask"] = data["to_play_mask"].clone()
-        elif "is_same_game" in data:
-            blackboard.targets["to_play_mask"] = data["is_same_game"].clone()
-            blackboard.targets["to_play_mask"][:, 0] = False
+        if "to_play_mask" not in targets:
+            if "to_play_mask" in data:
+                targets["to_play_mask"] = data["to_play_mask"].clone()
+            elif "is_same_game" in data:
+                targets["to_play_mask"] = data["is_same_game"].clone()
+        
+        # Ensure index 0 of to_play_mask matches reward_mask (False) per regression tests
+        if "to_play_mask" in targets:
+            targets["to_play_mask"][:, 0] = False
+            assert not targets["to_play_mask"][:, 0].any(), "to_play_mask[0] must be False"
 
         # 4. Handle Policy Mask
-        if "policy_mask" in data:
-            blackboard.targets["policy_mask"] = data["policy_mask"].clone()
-        elif "has_valid_obs_mask" in data:
-            blackboard.targets["policy_mask"] = data["has_valid_obs_mask"].clone()
-            if "dones" in data:
-                blackboard.targets["policy_mask"] &= ~data["dones"]
+        if "policy_mask" not in targets:
+            if "policy_mask" in data:
+                targets["policy_mask"] = data["policy_mask"].clone()
+            elif "has_valid_obs_mask" in data:
+                targets["policy_mask"] = data["has_valid_obs_mask"].clone()
+                if "dones" in data:
+                    targets["policy_mask"] &= ~data["dones"]
 
 
 class SequenceInfrastructureComponent(PipelineComponent):

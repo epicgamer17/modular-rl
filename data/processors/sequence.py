@@ -91,24 +91,24 @@ class SequenceTensorProcessor(InputProcessor):
         vals_t = torch.tensor(sequence.value_history, dtype=torch.float32)
 
         # To Plays
-        t_plays = []
-        for i in range(n_states):
-            pid = (
-                sequence.player_id_history[i]
-                if i < len(sequence.player_id_history)
-                else 0
-            )
-            t_plays.append(self._resolve_player_id(pid))
+        assert len(sequence.player_id_history) == n_states, (
+            f"player_id_history length ({len(sequence.player_id_history)}) "
+            f"must match n_states ({n_states})"
+        )
+        t_plays = [
+            self._resolve_player_id(pid) for pid in sequence.player_id_history
+        ]
         tps_t = torch.tensor(t_plays, dtype=torch.int16)
 
         # Chances
-        chance_t = torch.tensor(
-            [
-                sequence.chance_history[i] if i < len(sequence.chance_history) else 0
-                for i in range(n_states)
-            ],
-            dtype=torch.int16,
-        ).unsqueeze(1)
+        assert len(sequence.chance_history) == n_states or not sequence.chance_history, (
+            f"chance_history length ({len(sequence.chance_history)}) "
+            f"must match n_states ({n_states}) or be empty"
+        )
+        if sequence.chance_history:
+            chance_t = torch.tensor(sequence.chance_history, dtype=torch.int16).unsqueeze(1)
+        else:
+            chance_t = torch.zeros((n_states, 1), dtype=torch.int16)
 
         # Legal Moves Mask
         try:

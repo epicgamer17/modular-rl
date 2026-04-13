@@ -44,8 +44,18 @@ class MCTSSearchComponent(PipelineComponent):
         if blackboard.data.get("done") or blackboard.data.get("terminated") or blackboard.meta.get("done"):
             blackboard.meta["stop_execution"] = True
             return
+        # --- STABILITY GUARD: ENSURE EVAL MODE ---
+        # When using BatchNorm, we MUST be in eval mode during search to prevent 
+        # small MCTS batches from polluting the running statistics and slowing down learning.
+        was_training = self.agent_network.training
+        self.agent_network.eval()
+
         # Note: ModularSearch.run returns (root_value, exploratory_policy, target_policy, best_action, search_metadata)
         results = self.search_engine.run(obs, info, self.agent_network)
+
+        if was_training:
+            self.agent_network.train()
+
         
         if len(results) == 5:
             root_value, exploratory_policy, target_policy, best_action, search_meta = results

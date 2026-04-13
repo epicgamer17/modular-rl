@@ -16,7 +16,7 @@ class PettingZooObservationComponent(PipelineComponent):
         self.done = False
 
     def execute(self, blackboard: Blackboard) -> None:
-        if not self._initialized or not self.env.agents:
+        if not self._initialized or self.done or not self.env.agents:
             self.env.reset()
             self._initialized = True
             self.done = False
@@ -93,6 +93,14 @@ class PettingZooStepComponent(PipelineComponent):
             obs, term, trunc, info = None, True, False, {}
 
         self.obs_component.done = term or trunc
+
+        # Determine who would act next (needed for terminal to_play targets)
+        try:
+            next_agent = self.env.agent_selection
+            next_player_id = self.env.possible_agents.index(next_agent)
+        except (ValueError, AttributeError, StopIteration):
+            next_player_id = None
+        blackboard.data["next_player_id"] = next_player_id
 
         blackboard.data["reward"] = float(reward)
         blackboard.data["done"] = self.obs_component.done

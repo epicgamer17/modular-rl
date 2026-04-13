@@ -58,6 +58,7 @@ from components.selectors import (
 )
 from components.memory import SequenceBufferComponent
 from components.telemetry import TelemetryComponent
+from components.learner_telemetry import MuzeroMultiplayerTelemetry
 
 
 def make_muzero_network(
@@ -302,6 +303,10 @@ def make_muzero_learner(
                     "data.policies",
                     "data.actions",
                     "data.to_plays",
+                    "data.reward_mask",
+                    "data.to_play_mask",
+                    "data.policy_mask",
+                    "data.dones",
                 ],
             ),
             SequenceInfrastructureComponent(unroll_steps),
@@ -343,6 +348,7 @@ def make_muzero_learner(
                     "to_play_loss": 1.0,
                 }
             ),
+            MuzeroMultiplayerTelemetry(),
             priority_comp,
             buffer_update,
             OptimizerStepComponent(

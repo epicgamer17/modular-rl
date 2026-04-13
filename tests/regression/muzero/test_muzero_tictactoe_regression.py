@@ -193,8 +193,7 @@ def test_muzero_tictactoe_full_training():
     # --- 6. Training Loop ---
     print(f"Starting MuZero Tic-Tac-Toe training for {TOTAL_TRAINING_STEPS} steps...")
     train_steps = 0
-    to_play_losses = []
-    total_losses = []
+    loss_history = {}  # Tracks all individual and total losses
     training_scores = []
     test_score_history = []
     while train_steps < TOTAL_TRAINING_STEPS:
@@ -214,16 +213,27 @@ def test_muzero_tictactoe_full_training():
         if replay_buffer.size >= BATCH_SIZE:
             iterator = SingleBatchIterator(replay_buffer, DEVICE)
             for metrics in learner.step(iterator):
-                if train_steps % 1000 == 0:
+                if train_steps % 100 == 0:
                     loss_val = metrics["total_losses"].get("default")
-                    individual_losses = ", ".join([f"{k}: {v:.4f}" for k, v in metrics["losses"].items()])
-                    print(f"Step {train_steps} | Total Loss: {loss_val:.4f} | {individual_losses}")
+                    individual_losses = ", ".join(
+                        [f"{k}: {v:.4f}" for k, v in metrics["losses"].items()]
+                    )
+                    print(
+                        f"Step {train_steps} | Total Loss: {loss_val:.4f} | {individual_losses}"
+                    )
 
-                if "to_play_loss" in metrics["losses"]:
-                    to_play_losses.append(metrics["losses"]["to_play_loss"])
+                # Collect all individual losses
+                for loss_name, loss_val in metrics["losses"].items():
+                    if loss_name not in loss_history:
+                        loss_history[loss_name] = []
+                    loss_history[loss_name].append(loss_val)
 
-                if "default" in metrics["total_losses"]:
-                    total_losses.append(metrics["total_losses"]["default"])
+                # Collect total loss
+                if "total_loss" not in loss_history:
+                    loss_history["total_loss"] = []
+                loss_history["total_loss"].append(
+                    metrics["total_losses"].get("default", 0.0)
+                )
 
             train_steps += 1
 
@@ -250,7 +260,9 @@ def test_muzero_tictactoe_full_training():
 
                     r0 = last_res.get("vs_random_p0", {}).get("score", 0.0)
                     r1 = last_res.get("vs_random_p1", {}).get("score", 0.0)
-                    print(f"[Step {train_steps}] Vs Expert: {(p0+p1)/2:.2f} | Vs Random: {(r0+r1)/2:.2f}")
+                    print(
+                        f"[Step {train_steps}] Vs Expert: {(p0+p1)/2:.2f} | Vs Random: {(r0+r1)/2:.2f}"
+                    )
 
     # Final Evaluation
     print("Performing final evaluation...")
@@ -272,7 +284,7 @@ def test_muzero_tictactoe_full_training():
         name="MuZero TicTacToe",
         train_scores=training_scores,
         test_scores=test_score_history,
-        losses={"Total Loss": total_losses, "To-Play Loss": to_play_losses},
+        losses={k.replace("_", " ").title(): v for k, v in loss_history.items()},
     )
 
     if test_results:
@@ -281,11 +293,11 @@ def test_muzero_tictactoe_full_training():
         p0_score = last_res.get("vs_expert_p0", {}).get("score", -1.0)
         p1_score = last_res.get("vs_expert_p1", {}).get("score", -1.0)
         mean_score = (p0_score + p1_score) / 2
-        
+
         r0_score = last_res.get("vs_random_p0", {}).get("score", -1.0)
         r1_score = last_res.get("vs_random_p1", {}).get("score", -1.0)
         mean_random_score = (r0_score + r1_score) / 2
-        
+
         print(f"Final Mean Score vs Expert: {mean_score:.4f}")
         print(f"Final Mean Score vs Random: {mean_random_score:.4f}")
     else:
@@ -294,8 +306,8 @@ def test_muzero_tictactoe_full_training():
         r0_score = r1_score = mean_random_score = -1.0
 
     # assert to play loss is very very close to 0 (like maybe the mean of last 100 or 1000 is < 0.01)
-    if to_play_losses:
-        final_tp_loss = np.mean(to_play_losses[-1000:])
+    if "to_play_loss" in loss_history:
+        final_tp_loss = np.mean(loss_history["to_play_loss"][-1000:])
         assert (
             final_tp_loss < 0.01
         ), f"To-play loss is too high! Mean of last 1000: {final_tp_loss:.6f} > 0.01"
@@ -307,7 +319,7 @@ def test_muzero_tictactoe_full_training():
     assert (
         p0_score > 0.35 and p1_score > -0.05
     ), f"Performance vs Expert too low! Final p0_score {p0_score:.4f} or p1_score {p1_score:.4f} is below threshold"
-    
+
     # Random Agent Assertions
     assert (
         mean_random_score > 0.8
@@ -315,7 +327,7 @@ def test_muzero_tictactoe_full_training():
     assert (
         r0_score >= 0 and r1_score >= 0
     ), f"Agent lost to Random! p0_score: {r0_score}, p1_score: {r1_score}"
-    
+
     print("MuZero Regression Training complete and PASSED!")
 
     env.close()

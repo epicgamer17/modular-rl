@@ -89,8 +89,15 @@ class SequenceBufferComponent(PipelineComponent):
         if len(self._sequence) == 0:
             initial_obs = obs.squeeze(0).cpu().numpy() if torch.is_tensor(obs) else obs
             info = blackboard.data.get("info", {})
+            player_id = blackboard.data.get("player_id")
             legal = info.get("legal_moves", [])
-            self._sequence.append(initial_obs, terminated=False, truncated=False, legal_moves=legal)
+            self._sequence.append(
+                initial_obs, 
+                terminated=False, 
+                truncated=False, 
+                player_id=player_id, 
+                legal_moves=legal
+            )
 
         # Record the transition
         next_obs = blackboard.data.get("next_obs")
@@ -130,6 +137,8 @@ class SequenceBufferComponent(PipelineComponent):
             terminated = is_done
             truncated = False
 
+        next_player_id = blackboard.data.get("next_player_id")
+
         if action is not None:
             self._sequence.append(
                 observation=next_obs,
@@ -139,7 +148,7 @@ class SequenceBufferComponent(PipelineComponent):
                 reward=reward,
                 policy=policy,
                 value=value,
-                player_id=player_id,
+                player_id=next_player_id,
                 legal_moves=next_legal,
             )
 

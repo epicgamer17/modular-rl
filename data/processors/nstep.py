@@ -143,6 +143,16 @@ class NStepUnrollProcessor(OutputProcessor):
     """
     Handles window unrolling, validity masking, and N-step target calculation.
     Samples indices and creates unrolled sequences with N-step value bootstrapping.
+
+    Indexing Contract (Length K+1, indexed by u):
+    - observations[u]: State su. Index 0 is root s0.
+    - values[u]: Target value for su (relative to to_plays[u]).
+    - policies[u]: Target policy for action to be taken at su.
+    - to_plays[u]: ID of player whose turn it is to act at su.
+    - actions[u]: Action taken to reach su from su-1. Index 0 is Dummy (0).
+    - rewards[u]: Reward received reaching su from su-1. Index 0 is Dummy (0.0).
+    - reward_mask[u]: Unmasks prediction of ru. Index 0 is False.
+    - to_play_mask[u]: Unmasks prediction of player whose turn it is at su. Index 0 is False.
     """
 
     def __init__(
@@ -210,11 +220,12 @@ class NStepUnrollProcessor(OutputProcessor):
 
         # Calculate episode boundaries using dones (terminated/truncated)
         # We mask out any steps that occur AFTER a done signal in the sequence
-        # cumsum gives us a mask of [0, 0, 1, 1, 1] if done happens at index 2
         cumulative_dones = torch.cumsum(raw_dones.float(), dim=1)
 
-        # We want to mask steps *after* the done, not the done itself (which is a valid terminal state)
-        # Shift cumsum right by 1: [0, 0, 0, 1, 1]
+        # post_done_mask[t] is True if state s_t occurs STRICTLY AFTER a done transition.
+        # Transition t-1 -> t is done if raw_dones[t-1] is True.
+        # obs_mask should include the terminal state s_terminal, but mask everything after it...
+        # So we shift cumulative_dones by 1.
         post_done_mask = (
             torch.cat(
                 [torch.zeros((batch_size, 1), device=device), cumulative_dones[:, :-1]],
@@ -223,14 +234,33 @@ class NStepUnrollProcessor(OutputProcessor):
             > 0
         )
 
+        # dynamics_pre_done_mask[t] is True if we are NOT at or after a done state.
+        # We can act from s_t if s_t is not a terminal state.
+        # State s_t is terminal if raw_dones[t] is True.
+        dynamics_pre_done_mask = cumulative_dones == 0
+
         # Obs/Value Mask: Valid states (including terminal states), consistent with game ID and episode boundary
         obs_mask = same_game & (~post_done_mask)
 
         # Dynamics/Policy Mask: Valid transitions (excluding terminal states)
         # We cannot predict next state or policy FROM a terminal state
-        dynamics_mask = obs_mask & (~raw_dones)
+        dynamics_mask = same_game & dynamics_pre_done_mask
 
-        # 5. Compute N-Step Targets
+        # 5. Prepare ToPlay Targets (needed for N-step value perspective)
+        target_to_plays = torch.zeros(
+            (batch_size, self.unroll_steps + 1, self.num_players),
+            dtype=torch.float32,
+            device=device,
+        )
+
+        for u in range(self.unroll_steps + 1):
+            # Alignment: predicts P_u for state s_u. Match preds['to_plays'][:, u].
+            is_consistent_tp = (~post_done_mask[:, u]) & same_game[:, u]
+            tp_indices = torch.clamp(raw_to_plays[:, u].long(), 0, self.num_players - 1)
+            target_to_plays[range(batch_size), u, tp_indices] = 1.0
+            target_to_plays[~is_consistent_tp, u] = 0
+
+        # 6. Compute N-Step Targets
         target_values, target_rewards = self._compute_n_step_targets(
             batch_size,
             raw_rewards,
@@ -240,9 +270,10 @@ class NStepUnrollProcessor(OutputProcessor):
             raw_truncated,
             dynamics_mask,
             device,
+            target_to_plays=target_to_plays,
         )
 
-        # 6. Prepare Unroll Targets
+        # 7. Prepare Other Unroll Targets
         target_policies = torch.zeros(
             (batch_size, self.unroll_steps + 1, self.num_actions),
             dtype=torch.float32,
@@ -251,11 +282,6 @@ class NStepUnrollProcessor(OutputProcessor):
         target_actions = torch.zeros(
             (batch_size, self.unroll_steps), dtype=torch.int64, device=device
         )
-        target_to_plays = torch.zeros(
-            (batch_size, self.unroll_steps + 1, self.num_players),
-            dtype=torch.float32,
-            device=device,
-        )
         target_chances = torch.zeros(
             (batch_size, self.unroll_steps + 1, 1), dtype=torch.int64, device=device
         )
@@ -263,19 +289,11 @@ class NStepUnrollProcessor(OutputProcessor):
             (batch_size, self.unroll_steps + 1), dtype=torch.bool, device=device
         )
 
+        # Dynamics targets
         for u in range(self.unroll_steps + 1):
             is_consistent = dynamics_mask[:, u]
-
             target_policies[is_consistent, u] = raw_policies[is_consistent, u]
             target_policies[~is_consistent, u] = 1.0 / self.num_actions
-
-            # To_play targets: valid at non-root states within the same game,
-            # including terminal (terminal has a valid "whose turn" answer).
-            # Zeroed at root (u=0) and post-terminal.
-            is_consistent_tp = (u > 0) & (~post_done_mask[:, u]) & same_game[:, u]
-            tp_indices = torch.clamp(raw_to_plays[:, u].long(), 0, self.num_players - 1)
-            target_to_plays[range(batch_size), u, tp_indices] = 1.0
-            target_to_plays[~is_consistent_tp, u] = 0
 
             target_dones[is_consistent, u] = raw_dones[is_consistent, u]
             target_dones[~is_consistent, u] = True
@@ -286,7 +304,9 @@ class NStepUnrollProcessor(OutputProcessor):
 
             if u < self.unroll_steps:
                 target_actions[:, u] = raw_actions[:, u].long()
-                target_actions[~is_consistent, u] = 0
+                target_actions[~is_consistent, u] = int(
+                    np.random.randint(0, self.num_actions)
+                )
 
         # 7. Unroll Observations
         obs_indices = all_indices[:, : self.unroll_steps + 1]
@@ -302,13 +322,49 @@ class NStepUnrollProcessor(OutputProcessor):
                     is_absorbing, step - 1
                 ]
 
-        # Rename to canonical names for radical transparency
+        # 8. Define Masks (Length K)
+        # We use obs_valid_mask (which includes terminal states) for both 
+        # reward_mask and to_play_mask to ensure they are identical and 
+        # do not mask out terminal rewards.
+        reward_mask_raw = obs_valid_mask[:, : self.unroll_steps].clone()
+        to_play_mask_raw = obs_valid_mask[:, : self.unroll_steps].clone()
+        
+        # State-aligned masks (Length K+1)
         value_mask = obs_valid_mask
         policy_mask = dynamics_mask[:, : self.unroll_steps + 1]
-        reward_mask = policy_mask.clone()
-        reward_mask[:, 0] = False  # No reward at root
-        to_play_mask = policy_mask.clone()
-        to_play_mask[:, 0] = False  # No to-play at root (usually)
+
+        # 9. Slice transition-aligned targets to unroll_steps (K)
+        # target_rewards and target_actions correspond to transitions s_k -> s_{k+1}.
+        target_rewards = target_rewards[:, :self.unroll_steps]
+        target_actions = target_actions[:, :self.unroll_steps]
+
+        # 10. Prepend dummy 0 at index 0 to align with K+1 state targets
+        # This shift ensures that r1 is at index 1, which receives 1/K gradient scaling.
+        # Index 0 receives 1.0 scaling but is masked out (zero loss).
+        
+        # Reward padding
+        reward_padding = torch.zeros((batch_size, 1), device=target_rewards.device, dtype=target_rewards.dtype)
+        target_rewards = torch.cat([reward_padding, target_rewards], dim=1)
+        
+        # Action padding
+        action_padding = torch.zeros((batch_size, 1), device=target_actions.device, dtype=target_actions.dtype)
+        target_actions = torch.cat([action_padding, target_actions], dim=1)
+        
+        # Mask padding
+        mask_padding = torch.zeros((batch_size, 1), device=reward_mask_raw.device, dtype=torch.bool)
+        reward_mask = torch.cat([mask_padding, reward_mask_raw], dim=1)
+        to_play_mask = torch.cat([mask_padding, to_play_mask_raw], dim=1)
+
+        # Final Shape & Contract Assertions
+        T_expected = self.unroll_steps + 1
+        assert target_values.shape[1] == T_expected, f"Values T mismatch: {T_expected} vs {target_values.shape[1]}"
+        assert target_rewards.shape[1] == T_expected, f"Rewards T mismatch: {T_expected} vs {target_rewards.shape[1]}"
+        assert target_actions.shape[1] == T_expected, f"Actions T mismatch: {T_expected} vs {target_actions.shape[1]}"
+        
+        # Root Masking Rule: index 0 MUST be masked for rewards and to_plays
+        # This aligns with gradient_scales=[1.0, 1/K, 1/K, ...] where u=0 is root only.
+        assert not reward_mask[:, 0].any(), "reward_mask[0] must be False (Root transition is dummy)"
+        assert not to_play_mask[:, 0].any(), "to_play_mask[0] must be False (MuZero root TP is ungrounded)"
 
         return dict(
             observations=buffers["observations"][indices_tensor],
@@ -317,6 +373,7 @@ class NStepUnrollProcessor(OutputProcessor):
             policy_mask=policy_mask,
             reward_mask=reward_mask,
             to_play_mask=to_play_mask,
+            dynamics_mask=dynamics_mask[:, : self.unroll_steps], # Legacy
             masks=obs_valid_mask,  # Generic fallback
             rewards=target_rewards,
             policies=target_policies,
@@ -342,6 +399,7 @@ class NStepUnrollProcessor(OutputProcessor):
         raw_truncated,
         valid_mask,
         device,
+        target_to_plays=None,
     ):
         """
         Vectorized N-step target calculation.
@@ -384,10 +442,19 @@ class NStepUnrollProcessor(OutputProcessor):
 
             return tensor[:, :length].unfold(1, size, step)
 
-        # [B, num_windows, n_step]
+        # raw_rewards[i] is reward for s_i -> s_{i+1} (which is r_{i+1}).
+        # For state s_t, we want rewards starting at t: [r_{t+1}, r_{t+2}, ...].
+        # In the buffer, raw_rewards[t] already stores r_{t+1}.
+        # So no shift is needed.
         rewards_windows = safe_slice_unfold(raw_rewards, required_len, n_step, 1)
         to_plays_windows = safe_slice_unfold(raw_to_plays, required_len, n_step, 1)
+        # DONE ALIGNMENT:
+        # reward r_{u+k+1} is valid if s_{u+k} was not terminal.
+        # So we use unshifted raw_dones.
         dones_windows = safe_slice_unfold(raw_dones, required_len, n_step, 1)
+        
+        # VALIDITY ALIGNMENT:
+        # Reward r_{u+1} is valid if we could act from s_u.
         valid_windows = safe_slice_unfold(valid_mask, required_len, n_step, 1)
 
         # Current ToPlay for each window start (u)
@@ -400,48 +467,20 @@ class NStepUnrollProcessor(OutputProcessor):
         # Shape: [B, num_windows, 1]
         current_to_plays = raw_to_plays[:, :num_windows].unsqueeze(2)
 
-        # 3. Compute Value Masks
-        # Game Boundary Mask (from valid_mask) & Done Mask
-        # We need to compute a mask that handles the "break" when a done occurs.
-        # Original logic:
-        #   valid = valid_mask & (~has_ended)
-        #   has_ended |= done & valid
-
-        # This implies:
-        # - If done[k] is True, then mask[k] is VALID (we count the terminal reward).
-        # - But mask[k+1] and onwards are INVALID.
-
-        dones_float = dones_windows.float()
-        # cumsum gives [0, 0, 1, 1] for dones [0, 0, 1, 0]
-        # We want to forbid steps AFTER the first done.
-        # Shift cumsum right by 1 to get "was done before this step?"
-        was_done_before = torch.cat(
-            [
-                torch.zeros((batch_size, num_windows, 1), device=device),
-                torch.cumsum(dones_float, dim=2)[:, :, :-1],
-            ],
-            dim=2,
-        )
-
-        # Check if "was done before" > 0 or if "was done before" depends on valid mask?
-        # Typically simple cumsum is enough if we assume raw_dones are correct.
-
-        # Valid Reward Steps:
-        # 1. Original valid_mask is True (same game)
-        # 2. No done happened BEFORE this step in the window
+        # 3. Compute Transition Validity Mask
+        # was_done_before[u, k] is True if any state s_u...s_{u+k} was terminal.
+        was_done_before = torch.cumsum(dones_windows.float(), dim=2)
         valid_steps_mask = valid_windows & (was_done_before == 0)
 
-        # 4. Compute Discounted Rewards
-        # Player Sign: compared to current_to_play
-        # [B, W, N]
+        # 4. Compute Weighted Rewards
+        # REWARD SIGN ALIGNMENT:
+        # rewards_windows[:, u, k] is r_{u+k+1} (transition s_{u+k} -> s_{u+k+1}).
+        # The mover is s_{u+k}, which is provided by to_plays_windows[:, u, k].
+        # We want the reward relative to the player at state s_u (current_to_plays).
+        # Note: raw_rewards[i] is the reward for transition s_{i} -> s_{i+1}.
+        # In the buffer, we assume rewards[i] stores r_{i+1}.
         signs = torch.where(current_to_plays == to_plays_windows, 1.0, -1.0)
-
-        # Weighted Rewards
-        # sum(gamma^k * R_k * sign_k * valid_k)
-
         weighted_rewards = rewards_windows * gammas * signs * valid_steps_mask.float()
-
-        # [B, num_windows]
         summed_rewards = weighted_rewards.sum(dim=2)
 
         # 5. Compute Bootstrap Value
@@ -488,9 +527,12 @@ class NStepUnrollProcessor(OutputProcessor):
             boot_is_valid, boot_term, torch.tensor(0.0, device=device)
         )
 
-        # Grounding: Ensure that any targets for padded steps (past game end) are explicitly 0.0
-        # This is important for "safe absorbing states" logic where we want to learn V(s_absorbing) = 0
-        target_values = target_values * valid_mask[:, :num_windows].float()
+        # Grounding: Ensure that any targets for padded steps (past game end) 
+        # or terminal states are explicitly 0.0.
+        # State s_u is terminal if raw_terminated[:, u] is True.
+        # V(s_u) must be 0 if s_u is terminal.
+        terminal_mask = ~raw_terminated[:, :num_windows]
+        target_values = target_values * valid_mask[:, :num_windows].float() * terminal_mask.float()
 
         # 6. Target Rewards (Value Prefix or Instant)
         target_rewards = torch.zeros(
@@ -518,19 +560,17 @@ class NStepUnrollProcessor(OutputProcessor):
                 is_valid = valid_mask[:, u - 1]
                 target_rewards[is_valid, u] = prefix_sum[is_valid]
         else:
-            # Standard: target_rewards[u] = raw_rewards[u-1]
-            # The reward at step u is for the transition FROM state u-1,
-            # so validity is determined by dynamics_mask at position u-1.
-            t_rew = raw_rewards[:, : num_windows - 1]
-            mask_slice = valid_mask[:, : num_windows - 1]  # positions 0..K-1
+            # Transition-aligned targets: indices 0...K-1 map to r1...rK.
+            # SequencePadderComponent will prepend 0 at index 0 making it 0, r1...rK (length K+1).
+            target_rewards[:, :num_windows-1] = raw_rewards[:, :num_windows-1]
+            target_rewards[:, num_windows-1] = 0.0
 
-            # We assign to target_rewards[:, 1:]
-            # But we must respect the mask
-            # Safe way: fill zero, then assign masked
 
-            # Slice match: [B, num_windows-1]
-            target_slice = torch.zeros_like(target_rewards[:, 1:])
-            target_slice[mask_slice] = t_rew[mask_slice]
-            target_rewards[:, 1:] = target_slice
+        if False: # Debug toggle
+            print(f"DEBUG rewards_windows: {rewards_windows}")
+            print(f"DEBUG valid_steps_mask: {valid_steps_mask}")
+            print(f"DEBUG summed_rewards: {summed_rewards}")
+            print(f"DEBUG boot_term: {boot_term}")
+            print(f"DEBUG final target_values: {target_values}")
 
         return target_values, target_rewards

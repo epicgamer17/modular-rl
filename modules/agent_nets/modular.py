@@ -171,9 +171,14 @@ class ModularAgentNetwork(BaseAgentNetwork):
                     [target_observations[:, :-1], target_observations[:, 1:]], dim=2
                 )
 
+            # Slice actions to exclude the dummy root action (index 0) 
+            # added by the NStepUnrollProcessor for target alignment.
+            # This ensures we unroll for exactly K steps, starting from s0.
+            unroll_actions = actions[:, 1:]
+
             physics_output = self.components["world_model"].unroll_physics(
                 initial_latent_state=latent,
-                actions=actions,
+                actions=unroll_actions,
                 encoder_inputs=encoder_inputs,
                 true_chance_codes=target_chance_codes,
                 head_state=head_state,
@@ -188,14 +193,8 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
             pred_features = self.components["prediction_backbone"](flat_latents)
             raw_values, _, _ = self.components["value_head"](pred_features)
-            raw_policies, _, _ = self.components["policy_head"](
-                raw_values
-                if "prediction_backbone" not in self.components
-                else pred_features
-            )
-            # Note: The above logic for policy_head input depends on the architecture.
-            # In MuZero, policy and value heads often share the same backbone features.
             raw_policies, _, _ = self.components["policy_head"](pred_features)
+
 
             raw_values = raw_values.view(B, T_plus_1, -1)
             raw_policies = raw_policies.view(B, T_plus_1, -1)
