@@ -1,4 +1,4 @@
-from .inference import NetworkInferenceComponent, SearchInferenceComponent
+from .inference import NetworkInferenceComponent
 from .discrete import (
     mask_actions,
     write_to_blackboard,

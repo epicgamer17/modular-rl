@@ -128,11 +128,6 @@ class ActionSelectorComponent(PipelineComponent):
 
         from torch.distributions import Categorical
 
-        logits = blackboard.predictions.get("logits")
-        probs = blackboard.predictions.get("probs")
-        q_values = blackboard.predictions.get("q_values")
-        value = blackboard.predictions.get("value")
-
         # Select the source of action values using the required input_key
         values = blackboard.predictions.get(self.input_key)
         if values is None:
@@ -141,10 +136,18 @@ class ActionSelectorComponent(PipelineComponent):
                 f"Available keys: {list(blackboard.predictions.keys())}"
             )
             
-        is_prob = self.input_key == "probs"
-
-        # Apply masking
+        # Determine if we are dealing with probabilities or logits/values
+        is_prob = any(k in self.input_key for k in ["prob", "policy"])
+        
+        # Apply masking and strictly validate probabilities if heuristic triggers
         if is_prob:
+            # 🚨 INTEGRITY CHECK: Probabilities must be valid distributions
+            assert torch.all(values >= -1e-7), f"[{self.input_key}] Probabilities must be non-negative"
+            sum_val = values.sum(dim=-1)
+            assert torch.allclose(sum_val, torch.ones_like(sum_val), atol=1e-3), (
+                f"[{self.input_key}] Probabilities must sum to 1.0, got {sum_val}"
+            )
+            
             # For probabilities, we mask with 0 and re-normalize later if needed
             masked_values = mask_actions(values, info, mask_value=0.0)
         else:
@@ -158,17 +161,14 @@ class ActionSelectorComponent(PipelineComponent):
             # Categorical sampling
             if is_prob:
                 # If we only have probs, convert to logits for temperature scaling
-                # probs^(1/T) / sum(probs^(1/T))
-                # We use LOG_EPSILON to avoid log(0)
                 temp_logits = torch.log(masked_values + self.LOG_EPSILON)
                 dist = Categorical(logits=temp_logits / self.temperature)
             else:
                 dist = Categorical(logits=masked_values / self.temperature)
             action = dist.sample()
 
-        # Prepare metadata
+        # Prepare core metadata for environment interaction
         metadata = {
-            "value": (value.detach().cpu() if hasattr(value, "detach") else value) if value is not None else None,
             "temperature": self.temperature,
         }
 
@@ -187,15 +187,10 @@ class ActionSelectorComponent(PipelineComponent):
                 .cpu()
             )
 
-        # Handle search metadata if present
+        # Handle any supplemental search/inference metadata present in extra_metadata
         extra = blackboard.predictions.get("extra_metadata")
         if extra:
             metadata.update(extra)
-
-        # Propagate target_policy from MCTS for buffer storage
-        target_policy = blackboard.predictions.get("target_policy")
-        if target_policy is not None:
-            metadata["target_policies"] = target_policy.detach().cpu() if hasattr(target_policy, "detach") else target_policy
 
         write_to_blackboard(blackboard, action, metadata)
 

@@ -520,7 +520,7 @@ def make_muzero_actor_engine(
 
     components.append(
         ActionSelectorComponent(
-            input_key="probs",
+            input_key="search_policy",
             temperature=1.0 if exploration else 0.0,
             schedule=temperature_schedule,
             schedule_source="episode",
@@ -534,7 +534,14 @@ def make_muzero_actor_engine(
     components.append(TelemetryComponent(name="muzero_actor"))
 
     if replay_buffer is not None:
-        components.append(SequenceBufferComponent(replay_buffer, num_players=num_players))
+        components.append(
+            SequenceBufferComponent(
+                replay_buffer, 
+                num_players=num_players,
+                target_policy_key="search_target_policy",
+                target_value_key="search_value",
+            )
+        )
 
     # Finally, add a terminator to signal the end of the episode to the ActorWorker
     components.append(SequenceTerminatorComponent())
