@@ -1,4 +1,5 @@
 import torch
+from typing import Any, Tuple
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
 
@@ -8,12 +9,16 @@ class MuzeroMultiplayerTelemetry(PipelineComponent):
     """
     def __init__(
         self,
+        value_representation: Any = None,
+        num_players: int = 2,
         to_play_pred_key: str = "to_plays",
         to_play_target_key: str = "to_plays",
         value_pred_key: str = "values",
         value_target_key: str = "values",
         mask_key: str = "masks",
     ):
+        self.value_representation = value_representation
+        self.num_players = num_players
         self.to_play_pred_key = to_play_pred_key
         self.to_play_target_key = to_play_target_key
         self.value_pred_key = value_pred_key
@@ -47,16 +52,21 @@ class MuzeroMultiplayerTelemetry(PipelineComponent):
         correct = (pred_ids == target_ids).float()
         
         # 3. Value Error
-        # Ensure value shapes match [B, T]
-        if val_preds.ndim == 3:
-            val_preds = val_preds.squeeze(-1)
+        # Convert logits to expected value if representation is provided
+        if self.value_representation is not None:
+            val_scalars = self.value_representation.to_expected_value(val_preds)
+        else:
+            val_scalars = val_preds
+            if val_scalars.ndim == 3:
+                val_scalars = val_scalars.squeeze(-1)
+
         if val_targets.ndim == 3:
             val_targets = val_targets.squeeze(-1)
             
-        val_error = (val_preds - val_targets)**2
+        val_error = (val_scalars - val_targets)**2
         
         # 4. Split and Log
-        for p in range(2): # 2 players for Tic-Tac-Toe
+        for p in range(self.num_players):
             p_mask = (target_ids == p) & mask.bool()
             count = p_mask.sum().item()
             

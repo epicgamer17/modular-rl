@@ -60,8 +60,17 @@ class ExpectedValueErrorPriorityComponent(PipelineComponent):
         target_scalars = blackboard.targets[self.target_key]
 
         # 3. Compute root TD-error (MSE)
+        # Ensure target_scalars is [B, T] by squeezing if it's [B, T, 1]
+        if target_scalars.ndim == 3 and target_scalars.shape[-1] == 1:
+            target_scalars = target_scalars.squeeze(-1)
+            
         root_pred = pred_scalars[:, 0]
         root_target = target_scalars[:, 0]
+
+        assert root_target.shape == root_pred.shape, (
+            f"ExpectedValueErrorPriorityComponent: Shape mismatch between "
+            f"root_target {root_target.shape} and root_pred {root_pred.shape}"
+        )
 
         error = (root_target - root_pred) ** 2
         blackboard.meta['priorities'] = error.detach()

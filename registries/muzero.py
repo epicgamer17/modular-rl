@@ -6,6 +6,7 @@ from modules.agent_nets.modular import ModularAgentNetwork
 from modules.embeddings.action_embedding import ActionEncoder
 from modules.backbones.resnet import ResNetBackbone
 from modules.backbones.conv import ConvBackbone
+from modules.backbones.mlp import MLPBackbone
 from modules.heads.value import ValueHead
 from modules.heads.policy import PolicyHead
 from modules.heads.reward import RewardHead
@@ -57,7 +58,7 @@ from components.selectors import (
     ActionSelectorComponent,
 )
 from components.memory import SequenceBufferComponent
-from components.telemetry import TelemetryComponent
+from components.telemetry import TelemetryComponent, SequenceTerminatorComponent
 from components.learner_telemetry import MuzeroMultiplayerTelemetry
 
 
@@ -158,6 +159,108 @@ def make_muzero_network(
             kernel_sizes=[1],
             strides=[1],
             norm_type="batch",
+        ),
+        representation=ClassificationRepresentation(num_classes=num_actions),
+    )
+
+    agent_network = ModularAgentNetwork(
+        components={
+            "world_model": world_model,
+            "prediction_backbone": prediction_backbone,
+            "value_head": value_head,
+            "policy_head": policy_head,
+        },
+        unroll_steps=unroll_steps,
+        atom_size=1,
+    ).to(device)
+
+    return agent_network
+
+
+def make_muzero_mlp_network(
+    obs_dim: Tuple[int, ...],
+    num_actions: int,
+    action_embedding_dim: int = 16,
+    hidden_widths: List[int] = [64, 64],
+    support_range: int = 500,
+    unroll_steps: int = 5,
+    num_players: int = 2,
+    device: torch.device = torch.device("cpu"),
+) -> ModularAgentNetwork:
+    """
+    Creates a standard MuZero network using Multi-Layer Perceptrons (MLPs).
+    Typically used for environments with 1D/vector observations like CartPole.
+    """
+    action_encoder = ActionEncoder(num_actions, action_embedding_dim)
+
+    representation = Representation(
+        backbone=MLPBackbone(
+            input_shape=obs_dim,
+            widths=hidden_widths,
+        )
+    )
+
+    hidden_state_shape = representation.output_shape
+
+    dynamics = Dynamics(
+        backbone=MLPBackbone(
+            input_shape=hidden_state_shape,
+            widths=hidden_widths,
+        ),
+        action_encoder=action_encoder,
+        input_shape=hidden_state_shape,
+        action_embedding_dim=action_embedding_dim,
+    )
+
+    reward_head = RewardHead(
+        input_shape=hidden_state_shape,
+        representation=DiscreteSupportRepresentation(
+            vmin=-support_range, vmax=support_range, bins=2 * int(support_range) + 1
+        ),
+        neck=MLPBackbone(
+            input_shape=hidden_state_shape,
+            widths=[hidden_widths[-1]],
+        ),
+    )
+
+    to_play_head = ToPlayHead(
+        input_shape=hidden_state_shape,
+        num_players=num_players,
+        neck=MLPBackbone(
+            input_shape=hidden_state_shape,
+            widths=[hidden_widths[-1]],
+        ),
+    )
+
+    world_model = MuzeroWorldModel(
+        representation=representation,
+        dynamics=dynamics,
+        reward_head=reward_head,
+        to_play_head=to_play_head,
+        num_actions=num_actions,
+    )
+
+    prediction_backbone = MLPBackbone(
+        input_shape=hidden_state_shape,
+        widths=hidden_widths,
+    )
+
+    value_head = ValueHead(
+        input_shape=hidden_state_shape,
+        representation=DiscreteSupportRepresentation(
+            vmin=-support_range, vmax=support_range, bins=2 * int(support_range) + 1
+        ),
+        neck=MLPBackbone(
+            input_shape=hidden_state_shape,
+            widths=[hidden_widths[-1]],
+        ),
+    )
+
+    policy_head = PolicyHead(
+        input_shape=hidden_state_shape,
+        neck=MLPBackbone(
+            input_shape=hidden_state_shape,
+            widths=[hidden_widths[-1]],
         ),
         representation=ClassificationRepresentation(num_classes=num_actions),
     )
@@ -287,9 +390,46 @@ def make_muzero_learner(
     priority_comp = ExpectedValueErrorPriorityComponent(value_representation=val_rep)
     buffer_update = PriorityUpdateComponent(priority_update_fn=replay_buffer.update_priorities)
 
-    v_loss = ValueLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
+    if isinstance(val_rep, DiscreteSupportRepresentation):
+        v_loss = ValueLoss(
+            target_key="targets.values_projected",
+            loss_fn=nn.functional.cross_entropy,
+            loss_factor=1.0,
+        )
+        v_formatter = TwoHotProjectionComponent(
+            source_key="targets.values",
+            dest_key="values_projected",
+            representation=val_rep,
+        )
+    else:
+        v_loss = ValueLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
+        v_formatter = ScalarFormatterComponent(
+            source_key="targets.values",
+            dest_key="values",
+            representation=val_rep,
+        )
+
     p_loss = PolicyLoss(loss_fn=nn.functional.cross_entropy, loss_factor=1.0)
-    r_loss = RewardLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
+
+    if isinstance(rew_rep, DiscreteSupportRepresentation):
+        r_loss = RewardLoss(
+            target_key="targets.rewards_projected",
+            loss_fn=nn.functional.cross_entropy,
+            loss_factor=1.0,
+        )
+        r_formatter = TwoHotProjectionComponent(
+            source_key="targets.rewards",
+            dest_key="rewards_projected",
+            representation=rew_rep,
+        )
+    else:
+        r_loss = RewardLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
+        r_formatter = ScalarFormatterComponent(
+            source_key="targets.rewards",
+            dest_key="rewards",
+            representation=rew_rep,
+        )
+
     tp_loss = ToPlayLoss(loss_fn=nn.functional.cross_entropy, loss_factor=1.0)
 
     learner = BlackboardEngine(
@@ -311,27 +451,11 @@ def make_muzero_learner(
             ),
             SequenceInfrastructureComponent(unroll_steps),
             SequenceMaskComponent(),
-            TwoHotProjectionComponent(
-                source_key="targets.values",
-                dest_key="values",
-                representation=val_rep,
-            ) if isinstance(val_rep, DiscreteSupportRepresentation) else ScalarFormatterComponent(
-                source_key="targets.values",
-                dest_key="values",
-                representation=val_rep,
-            ),
+            v_formatter,
             ClassificationFormatterComponent(
                 source_key="targets.policies", dest_key="policies", representation=pol_rep
             ),
-            TwoHotProjectionComponent(
-                source_key="targets.rewards",
-                dest_key="rewards",
-                representation=rew_rep,
-            ) if isinstance(rew_rep, DiscreteSupportRepresentation) else ScalarFormatterComponent(
-                source_key="targets.rewards",
-                dest_key="rewards",
-                representation=rew_rep,
-            ),
+            r_formatter,
             ScalarFormatterComponent(
                 source_key="targets.to_plays", dest_key="to_plays", representation=tp_rep
             ),
@@ -348,7 +472,7 @@ def make_muzero_learner(
                     "to_play_loss": 1.0,
                 }
             ),
-            MuzeroMultiplayerTelemetry(),
+            MuzeroMultiplayerTelemetry(value_representation=val_rep, num_players=1),
             priority_comp,
             buffer_update,
             OptimizerStepComponent(
@@ -411,5 +535,8 @@ def make_muzero_actor_engine(
 
     if replay_buffer is not None:
         components.append(SequenceBufferComponent(replay_buffer, num_players=num_players))
+
+    # Finally, add a terminator to signal the end of the episode to the ActorWorker
+    components.append(SequenceTerminatorComponent())
 
     return BlackboardEngine(components=components, device=device)

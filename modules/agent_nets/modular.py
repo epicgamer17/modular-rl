@@ -269,6 +269,10 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 "latents": stacked_latents,
             }
 
+            if "projector" in self.components:
+                proj = self.project(flat_latents, grad=True)
+                output["projected_latents"] = proj.view(B, T_plus_1, -1)
+
             if stochastic and latents_afterstates is not None:
                 output["latents_afterstates"] = latents_afterstates
                 output["chance_logits"] = stochastic_chance_logits
@@ -422,12 +426,14 @@ class ModularAgentNetwork(BaseAgentNetwork):
         if "projector" not in self.components:
             raise NotImplementedError("Projector not configured for this architecture.")
 
+        import math
         original_shape = hidden_state.shape
-        flat_hidden = hidden_state.reshape(-1, self.flat_hidden_dim)
+        flat_hidden_dim = math.prod(self.components["world_model"].representation.output_shape)
+        flat_hidden = hidden_state.reshape(-1, flat_hidden_dim)
         proj = self.components["projector"].projection(flat_hidden)
 
         if grad:
-            proj = self.components["projector"].projection_head(proj)
+            proj = self.components["projector"].prediction_head(proj)
         else:
             proj = proj.detach()
 

@@ -89,7 +89,7 @@ class SequenceBufferComponent(PipelineComponent):
         if len(self._sequence) == 0:
             initial_obs = obs.squeeze(0).cpu().numpy() if torch.is_tensor(obs) else obs
             info = blackboard.data.get("info", {})
-            player_id = blackboard.data.get("player_id")
+            player_id = blackboard.data.get("player_id", 0 if self.num_players == 1 else None)
             legal = info.get("legal_moves", [])
             self._sequence.append(
                 initial_obs, 
@@ -129,7 +129,7 @@ class SequenceBufferComponent(PipelineComponent):
         if value is None:
             value = 0.0
 
-        player_id = blackboard.data.get("player_id") # MuZero needs this
+        player_id = blackboard.data.get("player_id", 0 if self.num_players == 1 else None) # MuZero needs this
 
         # If terminated/truncated are missing, use done
         if terminated is None and truncated is None:
@@ -137,7 +137,7 @@ class SequenceBufferComponent(PipelineComponent):
             terminated = is_done
             truncated = False
 
-        next_player_id = blackboard.data.get("next_player_id")
+        next_player_id = blackboard.data.get("next_player_id", 0 if self.num_players == 1 else None)
 
         if action is not None:
             self._sequence.append(

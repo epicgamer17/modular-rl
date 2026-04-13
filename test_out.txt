@@ -1,0 +1,19 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.3, pytest-9.0.2, pluggy-1.6.0 -- /Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/.venv/bin/python3.12
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff
+configfile: pytest.ini (WARNING: ignoring pytest config in pyproject.toml!)
+plugins: anyio-4.12.1, hypothesis-6.151.9, cov-7.0.0
+collecting ... collected 1 item
+
+tests/regression/efficient_zero/test_efficient_zero_tictactoe_regression.py::test_efficient_zero_tictactoe_full_training /Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:65: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:65: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:65: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:65: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:65: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]

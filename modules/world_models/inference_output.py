@@ -28,38 +28,52 @@ class MuZeroNetworkState(NamedTuple):
 
         # Handle wm_memory which can be None, Tuple (LSTM), or Tensor
         wm_mem_list = [s.wm_memory for s in states]
-        if wm_mem_list[0] is None:
+        first_valid_mem = next((m for m in wm_mem_list if m is not None), None)
+
+        if first_valid_mem is None:
             wm_memory = None
-        elif isinstance(wm_mem_list[0], tuple):
+        elif isinstance(first_valid_mem, tuple):
             # E.g. LSTM states: (h_n, c_n), each shape [num_layers, batch, hidden]
             batched_lstm = []
-            for i in range(len(wm_mem_list[0])):
-                tensors = [mem[i] for mem in wm_mem_list]
+            for i in range(len(first_valid_mem)):
+                tensors = [mem[i] if mem is not None else torch.zeros_like(first_valid_mem[i]) for mem in wm_mem_list]
                 if tensors[0].dim() == 3 and tensors[0].shape[1] == 1:
                     batched_lstm.append(torch.cat(tensors, dim=1))
                 else:
                     batched_lstm.append(torch.cat(tensors, dim=0))
             wm_memory = tuple(batched_lstm)
-        elif isinstance(wm_mem_list[0], torch.Tensor):
-            wm_memory = torch.cat(wm_mem_list, dim=0)
-        elif isinstance(wm_mem_list[0], dict):
+        elif isinstance(first_valid_mem, torch.Tensor):
+            tensors = [mem if mem is not None else torch.zeros_like(first_valid_mem) for mem in wm_mem_list]
+            wm_memory = torch.cat(tensors, dim=0)
+        elif isinstance(first_valid_mem, dict):
             batched_dict = {}
-            for k in wm_mem_list[0].keys():
-                tensors = [mem[k] for mem in wm_mem_list]
-                if tensors[0] is None:
+            for k in first_valid_mem.keys():
+                valid_elements = [mem[k] for mem in wm_mem_list if mem is not None and mem.get(k) is not None]
+                if not valid_elements:
                     batched_dict[k] = None
-                elif isinstance(tensors[0], torch.Tensor):
+                    continue
+                first_val = valid_elements[0]
+
+                if isinstance(first_val, torch.Tensor):
+                    tensors = [mem[k] if mem is not None and mem.get(k) is not None else torch.zeros_like(first_val) for mem in wm_mem_list]
                     if tensors[0].dim() == 3 and tensors[0].shape[1] == 1:
                         batched_dict[k] = torch.cat(tensors, dim=1)
                     else:
                         batched_dict[k] = torch.cat(tensors, dim=0)
+                elif isinstance(first_val, tuple):
+                    batched_tuple = []
+                    for i in range(len(first_val)):
+                        ith_elements = [mem[k][i] if mem is not None and mem.get(k) is not None else torch.zeros_like(first_val[i]) for mem in wm_mem_list]
+                        if ith_elements[0].dim() == 3 and ith_elements[0].shape[1] == 1:
+                            batched_tuple.append(torch.cat(ith_elements, dim=1))
+                        else:
+                            batched_tuple.append(torch.cat(ith_elements, dim=0))
+                    batched_dict[k] = tuple(batched_tuple)
                 else:
-                    raise ValueError(
-                        f"Unknown wm_memory dict value type: {type(tensors[0])}"
-                    )
+                    raise ValueError(f"Unknown wm_memory dict value type: {type(first_val)}")
             wm_memory = batched_dict
         else:
-            raise ValueError(f"Unknown wm_memory type: {type(wm_mem_list[0])}")
+            raise ValueError(f"Unknown wm_memory type: {type(first_valid_mem)}")
 
         return cls(dynamics=dynamics, wm_memory=wm_memory)
 
@@ -112,6 +126,16 @@ class MuZeroNetworkState(NamedTuple):
                                     unbatched_memory[j][k] = v[:, j : j + 1]
                                 else:
                                     unbatched_memory[j][k] = v[j : j + 1]
+                elif isinstance(v, tuple):
+                    # Handle tuples of tensors (e.g., LSTM (h_n, c_n)) inside dict
+                    unbatched_tuple = []
+                    for t in v:
+                        if t.dim() == 3:
+                            unbatched_tuple.append([t[:, j : j + 1] for j in range(batch_size)])
+                        else:
+                            unbatched_tuple.append([t[j : j + 1] for j in range(batch_size)])
+                    for j in range(batch_size):
+                        unbatched_memory[j][k] = tuple(ut[j] for ut in unbatched_tuple)
                 else:
                     for j in range(batch_size):
                         unbatched_memory[j][k] = v

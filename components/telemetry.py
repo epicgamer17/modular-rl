@@ -53,3 +53,16 @@ class TelemetryComponent(PipelineComponent):
         sm = blackboard.meta.get("search_metadata")
         if sm and isinstance(sm, dict):
             pass
+
+
+class SequenceTerminatorComponent(PipelineComponent):
+    """
+    Signals the BlackboardEngine to stop execution for the current sequence
+    when a 'done' signal is detected in the blackboard.
+    
+    This is essential for play_sequence() loops in executors to return 
+    the final telemetry of an episode and proceed to weight updates.
+    """
+    def execute(self, blackboard: Blackboard) -> None:
+        if blackboard.meta.get("done") or blackboard.data.get("done"):
+            blackboard.meta["stop_execution"] = True
