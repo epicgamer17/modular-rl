@@ -171,8 +171,17 @@ class ActionSelectorComponent(PipelineComponent):
         metadata = {
             "temperature": self.temperature,
         }
+        
+        # Include value and reward if they were predicted
+        if "value" in blackboard.predictions:
+            metadata["value"] = blackboard.predictions["value"]
+        if "reward" in blackboard.predictions:
+            metadata["reward"] = blackboard.predictions["reward"]
 
         if dist is not None:
+            log_prob = dist.log_prob(action).detach()
+            blackboard.predictions["log_prob"] = log_prob
+            metadata["log_prob"] = log_prob
             metadata["policy_dist"] = dist
             metadata["policy"] = dist.probs.detach().cpu()
         elif is_prob:

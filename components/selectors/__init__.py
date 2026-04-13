@@ -6,5 +6,4 @@ from .discrete import (
     EpsilonGreedySelectorComponent,
     NFSPSelectorComponent,
 )
-from .decorators import PPODecoratorComponent
 from .random import RandomSelectorComponent

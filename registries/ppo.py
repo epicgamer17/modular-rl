@@ -39,7 +39,6 @@ from components.environments import GymObservationComponent, GymStepComponent
 from components.selectors import (
     NetworkInferenceComponent,
     ActionSelectorComponent,
-    PPODecoratorComponent,
 )
 from components.memory import BufferStoreComponent
 
@@ -191,7 +190,6 @@ def make_ppo_actor_engine(
         ActionSelectorComponent(
             input_key="logits", temperature=1.0 if exploration else 0.0
         ),
-        PPODecoratorComponent(),
         step_component,
         TelemetryComponent(name="ppo_actor"),
     ]
@@ -203,10 +201,10 @@ def make_ppo_actor_engine(
             "actions": "meta.action",
             "rewards": "data.reward",
             "dones": "data.done",
-            "values": "meta.action_metadata.value",
-            "old_log_probs": "meta.action_metadata.log_prob",
+            "values": "predictions.value",
+            "old_log_probs": "predictions.log_prob",
             "legal_moves": "data.info.legal_moves",
         }
         components.append(BufferStoreComponent(replay_buffer, field_map=ppo_field_map))
 
-    return BlackboardEngine(components=components, device=device)
+    return BlackboardEngine(components=components, device=device, stateful=True)

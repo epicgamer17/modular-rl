@@ -97,7 +97,6 @@ def test_ppo_cartpole_full_training():
     from components.selectors import (
         NetworkInferenceComponent,
         ActionSelectorComponent,
-        PPODecoratorComponent,
     )
     from components.memory import BufferStoreComponent
     from core import BlackboardEngine, infinite_ticks
@@ -147,15 +146,14 @@ def test_ppo_cartpole_full_training():
         "actions": "meta.action",
         "rewards": "data.reward",
         "dones": "data.done",
-        "values": "meta.action_metadata.value",
-        "old_log_probs": "meta.action_metadata.log_prob",
+        "values": "predictions.value",
+        "old_log_probs": "predictions.log_prob",
     }
 
     collection_components = [
         obs_comp,
         NetworkInferenceComponent(agent_network, obs_dim),
         ActionSelectorComponent(input_key="logits", temperature=1.0),
-        PPODecoratorComponent(),
         GymStepComponent(env, obs_comp),
         TelemetryComponent(name="ppo_regression"),
         BufferStoreComponent(replay_buffer, field_map=ppo_field_map),
