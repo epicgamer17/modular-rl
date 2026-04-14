@@ -43,6 +43,10 @@ class BaseRepresentation(ABC):
         """Returns the semantic structure of this representation (e.g., Scalar, Categorical)."""
         pass
 
+    def get_metadata(self) -> Dict[str, Any]:
+        """Returns metadata about the representation parameters (vmin, vmax, etc.)."""
+        return {}
+
     def supports(self, logits: Tensor) -> bool:
         """Returns True if this representation can interpret the given logits."""
         try:
@@ -164,6 +168,9 @@ class DiscreteSupportRepresentation(BaseRepresentation):
     def get_structure(self) -> Structure:
         return Categorical(bins=self.bins)
 
+    def get_metadata(self) -> Dict[str, Any]:
+        return {"vmin": self.vmin, "vmax": self.vmax, "bins": self.bins}
+
     def format_target(
         self, targets: Dict[str, Tensor], target_key: str = "values"
     ) -> Tensor:
@@ -270,6 +277,9 @@ class ExponentialBucketsRepresentation(BaseRepresentation):
     def get_structure(self) -> Structure:
         return Categorical(bins=self.bins)
 
+    def get_metadata(self) -> Dict[str, Any]:
+        return {"vmin": self.vmin, "vmax": self.vmax, "bins": self.bins, "mode": "exponential"}
+
 
 class ClassificationRepresentation(BaseRepresentation):
     def __init__(self, num_classes: int):
@@ -296,6 +306,9 @@ class ClassificationRepresentation(BaseRepresentation):
 
     def get_structure(self) -> Structure:
         return Categorical(bins=self._num_classes)
+
+    def get_metadata(self) -> Dict[str, Any]:
+        return {"num_classes": self._num_classes}
 
     def format_target(
         self, targets: Dict[str, Tensor], target_key: str = "values"
@@ -376,6 +389,13 @@ class GaussianRepresentation(BaseRepresentation):
     def get_structure(self) -> Structure:
         # Gaussian is typically treated as Logits/Raw for the head output
         return Logits()
+
+    def get_metadata(self) -> Dict[str, Any]:
+        return {
+            "action_dim": self.action_dim,
+            "min_log_std": self.min_log_std,
+            "max_log_std": self.max_log_std,
+        }
 
 
 def get_representation(

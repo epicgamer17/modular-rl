@@ -19,8 +19,12 @@ def apply_updates(blackboard: Blackboard, updates: Dict[str, Any]) -> None:
 
 def validate_recipe(components: List[PipelineComponent], initial_keys: Set[Key]) -> None:
     """
-    Validates that all components in the pipeline have their requirements met.
-    Performs path existence, semantic type checks, and parameter compatibility checks.
+    Validates the pipeline DAG at build-time.
+    Stages:
+    1. Dependency Resolution (Path check)
+    2. Semantic Compatibility (Type check)
+    3. Representation Consistency (Metadata/Parameters check)
+    4. Shape Integrity (Lightweight tensor shape check)
     """
     # Track the full Key object for every available path
     available_contracts: Dict[str, Key] = {k.path: k for k in initial_keys}
@@ -30,55 +34,66 @@ def validate_recipe(components: List[PipelineComponent], initial_keys: Set[Key])
         incompatibilities = []
         
         for req in component.requires:
+            # Stage 1: Dependency Resolution
             if req.path not in available_contracts:
                 missing.append(req.path)
                 continue
             
             found_key = available_contracts[req.path]
             
-            # 1. Type Check (Semantic)
+            # Stage 2: Semantic Compatibility
+            # Generic semantic types (e.g., Reward) must match or found_key must be a subclass
             if not issubclass(found_key.semantic_type, req.semantic_type):
                 incompatibilities.append(
-                    f"Type mismatch for '{req.path}': expected {req.semantic_type.__name__}, "
-                    f"but found {found_key.semantic_type.__name__}"
+                    f"SEMANTIC MISMATCH for '{req.path}': expected {req.semantic_type}, "
+                    f"but found {found_key.semantic_type}"
                 )
             
-            # 2. Metadata Check (Parameter-Aware Contracts)
-            # If a requirement specifies metadata (e.g. bins=51), the provider must match it.
+            # Stage 3: Representation Consistency (Metadata)
+            # This ensures bins, vmin, vmax etc. match exactly between provider and consumer.
             for m_name, m_value in req.metadata.items():
                 if m_name not in found_key.metadata:
                     incompatibilities.append(
-                        f"Missing metadata '{m_name}' for '{req.path}': expected {m_value}"
+                        f"REPRESENTATION GAP for '{req.path}': consumer expects '{m_name}={m_value}', "
+                        f"but provider metadata is missing this parameter."
                     )
                 elif found_key.metadata[m_name] != m_value:
                     incompatibilities.append(
-                        f"Metadata mismatch for '{req.path}.{m_name}': expected {m_value}, "
-                        f"found {found_key.metadata[m_name]}"
+                        f"REPRESENTATION MISMATCH for '{req.path}.{m_name}': "
+                        f"expected {m_value}, provider has {found_key.metadata[m_name]}"
                     )
 
-            # 3. Shape Contract Check (ndim, time, distribution compatibility)
+            # Stage 4: Shape Integrity
             shape_issues = check_shape_compatibility(provider=found_key, consumer=req)
             for issue in shape_issues:
-                incompatibilities.append(f"Shape contract for '{req.path}': {issue}")
+                incompatibilities.append(f"SHAPE ERROR for '{req.path}': {issue}")
 
         if missing or incompatibilities:
-            error_msg = f"DAG Topology Error at Component [{i}] '{type(component).__name__}':\n"
+            error_header = f"DAG Topology Error at Component [{i}] '{type(component).__name__}':"
+            error_msg = [error_header]
             if missing:
-                error_msg += f"  Missing keys: {missing}\n"
+                error_msg.append(f"  Missing Dependencies: {missing}")
             if incompatibilities:
-                error_msg += f"  Incompatibilities: \n    - " + "\n    - ".join(incompatibilities) + "\n"
-            error_msg += f"  Available keys at this stage: {list(available_contracts.keys())}"
-            raise RuntimeError(error_msg)
+                error_msg.append("  Contract Violations:")
+                for inc in incompatibilities:
+                    error_msg.append(f"    - {inc}")
+            
+            error_msg.append(f"  Available keys in namespace: {sorted(list(available_contracts.keys()))}")
+            raise RuntimeError("\n".join(error_msg))
 
-        # Update available keys with what this component provides
+        # Update available keys with component provisions
         provides = component.provides
         provides_items = provides.items() if isinstance(provides, dict) else [(k, "new") for k in provides]
         
         for prov, mode in provides_items:
+            # Mode 'overwrite' requires the path to already exist
             if mode == "overwrite" and prov.path not in available_contracts:
-                raise RuntimeError(f"DAG Topology Error: Component '{type(component).__name__}' attempts to overwrite non-existent key '{prov.path}'")
+                raise RuntimeError(
+                    f"STAGE OVERWRITE ERROR: Component '{type(component).__name__}' "
+                    f"attempts to overwrite non-existent key '{prov.path}'"
+                )
             
-            # Update the global dataflow state
+            # Register the key for downstream components
             available_contracts[prov.path] = prov
 
     print(f"DAG Validation Passed: {len(components)} components verified.")

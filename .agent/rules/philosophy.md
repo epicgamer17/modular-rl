@@ -70,11 +70,13 @@ obs_inference(obs) -> InferenceOutput: Used by Actor/MCTS for real-world root st
 
 hidden_state_inference(hidden_state, action) -> InferenceOutput: Used by MCTS for latent stepping.
 
-learner_inference(batch) -> UnrollOutput: Used by the Learner to get raw logits across a batch/sequence.
+learner_inference(batch) -> Dict[str, Tensor]: Used by the Learner to get raw math tensors across a batch/sequence.
+
+get_learner_contract() -> Dict[str, Type[SemanticType]]: Used by ForwardPassComponent to determine providing keys and their structured semantic types.
 
 Contract: * InferenceOutput returns semantic objects (Expected Values, PyTorch Distribution objects). It never returns raw logits.
 
-UnrollOutput returns purely mathematical objects (raw Logits, C51 Atoms) for stable cross-entropy loss.
+Raw Tensors returned by learner_inference must have their semantic types declared via get_learner_contract(). 
 
 Must pack and unpack all sub-module RNN states into the network_state dictionary (The Opaque Token).
 
@@ -103,3 +105,14 @@ No deepcopy: Never use copy.deepcopy() on observations inside the Replay Buffer 
 Action Masking is Ruthless: If an action mask is applied, the illegal logit must be set to -inf. If Softmax or Gumbel noise is applied after an initial mask, the mask must be re-applied to explicitly set the illegal probability to 0.0 before sampling.
 
 No Python Loops in Samplers: Replay buffer processors (like N-step target builders) must use vectorized tensor operations. Looping over a batch in Python will starve the GPU.
+
+6. Structured Contracts & DAG Validation
+Semantic Types with Structure: All contracts use parameterized types: ValueEstimate[Scalar], PolicyLogits[Categorical(bins=51)], Reward[Quantile(n=32)]. String-based distribution mapping is FORBIDDEN.
+
+Automated Discovery: Components MUST NOT manually define output contracts based on config strings. They must query the AgentNetwork's get_learner_contract() API.
+
+Build-Time Validation: The BlackboardEngine enforces contract consistency before execution starts via a 4-stage validation:
+1. Dependency Resolution (Path existence)
+2. Semantic Compatibility (Type subclassing)
+3. Representation Consistency (Metadata/Parameters like vmin, vmax, bins matching)
+4. Shape Integrity (Dimensionality and structure-specific shape checks)

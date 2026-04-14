@@ -49,13 +49,22 @@ class MyComponent(PipelineComponent):
 
 Components communicate using **meaningful keys** and **semantic types**, not raw strings or tensor shapes.
 
-### ✅ Good
+### ✅ Good (Parameterized)
 ```python
 @property
 def requires(self) -> Set[Key]:
     return {Key("predictions.values", ValueEstimate[Scalar])}
 ```
-❌ Bad
+
+### ✅ Good (Structural)
+```python
+@property
+def provides(self) -> Dict[Key, str]:
+    # Returns ValueEstimate parameterized with Categorical structure
+    return {Key("predictions.values", ValueEstimate[Categorical(bins=51)]): "new"}
+```
+
+❌ Bad (Generic Strings)
 ```python
 requires = {"value": "tensor"}
 ```
@@ -95,7 +104,8 @@ def provides(self) -> Dict[Key, str]:
 
 This enables:
 
-*   **DAG Validation**: Verifying data flow before anything runs.
+*   **DAG Validation**: Verifying data flow and representation consistency before anything runs.
+*   **Automated Discovery**: Eliminates combinatorial overhead by querying `agent_network.get_learner_contract()` instead of passing distribution strings.
 *   **Type Matching**: Using `issubclass(found_type, required_type)` to allow polymorphic data flow.
 *   **Path Resolution**: Mapping complex paths like `targets.policies` to semantic identifiers.
 
@@ -235,18 +245,27 @@ Key("targets.values", ValueTarget[Categorical(bins=51)])
 
 To ensure high-performance execution and global correctness, the system builds an explicit **Execution Graph** before the first training step.
 
-## Build-time Graph Optimization
-The `BlackboardEngine` performs several optimizations to minimize redundant computation:
+## Build-time DAG Validation
+The `BlackboardEngine` enforces contract consistency before the first training step via a **4-stage validation pipeline**:
 
-1.  **Terminal-Value Pruning**: The engine automatically identifies and skips components whose outputs are never consumed by downstream components or terminal sinks (losses, telemetry).
-2.  **Metadata Validation**: The engine enforces that all providers and consumers agree on semantic metadata (like `bins` or `support_range`), preventing subtle algorithmic bugs.
-3.  **Future Proofing**: The explicit graph enables future optimizations like **component fusion** (combining small mathematical transforms) and **batching optimization**.
+1.  **Dependency Resolution**: Ensures every `requires` path is produced by an earlier component or initial key.
+2.  **Semantic Compatibility**: Verifies that the provided `SemanticType` satisfies the consumer's requirement via `issubclass()` (e.g., `ValueEstimate[Categorical] ⊆ ValueEstimate`).
+3.  **Representation Consistency**: Uses `representation.get_metadata()` to ensure that providers and consumers agree on internal parameters (e.g., matching `vmin`, `vmax`, `bins`, or `num_classes`).
+4.  **Shape Integrity**: Lightweight validation of dimensionality (rank) and structural properties (e.g., `has_time=True`).
 
 ### Rules for Optimal Pipelines:
+*   **Never Hardcode Contracts**: Components should discover their contracts from the agent network via `get_learner_contract()` where possible.
 *   **Avoid Hidden Dependencies**: Ensure every input is declared in `requires`. The pruner will remove components if it thinks their outputs aren't needed!
-*   **Use Parameters for Invariants**: If your logic depends on a specific configuration (e.g. 51 bins), declare it in your `Key` parameters.
+*   **Declare Metadata**: If your logic depends on a specific configuration (e.g. 51 bins), ensure it's captured in the `Key.metadata` via representations.
 *   **Explicit Telemetry**: Ensure any component intended for logging writes to the `meta.` or `losses.` paths, as these are never pruned.
 
 ## Runtime Pipeline Safety
-1. **Adaptive Execution**: The engine can skip branches of the DAG based on dynamic valves (e.g. `stop_execution`).
-2. **Transparent Dataflow**: Every mutation is explicit, allowing per-step tracing and bottleneck analysis.
+1. **Strict Mode Validation**: If `engine.strict=True`, `validate()` is called every step to catch dynamic shape or value drift.
+2. **Deterministic Layouts**: Forward passes optimize memory layout (e.g., `channels_last`) based on discovered hardware support, transparent to the component logic.
+
+IN FUTURE: 
+1.  **Terminal-Value Pruning**: The engine automatically identifies and skips components whose outputs are never consumed by downstream components or terminal sinks (losses, telemetry).
+2.  **Metadata Validation**: The engine enforces that all providers and consumers agree on semantic metadata (like `bins` or `support_range`), preventing subtle algorithmic bugs.
+3.  **Future Proofing**: The explicit graph enables future optimizations like **component fusion** (combining small mathematical transforms) and **batching optimization**.
+4. **Adaptive Execution**: The engine can skip branches of the DAG based on dynamic valves (e.g. `stop_execution`).
+5. **Transparent Dataflow**: Every mutation is explicit, allowing per-step tracing and bottleneck analysis.

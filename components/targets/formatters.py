@@ -94,9 +94,10 @@ class TwoHotProjectionComponent(PipelineComponent):
         self._semantic_type = semantic_type
         
         # Deterministic contracts
-        bins = getattr(self._representation, 'bins', 51) # Fallback to 51 if unknown
+        struct = self._representation.get_structure()
+        metadata = self._representation.get_metadata()
         self._requires = {Key(self._source_key, self._semantic_type[Scalar])}
-        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type[Categorical(bins=bins)]): "new"}
+        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type[struct], metadata=metadata): "new"}
 
     @property
     def requires(self) -> Set[Key]:
@@ -156,8 +157,14 @@ class ClassificationFormatterComponent(PipelineComponent):
         self._semantic_type = semantic_type
 
         # Deterministic contracts
+        struct = Scalar()
+        metadata = {}
+        if self._representation is not None:
+            struct = self._representation.get_structure()
+            metadata = self._representation.get_metadata()
+
         self._requires = {Key(self._source_key, self._semantic_type)}
-        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type): "new"}
+        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type[struct], metadata=metadata): "new"}
 
     @property
     def requires(self) -> Set[Key]:
@@ -222,8 +229,14 @@ class ScalarFormatterComponent(PipelineComponent):
         self._semantic_type = semantic_type
 
         # Deterministic contracts
+        struct = Scalar()
+        metadata = {}
+        if self._representation is not None:
+            struct = self._representation.get_structure()
+            metadata = self._representation.get_metadata()
+
         self._requires = {Key(self._source_key, self._semantic_type[Scalar])}
-        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type[Scalar]): "new"}
+        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type[struct], metadata=metadata): "new"}
 
     @property
     def requires(self) -> Set[Key]:
@@ -294,19 +307,11 @@ class ExpectedValueComponent(PipelineComponent):
         self._dest_key = dest_key
         
         # Deterministic contracts
-        if hasattr(representation, "bins"):
-            req_type = PolicyLogits[Categorical(bins=representation.bins)]
-            prov_type = ValueTarget[Categorical(bins=representation.bins)]
-        else:
-            req_type = PolicyLogits
-            prov_type = ValueTarget
+        struct = self._representation.get_structure()
+        metadata = self._representation.get_metadata()
         
-        self._requires = {
-            Key(f"predictions.{self._logits_key}", req_type)
-        }
-        self._provides = {
-            Key(f"targets.{self._dest_key}", prov_type): "new"
-        }
+        self._requires = {Key(f"predictions.{self._logits_key}", PolicyLogits[struct], metadata=metadata)}
+        self._provides = {Key(f"targets.{self._dest_key}", ValueTarget[Scalar]): "new"}
 
     @property
     def requires(self) -> Set[Key]:

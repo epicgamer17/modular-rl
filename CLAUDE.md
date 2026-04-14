@@ -66,12 +66,13 @@ This framework is built on **Strict Separation of Concerns and Perfect Polymorph
 `ModularAgentNetwork` (in `modules/agent_nets/modular.py`) is the switchboard between RL system and PyTorch sub-modules. It dynamically initialises components based on config type (PPO, Rainbow, Supervised).
 
 - **`obs_inference(obs) -> InferenceOutput`** — Used by Actor/MCTS for real-world root states. Returns semantic objects (expected values, `Distribution` objects). **Never raw logits.**
-- **`learner_inference(batch) -> LearningOutput`** — Used by the Learner for batched/sequential inference. Returns purely mathematical objects (raw logits, C51 atoms) for stable cross-entropy loss.
+- **`learner_inference(batch) -> Dict[str, Tensor]`** — Used by the Learner for batched/sequential inference. Returns purely mathematical objects (raw logits, C51 atoms) for stable cross-entropy loss.
+- **`get_learner_contract() -> Dict[str, Type[SemanticType]]`** — Exposes the semantic output contract of the network for automated DAG discovery.
 
-For MuZero latent stepping, use the `ModularWorldModel` directly:
+For MuZero latent stepping, use the `MuzeroWorldModel` directly:
 - **`world_model.recurrent_inference(state, action) -> WorldModelOutput`** — MCTS latent stepping.
-- **`world_model.representation_inference(obs) -> Dict[str, Tensor]`** — Initial state from observation.
-- **`world_model.unroll_physics(initial_state, actions) -> Dict[str, Tensor]`** — Unroll T steps for learner.
+- **`world_model.initial_inference(obs) -> WorldModelOutput`** — Initial features from observation.
+- **`world_model.unroll_physics(initial_latent, actions, ...) -> PhysicsOutput`** — Unroll T steps for learner.
 
 Must pack/unpack all sub-module RNN states into the `network_state` field (the Opaque Token).
 
@@ -148,6 +149,13 @@ class StepResult:
     predictions: Dict[str, Tensor] = ...
     targets: Dict[str, Tensor] = ...
     meta: Dict[str, Any] = ...
+
+### DAG Build-Time Validation
+The `BlackboardEngine` enforces contract consistency before the first training step via `validate_recipe()`:
+1. **Dependency Resolution**: All `requires` paths must exist in the namespace.
+2. **Semantic Compatibility**: `SemanticType` subclassing check (Provider ⊆ Consumer).
+3. **Representation Consistency**: Exact match of metadata (vmin, vmax, bins, num_classes) between providers and consumers.
+4. **Shape Integrity**: Lightweight validation of dimensionality and structural properties.
 ```
 Cannot loop over network modules. Calls `learner_inference(batch)`, unpacks `LearningOutput`, routes raw tensors to `LossAggregator`.
 
@@ -204,7 +212,8 @@ def load_from_checkpoint(cls, env, config_class, dir_path, training_step, device
 - **No PyTorch Objects in Loss Functions:** `LossModule.compute_loss` takes raw Tensors — not `Distribution` objects.
 - **No `deepcopy`:** Never `copy.deepcopy()` observations. Use `.copy()` for NumPy arrays.
 - **Action Masking is Ruthless:** Illegal logits → `-inf`. If Softmax/Gumbel follows, re-apply mask to set illegal probability to exactly `0.0` before sampling.
-- **No Python Loops in Samplers/Processors:** `OutputProcessor` and target builders must use vectorized tensor ops.
+- **No Python Loops in Samplers/Processors:** `OutputProcessor` and- **No Python loops over tensor dimensions.** Vectorize everything.
+- **Structured Semantic Types Required:** Use parameterized types like `ValueEstimate[Scalar]` or `PolicyLogits[Categorical(bins=51)]`. String-based mapping (e.g. `dist="scalar"`) is deprecated.
 - **No Dummy Configs in Tests:** Never hand-craft `config = {"batch_size": 2}` inline. Always use fixtures from `tests/conftest.py`.
 
 ---
