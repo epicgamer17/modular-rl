@@ -1,15 +1,80 @@
-from typing import Protocol, runtime_checkable, Type, Dict, Any, Optional, Tuple, List
+from typing import Type, Dict, Any, Optional, Tuple, List, Union
 from dataclasses import dataclass, field
 
 
-@runtime_checkable
-class SemanticType(Protocol):
+@dataclass(frozen=True)
+class Structure:
+    """Base for semantic structures."""
+    pass
+
+
+@dataclass(frozen=True)
+class Scalar(Structure):
+    def __repr__(self) -> str:
+        return "Scalar"
+
+
+@dataclass(frozen=True)
+class Logits(Structure):
+    def __repr__(self) -> str:
+        return "Logits"
+
+
+@dataclass(frozen=True)
+class Probs(Structure):
+    def __repr__(self) -> str:
+        return "Probs"
+
+
+@dataclass(frozen=True)
+class LogProbs(Structure):
+    def __repr__(self) -> str:
+        return "LogProbs"
+
+
+@dataclass(frozen=True)
+class Categorical(Structure):
+    bins: int
+
+    def __repr__(self) -> str:
+        return f"Categorical(bins={self.bins})"
+
+
+@dataclass(frozen=True)
+class Quantile(Structure):
+    n: int
+
+    def __repr__(self) -> str:
+        return f"Quantile(n={self.n})"
+
+
+_STRUCTURED_TYPE_CACHE: Dict[Tuple[Type["SemanticType"], Structure], Type["SemanticType"]] = {}
+
+
+class SemanticType:
     """
     Base for all semantic types in the RL pipeline.
-    These types define meaning, not structure (e.g., shapes).
+    These types define meaning, not structure (e.g., shapes), 
+    but can be parameterized with a Structure (e.g. ValueEstimate[Scalar]).
     """
+    structure: Optional[Structure] = None
 
-    pass
+    def __class_getitem__(cls, structure: Union[Type[Structure], Structure]) -> Type["SemanticType"]:
+        if isinstance(structure, type):
+            if issubclass(structure, (Scalar, Logits, Probs, LogProbs)):
+                structure = structure()
+            else:
+                # For Categorical/Quantile, we expect an instance or we can't know bins/n
+                raise TypeError(f"Structure type {structure} must be instantiated (e.g. {structure.__name__}(...))")
+        
+        cache_key = (cls, structure)
+        if cache_key not in _STRUCTURED_TYPE_CACHE:
+            _STRUCTURED_TYPE_CACHE[cache_key] = type(
+                f"{cls.__name__}[{structure}]",
+                (cls,),
+                {"structure": structure}
+            )
+        return _STRUCTURED_TYPE_CACHE[cache_key]
 
 
 @dataclass(frozen=True)
@@ -29,19 +94,12 @@ class ShapeContract:
         time_dim:      Axis index of the time dimension (typically 1 for [B, T, *]).
         feature_shape: Shape of the non-batch, non-time dimensions
                        (e.g. (9,) for a 9-action policy vector).
-        distribution:  What the feature dimension represents:
-                       "logits"  — raw unnormalised log-probabilities
-                       "probs"   — normalised probabilities (sum-to-1)
-                       "log_probs" — log-probabilities
-                       "scalar"  — single float value per sample
-                       "atoms_N" — distributional with N support atoms (e.g. "atoms_51")
     """
 
     ndim: Optional[int] = None
     has_time: Optional[bool] = None
     time_dim: Optional[int] = None
     feature_shape: Optional[Tuple[int, ...]] = None
-    distribution: Optional[str] = None
 
 
 def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
@@ -91,14 +149,6 @@ def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
             issues.append(
                 f"feature_shape mismatch: consumer expects {c.feature_shape}, "
                 f"provider declares {p.feature_shape}"
-            )
-
-    # Distribution kind
-    if c.distribution is not None and p.distribution is not None:
-        if c.distribution != p.distribution:
-            issues.append(
-                f"distribution mismatch: consumer expects '{c.distribution}', "
-                f"provider declares '{p.distribution}'"
             )
 
     return issues

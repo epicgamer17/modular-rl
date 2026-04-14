@@ -6,6 +6,7 @@ from torch import nn, Tensor
 
 from .base import BaseHead
 from modules.representations import BaseRepresentation
+from core.contracts import ActionDistribution
 from modules.layers.noisy_linear import build_linear_layer
 from modules.utils import build_normalization_layer
 
@@ -90,6 +91,10 @@ class QHead(BaseHead):
         new_state = state if state is not None else {}
         inference = self.representation.to_inference(logits)
         return logits, new_state, inference
+
+    @property
+    def semantic_type(self) -> Any:
+        return ActionDistribution[self.get_structure()]
 
 
 class DuelingQHead(BaseHead):
@@ -177,3 +182,7 @@ class DuelingQHead(BaseHead):
         new_state = state if state is not None else {}
         inference = self.representation.to_inference(q)
         return q, new_state, inference
+
+    @property
+    def semantic_type(self) -> Any:
+        return ActionDistribution[self.get_structure()]

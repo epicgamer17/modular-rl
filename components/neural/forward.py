@@ -1,9 +1,24 @@
 import torch
 from core import PipelineComponent
 from core import Blackboard
-from core.contracts import Key, ShapeContract, Observation, ValueEstimate, PolicyLogits, Reward, ToPlay, Metric
+from core.contracts import (
+    Key, 
+    ShapeContract, 
+    Observation, 
+    ValueEstimate, 
+    PolicyLogits, 
+    Reward, 
+    ToPlay, 
+    Metric,
+    Scalar,
+    Logits,
+    Probs,
+    LogProbs,
+    Categorical,
+    Quantile
+)
 from core.blackboard_engine import apply_updates
-from typing import TYPE_CHECKING, Optional, Set, Dict, Any
+from typing import TYPE_CHECKING, Optional, Set, Dict, Any, Union
 
 if TYPE_CHECKING:
     from modules.agent_nets.base import BaseAgentNetwork
@@ -20,23 +35,18 @@ class ForwardPassComponent(PipelineComponent):
         agent_network: "BaseAgentNetwork",
         shape_validator: Optional['ShapeValidator'] = None,
         obs_key: str = "observations",
-        value_distribution: str = "scalar",
-        policy_distribution: str = "logits",
     ):
         self.agent_network = agent_network
         self.shape_validator = shape_validator
         self._obs_key = obs_key
         
-        # Deterministic contracts computed at initialization
+        # Deterministic contracts computed at initialization via network introspection
         self._requires = {Key(f"data.{self._obs_key}", Observation)}
-        self._provides = {
-            Key("predictions.values", ValueEstimate,
-                shape=ShapeContract(has_time=True, distribution=value_distribution)): "new",
-            Key("predictions.policies", PolicyLogits,
-                shape=ShapeContract(has_time=True, distribution=policy_distribution)): "new",
-            Key("predictions.rewards", Reward): "new",
-            Key("predictions.to_plays", ToPlay): "new",
-        }
+        self._provides = {}
+        
+        contract = self.agent_network.get_learner_contract()
+        for key, sem_type in contract.items():
+            self._provides[Key(f"predictions.{key}", sem_type, shape=ShapeContract(has_time=True))] = "new"
 
     @property
     def requires(self) -> Set[Key]:

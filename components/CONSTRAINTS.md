@@ -53,7 +53,7 @@ Components communicate using **meaningful keys** and **semantic types**, not raw
 ```python
 @property
 def requires(self) -> Set[Key]:
-    return {Key("predictions.values", ValueEstimate)}
+    return {Key("predictions.values", ValueEstimate[Scalar])}
 ```
 ❌ Bad
 ```python
@@ -87,7 +87,7 @@ Components communicate their intent for writing data using write modes. The `pro
 ```python
 def provides(self) -> Dict[Key, str]:
     return {
-        Key("predictions.values", ValueEstimate): "new",
+        Key("predictions.values", ValueEstimate[Scalar]): "new",
         Key("meta.processed", SemanticType): "overwrite"
     }
 ```
@@ -211,8 +211,8 @@ Systems often require specific data representations that still share a high-leve
 
 ```python
 class ValueTarget(SemanticType): pass
-class DiscreteValue(ValueTarget): pass
-class ProjectValue(ValueTarget): pass
+class DiscreteValue(ValueTarget[Categorical(bins=51)]): pass
+class ScalarValue(ValueTarget[Scalar]): pass
 ```
 
 If a component requires `ValueTarget`, it will accept `DiscreteValue` automatically because the DAG validator uses `issubclass()`.
@@ -222,7 +222,7 @@ If a component requires `ValueTarget`, it will accept `DiscreteValue` automatica
 A `Key` binds a **blackboard path** (string) to a **semantic type**, and optionally, **metadata**.
 
 ```python
-Key("targets.values", ValueTarget, metadata={"bins": 51})
+Key("targets.values", ValueTarget[Categorical(bins=51)])
 ```
 
 *   **Path**: Used by `resolve_blackboard_path` to find tensors.

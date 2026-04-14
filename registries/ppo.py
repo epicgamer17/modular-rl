@@ -35,6 +35,8 @@ from core.contracts import (
     Advantage,
     Return,
     Mask,
+    Scalar,
+    LogProbs,
 )
 from components.telemetry import TelemetryComponent
 from components.neural import ForwardPassComponent
@@ -183,14 +185,10 @@ def make_ppo_learner(
         Key("data.actions", Action),
         Key("data.rewards", Reward),
         Key("data.dones", Done),
-        Key("data.values", ValueEstimate,
-            shape=ShapeContract(distribution="scalar")),
-        Key("data.old_log_probs", LogProb,
-            shape=ShapeContract(distribution="log_probs")),
-        Key("data.advantages", Advantage,
-            shape=ShapeContract(distribution="scalar")),
-        Key("data.returns", ValueTarget,
-            shape=ShapeContract(distribution="scalar")),
+        Key("data.values", ValueEstimate[Scalar]),
+        Key("data.old_log_probs", LogProb[LogProbs]),
+        Key("data.advantages", Advantage[Scalar]),
+        Key("data.returns", ValueTarget[Scalar]),
         Key("data.legal_moves_masks", Mask),
     }
 

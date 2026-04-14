@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from typing import Any, Optional, Dict, Union, List, Set
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import Key, PolicyLogits, ValueEstimate, Action, ValueTarget, LossScalar, Metric
+from core.contracts import Key, PolicyLogits, ValueEstimate, Action, ValueTarget, LossScalar, Metric, Scalar, Categorical, Logits
 from .infrastructure import apply_infrastructure
 
 
@@ -13,6 +13,7 @@ class QBootstrappingLoss(PipelineComponent):
     def __init__(
         self,
         is_categorical: bool = False,
+        atom_size: Optional[int] = None,
         loss_fn: Any = None,
         mask_key: str = "value_mask",
         actions_key: str = "actions",
@@ -20,6 +21,7 @@ class QBootstrappingLoss(PipelineComponent):
         name: str = "q_loss",
     ):
         self.is_categorical = is_categorical
+        self.atom_size = atom_size
         self.pred_key = "q_logits" if is_categorical else "q_values"
         
         if target_key:
@@ -37,10 +39,19 @@ class QBootstrappingLoss(PipelineComponent):
         self.name = name
 
         # Deterministic contracts computed at initialization
+        if self.is_categorical:
+            # If atoms are used, we expect Categorical structure
+            struct = Categorical(bins=atom_size) if atom_size else Logits()
+            req_type = PolicyLogits[struct]
+            target_type = PolicyLogits[struct] # Or Probs if target is normalized
+        else:
+            req_type = ValueEstimate[Scalar]
+            target_type = ValueTarget[Scalar]
+
         self._requires = {
-            Key(f"predictions.{self.pred_key}", PolicyLogits if self.is_categorical else ValueEstimate),
+            Key(f"predictions.{self.pred_key}", req_type),
             Key(self.actions_key, Action),
-            Key(self.target_key, PolicyLogits if self.is_categorical else ValueTarget)
+            Key(self.target_key, target_type)
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",

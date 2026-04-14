@@ -14,6 +14,10 @@ from core.contracts import (
     LogProb,
     LossScalar,
     Metric,
+    Logits,
+    Probs,
+    LogProbs,
+    Scalar,
 )
 from .infrastructure import apply_infrastructure
 from core.validation import assert_same_batch, assert_time_dim
@@ -45,10 +49,10 @@ class PolicyLoss(PipelineComponent):
 
         # Deterministic contracts computed at initialization
         self._requires = {
-            Key("predictions.policies", PolicyLogits,
-                shape=ShapeContract(has_time=True, distribution="logits")),
-            Key(self.target_key, PolicyLogits,
-                shape=ShapeContract(has_time=True, distribution="probs")),
+            Key("predictions.policies", PolicyLogits[Logits],
+                shape=ShapeContract(has_time=True)),
+            Key(self.target_key, PolicyLogits[Probs],
+                shape=ShapeContract(has_time=True)),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",
@@ -174,13 +178,10 @@ class ClippedSurrogateLoss(PipelineComponent):
 
         # Deterministic contracts computed at initialization
         self._requires = {
-            Key("predictions.policies", PolicyLogits,
-                shape=ShapeContract(distribution="logits")),
+            Key("predictions.policies", PolicyLogits[Logits]),
             Key(self.actions_key, Action),
-            Key(self.old_log_probs_key, LogProb,
-                shape=ShapeContract(distribution="log_probs")),
-            Key(self.advantages_key, Advantage,
-                shape=ShapeContract(distribution="scalar")),
+            Key(self.old_log_probs_key, LogProb[LogProbs]),
+            Key(self.advantages_key, Advantage[Scalar]),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",

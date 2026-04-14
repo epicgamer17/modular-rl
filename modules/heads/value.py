@@ -1,6 +1,7 @@
 from typing import Tuple, Optional, Dict, Any
 from torch import nn, Tensor
 from .base import BaseHead
+from core.contracts import ValueEstimate
 from modules.representations import BaseRepresentation
 
 
@@ -28,3 +29,7 @@ class ValueHead(BaseHead):
         logits, new_state = super().forward(x, state)
         expected_value = self.representation.to_expected_value(logits)
         return logits, new_state, expected_value
+
+    @property
+    def semantic_type(self) -> Any:
+        return ValueEstimate[self.get_structure()]

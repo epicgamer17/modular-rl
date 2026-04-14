@@ -15,12 +15,24 @@ from __future__ import annotations
 
 import torch
 from typing import TYPE_CHECKING, Any, Dict, Optional, Type, Set
-from core.contracts import Key, ValueTarget, Reward, ActionDistribution, PolicyLogits, SemanticType
-
+from core.contracts import (
+    Key, 
+    ShapeContract, 
+    ValueTarget, 
+    PolicyLogits, 
+    ActionDistribution, 
+    Action, 
+    Reward,
+    Scalar,
+    Logits,
+    Probs,
+    LogProbs,
+    Categorical,
+    SemanticType
+)
+from modules.representations import BaseRepresentation, DiscreteSupportRepresentation, ClassificationRepresentation
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import Key, ShapeContract, ValueTarget, PolicyLogits, ActionDistribution, Action, Reward
-from modules.representations import BaseRepresentation, DiscreteSupportRepresentation, ClassificationRepresentation
 
 if TYPE_CHECKING:
     pass  # guard only used for type annotations if needed in future
@@ -82,12 +94,9 @@ class TwoHotProjectionComponent(PipelineComponent):
         self._semantic_type = semantic_type
         
         # Deterministic contracts
-        bins = getattr(self._representation, 'bins', None)
-        atoms_dist = f"atoms_{bins}" if bins is not None else None
-        self._requires = {Key(self._source_key, self._semantic_type,
-                              shape=ShapeContract(distribution="scalar"))}
-        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type,
-                              shape=ShapeContract(distribution=atoms_dist)): "new"}
+        bins = getattr(self._representation, 'bins', 51) # Fallback to 51 if unknown
+        self._requires = {Key(self._source_key, self._semantic_type[Scalar])}
+        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type[Categorical(bins=bins)]): "new"}
 
     @property
     def requires(self) -> Set[Key]:
@@ -213,10 +222,8 @@ class ScalarFormatterComponent(PipelineComponent):
         self._semantic_type = semantic_type
 
         # Deterministic contracts
-        self._requires = {Key(self._source_key, self._semantic_type,
-                              shape=ShapeContract(distribution="scalar"))}
-        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type,
-                              shape=ShapeContract(distribution="scalar")): "new"}
+        self._requires = {Key(self._source_key, self._semantic_type[Scalar])}
+        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type[Scalar]): "new"}
 
     @property
     def requires(self) -> Set[Key]:
@@ -286,16 +293,19 @@ class ExpectedValueComponent(PipelineComponent):
         self._logits_key = logits_key
         self._dest_key = dest_key
         
-        # Deterministic contracts: Parameter-Aware
-        metadata = {}
+        # Deterministic contracts
         if hasattr(representation, "bins"):
-            metadata["bins"] = representation.bins
+            req_type = PolicyLogits[Categorical(bins=representation.bins)]
+            prov_type = ValueTarget[Categorical(bins=representation.bins)]
+        else:
+            req_type = PolicyLogits
+            prov_type = ValueTarget
         
         self._requires = {
-            Key(f"predictions.{self._logits_key}", PolicyLogits, metadata=metadata)
+            Key(f"predictions.{self._logits_key}", req_type)
         }
         self._provides = {
-            Key(f"targets.{self._dest_key}", ValueTarget, metadata=metadata): "new"
+            Key(f"targets.{self._dest_key}", prov_type): "new"
         }
 
     @property
@@ -355,8 +365,7 @@ class OneHotPolicyTargetComponent(PipelineComponent):
         
         # Deterministic contracts
         self._requires = {Key(self._source_key, Action)}
-        self._provides = {Key(f"targets.{self._dest_key}", ActionDistribution,
-                              shape=ShapeContract(distribution="probs")): "new"}
+        self._provides = {Key(f"targets.{self._dest_key}", ActionDistribution[Probs]): "new"}
 
     @property
     def requires(self) -> Set[Key]:

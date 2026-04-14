@@ -1,10 +1,11 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Callable, Union, Tuple
+from typing import Any, Dict, List, Optional, Callable, Union, Tuple, Type
 import torch
 from torch import nn, Tensor
 
 from modules.utils import kernel_initializer_wrapper
 from modules.world_models.inference_output import InferenceOutput
+from core.contracts import SemanticType
 
 
 class BaseAgentNetwork(nn.Module, ABC):
@@ -107,6 +108,11 @@ class BaseAgentNetwork(nn.Module, ABC):
     @abstractmethod
     def learner_inference(self, batch: Dict[str, Any]) -> Dict[str, Tensor]:
         """Standard interface for Learner to get raw math tensors across a sequence."""
+        pass
+
+    @abstractmethod
+    def get_learner_contract(self) -> Dict[str, Type[SemanticType]]:
+        """Returns the semantic contract of the learner output (key -> semantic type)."""
         pass
 
     def compile(self, mode: str = "default", fullgraph: bool = False) -> None:

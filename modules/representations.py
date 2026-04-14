@@ -3,6 +3,7 @@ from typing import Optional, Dict, Any, Union
 import torch
 from torch import Tensor
 import torch.nn.functional as F
+from core.contracts import Structure, Scalar, Categorical, Probs, Logits
 
 
 # TODO: clean up representation stuff (its close to distributions too, and its kind of clunky with action selectors, they are all closely coupled and annoying to initialize and use.)
@@ -35,6 +36,11 @@ class BaseRepresentation(ABC):
     @abstractmethod
     def to_representation(self, scalar_targets: Tensor) -> Tensor:
         """Converts mathematically pure targets into the target distribution expected by the loss engine."""
+        pass
+
+    @abstractmethod
+    def get_structure(self) -> Structure:
+        """Returns the semantic structure of this representation (e.g., Scalar, Categorical)."""
         pass
 
     def supports(self, logits: Tensor) -> bool:
@@ -85,6 +91,9 @@ class ScalarRepresentation(BaseRepresentation):
 
     def to_representation(self, scalar_targets: Tensor) -> Tensor:
         return scalar_targets.reshape(*scalar_targets.shape, 1)
+
+    def get_structure(self) -> Structure:
+        return Scalar()
 
 
 class DiscreteSupportRepresentation(BaseRepresentation):
@@ -151,6 +160,9 @@ class DiscreteSupportRepresentation(BaseRepresentation):
 
         # 3. Unflatten back to [B, T, bins]
         return projected.view(*orig_shape, self.bins)
+
+    def get_structure(self) -> Structure:
+        return Categorical(bins=self.bins)
 
     def format_target(
         self, targets: Dict[str, Tensor], target_key: str = "values"
@@ -255,6 +267,9 @@ class ExponentialBucketsRepresentation(BaseRepresentation):
         log_targets = self._log_transform(scalar_targets)
         return self._inner.to_representation(log_targets)
 
+    def get_structure(self) -> Structure:
+        return Categorical(bins=self.bins)
+
 
 class ClassificationRepresentation(BaseRepresentation):
     def __init__(self, num_classes: int):
@@ -278,6 +293,9 @@ class ClassificationRepresentation(BaseRepresentation):
         flat_targets = scalar_targets.reshape(-1).long()
         flat_one_hot = F.one_hot(flat_targets, num_classes=self._num_classes).float()
         return flat_one_hot.reshape(*orig_shape, self._num_classes)
+
+    def get_structure(self) -> Structure:
+        return Categorical(bins=self._num_classes)
 
     def format_target(
         self, targets: Dict[str, Tensor], target_key: str = "values"
@@ -309,6 +327,9 @@ class IdentityRepresentation(BaseRepresentation):
 
     def to_representation(self, scalar_targets: Tensor) -> Tensor:
         return scalar_targets
+
+    def get_structure(self) -> Structure:
+        return Scalar() if self._num_features == 1 else Categorical(bins=self._num_features)
 
     def format_target(
         self, targets: Dict[str, Tensor], target_key: str = "values"
@@ -351,6 +372,10 @@ class GaussianRepresentation(BaseRepresentation):
     def to_representation(self, scalar_targets: Tensor) -> Tensor:
         """For continuous targets, the representation is often just the scalar target."""
         return scalar_targets
+
+    def get_structure(self) -> Structure:
+        # Gaussian is typically treated as Logits/Raw for the head output
+        return Logits()
 
 
 def get_representation(

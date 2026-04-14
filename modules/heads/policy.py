@@ -2,6 +2,7 @@ from typing import Tuple, Optional, Dict, Any
 import torch
 from torch import nn, Tensor
 from .base import BaseHead
+from core.contracts import PolicyLogits
 from modules.representations import BaseRepresentation
 
 
@@ -29,3 +30,7 @@ class PolicyHead(BaseHead):
         logits, new_state = super().forward(x, state)
         inference = self.representation.to_inference(logits)
         return logits, new_state, inference
+
+    @property
+    def semantic_type(self) -> Any:
+        return PolicyLogits[self.get_structure()]

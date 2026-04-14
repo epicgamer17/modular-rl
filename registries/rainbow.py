@@ -191,7 +191,7 @@ def make_rainbow_learner(
     if per_beta_schedule is None:
         per_beta_schedule = ConstantSchedule(0.6)
 
-    q_loss = QBootstrappingLoss(is_categorical=True, name="q_loss")
+    q_loss = QBootstrappingLoss(is_categorical=True, atom_size=agent_network.atom_size, name="q_loss")
     priority_comp = LossPriorityComponent(loss_key="q_loss", reduction="max")
     buffer_update = PriorityUpdateComponent(priority_update_fn=replay_buffer.update_priorities)
 

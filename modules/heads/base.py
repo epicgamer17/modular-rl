@@ -1,6 +1,7 @@
 from typing import Tuple, Optional, Callable, Dict, Any
 import torch
 from torch import nn, Tensor
+from core.contracts import SemanticType, Structure
 from modules.representations import BaseRepresentation
 from modules.layers.noisy_linear import build_linear_layer
 
@@ -70,3 +71,12 @@ class BaseHead(nn.Module):
         if x.dim() > 2:
             x = x.flatten(1, -1)
         return x
+
+    def get_structure(self) -> Structure:
+        """Returns the semantic structure of this head's output."""
+        return self.representation.get_structure()
+
+    @property
+    def semantic_type(self) -> Any:
+        """The base semantic class for this head's primary output."""
+        return SemanticType

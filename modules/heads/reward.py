@@ -3,6 +3,7 @@ from torch import Tensor
 from torch import nn
 import torch
 from .base import BaseHead
+from core.contracts import Reward
 from modules.representations import BaseRepresentation
 from modules.layers.noisy_linear import build_linear_layer
 
@@ -34,6 +35,10 @@ class RewardHead(BaseHead):
         # Default instant reward is representation conversion of logits
         instant_reward = self.representation.to_expected_value(logits)
         return logits, state, instant_reward
+
+    @property
+    def semantic_type(self) -> Any:
+        return Reward[self.get_structure()]
 
 
 class ValuePrefixRewardHead(RewardHead):

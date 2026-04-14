@@ -1,4 +1,4 @@
-from typing import Callable, Tuple, Dict, Any, List, Optional
+from typing import Callable, Tuple, Dict, Any, List, Optional, Type
 import torch
 from torch import nn, Tensor
 
@@ -12,6 +12,7 @@ from modules.heads.policy import PolicyHead
 from modules.heads.value import ValueHead
 from modules.heads.q import QHead, DuelingQHead
 from modules.representations import get_representation
+from core.contracts import SemanticType, ActionDistribution, Scalar
 from modules.projectors.sim_siam import Projector
 from components.losses import ShapeValidator
 
@@ -350,6 +351,36 @@ class ModularAgentNetwork(BaseAgentNetwork):
             raise NotImplementedError(
                 "Network components don't match any known learner inference pipeline."
             )
+
+    def get_learner_contract(self) -> Dict[str, Type[SemanticType]]:
+        """
+        Dynamically builds the learner output contract based on instantiated components.
+        """
+        contract = {}
+        
+        # Core prediction heads
+        if "value_head" in self.components:
+            contract["values"] = self.components["value_head"].semantic_type
+        if "policy_head" in self.components:
+            contract["policies"] = self.components["policy_head"].semantic_type
+        if "q_head" in self.components:
+            contract["q_logits"] = self.components["q_head"].semantic_type
+            # Q-values (expectations) are always scalars per action
+            contract["q_values"] = ActionDistribution[Scalar()]
+
+        # World model components (Rewards, ToPlay)
+        if "world_model" in self.components:
+            wm = self.components["world_model"]
+            if hasattr(wm, "reward_head") and hasattr(wm.reward_head, "semantic_type"):
+                contract["rewards"] = wm.reward_head.semantic_type
+            if hasattr(wm, "to_play_head") and hasattr(wm.to_play_head, "semantic_type"):
+                contract["to_plays"] = wm.to_play_head.semantic_type
+                
+        # Supervised only policy
+        if "policy_head" in self.components and len(contract) == 0:
+             contract["policies"] = self.components["policy_head"].semantic_type
+
+        return contract
 
     # ==========================================
     # SEARCH API (Only relevant for MuZero routing)

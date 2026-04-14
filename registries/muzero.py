@@ -25,7 +25,7 @@ from data.samplers.prioritized import UniformSampler
 from data.concurrency import TorchMPBackend
 
 from core import BlackboardEngine
-from core.contracts import Key, Observation, Action, Reward, ValueTarget, PolicyLogits, ToPlay, SemanticType, Done, Mask
+from core.contracts import Key, Observation, Action, Reward, ValueTarget, PolicyLogits, ToPlay, SemanticType, Done, Mask, Scalar, Probs
 from components.neural import ForwardPassComponent
 from components.losses import OptimizerStepComponent
 from components.losses import LossAggregatorComponent
@@ -391,9 +391,9 @@ def make_muzero_learner(
     learner_initial_keys = {
         Key("data.observations", Observation),
         Key("data.actions", Action),
-        Key("data.rewards", Reward),
-        Key("data.values", ValueTarget),
-        Key("data.policies", PolicyLogits),
+        Key("data.rewards", Reward[Scalar]),
+        Key("data.values", ValueTarget[Scalar]),
+        Key("data.policies", PolicyLogits[Probs]),
         Key("data.to_plays", ToPlay),
         Key("data.terminated", SemanticType),
         Key("data.truncated", SemanticType),
@@ -489,9 +489,9 @@ def make_muzero_learner(
             SequencePadderComponent(
                 unroll_steps,
                 keys=[
-                    Key("data.values", ValueTarget),
-                    Key("data.rewards", Reward),
-                    Key("data.policies", PolicyLogits),
+                    Key("data.values", ValueTarget[Scalar]),
+                    Key("data.rewards", Reward[Scalar]),
+                    Key("data.policies", PolicyLogits[Probs]),
                     Key("data.actions", Action),
                     Key("data.to_plays", ToPlay),
                     Key("data.reward_mask", Mask),
