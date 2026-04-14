@@ -80,14 +80,18 @@ class TwoHotProjectionComponent(PipelineComponent):
         self._source_key = source_key
         self._dest_key = dest_key
         self._semantic_type = semantic_type
+        
+        # Deterministic contracts
+        self._requires = {Key(self._source_key, self._semantic_type)}
+        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type)}
 
     @property
     def requires(self) -> Set[Key]:
-        return {Key(self._source_key, self._semantic_type)}
+        return self._requires
 
     @property
     def provides(self) -> Set[Key]:
-        return {Key(f"targets.{self._dest_key}", self._semantic_type)}
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -130,14 +134,18 @@ class ClassificationFormatterComponent(PipelineComponent):
         self._dest_key = dest_key
         self._representation = representation
         self._semantic_type = semantic_type
+        
+        # Deterministic contracts
+        self._requires = {Key(self._source_key, self._semantic_type)}
+        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type)}
 
     @property
-    def requires(self) -> set[Key]:
-        return {Key(self._source_key, self._semantic_type)}
+    def requires(self) -> Set[Key]:
+        return self._requires
 
     @property
-    def provides(self) -> set[Key]:
-        return {Key(f"targets.{self._dest_key}", self._semantic_type)}
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -184,14 +192,18 @@ class ScalarFormatterComponent(PipelineComponent):
         self._dest_key = dest_key
         self._representation = representation
         self._semantic_type = semantic_type
+        
+        # Deterministic contracts
+        self._requires = {Key(self._source_key, self._semantic_type)}
+        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type)}
 
     @property
     def requires(self) -> Set[Key]:
-        return {Key(self._source_key, self._semantic_type)}
+        return self._requires
 
     @property
     def provides(self) -> Set[Key]:
-        return {Key(f"targets.{self._dest_key}", self._semantic_type)}
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -248,14 +260,18 @@ class ExpectedValueComponent(PipelineComponent):
         self._representation = representation
         self._logits_key = logits_key
         self._dest_key = dest_key
+        
+        # Deterministic contracts
+        self._requires = {Key(f"predictions.{self._logits_key}", PolicyLogits)}
+        self._provides = {Key(f"targets.{self._dest_key}", ValueTarget)}
 
     @property
-    def requires(self) -> set[Key]:
-        return {Key(f"predictions.{self._logits_key}", PolicyLogits)}
+    def requires(self) -> Set[Key]:
+        return self._requires
 
     @property
-    def provides(self) -> set[Key]:
-        return {Key(f"targets.{self._dest_key}", ValueTarget)}
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         assert self._logits_key in blackboard.predictions
@@ -302,14 +318,18 @@ class OneHotPolicyTargetComponent(PipelineComponent):
         self._representation = ClassificationRepresentation(num_actions)
         self._source_key = source_key
         self._dest_key = dest_key
+        
+        # Deterministic contracts
+        self._requires = {Key(self._source_key, Action)}
+        self._provides = {Key(f"targets.{self._dest_key}", ActionDistribution)}
 
     @property
-    def requires(self) -> set[Key]:
-        return {Key(self._source_key, Action)}
+    def requires(self) -> Set[Key]:
+        return self._requires
 
     @property
-    def provides(self) -> set[Key]:
-        return {Key(f"targets.{self._dest_key}", ActionDistribution)}
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass

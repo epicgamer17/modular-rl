@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from typing import Any
+from typing import Any, Set
 from core import PipelineComponent
 from core import Blackboard
 from core.path_resolver import resolve_blackboard_path
@@ -18,30 +18,34 @@ class PolicyLoss(PipelineComponent):
 
     def __init__(
         self,
-        loss_fn: Any,
-        loss_factor: float = 1.0,
-        mask_key: str = "policy_mask",
         target_key: str = "policies",
-        log_kl: bool = True,
+        mask_key: str = "policy_mask",
+        loss_fn: Any = F.cross_entropy,
+        loss_factor: float = 1.0,
         name: str = "policy_loss",
+        log_kl: bool = True,
     ):
+        self.target_key = target_key
+        self.mask_key = mask_key
         self.loss_fn = loss_fn
         self.loss_factor = loss_factor
-        self.mask_key = mask_key
-        self.target_key = target_key
-        self.log_kl = log_kl
         self.name = name
-
-    @property
-    def requires(self) -> set[Key]:
-        return {
+        self.log_kl = log_kl
+        
+        # Deterministic contracts computed at initialization
+        self._requires = {
             Key("predictions.policies", PolicyLogits),
             Key(self.target_key, PolicyLogits)
         }
+        self._provides = {Key(f"losses.{self.name}", LossScalar)}
 
     @property
-    def provides(self) -> set[Key]:
-        return {Key(f"losses.{self.name}", LossScalar)}
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["policies"]

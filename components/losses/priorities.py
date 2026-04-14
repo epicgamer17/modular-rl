@@ -1,6 +1,7 @@
 import torch
 from typing import Any, Set
 from core import PipelineComponent, Blackboard
+from core.path_resolver import resolve_blackboard_path
 from core.contracts import Key, SemanticType, PolicyLogits, ValueTarget, ValueEstimate
 
 
@@ -52,38 +53,46 @@ class ExpectedValueErrorPriorityComponent(PipelineComponent):
     def __init__(
         self,
         value_representation: Any,
-        target_key: str = "values",
-        pred_key: str = "values",
+        prediction_key: str = "predictions.values",
+        target_key: str = "targets.values",
+        dest_key: str = "meta.priorities",
     ):
         self.value_representation = value_representation
+        self.prediction_key = prediction_key
         self.target_key = target_key
-        self.pred_key = pred_key
+        self.dest_key = dest_key
+        
+        # Deterministic contracts computed at initialization
+        self._requires = {
+            Key(self.prediction_key, ValueEstimate),
+            Key(self.target_key, ValueTarget),
+        }
+        self._provides = {Key(self.dest_key, SemanticType)}
 
     @property
     def requires(self) -> Set[Key]:
-        return {
-            Key(f"predictions.{self.pred_key}", ValueEstimate),
-            Key(f"targets.{self.target_key}", ValueTarget)
-        }
+        return self._requires
 
     @property
     def provides(self) -> Set[Key]:
-        return {Key("meta.priorities", SemanticType)}
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
     def execute(self, blackboard: Blackboard) -> None:
         """Computes MSE of expected value error at root and stores in blackboard.meta."""
-        if self.pred_key not in blackboard.predictions or self.target_key not in blackboard.targets:
+        try:
+            pred_logits = resolve_blackboard_path(blackboard, self.prediction_key)
+            target_scalars = resolve_blackboard_path(blackboard, self.target_key)
+        except (KeyError, AttributeError):
             return
 
         # 1. Predictions: Distribution -> Expected Scalar Value [B, T]
-        pred_logits = blackboard.predictions[self.pred_key]
         pred_scalars = self.value_representation.to_expected_value(pred_logits)
 
         # 2. Targets: Raw Scalar Value [B, T]
-        target_scalars = blackboard.targets[self.target_key]
+        # target_scalars already resolved above
 
         # 3. Compute root TD-error (MSE)
         # Ensure target_scalars is [B, T] by squeezing if it's [B, T, 1]

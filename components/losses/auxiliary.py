@@ -24,17 +24,21 @@ class RewardLoss(PipelineComponent):
         self.mask_key = mask_key
         self.target_key = target_key
         self.name = name
-
-    @property
-    def requires(self) -> Set[Key]:
-        return {
+        
+        # Deterministic contracts computed at initialization
+        self._requires = {
             Key("predictions.rewards", Reward),
             Key(self.target_key, Reward)
         }
+        self._provides = {Key(f"losses.{self.name}", LossScalar)}
+
+    @property
+    def requires(self) -> Set[Key]:
+        return self._requires
 
     @property
     def provides(self) -> Set[Key]:
-        return {Key(f"losses.{self.name}", LossScalar)}
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -81,17 +85,21 @@ class ToPlayLoss(PipelineComponent):
         self.mask_key = mask_key
         self.target_key = target_key
         self.name = name
-
-    @property
-    def requires(self) -> Set[Key]:
-        return {
+        
+        # Deterministic contracts computed at initialization
+        self._requires = {
             Key("predictions.to_plays", ToPlay),
             Key(self.target_key, ToPlay)
         }
+        self._provides = {Key(f"losses.{self.name}", LossScalar)}
+
+    @property
+    def requires(self) -> Set[Key]:
+        return self._requires
 
     @property
     def provides(self) -> Set[Key]:
-        return {Key(f"losses.{self.name}", LossScalar)}
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -138,17 +146,21 @@ class ChanceQLoss(PipelineComponent):
         self.mask_key = mask_key
         self.target_key = target_key
         self.name = name
-
-    @property
-    def requires(self) -> Set[Key]:
-        return {
+        
+        # Deterministic contracts computed at initialization
+        self._requires = {
             Key("predictions.chance_q_logits", PolicyLogits),
             Key(self.target_key, ValueTarget)
         }
+        self._provides = {Key(f"losses.{self.name}", LossScalar)}
+
+    @property
+    def requires(self) -> Set[Key]:
+        return self._requires
 
     @property
     def provides(self) -> Set[Key]:
-        return {Key(f"losses.{self.name}", LossScalar)}
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -194,17 +206,21 @@ class ConsistencyLoss(PipelineComponent):
         self.loss_factor = loss_factor
         self.mask_key = mask_key
         self.name = name
-
-    @property
-    def requires(self) -> Set[Key]:
-        return {
+        
+        # Deterministic contracts computed at initialization
+        self._requires = {
             Key("predictions.projected_latents", SemanticType),
             Key("targets.consistency_targets", SemanticType)
         }
+        self._provides = {Key(f"losses.{self.name}", LossScalar)}
+
+    @property
+    def requires(self) -> Set[Key]:
+        return self._requires
 
     @property
     def provides(self) -> Set[Key]:
-        return {Key(f"losses.{self.name}", LossScalar)}
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -242,17 +258,21 @@ class SigmaLoss(PipelineComponent):
         self.mask_key = mask_key
         self.target_key = target_key
         self.name = name
-
-    @property
-    def requires(self) -> Set[Key]:
-        return {
+        
+        # Deterministic contracts computed at initialization
+        self._requires = {
             Key("predictions.sigma_logits", PolicyLogits),
             Key(self.target_key, SemanticType)
         }
+        self._provides = {Key(f"losses.{self.name}", LossScalar)}
+
+    @property
+    def requires(self) -> Set[Key]:
+        return self._requires
 
     @property
     def provides(self) -> Set[Key]:
-        return {Key(f"losses.{self.name}", LossScalar)}
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -293,14 +313,18 @@ class CommitmentLoss(PipelineComponent):
         self.loss_factor = loss_factor
         self.mask_key = mask_key
         self.name = name
+        
+        # Deterministic contracts computed at initialization
+        self._requires = {Key("predictions.commitment_loss", LossScalar)}
+        self._provides = {Key(f"losses.{self.name}", LossScalar)}
 
     @property
     def requires(self) -> Set[Key]:
-        return {Key("predictions.commitment_loss", LossScalar)}
+        return self._requires
 
     @property
     def provides(self) -> Set[Key]:
-        return {Key(f"losses.{self.name}", LossScalar)}
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass

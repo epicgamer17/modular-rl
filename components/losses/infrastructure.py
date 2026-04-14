@@ -22,14 +22,16 @@ class EpsilonDecayComponent(PipelineComponent):
         self.min_epsilon = min_epsilon
         self.decay_steps = decay_steps
         self.current_step = 0
+        self._requires = set()
+        self._provides = {Key("meta.epsilon", SemanticType)}
 
     @property
-    def requires(self) -> set[Key]:
-        return set()
+    def requires(self) -> Set[Key]:
+        return self._requires
 
     @property
-    def provides(self) -> set[Key]:
-        return {Key("meta.epsilon", SemanticType)}
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -111,17 +113,21 @@ class LossAggregatorComponent(PipelineComponent):
     def __init__(self, loss_weights: Dict[str, float], optimizer_key: str = "default"):
         self.loss_weights = loss_weights
         self.optimizer_key = optimizer_key
-
-    @property
-    def requires(self) -> set[Key]:
-        return {Key(f"losses.{name}", LossScalar) for name in self.loss_weights.keys()}
-
-    @property
-    def provides(self) -> Set[Key]:
-        return {
+        
+        # Deterministic contracts computed at initialization
+        self._requires = {Key(f"losses.{name}", LossScalar) for name in self.loss_weights.keys()}
+        self._provides = {
             Key(f"losses.total_loss.{self.optimizer_key}", LossScalar),
             Key("losses.total_loss", SemanticType)
         }
+
+    @property
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -165,14 +171,16 @@ class OptimizerStepComponent(PipelineComponent):
         self.agent_network = agent_network
         self.optimizers = optimizers
         self.max_grad_norm = max_grad_norm
+        self._requires = {Key("losses.total_loss", SemanticType)}
+        self._provides = set()
 
     @property
     def requires(self) -> Set[Key]:
-        return {Key("losses.total_loss", SemanticType)}
+        return self._requires
 
     @property
-    def provides(self) -> set[Key]:
-        return set()
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         assert "total_loss" in blackboard.losses
@@ -243,15 +251,16 @@ class ShapeValidatorComponent(PipelineComponent):
 
     def __init__(self, validator: ShapeValidator):
         self.validator = validator
+        self._requires = {Key("predictions", SemanticType), Key("targets", SemanticType)}
+        self._provides = set()
 
     @property
-    def requires(self) -> set[Key]:
-        # Requires everything to validate shapes
-        return {Key("predictions", SemanticType), Key("targets", SemanticType)}
+    def requires(self) -> Set[Key]:
+        return self._requires
 
     @property
-    def provides(self) -> set[Key]:
-        return set()
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -265,17 +274,19 @@ class MetricEarlyStopComponent(PipelineComponent):
     def __init__(self, threshold: float, metric_key: str = "approx_kl"):
         self.metric_key = metric_key
         self.threshold = threshold
-
-    @property
-    def requires(self) -> set[Key]:
-        return {
+        self._requires = {
             Key(f"meta.{self.metric_key}", SemanticType),
             Key(f"losses.{self.metric_key}", SemanticType)
         }
+        self._provides = {Key("meta.stop_execution", SemanticType)}
 
     @property
-    def provides(self) -> set[Key]:
-        return {Key("meta.stop_execution", SemanticType)}
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -300,14 +311,16 @@ class MPSCacheClearComponent(PipelineComponent):
         self.device = device
         self.interval = interval
         self.step_count = 0
+        self._requires = set()
+        self._provides = set()
 
     @property
-    def requires(self) -> set[Key]:
-        return set()
+    def requires(self) -> Set[Key]:
+        return self._requires
 
     @property
-    def provides(self) -> set[Key]:
-        return set()
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -324,14 +337,16 @@ class DeviceTransferComponent(PipelineComponent):
 
     def __init__(self, device: torch.device):
         self.device = device
+        self._requires = {Key("data", SemanticType)}
+        self._provides = {Key("data", SemanticType)}
 
     @property
-    def requires(self) -> set[Key]:
-        return {Key("data", SemanticType)}
+    def requires(self) -> Set[Key]:
+        return self._requires
 
     @property
-    def provides(self) -> set[Key]:
-        return {Key("data", SemanticType)}
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass

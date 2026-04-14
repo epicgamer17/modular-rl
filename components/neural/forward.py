@@ -17,19 +17,23 @@ class ForwardPassComponent(PipelineComponent):
     def __init__(self, agent_network: "BaseAgentNetwork", shape_validator: Optional['ShapeValidator'] = None):
         self.agent_network = agent_network
         self.shape_validator = shape_validator
-
-    @property
-    def requires(self) -> Set[Key]:
-        return {Key("data.observations", Observation)}
-
-    @property
-    def provides(self) -> Set[Key]:
-        return {
+        
+        # Deterministic contracts computed at initialization
+        self._requires = {Key("data.observations", Observation)}
+        self._provides = {
             Key("predictions.values", ValueEstimate),
             Key("predictions.policies", PolicyLogits),
             Key("predictions.rewards", Reward),
             Key("predictions.to_plays", ToPlay),
         }
+
+    @property
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         obs = blackboard.data.get("observations")

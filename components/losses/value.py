@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from typing import Any
+from typing import Any, Set
 from core import PipelineComponent
 from core import Blackboard
 from core.path_resolver import resolve_blackboard_path
@@ -27,17 +27,21 @@ class ValueLoss(PipelineComponent):
         self.loss_fn = loss_fn
         self.loss_factor = loss_factor
         self.name = name
-
-    @property
-    def requires(self) -> set[Key]:
-        return {
+        
+        # Deterministic contracts computed at initialization
+        self._requires = {
             Key("predictions.values", ValueEstimate),
             Key(self.target_key, ValueTarget)
         }
+        self._provides = {Key(f"losses.{self.name}", LossScalar)}
 
     @property
-    def provides(self) -> set[Key]:
-        return {Key(f"losses.{self.name}", LossScalar)}
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     @property
     def constraints(self) -> list[str]:

@@ -10,25 +10,28 @@ class SequencePadderComponent(PipelineComponent):
 
     def __init__(self, unroll_steps: int, keys: List[Key]):
         self.T = unroll_steps + 1
-        self.keys = keys
+        self._keys = keys
+        
+        # Deterministic contracts computed at initialization
+        self._requires = set(keys)
+        self._provides = {
+            Key(f"targets.{k.path.split('.')[-1]}", k.semantic_type) 
+            for k in keys
+        }
 
     @property
     def requires(self) -> Set[Key]:
-        return set(self.keys)
+        return self._requires
 
     @property
     def provides(self) -> Set[Key]:
-        # Maps data.X to targets.X preserving semantic type
-        return {
-            Key(f"targets.{k.path.split('.')[-1]}", k.semantic_type) 
-            for k in self.keys
-        }
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
     def execute(self, blackboard: Blackboard) -> None:
-        for k in self.keys:
+        for k in self._keys:
             key_path = k.path
             try:
                 v = resolve_blackboard_path(blackboard, key_path)
@@ -63,18 +66,22 @@ class SequenceMaskComponent(PipelineComponent):
     it moves them to blackboard.targets. Otherwise, it generates them from is_same_game.
     """
 
-    @property
-    def requires(self) -> set[Key]:
-        return {Key("data.is_same_game", Mask)}
-
-    @property
-    def provides(self) -> set[Key]:
-        return {
+    def __init__(self):
+        self._requires = {Key("data.is_same_game", Mask)}
+        self._provides = {
             Key("targets.value_mask", Mask),
             Key("targets.reward_mask", Mask),
             Key("targets.to_play_mask", Mask),
             Key("targets.policy_mask", Mask),
         }
+
+    @property
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -130,17 +137,19 @@ class SequenceInfrastructureComponent(PipelineComponent):
 
     def __init__(self, unroll_steps: int):
         self.unroll_steps = unroll_steps
-
-    @property
-    def requires(self) -> set[Key]:
-        return {Key("data.actions", Action)}
-
-    @property
-    def provides(self) -> set[Key]:
-        return {
+        self._requires = {Key("data.actions", Action)}
+        self._provides = {
             Key("meta.weights", Mask),
             Key("meta.gradient_scales", Reward)
         }
+
+    @property
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -176,13 +185,17 @@ class SequenceInfrastructureComponent(PipelineComponent):
 class ChanceTargetComponent(PipelineComponent):
     """Generator: Calculates chance outcomes for Stochastic MuZero."""
 
-    @property
-    def requires(self) -> set[Key]:
-        return {Key("targets.values", ValueTarget)}
+    def __init__(self):
+        self._requires = {Key("targets.values", ValueTarget)}
+        self._provides = {Key("targets.chance_values_next", ValueTarget)}
 
     @property
-    def provides(self) -> set[Key]:
-        return {Key("targets.chance_values_next", ValueTarget)}
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         pass

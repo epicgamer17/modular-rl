@@ -19,7 +19,33 @@ This is achieved through a **layered contract system**:
 
 # Core Principles
 
-## 1. Contracts are semantic, not structural
+## 3. Contracts must be deterministic after initialization
+
+To prevent "shifting sand" bugs during execution, a component's contract (what it reads and writes) MUST NOT change after the component has been initialized.
+
+*   **DO**: Compute `requires` and `provides` once in `__init__`.
+*   **AVOID**: Logical branching inside the `@property` methods.
+*   **FIXED**: Contracts are declared once, enabling static DAG validation before the first training step.
+
+### Example
+```python
+class MyComponent(PipelineComponent):
+    def __init__(self, mode: str):
+        # Compute contract once based on initialization parameters
+        base_key = "data.x" if mode == "fast" else "data.y"
+        self._requires = {Key(base_key, Observation)}
+        self._provides = {Key("targets.z", Observation)}
+
+    @property
+    def requires(self) -> Set[Key]:
+        return self._requires
+    
+    @property
+    def provides(self) -> Set[Key]:
+        return self._provides
+```
+
+## 4. Contracts are semantic, not structural
 
 Components communicate using **meaningful keys** and **semantic types**, not raw strings or tensor shapes.
 
@@ -40,7 +66,7 @@ Rationale:
 *   **Polymorphism**: Enables components to accept specific types (e.g., `DiscreteValue`) where a base type (`ValueEstimate`) is expected.
 *   **Decoupling**: Logic is isolated from specific blackboard path naming conventions via configurable keys.
 
-## 2. Every component must declare bound contracts
+## 5. Every component must declare bound contracts
 
 Contracts MUST be instance properties (`@property`), never class-level attributes. This allows components to be dynamic based on their configuration (e.g., different target keys).
 
