@@ -3,7 +3,7 @@ from typing import Any, Tuple, Dict, Set
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
 
-from core.contracts import Key, ToPlay, ValueEstimate, ValueTarget, LossScalar
+from core.contracts import Key, ToPlay, ValueEstimate, ValueTarget, LossScalar, Metric
 
 class MuzeroMultiplayerTelemetry(PipelineComponent):
     """
@@ -27,25 +27,35 @@ class MuzeroMultiplayerTelemetry(PipelineComponent):
         self.value_target_key = value_target_key
         self.mask_key = mask_key
 
-    @property
-    def requires(self) -> Set[Key]:
-        return {
+        # Deterministic contracts computed at initialization
+        self._requires = {
             Key(f"predictions.{self.to_play_pred_key}", ToPlay),
             Key(f"targets.{self.to_play_target_key}", ToPlay),
             Key(f"predictions.{self.value_pred_key}", ValueEstimate),
             Key(f"targets.{self.value_target_key}", ValueTarget),
         }
+        self._provides = {}
+        for p in range(self.num_players):
+            self._provides[Key(f"meta.tp_acc_p{p}", Metric)] = "new"
+            self._provides[Key(f"meta.val_mse_p{p}", Metric)] = "new"
+            self._provides[Key(f"meta.losses.tp_acc_p{p}", Metric)] = "new"
+            self._provides[Key(f"meta.losses.val_mse_p{p}", Metric)] = "new"
 
     @property
-    def provides(self) -> Set[Key]:
-        w = set()
-        for p in range(self.num_players):
-            w.add(Key(f"meta.tp_acc_p{p}", LossScalar))
-            w.add(Key(f"meta.val_mse_p{p}", LossScalar))
-        return w
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Dict[Key, str]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures to-play predictions exist."""
+        if self.to_play_pred_key not in blackboard.predictions:
+            return  # Component gracefully skips if no predictions
+        from core.validation import assert_is_tensor, assert_same_batch
+        tp_preds = blackboard.predictions[self.to_play_pred_key]
+        assert_is_tensor(tp_preds, msg="in MuzeroMultiplayerTelemetry (to_play predictions)")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if self.to_play_pred_key not in blackboard.predictions:

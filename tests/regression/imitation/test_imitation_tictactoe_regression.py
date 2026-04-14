@@ -127,6 +127,14 @@ def test_imitation_tictactoe_regression():
         target_key="data.policies",
     )
 
+    from core.contracts import Key, Observation, Action, SemanticType, PolicyLogits, Mask
+    initial_keys = {
+        Key("data.observations", Observation),
+        Key("data.actions", Action),
+        Key("data.legal_moves_masks", Mask),
+        Key("data.policies", PolicyLogits),
+    }
+
     learner = BlackboardEngine(
         components=[
             ForwardPassComponent(agent_network, None),
@@ -137,6 +145,7 @@ def test_imitation_tictactoe_regression():
                 optimizers=optimizer,
             ),
         ],
+        initial_keys=initial_keys,
         device=DEVICE,
     )
 

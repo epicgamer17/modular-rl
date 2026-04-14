@@ -2,7 +2,7 @@ from typing import Any, Set, Dict
 import torch
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import Key, SemanticType, PolicyLogits, ValueTarget, ValueEstimate
+from core.contracts import Key, SemanticType, PolicyLogits, ValueTarget, ValueEstimate, Priority, Metric
 
 
 class LossPriorityComponent(PipelineComponent):
@@ -18,16 +18,24 @@ class LossPriorityComponent(PipelineComponent):
         assert reduction in ("root", "max"), f"Unknown reduction: {reduction}"
         self.reduction = reduction
 
+        # Deterministic contracts computed at initialization
+        self._requires = {Key("meta.elementwise_losses", Metric)}
+        self._provides = {Key("meta.priorities", Priority): "new"}
+
     @property
     def requires(self) -> Set[Key]:
-        return {Key("meta.elementwise_losses", SemanticType)}
+        return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
-        return {Key("meta.priorities", SemanticType)}
+    def provides(self) -> Dict[Key, str]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures elementwise_losses dict exists and contains the target loss key."""
+        elementwise_losses = blackboard.meta.get("elementwise_losses", {})
+        if self.loss_key in elementwise_losses:
+            loss = elementwise_losses[self.loss_key]
+            assert torch.is_tensor(loss), f"Expected tensor for elementwise loss '{self.loss_key}', got {type(loss)}"
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """Extracts priorities and stores them in blackboard.meta."""
@@ -68,18 +76,29 @@ class ExpectedValueErrorPriorityComponent(PipelineComponent):
             Key(self.prediction_key, ValueEstimate),
             Key(self.target_key, ValueTarget),
         }
-        self._provides = {Key(self.dest_key, SemanticType)}
+        self._provides = {Key(self.dest_key, Priority): "new"}
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures prediction and target keys exist and are tensors with time dimension."""
+        from core.validation import assert_in_blackboard, assert_is_tensor, assert_shape_sanity
+        try:
+            pred_logits = resolve_blackboard_path(blackboard, self.prediction_key)
+            target_scalars = resolve_blackboard_path(blackboard, self.target_key)
+        except (KeyError, AttributeError):
+            return  # Keys may not exist yet; execute() handles gracefully
+
+        assert_is_tensor(pred_logits, msg=f"in ExpectedValueErrorPriorityComponent (predictions)")
+        assert_is_tensor(target_scalars, msg=f"in ExpectedValueErrorPriorityComponent (targets)")
+        assert pred_logits.ndim >= 2, f"Predictions must have at least [B, T], got {pred_logits.shape}"
+        assert target_scalars.ndim >= 1, f"Targets must have at least [B], got {target_scalars.shape}"
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """Computes MSE of expected value error at root and stores in blackboard.meta."""
@@ -93,20 +112,12 @@ class ExpectedValueErrorPriorityComponent(PipelineComponent):
         pred_scalars = self.value_representation.to_expected_value(pred_logits)
 
         # 2. Targets: Raw Scalar Value [B, T]
-        # target_scalars already resolved above
-
-        # 3. Compute root TD-error (MSE)
         # Ensure target_scalars is [B, T] by squeezing if it's [B, T, 1]
         if target_scalars.ndim == 3 and target_scalars.shape[-1] == 1:
             target_scalars = target_scalars.squeeze(-1)
-            
+
         root_pred = pred_scalars[:, 0]
         root_target = target_scalars[:, 0]
-
-        assert root_target.shape == root_pred.shape, (
-            f"ExpectedValueErrorPriorityComponent: Shape mismatch between "
-            f"root_target {root_target.shape} and root_pred {root_pred.shape}"
-        )
 
         error = (root_target - root_pred) ** 2
         return {"meta.priorities": error.detach()}

@@ -1,9 +1,9 @@
 import torch
 from core import PipelineComponent
 from core import Blackboard
-from core.contracts import Key, Observation, ValueEstimate, PolicyLogits, Reward, ToPlay
+from core.contracts import Key, Observation, ValueEstimate, PolicyLogits, Reward, ToPlay, Metric
 from core.blackboard_engine import apply_updates
-from typing import TYPE_CHECKING, Optional, Set, Dict
+from typing import TYPE_CHECKING, Optional, Set, Dict, Any
 
 if TYPE_CHECKING:
     from modules.agent_nets.base import BaseAgentNetwork
@@ -15,7 +15,7 @@ class ForwardPassComponent(PipelineComponent):
     Component for the neural network forward pass.
     """
 
-    def __init__(self, agent_network: "BaseAgentNetwork", shape_validator: Optional['ShapeValidator'] = None, obs_key: str = "obs"):
+    def __init__(self, agent_network: "BaseAgentNetwork", shape_validator: Optional['ShapeValidator'] = None, obs_key: str = "observations"):
         self.agent_network = agent_network
         self.shape_validator = shape_validator
         self._obs_key = obs_key
@@ -23,10 +23,10 @@ class ForwardPassComponent(PipelineComponent):
         # Deterministic contracts computed at initialization
         self._requires = {Key(f"data.{self._obs_key}", Observation)}
         self._provides = {
-            Key("predictions.values", ValueEstimate),
-            Key("predictions.policies", PolicyLogits),
-            Key("predictions.rewards", Reward),
-            Key("predictions.to_plays", ToPlay),
+            Key("predictions.values", ValueEstimate): "new",
+            Key("predictions.policies", PolicyLogits): "new",
+            Key("predictions.rewards", Reward): "new",
+            Key("predictions.to_plays", ToPlay): "new",
         }
 
     @property
@@ -34,7 +34,7 @@ class ForwardPassComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:

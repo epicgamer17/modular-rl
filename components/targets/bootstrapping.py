@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
-from typing import Optional, TYPE_CHECKING, Dict, Any, Set
+from typing import Dict, Any, Optional, TYPE_CHECKING, Set
 from core import PipelineComponent
 from core import Blackboard
-from core.contracts import Key, Reward, Done, Observation, ValueTarget, Action, PolicyLogits
+from core.contracts import Key, Reward, Done, Observation, ValueTarget, Action, PolicyLogits, Metric
 
 
 class TDTargetComponent(PipelineComponent):
@@ -26,20 +26,23 @@ class TDTargetComponent(PipelineComponent):
         self.discount = gamma**n_step
         self.bootstrap_on_truncated = bootstrap_on_truncated
 
-    @property
-    def requires(self) -> Set[Key]:
-        return {
+        # Deterministic contracts computed at initialization
+        self._requires = {
             Key("data.rewards", Reward),
             Key("data.dones", Done),
             Key("data.next_observations", Observation)
         }
+        self._provides = {Key("targets.values", ValueTarget): "new"}
+        if self.online_network is not None:
+            self._provides[Key("targets.next_actions", Action)] = "new"
 
     @property
-    def provides(self) -> Set[Key]:
-        w = {Key("targets.values", ValueTarget)}
-        if self.online_network is not None:
-            w.add(Key("targets.next_actions", Action))
-        return w
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Dict[Key, str]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         rewards = blackboard.data["rewards"]
@@ -133,20 +136,24 @@ class DistributionalTargetComponent(PipelineComponent):
         self.discount = gamma**n_step
         self.bootstrap_on_truncated = bootstrap_on_truncated
 
-    @property
-    def requires(self) -> Set[Key]:
-        return {
+        # Deterministic contracts computed at initialization
+        self._requires = {
             Key("data.rewards", Reward),
             Key("data.dones", Done),
             Key("data.next_observations", Observation)
         }
+        self._provides = {
+            Key("targets.q_logits", PolicyLogits): "new",
+            Key("targets.next_actions", Action): "new",
+        }
 
     @property
-    def provides(self) -> Set[Key]:
-        return {
-            Key("targets.q_logits", PolicyLogits),
-            Key("targets.next_actions", Action)
-        }
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Dict[Key, str]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         rewards = blackboard.data["rewards"]

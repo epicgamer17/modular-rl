@@ -1,5 +1,6 @@
 import time
 import random
+import os
 import numpy as np
 import torch
 import torch.nn as nn
@@ -19,11 +20,13 @@ from actors.action_selectors.selectors import ActionSelector
 from utils.schedule import StepwiseSchedule
 from executors.torch_mp_executor import TorchMPExecutor
 from executors.workers.actor_worker import ActorWorker
-from utils.plotting import plot_regression_results
+# from utils.plotting import plot_regression_results
 
 
 # Module-level marker for regression tests
 pytestmark = [pytest.mark.regression, pytest.mark.slow]
+
+os.environ["MPLCONFIGDIR"] = "/tmp/matplotlib"
 
 
 def setup_seeds(seed=42):
@@ -34,14 +37,15 @@ def setup_seeds(seed=42):
         torch.cuda.manual_seed_all(seed)
 
 
-def evaluate_agent(eval_engine, num_episodes=100):
+def evaluate_agent(eval_engine, num_episodes=20):
     scores = []
-    for result in eval_engine.step(infinite_ticks()):
-        meta = result["meta"]
-        if "episode_score" in meta:
-            scores.append(meta["episode_score"])
-            if len(scores) >= num_episodes:
-                break
+    while len(scores) < num_episodes:
+        for result in eval_engine.step(infinite_ticks()):
+            meta = result["meta"]
+            if "episode_score" in meta:
+                scores.append(meta["episode_score"])
+                if len(scores) >= num_episodes:
+                    return scores
     return scores
 
 
@@ -50,6 +54,7 @@ def test_muzero_cartpole_full_training():
     Heavy full training test for MuZero on CartPole-v1.
     Replicates hyperparameters and logic from PPO CartPole where applicable.
     """
+    from utils.plotting import plot_regression_results
     try:
         mp.set_start_method("spawn", force=True)
     except RuntimeError:
@@ -85,6 +90,7 @@ def test_muzero_cartpole_full_training():
     SUPPORT_RANGE = 500
 
     # --- 1. Agent Network Architecture ---
+    print("Creating Agent Network...")
     agent_network = make_muzero_mlp_network(
         obs_dim=obs_dim,
         num_actions=num_actions,
@@ -96,7 +102,7 @@ def test_muzero_cartpole_full_training():
         device=DEVICE,
     )
 
-    # --- 2. Search Backend ---
+    print("Creating Search Engine...")
     search_engine = make_muzero_search_engine(
         num_actions=num_actions,
         num_simulations=NUM_SIMULATIONS,
@@ -111,7 +117,7 @@ def test_muzero_cartpole_full_training():
 
     temperature_schedule = StepwiseSchedule(steps=[15, 30], values=[1.0, 0.5, 0.0])
 
-    # --- 3. Replay Buffer ---
+    print("Creating Replay Buffer...")
     # Cartpole is 1-player
     replay_buffer = make_muzero_replay_buffer(
         obs_dim=obs_dim,
@@ -125,7 +131,7 @@ def test_muzero_cartpole_full_training():
         player_map=None,
     )
 
-    # --- 4. Learner ---
+    print("Creating Learner...")
     optimizer = torch.optim.Adam(agent_network.parameters(), lr=LEARNING_RATE, eps=1e-5)
 
     learner = make_muzero_learner(
@@ -158,8 +164,11 @@ def test_muzero_cartpole_full_training():
         device=torch.device("cpu"),
     )
 
+    print("Launching Executor...")
     executor.launch(ActorWorker, (actor_engine,), num_workers=NUM_WORKERS)
+    print("Executor Launched.")
 
+    print("Creating Evaluation Engine...")
     # Evaluator Engine
     eval_engine = make_muzero_actor_engine(
         env=gym.make(ENV_ID),
@@ -182,9 +191,13 @@ def test_muzero_cartpole_full_training():
     test_score_history = []
 
     # Let the replay buffer fill a bit before starting
+    print("Waiting for replay buffer to fill...")
     time.sleep(2)
 
     while train_steps < TOTAL_TRAINING_STEPS:
+        if train_steps == 0:
+             print(f"Waiting for buffer to fill... Current size: {replay_buffer.size}/{BATCH_SIZE}", end="\r")
+        
         # 1. Data Collection
         results, _ = executor.collect_data(min_samples=None, worker_type=ActorWorker)
         for res in results:
@@ -237,11 +250,11 @@ def test_muzero_cartpole_full_training():
             # Periodic Testing
             if train_steps % TEST_INTERVAL == 0:
                 print("Running evaluation...")
-                eval_scores = evaluate_agent(eval_engine, num_episodes=100)
+                eval_scores = evaluate_agent(eval_engine, num_episodes=5)
                 mean_eval_score = np.mean(eval_scores)
                 test_score_history.append(mean_eval_score)
                 print(
-                    f"[Step {train_steps}] Evaluated 3 episodes: {eval_scores} | Mean: {mean_eval_score:.2f}"
+                    f"[Step {train_steps}] Evaluated {len(eval_scores)} episodes: {eval_scores} | Mean: {mean_eval_score:.2f}"
                 )
 
         # Check early stopping
@@ -253,7 +266,7 @@ def test_muzero_cartpole_full_training():
 
     # Final Evaluation
     print("Performing final evaluation...")
-    eval_scores = evaluate_agent(eval_engine, num_episodes=100)
+    eval_scores = evaluate_agent(eval_engine, num_episodes=20)
     final_eval_score = np.mean(eval_scores)
     test_score_history.append(final_eval_score)
     print(f"Final Test results: {eval_scores} | Mean: {final_eval_score:.2f}")

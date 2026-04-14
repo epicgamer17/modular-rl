@@ -14,7 +14,7 @@ Blackboard key conventions:
 from __future__ import annotations
 
 import torch
-from typing import TYPE_CHECKING, Optional, Type, Set
+from typing import TYPE_CHECKING, Any, Dict, Optional, Type, Set
 from core.contracts import Key, ValueTarget, Reward, ActionDistribution, PolicyLogits, SemanticType
 
 from core import PipelineComponent, Blackboard
@@ -83,21 +83,21 @@ class TwoHotProjectionComponent(PipelineComponent):
         
         # Deterministic contracts
         self._requires = {Key(self._source_key, self._semantic_type)}
-        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type)}
+        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type): "new"}
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures source key exists and contains a scalar tensor."""
         from core.validation import assert_in_blackboard, assert_is_tensor, assert_shape_sanity
         assert_in_blackboard(blackboard, self._source_key)
-        
+
         raw = resolve_blackboard_path(blackboard, self._source_key)
         assert_is_tensor(raw, msg=f"for {self.__class__.__name__} ({self._source_key})")
         # Two-hot usually expects [B] or [B, T]
@@ -106,7 +106,7 @@ class TwoHotProjectionComponent(PipelineComponent):
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """Project scalar targets to two-hot distributions and write back."""
         raw = resolve_blackboard_path(blackboard, self._source_key)
-        
+
         # projected: [B, T, bins] (or [B, bins] if raw was 1-D)
         projected: torch.Tensor = self._representation.to_representation(raw)
 
@@ -141,17 +141,17 @@ class ClassificationFormatterComponent(PipelineComponent):
         self._dest_key = dest_key
         self._representation = representation
         self._semantic_type = semantic_type
-        
+
         # Deterministic contracts
         self._requires = {Key(self._source_key, self._semantic_type)}
-        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type)}
+        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type): "new"}
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -207,17 +207,17 @@ class ScalarFormatterComponent(PipelineComponent):
         self._dest_key = dest_key
         self._representation = representation
         self._semantic_type = semantic_type
-        
+
         # Deterministic contracts
         self._requires = {Key(self._source_key, self._semantic_type)}
-        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type)}
+        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type): "new"}
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -229,7 +229,7 @@ class ScalarFormatterComponent(PipelineComponent):
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         val = resolve_blackboard_path(blackboard, self._source_key)
-        
+
         if self._representation is not None:
             formatted = self._representation.format_target(
                 {self._dest_key: val}, target_key=self._dest_key
@@ -289,7 +289,7 @@ class ExpectedValueComponent(PipelineComponent):
             Key(f"predictions.{self._logits_key}", PolicyLogits, metadata=metadata)
         }
         self._provides = {
-            Key(f"targets.{self._dest_key}", ValueTarget, metadata=metadata)
+            Key(f"targets.{self._dest_key}", ValueTarget, metadata=metadata): "new"
         }
 
     @property
@@ -297,7 +297,7 @@ class ExpectedValueComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -349,14 +349,14 @@ class OneHotPolicyTargetComponent(PipelineComponent):
         
         # Deterministic contracts
         self._requires = {Key(self._source_key, Action)}
-        self._provides = {Key(f"targets.{self._dest_key}", ActionDistribution)}
+        self._provides = {Key(f"targets.{self._dest_key}", ActionDistribution): "new"}
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:

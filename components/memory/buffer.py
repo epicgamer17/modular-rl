@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from core import PipelineComponent, Blackboard
 from core.contracts import Key, SemanticType, Observation, Action, Reward, Done, Mask
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, Set, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from data.storage.circular import ModularReplayBuffer
@@ -24,6 +24,9 @@ class BufferStoreComponent(PipelineComponent):
             "dones": "data.done",
             "next_observations": "data.next_obs",
         }
+        # Deterministic contracts computed at initialization
+        self._requires = {Key(bb_path, SemanticType) for bb_path in self.field_map.values()}
+        self._provides = {}
 
     def _resolve(self, blackboard: Blackboard, path: str) -> Any:
         """Resolves a nested dotted path like 'meta.action_metadata.value' from the blackboard."""
@@ -37,16 +40,23 @@ class BufferStoreComponent(PipelineComponent):
         return container
 
     @property
-    def requires(self) -> set[Key]:
-        # Polymorphic mapping
-        return {Key(bb_path, SemanticType) for bb_path in self.field_map.values()}
+    def requires(self) -> Set[Key]:
+        return self._requires
 
     @property
-    def provides(self) -> set[Key]:
-        return set()
+    def provides(self) -> Dict[Key, str]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures all mapped blackboard paths are resolvable."""
+        for buffer_key, bb_path in self.field_map.items():
+            try:
+                self._resolve(blackboard, bb_path)
+            except (KeyError, AttributeError):
+                assert False, (
+                    f"BufferStoreComponent: path '{bb_path}' (for buffer field '{buffer_key}') "
+                    f"not resolvable on the blackboard"
+                )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         transition = {}
@@ -89,6 +99,20 @@ class SequenceBufferComponent(PipelineComponent):
         self.target_value_key = target_value_key
         self._sequence: Any = None  # lazily imported Sequence
 
+        # Deterministic contracts computed at initialization
+        from core.contracts import PolicyLogits, ValueEstimate
+        self._requires = {
+            Key("data.obs", Observation),
+            Key("data.done", Done),
+            Key("data.reward", Reward),
+            Key("meta.action", Action),
+        }
+        if self.target_policy_key:
+            self._requires.add(Key(f"predictions.{self.target_policy_key}", PolicyLogits))
+        if self.target_value_key:
+            self._requires.add(Key(f"predictions.{self.target_value_key}", ValueEstimate))
+        self._provides = {}
+
     def _ensure_sequence(self) -> None:
         if self._sequence is None:
             from data.samplers.sequence import Sequence
@@ -97,27 +121,20 @@ class SequenceBufferComponent(PipelineComponent):
 
     @property
     def requires(self) -> Set[Key]:
-        from core.contracts import Key, Observation, Action, Reward, Done
-        r = {
-            Key("data.obs", Observation),
-            Key("data.done", Done),
-            Key("data.reward", Reward),
-            Key("meta.action", Action),
-        }
-        if self.target_policy_key:
-            from core.contracts import PolicyLogits
-            r.add(Key(f"predictions.{self.target_policy_key}", PolicyLogits))
-        if self.target_value_key:
-            from core.contracts import ValueEstimate
-            r.add(Key(f"predictions.{self.target_value_key}", ValueEstimate))
-        return r
+        return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
-        return set()
+    def provides(self) -> Dict[Key, str]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures obs and done signals exist."""
+        assert blackboard.data.get("obs") is not None, (
+            "SequenceBufferComponent: 'obs' missing from blackboard.data"
+        )
+        assert blackboard.data.get("done") is not None, (
+            "SequenceBufferComponent: 'done' missing from blackboard.data"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         self._ensure_sequence()

@@ -22,6 +22,19 @@ from data.writers import PPOWriter
 from data.samplers.prioritized import WholeBufferSampler
 
 from core import BlackboardEngine
+from core.contracts import (
+    Key,
+    Observation,
+    Action,
+    Reward,
+    Done,
+    ValueTarget,
+    ValueEstimate,
+    LogProb,
+    Advantage,
+    Return,
+    Mask,
+)
 from components.telemetry import TelemetryComponent
 from components.neural import ForwardPassComponent
 from components.losses import (
@@ -145,14 +158,15 @@ def make_ppo_learner(
 
     value_loss = ClippedValueLoss(
         clip_param=clip_param,
-        target_key="returns",
+        target_key="targets.returns",
+        old_values_key="targets.values",
         loss_factor=value_coef,
     )
 
     components = [
         ForwardPassComponent(agent_network, shape_validator),
-        ScalarFormatterComponent(source_key="data.values", dest_key="values", representation=val_rep),
-        ScalarFormatterComponent(source_key="data.returns", dest_key="returns", representation=val_rep),
+        ScalarFormatterComponent(source_key="data.values", dest_key="values", representation=val_rep, semantic_type=ValueEstimate),
+        ScalarFormatterComponent(source_key="data.returns", dest_key="returns", representation=val_rep, semantic_type=ValueTarget),
         policy_loss,
         value_loss,
         LossAggregatorComponent(loss_weights={"policy_loss": 1.0, "value_loss": 1.0}),
@@ -163,10 +177,19 @@ def make_ppo_learner(
         ),
     ]
 
-    if target_kl is not None:
-        components.append(MetricEarlyStopComponent(threshold=target_kl))
+    initial_keys = {
+        Key("data.observations", Observation),
+        Key("data.actions", Action),
+        Key("data.rewards", Reward),
+        Key("data.dones", Done),
+        Key("data.values", ValueEstimate),
+        Key("data.old_log_probs", LogProb),
+        Key("data.advantages", Advantage),
+        Key("data.returns", ValueTarget),
+        Key("data.legal_moves_masks", Mask),
+    }
 
-    return BlackboardEngine(components=components, device=device)
+    return BlackboardEngine(components=components, initial_keys=initial_keys, device=device)
 
 
 def make_ppo_actor_engine(

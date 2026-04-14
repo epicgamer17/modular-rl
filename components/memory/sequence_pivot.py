@@ -99,9 +99,7 @@ class VectorToSequencePivotComponent(PipelineComponent):
             episode_start_time if episode_start_time is not None else time.time()
         )
 
-    @property
-    def requires(self) -> Set[Key]:
-        return {
+        self._requires = {
             Key("data.obs", Observation),
             Key("meta.actions", Action),
             Key("data.rewards", Reward),
@@ -109,13 +107,38 @@ class VectorToSequencePivotComponent(PipelineComponent):
             Key("data.truncations", Done),
             Key("data.next_infos", SemanticType),
         }
+        self._provides = {Key("meta.completed_sequences", SemanticType): "new"}
 
     @property
-    def provides(self) -> Set[Key]:
-        return {Key("meta.completed_sequences", SemanticType)}
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Dict[Key, str]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures all required batch inputs exist and have matching shapes."""
+        obs_tensor = blackboard.data.get("obs")
+        assert obs_tensor is not None, (
+            "VectorToSequencePivotComponent: 'obs' missing from blackboard.data"
+        )
+        actions = blackboard.meta.get("actions")
+        assert actions is not None, (
+            "VectorToSequencePivotComponent: 'actions' missing from blackboard.meta"
+        )
+        assert len(actions) == self.num_envs, (
+            f"VectorToSequencePivotComponent: actions length {len(actions)} != num_envs {self.num_envs}"
+        )
+        assert blackboard.data.get("rewards") is not None, (
+            "VectorToSequencePivotComponent: 'rewards' missing from blackboard.data"
+        )
+        assert blackboard.data.get("terminals") is not None, (
+            "VectorToSequencePivotComponent: 'terminals' missing from blackboard.data"
+        )
+        assert blackboard.data.get("truncations") is not None, (
+            "VectorToSequencePivotComponent: 'truncations' missing from blackboard.data"
+        )
 
     # ------------------------------------------------------------------
     # PipelineComponent interface
@@ -139,41 +162,16 @@ class VectorToSequencePivotComponent(PipelineComponent):
             AssertionError: If any required Blackboard key is missing or has
                 an unexpected shape.
         """
-        # ---- Read required inputs ----------------------------------------
-        obs_tensor = blackboard.data.get("obs")
-        assert obs_tensor is not None, (
-            "VectorToSequencePivotComponent: 'obs' missing from blackboard.data. "
-            "PufferObservationComponent must run before this component."
-        )
+        # ---- Read required inputs (validated by validate()) ----------------
+        obs_tensor = blackboard.data["obs"]
 
         infos: List[Dict[str, Any]] = blackboard.data.get("infos") or [
             {} for _ in range(self.num_envs)
         ]
-        actions: np.ndarray = blackboard.meta.get("actions")  # type: ignore[assignment]
-        assert actions is not None, (
-            "VectorToSequencePivotComponent: 'actions' missing from blackboard.meta. "
-            "An action-selection component must write actions before the pivot."
-        )
-        assert len(actions) == self.num_envs, (
-            f"VectorToSequencePivotComponent: actions length {len(actions)} "
-            f"!= num_envs {self.num_envs}."
-        )
-
-        rewards: np.ndarray = blackboard.data.get("rewards")  # type: ignore[assignment]
-        assert rewards is not None, (
-            "VectorToSequencePivotComponent: 'rewards' missing from blackboard.data. "
-            "PufferStepComponent must run before this component."
-        )
-
-        terminals: np.ndarray = blackboard.data.get("terminals")  # type: ignore[assignment]
-        assert terminals is not None, (
-            "VectorToSequencePivotComponent: 'terminals' missing from blackboard.data."
-        )
-
-        truncations: np.ndarray = blackboard.data.get("truncations")  # type: ignore[assignment]
-        assert truncations is not None, (
-            "VectorToSequencePivotComponent: 'truncations' missing from blackboard.data."
-        )
+        actions: np.ndarray = blackboard.meta["actions"]  # type: ignore[assignment]
+        rewards: np.ndarray = blackboard.data["rewards"]  # type: ignore[assignment]
+        terminals: np.ndarray = blackboard.data["terminals"]  # type: ignore[assignment]
+        truncations: np.ndarray = blackboard.data["truncations"]  # type: ignore[assignment]
 
         next_infos: List[Dict[str, Any]] = blackboard.data.get("next_infos") or [
             {} for _ in range(self.num_envs)

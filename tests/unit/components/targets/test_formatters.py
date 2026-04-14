@@ -2,6 +2,7 @@ import pytest
 import torch
 import numpy as np
 from core import Blackboard
+from core.blackboard_engine import apply_updates
 from components.targets.formatters import OneHotPolicyTargetComponent
 
 pytestmark = pytest.mark.unit
@@ -21,7 +22,8 @@ def test_one_hot_policy_target_component_standard():
     actions = torch.randint(0, num_actions, (B, T))
     blackboard.data["actions"] = actions
     
-    component.execute(blackboard)
+    outputs = component.execute(blackboard)
+    apply_updates(blackboard, outputs)
     
     # Check output
     assert "policies" in blackboard.targets
@@ -53,7 +55,8 @@ def test_one_hot_policy_target_component_unsqeezed():
     actions = torch.randint(0, num_actions, (B, T, 1))
     blackboard.data["actions"] = actions
     
-    component.execute(blackboard)
+    outputs = component.execute(blackboard)
+    apply_updates(blackboard, outputs)
     
     policies = blackboard.targets["policies"]
     assert policies.shape == (B, T, num_actions)
@@ -71,7 +74,8 @@ def test_one_hot_policy_target_custom_keys():
     actions = torch.tensor([[0, 1], [9, 5]]) # [2, 2]
     blackboard.data["my_actions"] = actions
     
-    component.execute(blackboard)
+    outputs = component.execute(blackboard)
+    apply_updates(blackboard, outputs)
     
     assert "my_policy" in blackboard.targets
     assert blackboard.targets["my_policy"].shape == (2, 2, 10)

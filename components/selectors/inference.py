@@ -3,7 +3,7 @@ import time
 from typing import Any, Optional, Tuple, TYPE_CHECKING, Set, Dict
 
 from core import PipelineComponent, Blackboard
-from core.contracts import Key, Observation, ValueEstimate, PolicyLogits, Reward, ToPlay, SemanticType
+from core.contracts import Key, Observation, ValueEstimate, PolicyLogits, Reward, ToPlay, SemanticType, Metric
 
 if TYPE_CHECKING:
     from modules.agent_nets.base import BaseAgentNetwork
@@ -23,24 +23,31 @@ class NetworkInferenceComponent(PipelineComponent):
         self.agent_network = agent_network
         self.input_shape = input_shape
 
-    @property
-    def requires(self) -> Set[Key]:
-        return {Key("data.obs", Observation)}
-
-    @property
-    def provides(self) -> Set[Key]:
-        return {
-            Key("predictions.q_values", ValueEstimate),
-            Key("predictions.logits", PolicyLogits),
-            Key("predictions.probs", PolicyLogits),
-            Key("predictions.value", ValueEstimate),
-            Key("predictions.reward", Reward),
-            Key("predictions.to_play", ToPlay),
-            Key("predictions.extra_metadata", SemanticType),
+        self._requires = {Key("data.obs", Observation)}
+        self._provides = {
+            Key("predictions.q_values", ValueEstimate): "optional",
+            Key("predictions.logits", PolicyLogits): "optional",
+            Key("predictions.probs", PolicyLogits): "optional",
+            Key("predictions.value", ValueEstimate): "optional",
+            Key("predictions.reward", Reward): "optional",
+            Key("predictions.to_play", ToPlay): "optional",
+            Key("predictions.extra_metadata", SemanticType): "optional",
         }
 
+    @property
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Dict[Key, str]:
+        return self._provides
+
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures observation tensor exists."""
+        from core.validation import assert_is_tensor
+        obs = blackboard.data.get("obs")
+        if obs is not None and not blackboard.data.get("done", False):
+            assert_is_tensor(obs, msg="for NetworkInferenceComponent")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         obs = blackboard.data["obs"]

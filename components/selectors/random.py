@@ -54,17 +54,27 @@ class RandomSelectorComponent(PipelineComponent):
 
     def __init__(self, num_actions: Optional[int] = None) -> None:
         self.num_actions = num_actions
+        self._requires = {Key("data.info", SemanticType)}
+        self._provides = {Key("meta.action", Action): "new"}
 
     @property
     def requires(self) -> Set[Key]:
-        return {Key("data.info", SemanticType)}
+        return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
-        return {Key("meta.action", Action)}
+    def provides(self) -> Dict[Key, str]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures info dict is accessible and legal moves or num_actions is available."""
+        info = blackboard.data.get("info", {})
+        if info is None:
+            info = {}
+        legal_moves = info.get("legal_moves", [])
+        if not legal_moves:
+            assert self.num_actions is not None, (
+                "RandomSelectorComponent: no legal moves in info and num_actions not provided"
+            )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """

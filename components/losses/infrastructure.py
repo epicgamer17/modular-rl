@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional, Set, Dict as TypedDict
 import torch
 import torch.nn as nn
 from core import PipelineComponent, Blackboard
-from core.contracts import Key, LossScalar, SemanticType
+from core.contracts import Key, LossScalar, SemanticType, Epsilon, Metric, Observation
 from core.validation import assert_in_blackboard
 from modules.utils import scale_gradient
 
@@ -24,17 +24,18 @@ class EpsilonDecayComponent(PipelineComponent):
         self.decay_steps = decay_steps
         self.current_step = 0
         self._requires = set()
-        self._provides = {Key("meta.epsilon", SemanticType)}
+        self._provides = {Key("meta.epsilon", Epsilon): "new"}
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
+        """No inputs to validate; this component is a pure generator."""
         pass
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
@@ -114,12 +115,11 @@ class LossAggregatorComponent(PipelineComponent):
     def __init__(self, loss_weights: Dict[str, float], optimizer_key: str = "default"):
         self.loss_weights = loss_weights
         self.optimizer_key = optimizer_key
-        
+
         # Deterministic contracts computed at initialization
         self._requires = {Key(f"losses.{name}", LossScalar) for name in self.loss_weights.keys()}
         self._provides = {
-            Key(f"losses.total_loss.{self.optimizer_key}", LossScalar): "new",
-            Key("losses.total_loss", SemanticType): "overwrite" if "total_loss" in self.loss_weights else "new"
+            Key("losses.total_loss", LossScalar): "new",
         }
 
     @property
@@ -131,7 +131,13 @@ class LossAggregatorComponent(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures at least some of the declared loss keys exist."""
+        available = set(blackboard.losses.keys()) if blackboard.losses else set()
+        declared = set(self.loss_weights.keys())
+        assert available & declared, (
+            f"LossAggregatorComponent: none of the declared losses {declared} "
+            f"found in blackboard.losses (available: {available})"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if not blackboard.losses:
@@ -150,9 +156,9 @@ class LossAggregatorComponent(PipelineComponent):
         if total_loss is None:
             return {}
 
+        # Return as a dictionary under a single key to avoid write_blackboard_path overwriting logic
         return {
-            f"losses.total_loss.{self.optimizer_key}": total_loss,
-            "losses.total_loss": total_loss # Also keep it simple if needed
+            "losses.total_loss": {self.optimizer_key: total_loss}
         }
 
 
@@ -170,15 +176,15 @@ class OptimizerStepComponent(PipelineComponent):
         self.agent_network = agent_network
         self.optimizers = optimizers
         self.max_grad_norm = max_grad_norm
-        self._requires = {Key("losses.total_loss", SemanticType)}
-        self._provides = set()
+        self._requires = {Key("losses.total_loss", LossScalar)}
+        self._provides = {Key("meta.optimizer_steps", Metric): "optional"}
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -200,7 +206,7 @@ class OptimizerStepComponent(PipelineComponent):
 
             opt.step()
         
-        return {}
+        return {"meta.optimizer_steps": 1}
 
 
 class ShapeValidator:
@@ -253,18 +259,19 @@ class ShapeValidatorComponent(PipelineComponent):
     def __init__(self, validator: ShapeValidator):
         self.validator = validator
         self._requires = {Key("predictions", SemanticType), Key("targets", SemanticType)}
-        self._provides = set()
+        self._provides = {}
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Delegates shape validation to the ShapeValidator."""
+        self.validator.validate(blackboard.predictions, blackboard.targets)
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         self.validator.validate(blackboard.predictions, blackboard.targets)
@@ -276,22 +283,27 @@ class MetricEarlyStopComponent(PipelineComponent):
     def __init__(self, threshold: float, metric_key: str = "approx_kl"):
         self.metric_key = metric_key
         self.threshold = threshold
-        self._requires = {
-            Key(f"meta.{self.metric_key}", SemanticType),
-            Key(f"losses.{self.metric_key}", SemanticType)
-        }
-        self._provides = {Key("meta.stop_execution", SemanticType)}
+        # Only require meta key - the execute checks both meta and losses as fallback
+        self._requires = {Key(f"meta.{self.metric_key}", Metric)}
+        self._provides = {Key("meta.stop_execution", Metric): "optional"}
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures at least one source for the metric exists."""
+        val = blackboard.meta.get(self.metric_key)
+        if val is None:
+            val = blackboard.losses.get(self.metric_key)
+        assert val is not None, (
+            f"MetricEarlyStopComponent: metric '{self.metric_key}' not found "
+            f"in blackboard.meta or blackboard.losses"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         # Check both meta and losses for the metric
@@ -316,17 +328,18 @@ class MPSCacheClearComponent(PipelineComponent):
         self.interval = interval
         self.step_count = 0
         self._requires = set()
-        self._provides = set()
+        self._provides = {}
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
+        """No inputs to validate; this component is a side-effect-only utility."""
         pass
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
@@ -342,19 +355,20 @@ class DeviceTransferComponent(PipelineComponent):
 
     def __init__(self, device: torch.device):
         self.device = device
-        self._requires = {Key("data", SemanticType)}
-        self._provides = {Key("data", SemanticType)}
+        self._requires = {Key("data", Observation)}
+        self._provides = {Key("data", Observation): "overwrite"}
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures data dict exists and is non-empty."""
+        assert blackboard.data, "DeviceTransferComponent: blackboard.data is empty"
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         updates = {}

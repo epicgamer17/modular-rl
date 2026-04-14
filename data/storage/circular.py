@@ -153,16 +153,10 @@ class ModularReplayBuffer:
         return idx
 
     def store_aggregate(self, sequence_object, **kwargs):
-        """
-        Stores a complete sequence/trajectory.
-        Uses process_sequence instead of process_single.
-        """
-        # print("Storing aggregate")
         # 1. Process Sequence
         data = self.input_processor.process_sequence(sequence_object, **kwargs)
 
         if data is None:
-            # print("Data none returning")
             return
 
         # 2. Handle List of Transitions (e.g. N-Step, PPO/GAE)

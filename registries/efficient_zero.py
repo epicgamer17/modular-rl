@@ -214,6 +214,23 @@ def make_efficient_zero_learner(
     priority_comp = ExpectedValueErrorPriorityComponent(value_representation=val_rep)
     buffer_update = PriorityUpdateComponent(priority_update_fn=replay_buffer.update_priorities)
 
+    from core.contracts import Key, Observation, Action, Reward, ValueTarget, PolicyLogits, ToPlay, SemanticType, Mask, Done
+    initial_keys = {
+        Key("data.observations", Observation),
+        Key("data.actions", Action),
+        Key("data.rewards", Reward),
+        Key("data.values", ValueTarget),
+        Key("data.policies", PolicyLogits),
+        Key("data.to_plays", ToPlay),
+        Key("data.terminated", SemanticType),
+        Key("data.truncated", SemanticType),
+        Key("data.dones", Done),
+        Key("data.legal_masks", Mask),
+        Key("data.reward_mask", Mask),
+        Key("data.to_play_mask", Mask),
+        Key("data.policy_mask", Mask),
+    }
+
     v_loss = ValueLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
     p_loss = PolicyLoss(loss_fn=nn.functional.cross_entropy, loss_factor=1.0)
     r_loss = RewardLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
@@ -230,15 +247,15 @@ def make_efficient_zero_learner(
             SequencePadderComponent(
                 unroll_steps,
                 keys=[
-                    "data.values",
-                    "data.rewards",
-                    "data.policies",
-                    "data.actions",
-                    "data.to_plays",
-                    "data.reward_mask",
-                    "data.to_play_mask",
-                    "data.policy_mask",
-                    "data.dones",
+                    Key("data.values", ValueTarget),
+                    Key("data.rewards", Reward),
+                    Key("data.policies", PolicyLogits),
+                    Key("data.actions", Action),
+                    Key("data.to_plays", ToPlay),
+                    Key("data.reward_mask", Mask),
+                    Key("data.to_play_mask", Mask),
+                    Key("data.policy_mask", Mask),
+                    Key("data.dones", SemanticType),
                 ],
             ),
             SequenceInfrastructureComponent(unroll_steps),

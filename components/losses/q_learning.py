@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from typing import Any, Optional, Dict, Union, List, Set
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import Key, PolicyLogits, ValueEstimate, Action, ValueTarget, LossScalar, SemanticType
+from core.contracts import Key, PolicyLogits, ValueEstimate, Action, ValueTarget, LossScalar, Metric
 from .infrastructure import apply_infrastructure
 
 
@@ -36,25 +36,45 @@ class QBootstrappingLoss(PipelineComponent):
         self.actions_key = actions_key
         self.name = name
 
-    @property
-    def requires(self) -> Set[Key]:
-        return {
+        # Deterministic contracts computed at initialization
+        self._requires = {
             Key(f"predictions.{self.pred_key}", PolicyLogits if self.is_categorical else ValueEstimate),
             Key(self.actions_key, Action),
             Key(self.target_key, PolicyLogits if self.is_categorical else ValueTarget)
         }
-
-    @property
-    def provides(self) -> Set[Key]:
-        return {
-            Key(f"losses.{self.name}", LossScalar),
-            Key(f"meta.{self.name}", SemanticType)
+        self._provides = {
+            Key(f"losses.{self.name}", LossScalar): "new",
+            Key(f"meta.{self.name}", Metric): "new",
+            Key(f"meta.elementwise_losses.{self.name}", Metric): "new",
         }
 
+    @property
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Dict[Key, str]:
+        return self._provides
+
     def validate(self, blackboard: Blackboard) -> None:
+        """Ensures predictions, actions, and targets exist and are batch-aligned."""
+        from core.validation import assert_in_blackboard, assert_is_tensor, assert_same_batch
+        assert_in_blackboard(blackboard, f"predictions.{self.pred_key}")
+        assert_in_blackboard(blackboard, self.actions_key)
+        assert_in_blackboard(blackboard, self.target_key)
+
         q_preds = blackboard.predictions[self.pred_key]
         actions = resolve_blackboard_path(blackboard, self.actions_key)
-        assert q_preds.shape[:2] == actions.shape[:2], "Batch/Time mismatch in QBootstrappingLoss"
+        targets = resolve_blackboard_path(blackboard, self.target_key)
+
+        assert_is_tensor(q_preds, msg=f"in {self.name} (predictions)")
+        assert_is_tensor(actions, msg=f"in {self.name} (actions)")
+        assert_is_tensor(targets, msg=f"in {self.name} (targets)")
+
+        assert q_preds.shape[:2] == actions.shape[:2], (
+            f"Batch/Time mismatch in {self.name}: preds {q_preds.shape[:2]} vs actions {actions.shape[:2]}"
+        )
+        assert_same_batch(q_preds, targets, msg=f"in {self.name}")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         q_preds = blackboard.predictions[self.pred_key]

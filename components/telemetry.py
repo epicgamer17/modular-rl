@@ -2,7 +2,7 @@ import time
 import torch
 from typing import Dict, Any, Optional, Set
 from core import PipelineComponent, Blackboard
-from core.contracts import Key, Reward, Done, LossScalar, SemanticType
+from core.contracts import Key, Reward, Done, LossScalar, SemanticType, Metric
 
 
 class TelemetryComponent(PipelineComponent):
@@ -19,21 +19,28 @@ class TelemetryComponent(PipelineComponent):
         self.episode_reward: Optional[torch.Tensor] = None
         self.episode_length: Optional[torch.Tensor] = None
 
-    @property
-    def requires(self) -> Set[Key]:
-        return {Key("data.reward", Reward), Key("data.done", Done)}
-
-    @property
-    def provides(self) -> Set[Key]:
-        return {
-            Key("meta.score", LossScalar),
-            Key("meta.episode_length", LossScalar),
-            Key("meta.fps", LossScalar),
-            Key("meta.running_reward", LossScalar),
+        # Deterministic contracts computed at initialization
+        self._requires = {Key("data.reward", Reward), Key("data.done", Done)}
+        self._provides = {
+            Key("meta.score", Metric): "optional",
+            Key("meta.episode_length", Metric): "optional",
+            Key("meta.fps", Metric): "optional",
+            Key("meta.running_reward", Metric): "new",
         }
 
+    @property
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Dict[Key, str]:
+        return self._provides
+
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures reward and done signals are accessible."""
+        assert blackboard.meta.get("reward") is not None or blackboard.data.get("reward") is not None, (
+            "TelemetryComponent: 'reward' not found in blackboard.meta or blackboard.data"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         # 1. Extraction and Normalization
@@ -71,11 +78,7 @@ class TelemetryComponent(PipelineComponent):
 
         # Env-level finishes: shape [B]
         any_done = done.any(dim=1)
-
-        outputs = {
-            "meta.running_reward": self.episode_reward.mean().item(),
-            "meta.running_length": self.episode_length.float().mean().item()
-        }
+        outputs = {}
 
         if any_done.any():
             indices = torch.where(any_done)[0]
@@ -108,6 +111,12 @@ class TelemetryComponent(PipelineComponent):
             self.episode_reward[indices] = 0.0
             self.episode_length[indices] = 0
 
+        # Update running stats for output after potential resets
+        outputs.update({
+            "meta.running_reward": self.episode_reward.mean().item(),
+            "meta.running_length": self.episode_length.float().mean().item()
+        })
+
         # Promote search metadata if available
         sm = blackboard.meta.get("search_metadata")
         if sm and isinstance(sm, dict):
@@ -126,15 +135,20 @@ class SequenceTerminatorComponent(PipelineComponent):
 
     Supports Universal Time Mandate: Triggers if ANY environment in a batch is done.
     """
+    def __init__(self):
+        self._requires = {Key("data.done", Done)}
+        self._provides = {Key("meta.stop_execution", Metric): "optional"}
+
     @property
     def requires(self) -> Set[Key]:
-        return {Key("data.done", Done)}
+        return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
-        return {Key("meta.stop_execution", SemanticType)}
+    def provides(self) -> Dict[Key, str]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
+        """No strict validation needed; component gracefully handles missing done signal."""
         pass
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:

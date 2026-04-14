@@ -387,7 +387,7 @@ def make_muzero_learner(
     priority_comp = ExpectedValueErrorPriorityComponent(value_representation=val_rep)
     buffer_update = PriorityUpdateComponent(priority_update_fn=replay_buffer.update_priorities)
 
-    from core.contracts import Observation, Action, Reward, ValueTarget, PolicyLogits, ToPlay, SemanticType
+    from core.contracts import Observation, Action, Reward, ValueTarget, PolicyLogits, ToPlay, SemanticType, Done, Mask
     learner_initial_keys = {
         Key("data.observations", Observation),
         Key("data.actions", Action),
@@ -397,8 +397,8 @@ def make_muzero_learner(
         Key("data.to_plays", ToPlay),
         Key("data.terminated", SemanticType),
         Key("data.truncated", SemanticType),
-        Key("data.dones", SemanticType),
-        Key("data.legal_masks", SemanticType),
+        Key("data.dones", Done),
+        Key("data.legal_masks", Mask),
         Key("data.reward_mask", Mask),
         Key("data.to_play_mask", Mask),
         Key("data.policy_mask", Mask),

@@ -4,7 +4,16 @@ from typing import Any, Set, Dict
 from core import PipelineComponent
 from core import Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import Key, PolicyLogits, ActionDistribution, Action, Advantage, LossScalar
+from core.contracts import (
+    Key,
+    PolicyLogits,
+    ActionDistribution,
+    Action,
+    Advantage,
+    LogProb,
+    LossScalar,
+    Metric,
+)
 from .infrastructure import apply_infrastructure
 from core.validation import assert_same_batch, assert_time_dim
 
@@ -32,60 +41,92 @@ class PolicyLoss(PipelineComponent):
         self.loss_factor = loss_factor
         self.name = name
         self.log_kl = log_kl
-        
+
         # Deterministic contracts computed at initialization
         self._requires = {
             Key("predictions.policies", PolicyLogits),
-            Key(self.target_key, PolicyLogits)
+            Key(self.target_key, PolicyLogits),
         }
-        self._provides = {Key(f"losses.{self.name}", LossScalar)}
+        self._provides = {
+            Key(f"losses.{self.name}", LossScalar): "new",
+            Key(f"meta.{self.name}", Metric): "new",
+            Key(f"meta.approx_kl", Metric): "optional",
+        }
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
+
+    @property
+    def constraints(self) -> list[str]:
+        return [
+            f"same_batch(predictions.policies, {self.target_key})",
+            f"time_aligned(predictions.policies, {self.target_key})",
+            f"feature_dim_match(predictions.policies, {self.target_key})",
+        ]
 
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures both prediction and target exist, are tensors, and aligned."""
-        from core.validation import assert_in_blackboard, assert_is_tensor, assert_same_batch
-        
+        from core.validation import (
+            assert_in_blackboard,
+            assert_is_tensor,
+            assert_same_batch,
+            assert_shape_sanity,
+        )
+
         assert_in_blackboard(blackboard, "predictions.policies")
         assert_in_blackboard(blackboard, self.target_key)
-        
+
         preds = blackboard.predictions["policies"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
-        
+
         assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
         assert_is_tensor(targets, msg=f"in {self.name} (targets)")
-        
+
         assert_same_batch(preds, targets, msg=f"in {self.name}")
+
+        # Rigorous shape checks
+        assert_shape_sanity(
+            preds, min_ndim=3, msg=f"Prediction {self.name} must have [B, T, K]"
+        )
+
+        # Hypothetical alignment for validation purposes
+        # TODO: enforce always time dimension some how.
+
+        check_targets = targets
+        if check_targets.ndim == preds.ndim - 1:
+            check_targets = check_targets.unsqueeze(1)
+
+        assert check_targets.shape == preds.shape, (
+            f"PolicyLoss Contract Violation: targets {targets.shape} (locally aligned to {check_targets.shape}) "
+            f"must match predictions {preds.shape}. Expected [B, T, K]."
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """Compute policy loss and write to losses."""
-        # execute() trusts validate() for basic existence and type
         preds = blackboard.predictions["policies"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
-        # TODO: enforce always time dimension some how.
 
-        # 2. Align targets to predictions time dimension if missing (e.g. from flat buffer)
+        # 1. Robust Time Alignment: Handle [B, K] -> [B, 1, K]
+        # This occurs when learner_inference adds T=1 but buffer remains flat.
         if targets.ndim == preds.ndim - 1:
             targets = targets.unsqueeze(1)
 
-        # 3. Enforce shape matching (strictly require distributions)
-        assert targets.shape == preds.shape, (
-            f"PolicyLoss Contract Violation: targets {targets.shape} must match "
-            f"predictions {preds.shape}. For index-based targets (BC), use "
-            f"OneHotPolicyTargetComponent first."
-        )
+        # 2. Flatten leads dimensions [B, T] into [N] for standard PyTorch loss functions
+        B, T = preds.shape[:2]
+        flat_preds = preds.flatten(0, 1)
         flat_targets = targets.flatten(0, 1)
 
-        raw_loss = self.loss_fn(preds.flatten(0, 1), flat_targets, reduction="none")
+        raw_loss = self.loss_fn(flat_preds, flat_targets, reduction="none")
+
+        # If loss_fn returned per-class loss (for distribution targets), sum it up
         if raw_loss.ndim > 1:
             raw_loss = raw_loss.sum(dim=-1)
-        B, T = preds.shape[:2]
+
         elementwise_loss = raw_loss.reshape(B, T) * self.loss_factor
 
         # Pass through infrastructure
@@ -93,7 +134,7 @@ class PolicyLoss(PipelineComponent):
 
         outputs = {
             f"losses.{self.name}": scalar_loss,
-            f"meta.{self.name}": scalar_loss.item()
+            f"meta.{self.name}": scalar_loss.item(),
         }
 
         # KL divergence logging (only meaningful for soft distribution targets)
@@ -127,46 +168,55 @@ class ClippedSurrogateLoss(PipelineComponent):
         self.old_log_probs_key = old_log_probs_key
         self.advantages_key = advantages_key
         self.name = name
-        
+
         # Deterministic contracts computed at initialization
         self._requires = {
             Key("predictions.policies", PolicyLogits),
             Key(self.actions_key, Action),
-            Key(self.old_log_probs_key, Advantage),  # Use Advantage as a stand-in for LogProbs if not explicit
+            Key(self.old_log_probs_key, LogProb),
             Key(self.advantages_key, Advantage),
         }
-        self._provides = {Key(f"losses.{self.name}", LossScalar)}
+        self._provides = {
+            Key(f"losses.{self.name}", LossScalar): "new",
+            Key(f"meta.{self.name}", Metric): "new",
+            Key(f"meta.approx_kl", Metric): "new",
+        }
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures all required tensors for PPO surrogate loss exist and match."""
-        from core.validation import assert_in_blackboard, assert_is_tensor, assert_same_batch, assert_time_dim
-        
+        from core.validation import (
+            assert_in_blackboard,
+            assert_is_tensor,
+            assert_same_batch,
+            assert_time_dim,
+        )
+
         # Existence checks
         assert_in_blackboard(blackboard, "predictions.policies")
         assert_in_blackboard(blackboard, self.actions_key)
         assert_in_blackboard(blackboard, self.old_log_probs_key)
         assert_in_blackboard(blackboard, self.advantages_key)
-        
+
         # Extraction for refined checks
         logits = blackboard.predictions["policies"]
         actions = resolve_blackboard_path(blackboard, self.actions_key)
         old_log_probs = resolve_blackboard_path(blackboard, self.old_log_probs_key)
         advantages = resolve_blackboard_path(blackboard, self.advantages_key)
-        
+
         # Type and Shape alignment
         assert_is_tensor(logits, msg=f"in {self.name} (logits)")
         assert_is_tensor(actions, msg=f"in {self.name} (actions)")
         assert_is_tensor(old_log_probs, msg=f"in {self.name} (old_log_probs)")
         assert_is_tensor(advantages, msg=f"in {self.name} (advantages)")
-        
+
         B, T = logits.shape[:2]
         assert_same_batch(logits, actions, msg=f"in {self.name}")
         assert_time_dim(actions, T, msg=f"in {self.name}")
@@ -196,7 +246,7 @@ class ClippedSurrogateLoss(PipelineComponent):
 
         outputs = {
             f"losses.{self.name}": scalar_loss,
-            f"meta.{self.name}": scalar_loss.item()
+            f"meta.{self.name}": scalar_loss.item(),
         }
 
         with torch.no_grad():

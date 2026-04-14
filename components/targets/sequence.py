@@ -1,8 +1,8 @@
 import torch
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import Key, ValueTarget, Reward, Action, Mask, Return, ToPlay, SemanticType, PolicyLogits
-from typing import List, Optional, Set, Dict
+from core.contracts import Key, ValueTarget, Reward, Action, Mask, Return, ToPlay, SemanticType, PolicyLogits, Weight, GradientScale
+from typing import Any, Dict, List, Optional, Set
 
 
 class SequencePadderComponent(PipelineComponent):
@@ -28,7 +28,18 @@ class SequencePadderComponent(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures at least one of the required keys exists and has correct time dimension."""
+        for k in self._keys:
+            try:
+                v = resolve_blackboard_path(blackboard, k.path)
+                if torch.is_tensor(v) and v.ndim >= 2:
+                    current_len = v.shape[1]
+                    assert current_len in (self.T - 1, self.T), (
+                        f"SequencePadderComponent: key '{k.path}' has time dim {current_len}, "
+                        f"expected {self.T - 1} or {self.T}"
+                    )
+            except KeyError:
+                continue
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         updates = {}
@@ -86,7 +97,10 @@ class SequenceMaskComponent(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures is_same_game or equivalent mask source exists."""
+        assert "is_same_game" in blackboard.data or "value_mask" in blackboard.data, (
+            "SequenceMaskComponent: neither 'is_same_game' nor 'value_mask' found in blackboard.data"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         data = blackboard.data
@@ -153,8 +167,8 @@ class SequenceInfrastructureComponent(PipelineComponent):
         self.unroll_steps = unroll_steps
         self._requires = {Key("data.actions", Action)}
         self._provides = {
-            Key("meta.weights", Mask): "new",
-            Key("meta.gradient_scales", Reward): "new"
+            Key("meta.weights", Weight): "new",
+            Key("meta.gradient_scales", GradientScale): "new"
         }
 
     @property
@@ -166,7 +180,10 @@ class SequenceInfrastructureComponent(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures actions exist in data."""
+        assert "actions" in blackboard.data, (
+            "SequenceInfrastructureComponent: 'actions' missing from blackboard.data"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         data = blackboard.data
@@ -215,7 +232,12 @@ class ChanceTargetComponent(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures value targets exist and have a time dimension."""
+        from core.validation import assert_is_tensor
+        if "values" in blackboard.targets:
+            v = blackboard.targets["values"]
+            assert_is_tensor(v, msg="in ChanceTargetComponent (targets.values)")
+            assert v.ndim >= 2, f"ChanceTargetComponent: values must have [B, T], got {v.shape}"
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         # Stochastic MuZero shifts the value target by 1 step for chance nodes

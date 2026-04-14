@@ -195,6 +195,18 @@ def make_rainbow_learner(
     priority_comp = LossPriorityComponent(loss_key="q_loss", reduction="max")
     buffer_update = PriorityUpdateComponent(priority_update_fn=replay_buffer.update_priorities)
 
+    from core.contracts import Key, Observation, Action, Reward, Done, Mask, SemanticType
+    initial_keys = {
+        Key("data.observations", Observation),
+        Key("data.actions", Action),
+        Key("data.rewards", Reward),
+        Key("data.next_observations", Observation),
+        Key("data.terminated", SemanticType),
+        Key("data.truncated", SemanticType),
+        Key("data.dones", Done),
+        Key("data.next_legal_moves_masks", Mask),
+    }
+
     return BlackboardEngine(
         components=[
             ForwardPassComponent(agent_network, None),
@@ -219,5 +231,6 @@ def make_rainbow_learner(
             ),
             ResetNoiseComponent(agent_network=agent_network),
         ],
+        initial_keys=initial_keys,
         device=device,
     )

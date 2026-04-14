@@ -101,14 +101,24 @@ class PlayerRoutingComponent(PipelineComponent):
         return r
 
     @property
-    def provides(self) -> Set[Key]:
-        p = set()
+    def provides(self) -> Dict[Key, str]:
+        p = {}
         for comps in self.player_components.values():
             for c in comps:
-                p.update(c.provides)
+                child_provides = c.provides
+                if isinstance(child_provides, dict):
+                    p.update(child_provides)
+                else:
+                    for k in child_provides:
+                        p[k] = "new"
         if self.default_components:
             for c in self.default_components:
-                p.update(c.provides)
+                child_provides = c.provides
+                if isinstance(child_provides, dict):
+                    p.update(child_provides)
+                else:
+                    for k in child_provides:
+                        p[k] = "new"
         return p
 
     def validate(self, blackboard: Blackboard) -> None:

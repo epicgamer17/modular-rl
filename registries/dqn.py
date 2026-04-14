@@ -142,6 +142,18 @@ def make_dqn_learner(
     """
     q_loss = QBootstrappingLoss(is_categorical=False, name="q_loss")
 
+    from core.contracts import Key, Observation, Action, Reward, Done, Mask, SemanticType
+    initial_keys = {
+        Key("data.observations", Observation),
+        Key("data.actions", Action),
+        Key("data.rewards", Reward),
+        Key("data.next_observations", Observation),
+        Key("data.terminated", SemanticType),
+        Key("data.truncated", SemanticType),
+        Key("data.dones", Done),
+        Key("data.next_legal_moves_masks", Mask),
+    }
+
     return BlackboardEngine(
         components=[
             ForwardPassComponent(agent_network, None),
@@ -157,5 +169,6 @@ def make_dqn_learner(
                 max_grad_norm=clip_norm,
             ),
         ],
+        initial_keys=initial_keys,
         device=device,
     )

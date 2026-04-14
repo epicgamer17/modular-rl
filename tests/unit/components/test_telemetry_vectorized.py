@@ -1,6 +1,7 @@
 import torch
 import pytest
 from core.blackboard import Blackboard
+from core.blackboard_engine import apply_updates
 from components.telemetry import TelemetryComponent, SequenceTerminatorComponent
 
 pytestmark = pytest.mark.unit
@@ -13,7 +14,8 @@ def test_telemetry_scalar_consistency():
     # Step 1
     blackboard.meta["reward"] = 1.0
     blackboard.meta["done"] = False
-    telemetry.execute(blackboard)
+    outputs = telemetry.execute(blackboard)
+    apply_updates(blackboard, outputs)
     
     assert blackboard.meta["running_reward"] == 1.0
     assert blackboard.meta["running_length"] == 1.0
@@ -22,7 +24,8 @@ def test_telemetry_scalar_consistency():
     # Step 2 (Finish)
     blackboard.meta["reward"] = 2.0
     blackboard.meta["done"] = True
-    telemetry.execute(blackboard)
+    outputs = telemetry.execute(blackboard)
+    apply_updates(blackboard, outputs)
     
     assert blackboard.meta["score"] == 3.0
     assert blackboard.meta["episode_length"] == 2.0
@@ -38,14 +41,16 @@ def test_telemetry_vectorized_reward():
     # Step 1: Both continue
     blackboard.meta["reward"] = torch.tensor([1.0, 10.0])
     blackboard.meta["done"] = torch.tensor([False, False])
-    telemetry.execute(blackboard)
+    outputs = telemetry.execute(blackboard)
+    apply_updates(blackboard, outputs)
     
     assert blackboard.meta["running_reward"] == 5.5  # (1 + 10) / 2
     
     # Step 2: Env 0 finishes, Env 1 continues
     blackboard.meta["reward"] = torch.tensor([1.0, 10.0])
     blackboard.meta["done"] = torch.tensor([True, False])
-    telemetry.execute(blackboard)
+    outputs = telemetry.execute(blackboard)
+    apply_updates(blackboard, outputs)
     
     # Env 0 finished with 2.0. Env 1 is at 20.0
     assert blackboard.meta["score"] == 2.0
@@ -55,7 +60,8 @@ def test_telemetry_vectorized_reward():
     # Step 3: Env 1 finishes
     blackboard.meta["reward"] = torch.tensor([1.0, 10.0])
     blackboard.meta["done"] = torch.tensor([False, True])
-    telemetry.execute(blackboard)
+    outputs = telemetry.execute(blackboard)
+    apply_updates(blackboard, outputs)
     
     # Env 0 started new episode (reward=1.0). Env 1 finished with 30.0
     assert blackboard.meta["score"] == 30.0
@@ -75,7 +81,8 @@ def test_telemetry_universal_time_mandate():
     done[0, 1] = True
     blackboard.meta["done"] = done
     
-    telemetry.execute(blackboard)
+    outputs = telemetry.execute(blackboard)
+    apply_updates(blackboard, outputs)
     
     # Total rewards for step: Env 0 = 3.0, Env 1 = 3.0
     # But Env 0 finished, so score should be reported.
@@ -92,15 +99,18 @@ def test_sequence_terminator_vectorized():
     
     # Scalar False
     blackboard.meta["done"] = False
-    terminator.execute(blackboard)
+    outputs = terminator.execute(blackboard)
+    apply_updates(blackboard, outputs)
     assert not blackboard.meta.get("stop_execution")
     
     # Vector False
     blackboard.meta["done"] = torch.tensor([False, False])
-    terminator.execute(blackboard)
+    outputs = terminator.execute(blackboard)
+    apply_updates(blackboard, outputs)
     assert not blackboard.meta.get("stop_execution")
     
     # Vector True
     blackboard.meta["done"] = torch.tensor([False, True])
-    terminator.execute(blackboard)
+    outputs = terminator.execute(blackboard)
+    apply_updates(blackboard, outputs)
     assert blackboard.meta["stop_execution"] is True

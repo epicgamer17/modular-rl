@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import pytest
 from core import Blackboard
+from core.blackboard_engine import apply_updates
 from components.search.mcts_component import MCTSSearchComponent
 from components.selectors.discrete import ActionSelectorComponent
 from components.memory.buffer import SequenceBufferComponent
@@ -74,7 +75,8 @@ def test_search_selector_buffer_alignment():
     )
     
     # 2. Execute Search
-    mcts_comp.execute(blackboard)
+    updates = mcts_comp.execute(blackboard)
+    apply_updates(blackboard, updates)
     
     # Assert Search Contract Keys
     assert "search_policy" in blackboard.predictions
@@ -82,7 +84,8 @@ def test_search_selector_buffer_alignment():
     assert "search_value" in blackboard.predictions
     
     # 3. Execute Selector
-    selector_comp.execute(blackboard)
+    updates = selector_comp.execute(blackboard)
+    apply_updates(blackboard, updates)
     
     # Assert Selector DOES NOT bridge targets anymore
     meta = blackboard.meta["action_metadata"]
@@ -98,7 +101,8 @@ def test_search_selector_buffer_alignment():
     blackboard.meta["next_info"] = {}
     blackboard.data["next_obs"] = torch.randn(1, 10)
     
-    buffer_comp.execute(blackboard)
+    updates = buffer_comp.execute(blackboard)
+    apply_updates(blackboard, updates)
     
     # Assert Buffer Storage alignment
     assert len(buffer.stored_data) == 1

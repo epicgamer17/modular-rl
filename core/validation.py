@@ -59,7 +59,16 @@ def assert_in_blackboard(bb: "Blackboard", key: str, msg: str = ""):
         except (KeyError, AttributeError):
             assert False, f"Key {key} not found in blackboard {msg}"
     else:
-        assert hasattr(bb, parts[0]) or parts[0] in bb.data or parts[0] in bb.meta, f"Key {key} not found in blackboard {msg}"
+        # Unqualified keys should be searched in targets, data, predictions, meta, and losses
+        found = (
+            hasattr(bb, parts[0]) or 
+            parts[0] in bb.targets or 
+            parts[0] in bb.data or 
+            parts[0] in bb.predictions or 
+            parts[0] in bb.meta or 
+            parts[0] in bb.losses
+        )
+        assert found, f"Key {key} not found in blackboard {msg}"
 
 def assert_is_tensor(obj: Any, msg: str = ""):
     """Asserts that an object is a torch.Tensor."""

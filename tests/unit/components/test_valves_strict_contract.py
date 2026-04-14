@@ -14,8 +14,8 @@ def test_gradient_scale_valve_strict_missing_key():
     # predictions is empty
     valve = GradientScaleValve(key="missing_tensor", scale=0.5)
     
-    with pytest.raises(KeyError) as excinfo:
-        valve.execute(blackboard)
+    with pytest.raises(AssertionError) as excinfo:
+        valve.validate(blackboard)
     
     assert "missing_tensor" in str(excinfo.value)
     assert "[GradientScaleValve]" in str(excinfo.value)
@@ -32,8 +32,8 @@ def test_gradient_scale_valve_strict_no_grad():
     
     valve = GradientScaleValve(key="flat_tensor", scale=0.5)
     
-    with pytest.raises(RuntimeError) as excinfo:
-        valve.execute(blackboard)
+    with pytest.raises(AssertionError) as excinfo:
+        valve.validate(blackboard)
     
     assert "detached" in str(excinfo.value)
     assert "[GradientScaleValve]" in str(excinfo.value)

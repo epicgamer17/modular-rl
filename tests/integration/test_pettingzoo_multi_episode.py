@@ -15,6 +15,7 @@ import pytest
 import numpy as np
 
 from core import Blackboard
+from core.blackboard_engine import apply_updates
 from components.environments.pettingzoo import (
     PettingZooObservationComponent,
     PettingZooStepComponent,
@@ -36,7 +37,8 @@ def _play_one_episode(obs_comp, step_comp):
     actions_taken = 0
     for _ in range(50):  # safety limit
         bb = Blackboard()
-        obs_comp.execute(bb)
+        updates = obs_comp.execute(bb)
+        apply_updates(bb, updates)
 
         # MCTSSearchComponent would check done here and set stop_execution
         if bb.data.get("done") or bb.data.get("terminated"):
@@ -51,7 +53,8 @@ def _play_one_episode(obs_comp, step_comp):
         action = np.random.choice(legal) if legal else 0
 
         bb.meta["action"] = action
-        step_comp.execute(bb)
+        updates = step_comp.execute(bb)
+        apply_updates(bb, updates)
         actions_taken += 1
 
         # The step component sets obs_comp.done when the game ends.
@@ -97,7 +100,8 @@ def test_done_flag_lifecycle():
 
     # First tick of the next episode — obs_comp should reset and clear done
     bb = Blackboard()
-    obs_comp.execute(bb)
+    updates = obs_comp.execute(bb)
+    apply_updates(bb, updates)
     assert obs_comp.done is False, "done flag should be False after env reset"
     assert bb.data["done"] is False, "new episode should not start as done"
 
@@ -114,7 +118,8 @@ def test_consecutive_episodes_produce_valid_observations():
 
         # Start the next episode and check the first observation is valid
         bb = Blackboard()
-        obs_comp.execute(bb)
+        updates = obs_comp.execute(bb)
+        apply_updates(bb, updates)
         obs = bb.data.get("obs")
         assert obs is not None, f"Episode {episode+1} started with None observation"
         assert obs.shape[-2:] == (3, 3), (

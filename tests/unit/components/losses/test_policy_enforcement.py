@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from core import Blackboard
+from core.blackboard_engine import apply_updates
 from components.losses.policy import PolicyLoss
 from components.targets.formatters import OneHotPolicyTargetComponent
 
@@ -27,7 +28,7 @@ def test_policy_loss_enforcement_fail_on_indices():
     
     # Should raise contract violation
     with pytest.raises(AssertionError, match="PolicyLoss Contract Violation"):
-        policy_loss_comp.execute(blackboard)
+        policy_loss_comp.validate(blackboard)
 
 def test_policy_loss_enforcement_success_with_one_hot_component():
     """PolicyLoss should succeed when OneHotPolicyTargetComponent is used first."""
@@ -45,14 +46,16 @@ def test_policy_loss_enforcement_success_with_one_hot_component():
     
     # 3. Use OneHotPolicyTargetComponent to generate one-hot [B, T, K] distribution
     target_comp = OneHotPolicyTargetComponent(num_actions=K)
-    target_comp.execute(blackboard)
+    outputs = target_comp.execute(blackboard)
+    apply_updates(blackboard, outputs)
     
     # 4. Use PolicyLoss (should accept the one-hot distribution)
     loss_fn = F.cross_entropy
     policy_loss_comp = PolicyLoss(loss_fn=loss_fn)
     
     # Should NOT raise AssertionError
-    policy_loss_comp.execute(blackboard)
+    outputs = policy_loss_comp.execute(blackboard)
+    apply_updates(blackboard, outputs)
     
     assert "policy_loss" in blackboard.losses
     assert blackboard.losses["policy_loss"].item() > 0
@@ -72,12 +75,14 @@ def test_policy_loss_kl_divergence_check():
     blackboard.predictions["policies"] = preds
     
     target_comp = OneHotPolicyTargetComponent(num_actions=K)
-    target_comp.execute(blackboard)
+    target_outputs = target_comp.execute(blackboard)
+    apply_updates(blackboard, target_outputs)
     
     loss_fn = F.cross_entropy
     policy_loss_comp = PolicyLoss(loss_fn=loss_fn, log_kl=True)
     
-    policy_loss_comp.execute(blackboard)
+    outputs = policy_loss_comp.execute(blackboard)
+    apply_updates(blackboard, outputs)
     
     # KL between one-hot [1, 0, 0] and uniform [1/3, 1/3, 1/3]
     # KL = sum(p * (log p - log q))

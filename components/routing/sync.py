@@ -1,3 +1,4 @@
+import torch
 from typing import Callable, TYPE_CHECKING, Set, Dict, Any
 from core import PipelineComponent, Blackboard
 from core.contracts import Key, SemanticType
@@ -22,16 +23,22 @@ class TargetNetworkSyncComponent(PipelineComponent):
         self.ema_beta = ema_beta
         self._step_counter = 0
 
+        self._requires = {Key("meta.agent_network", SemanticType)}
+        self._provides = {}
+
     @property
     def requires(self) -> Set[Key]:
-        return {Key("meta.agent_network", SemanticType)}
+        return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
-        return set()
+    def provides(self) -> Dict[Key, str]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures source network is accessible."""
+        assert blackboard.meta.get("agent_network") is not None, (
+            "TargetNetworkSyncComponent: 'agent_network' missing from blackboard.meta"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         self._step_counter += 1
@@ -72,16 +79,19 @@ class WeightBroadcastComponent(PipelineComponent):
     ):
         self.agent_network = agent_network
         self.weight_broadcast_fn = weight_broadcast_fn
+        self._requires = set()
+        self._provides = {}
 
     @property
     def requires(self) -> Set[Key]:
-        return set()
+        return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
-        return set()
+    def provides(self) -> Dict[Key, str]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
+        """No inputs to validate; this component is a side-effect-only utility."""
         pass
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:

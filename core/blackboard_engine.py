@@ -132,7 +132,8 @@ class BlackboardEngine:
             
             # If this component produces something someone else needs, we must keep it.
             # OR if it's a telemetry/output component.
-            if (provides_paths & required_downstream) or is_telemetry:
+            # OR if it has NO provides (side-effect component like a buffer writer)
+            if (provides_paths & required_downstream) or is_telemetry or not provides_paths:
                 active_components.append(component)
                 # Add its requirements to the list of what we need from earlier components
                 required_downstream.update({k.path for k in component.requires})
@@ -182,9 +183,30 @@ class BlackboardEngine:
             }
             
             self.training_step += 1
+            
+            # Aggregate losses and metrics
+            log_losses = {}
+            total_losses = {}
+            for k, v in blackboard.losses.items():
+                if k.startswith("total_loss"):
+                    # Handle both flat total_loss and nested total_loss.opt_key
+                    if isinstance(v, dict):
+                        for sub_k, sub_v in v.items():
+                            total_losses[sub_k] = sub_v.item()
+                    else:
+                        val = v.item()
+                        total_losses["total"] = val
+                        # Backward compatibility for 'default' key if missing
+                        if "default" not in total_losses:
+                            total_losses["default"] = val
+                else:
+                    # Individual diagnostic losses
+                    if torch.is_tensor(v):
+                        log_losses[k] = v.item()
+            
             yield {
-                "losses": {k: v.item() for k, v in blackboard.losses.items() if k != "total_loss"},
-                "total_losses": {k: v.item() for k, v in blackboard.losses.get("total_loss", {}).items()},
+                "losses": log_losses,
+                "total_losses": total_losses,
                 "meta": blackboard.meta,
             }
 

@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from typing import Any, Dict, Optional, TYPE_CHECKING, Set
 from core import PipelineComponent, Blackboard
-from core.contracts import Key, Action, SemanticType, ValueEstimate, PolicyLogits
+from core.contracts import Key, Action, SemanticType, ValueEstimate, PolicyLogits, LogProb, Metric
 
 if TYPE_CHECKING:
     from utils.schedule import Schedule
@@ -120,6 +120,7 @@ class ActionSelectorComponent(PipelineComponent):
             Key("meta.action", Action): "new",
             Key("meta.action_tensor", Action): "new",
             Key("meta.action_metadata", SemanticType): "new",
+            Key("predictions.log_prob", LogProb): "optional",
         }
 
     @property
@@ -131,7 +132,14 @@ class ActionSelectorComponent(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures prediction input key exists in predictions."""
+        if blackboard.data.get("done", False):
+            return  # No validation needed when done
+        values = blackboard.predictions.get(self.input_key)
+        assert values is not None, (
+            f"ActionSelectorComponent: '{self.input_key}' not found in blackboard.predictions. "
+            f"Available keys: {list(blackboard.predictions.keys())}"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if blackboard.data.get("done", False):
@@ -276,7 +284,12 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures q_values exist in predictions."""
+        if blackboard.data.get("done", False):
+            return
+        assert blackboard.predictions.get("q_values") is not None, (
+            "EpsilonGreedySelectorComponent: 'q_values' not found in blackboard.predictions"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if blackboard.data.get("done", False):
@@ -381,7 +394,13 @@ class NFSPSelectorComponent(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures both BR and average strategy prediction keys exist."""
+        assert blackboard.predictions.get(f"{self.br_prefix}q_values") is not None, (
+            f"NFSPSelectorComponent: '{self.br_prefix}q_values' not found in blackboard.predictions"
+        )
+        assert blackboard.predictions.get(f"{self.avg_prefix}logits") is not None, (
+            f"NFSPSelectorComponent: '{self.avg_prefix}logits' not found in blackboard.predictions"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         import random

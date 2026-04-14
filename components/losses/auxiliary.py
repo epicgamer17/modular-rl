@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from typing import Any, Set, Dict
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import Key, Reward, ToPlay, PolicyLogits, ValueTarget, LossScalar, SemanticType, Observation
+from core.contracts import Key, Reward, ToPlay, PolicyLogits, ValueTarget, LossScalar, SemanticType, Observation, Metric
 from .infrastructure import apply_infrastructure
 from core.validation import assert_same_batch, assert_compatible_value
 
@@ -31,14 +31,17 @@ class RewardLoss(PipelineComponent):
             Key("predictions.rewards", Reward),
             Key(self.target_key, Reward)
         }
-        self._provides = {Key(f"losses.{self.name}", LossScalar)}
+        self._provides = {
+            Key(f"losses.{self.name}", LossScalar): "new",
+            Key(f"meta.{self.name}", Metric): "new",
+        }
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -97,20 +100,27 @@ class ToPlayLoss(PipelineComponent):
             Key("predictions.to_plays", ToPlay),
             Key(self.target_key, ToPlay)
         }
-        self._provides = {Key(f"losses.{self.name}", LossScalar)}
+        self._provides = {
+            Key(f"losses.{self.name}", LossScalar): "new",
+            Key(f"meta.{self.name}", Metric): "new",
+        }
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
+        """Ensures prediction and target exist and are batch-aligned."""
+        from core.validation import assert_is_tensor
         preds = blackboard.predictions.get("to_plays")
-        targets = resolve_blackboard_path(blackboard, self.target_key)
         if preds is not None:
+            assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
+            targets = resolve_blackboard_path(blackboard, self.target_key)
+            assert_is_tensor(targets, msg=f"in {self.name} (targets)")
             assert_same_batch(preds, targets, msg=f"in {self.name}")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
@@ -163,18 +173,26 @@ class ChanceQLoss(PipelineComponent):
             Key("predictions.chance_q_logits", PolicyLogits),
             Key(self.target_key, ValueTarget)
         }
-        self._provides = {Key(f"losses.{self.name}", LossScalar)}
+        self._provides = {
+            Key(f"losses.{self.name}", LossScalar): "new",
+            Key(f"meta.{self.name}", Metric): "new",
+        }
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures prediction logits and target exist."""
+        from core.validation import assert_in_blackboard, assert_is_tensor
+        assert_in_blackboard(blackboard, "predictions.chance_q_logits")
+        assert_in_blackboard(blackboard, self.target_key)
+        preds = blackboard.predictions["chance_q_logits"]
+        assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         try:
@@ -225,18 +243,28 @@ class ConsistencyLoss(PipelineComponent):
             Key("predictions.projected_latents", SemanticType),
             Key("targets.consistency_targets", SemanticType)
         }
-        self._provides = {Key(f"losses.{self.name}", LossScalar)}
+        self._provides = {
+            Key(f"losses.{self.name}", LossScalar): "new",
+            Key(f"meta.{self.name}", Metric): "new",
+        }
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures projected latents and consistency targets exist and are tensors."""
+        from core.validation import assert_is_tensor, assert_same_batch
+        preds = blackboard.predictions.get("projected_latents")
+        targets = blackboard.targets.get("consistency_targets")
+        if preds is not None and targets is not None:
+            assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
+            assert_is_tensor(targets, msg=f"in {self.name} (targets)")
+            assert_same_batch(preds, targets, msg=f"in {self.name}")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         preds = blackboard.predictions.get("projected_latents")
@@ -279,18 +307,25 @@ class SigmaLoss(PipelineComponent):
             Key("predictions.sigma_logits", PolicyLogits),
             Key(self.target_key, SemanticType)
         }
-        self._provides = {Key(f"losses.{self.name}", LossScalar)}
+        self._provides = {
+            Key(f"losses.{self.name}", LossScalar): "new",
+            Key(f"meta.{self.name}", Metric): "new",
+        }
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures sigma logits exist if present."""
+        from core.validation import assert_is_tensor
+        preds = blackboard.predictions.get("sigma_logits")
+        if preds is not None:
+            assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         preds = blackboard.predictions.get("sigma_logits")
@@ -333,18 +368,25 @@ class CommitmentLoss(PipelineComponent):
         
         # Deterministic contracts computed at initialization
         self._requires = {Key("predictions.commitment_loss", LossScalar)}
-        self._provides = {Key(f"losses.{self.name}", LossScalar)}
+        self._provides = {
+            Key(f"losses.{self.name}", LossScalar): "new",
+            Key(f"meta.{self.name}", Metric): "new",
+        }
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures commitment_loss exists if present."""
+        from core.validation import assert_is_tensor
+        loss = blackboard.predictions.get("commitment_loss")
+        if loss is not None:
+            assert_is_tensor(loss, msg=f"in {self.name} (commitment_loss)")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         elementwise_loss = blackboard.predictions.get("commitment_loss")
@@ -365,17 +407,23 @@ class LatentConsistencyComponent(PipelineComponent):
 
     def __init__(self, agent_network: nn.Module):
         self.agent_network = agent_network
+        self._requires = {Key("data.unroll_observations", Observation)}
+        self._provides = {Key("targets.consistency_targets", SemanticType): "new"}
 
     @property
     def requires(self) -> Set[Key]:
-        return {Key("data.unroll_observations", Observation)}
+        return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
-        return {Key("targets.consistency_targets", SemanticType)}
+    def provides(self) -> Dict[Key, str]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures unroll observations exist and are tensors."""
+        from core.validation import assert_in_blackboard, assert_is_tensor
+        assert_in_blackboard(blackboard, "data.unroll_observations")
+        obs = blackboard.data["unroll_observations"]
+        assert_is_tensor(obs, msg="in LatentConsistencyComponent (unroll_observations)")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         real_obs = blackboard.data["unroll_observations"].float()
