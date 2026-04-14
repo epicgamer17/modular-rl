@@ -132,14 +132,25 @@ class ActionSelectorComponent(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        """Ensures prediction input key exists in predictions."""
+        """Ensures prediction input key exists and is valid."""
         if blackboard.data.get("done", False):
             return  # No validation needed when done
+        
         values = blackboard.predictions.get(self.input_key)
         assert values is not None, (
             f"ActionSelectorComponent: '{self.input_key}' not found in blackboard.predictions. "
             f"Available keys: {list(blackboard.predictions.keys())}"
         )
+
+        # Determine if we are dealing with probabilities
+        is_prob = any(k in self.input_key for k in ["prob", "policy"])
+        if is_prob:
+            # 🚨 INTEGRITY CHECK: Probabilities must be valid distributions
+            assert torch.all(values >= -1e-7), f"[{self.input_key}] Probabilities must be non-negative"
+            sum_val = values.sum(dim=-1)
+            assert torch.allclose(sum_val, torch.ones_like(sum_val), atol=1e-3), (
+                f"[{self.input_key}] Probabilities must sum to 1.0, got {sum_val}"
+            )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if blackboard.data.get("done", False):
@@ -155,29 +166,14 @@ class ActionSelectorComponent(PipelineComponent):
                 self._update_from_training(blackboard)
 
         info = blackboard.meta.get("info", blackboard.data.get("info", {}))
-
         from torch.distributions import Categorical
 
         # Select the source of action values using the required input_key
-        values = blackboard.predictions.get(self.input_key)
-        if values is None:
-            raise KeyError(
-                f"ActionSelectorComponent: '{self.input_key}' not found in blackboard.predictions. "
-                f"Available keys: {list(blackboard.predictions.keys())}"
-            )
-            
-        # Determine if we are dealing with probabilities or logits/values
+        values = blackboard.predictions[self.input_key]
         is_prob = any(k in self.input_key for k in ["prob", "policy"])
         
-        # Apply masking and strictly validate probabilities if heuristic triggers
+        # Apply masking
         if is_prob:
-            # 🚨 INTEGRITY CHECK: Probabilities must be valid distributions
-            assert torch.all(values >= -1e-7), f"[{self.input_key}] Probabilities must be non-negative"
-            sum_val = values.sum(dim=-1)
-            assert torch.allclose(sum_val, torch.ones_like(sum_val), atol=1e-3), (
-                f"[{self.input_key}] Probabilities must sum to 1.0, got {sum_val}"
-            )
-            
             # For probabilities, we mask with 0 and re-normalize later if needed
             masked_values = mask_actions(values, info, mask_value=0.0)
         else:
@@ -287,9 +283,8 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
         """Ensures q_values exist in predictions."""
         if blackboard.data.get("done", False):
             return
-        assert blackboard.predictions.get("q_values") is not None, (
-            "EpsilonGreedySelectorComponent: 'q_values' not found in blackboard.predictions"
-        )
+        from core.validation import assert_in_blackboard
+        assert_in_blackboard(blackboard, "predictions.q_values")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if blackboard.data.get("done", False):
@@ -299,11 +294,8 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
 
         info = blackboard.meta.get("info", blackboard.data.get("info", {}))
 
-        q_values = blackboard.predictions.get("q_values")
+        q_values = blackboard.predictions["q_values"]
         probs = blackboard.predictions.get("probs")
-
-        if q_values is None:
-            return {"meta.action": None}
 
         if q_values.dim() == 2:
             batch_size = q_values.shape[0]
@@ -395,12 +387,9 @@ class NFSPSelectorComponent(PipelineComponent):
 
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures both BR and average strategy prediction keys exist."""
-        assert blackboard.predictions.get(f"{self.br_prefix}q_values") is not None, (
-            f"NFSPSelectorComponent: '{self.br_prefix}q_values' not found in blackboard.predictions"
-        )
-        assert blackboard.predictions.get(f"{self.avg_prefix}logits") is not None, (
-            f"NFSPSelectorComponent: '{self.avg_prefix}logits' not found in blackboard.predictions"
-        )
+        from core.validation import assert_in_blackboard
+        assert_in_blackboard(blackboard, f"predictions.{self.br_prefix}q_values")
+        assert_in_blackboard(blackboard, f"predictions.{self.avg_prefix}logits")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         import random

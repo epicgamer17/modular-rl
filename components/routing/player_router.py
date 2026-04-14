@@ -122,42 +122,31 @@ class PlayerRoutingComponent(PipelineComponent):
         return p
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
-
-    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        """
-        Look up the active player's component list and execute each component.
-
-        Args:
-            blackboard: The shared Blackboard for the current pipeline tick.
-
-        Returns:
-            Aggregated dictionary of mutations from all executed sub-components.
-
-        Raises:
-            AssertionError: If ``blackboard.data["player_id"]`` is missing.
-            AssertionError: If the player_id is not in ``player_components``
-                and no ``default_components`` were provided.
-        """
-        assert "player_id" in blackboard.data, (
-            "PlayerRoutingComponent: 'player_id' missing from blackboard.data. "
-            "An observation component must write the active player's index to "
-            "blackboard.data['player_id'] before routing."
-        )
-
-        player_id: int = int(blackboard.data["player_id"])
-
-        if player_id in self.player_components:
-            components = self.player_components[player_id]
-        elif self.default_components is not None:
-            components = self.default_components
-        else:
+        """Ensures 'player_id' exists and a valid component list is available."""
+        from core.validation import assert_in_blackboard
+        assert_in_blackboard(blackboard, "data.player_id")
+        
+        player_id = int(blackboard.data["player_id"])
+        if player_id not in self.player_components and self.default_components is None:
             registered = sorted(self.player_components.keys())
             assert False, (
                 f"PlayerRoutingComponent: received player_id={player_id} which is "
                 f"not in the registered player map {registered} and no "
                 f"default_components were provided."
             )
+
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
+        """
+        Look up the active player's component list and execute each component.
+        """
+        player_id: int = int(blackboard.data["player_id"])
+
+        if player_id in self.player_components:
+            components = self.player_components[player_id]
+        else:
+            # If we reached here, validate() must have passed, 
+            # meaning default_components is not None if player_id wasn't in player_components.
+            components = self.default_components
 
         combined_updates = {}
         for component in components:

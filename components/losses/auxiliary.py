@@ -115,23 +115,20 @@ class ToPlayLoss(PipelineComponent):
 
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures prediction and target exist and are batch-aligned."""
-        from core.validation import assert_is_tensor
-        preds = blackboard.predictions.get("to_plays")
-        if preds is not None:
-            assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
-            targets = resolve_blackboard_path(blackboard, self.target_key)
-            assert_is_tensor(targets, msg=f"in {self.name} (targets)")
-            assert_same_batch(preds, targets, msg=f"in {self.name}")
+        from core.validation import assert_in_blackboard, assert_is_tensor
+        assert_in_blackboard(blackboard, "predictions.to_plays")
+        assert_in_blackboard(blackboard, self.target_key)
+        
+        preds = blackboard.predictions["to_plays"]
+        targets = resolve_blackboard_path(blackboard, self.target_key)
+        
+        assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
+        assert_is_tensor(targets, msg=f"in {self.name} (targets)")
+        assert_same_batch(preds, targets, msg=f"in {self.name}")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        preds = blackboard.predictions.get("to_plays")
-        try:
-            targets = resolve_blackboard_path(blackboard, self.target_key)
-        except KeyError:
-            targets = None
-
-        if preds is None or targets is None:
-            return {}
+        preds = blackboard.predictions["to_plays"]
+        targets = resolve_blackboard_path(blackboard, self.target_key)
 
         B, T = preds.shape[:2]
 
@@ -195,16 +192,7 @@ class ChanceQLoss(PipelineComponent):
         assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        try:
-            formatted_target = resolve_blackboard_path(blackboard, self.target_key)
-        except KeyError:
-            formatted_target = None
-
-        if formatted_target is None:
-            raise KeyError(
-                f"ChanceQLoss requires '{self.target_key}' in targets or data."
-            )
-
+        formatted_target = resolve_blackboard_path(blackboard, self.target_key)
         pred = blackboard.predictions["chance_q_logits"]
         B, T = pred.shape[:2]
 
@@ -258,20 +246,20 @@ class ConsistencyLoss(PipelineComponent):
 
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures projected latents and consistency targets exist and are tensors."""
-        from core.validation import assert_is_tensor, assert_same_batch
-        preds = blackboard.predictions.get("projected_latents")
-        targets = blackboard.targets.get("consistency_targets")
-        if preds is not None and targets is not None:
-            assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
-            assert_is_tensor(targets, msg=f"in {self.name} (targets)")
-            assert_same_batch(preds, targets, msg=f"in {self.name}")
+        from core.validation import assert_in_blackboard, assert_is_tensor, assert_same_batch
+        assert_in_blackboard(blackboard, "predictions.projected_latents")
+        assert_in_blackboard(blackboard, "targets.consistency_targets")
+        
+        preds = blackboard.predictions["projected_latents"]
+        targets = blackboard.targets["consistency_targets"]
+        
+        assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
+        assert_is_tensor(targets, msg=f"in {self.name} (targets)")
+        assert_same_batch(preds, targets, msg=f"in {self.name}")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        preds = blackboard.predictions.get("projected_latents")
-        targets = blackboard.targets.get("consistency_targets")
-
-        if preds is None or targets is None:
-            return {}
+        preds = blackboard.predictions["projected_latents"]
+        targets = blackboard.targets["consistency_targets"]
 
         B, T = preds.shape[:2]
 
@@ -321,21 +309,19 @@ class SigmaLoss(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        """Ensures sigma logits exist if present."""
-        from core.validation import assert_is_tensor
-        preds = blackboard.predictions.get("sigma_logits")
-        if preds is not None:
-            assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
+        """Ensures sigma logits and targets exist and are tensors."""
+        from core.validation import assert_in_blackboard, assert_is_tensor
+        assert_in_blackboard(blackboard, "predictions.sigma_logits")
+        assert_in_blackboard(blackboard, self.target_key)
+        
+        preds = blackboard.predictions["sigma_logits"]
+        targets = resolve_blackboard_path(blackboard, self.target_key)
+        assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
+        assert_is_tensor(targets, msg=f"in {self.name} (targets)")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        preds = blackboard.predictions.get("sigma_logits")
-        try:
-            targets = resolve_blackboard_path(blackboard, self.target_key)
-        except KeyError:
-            targets = None
-
-        if preds is None or targets is None:
-            return {}
+        preds = blackboard.predictions["sigma_logits"]
+        targets = resolve_blackboard_path(blackboard, self.target_key)
 
         B, T = preds.shape[:2]
         raw_loss = F.cross_entropy(
@@ -382,17 +368,14 @@ class CommitmentLoss(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        """Ensures commitment_loss exists if present."""
-        from core.validation import assert_is_tensor
-        loss = blackboard.predictions.get("commitment_loss")
-        if loss is not None:
-            assert_is_tensor(loss, msg=f"in {self.name} (commitment_loss)")
+        """Ensures commitment_loss exists and is a tensor."""
+        from core.validation import assert_in_blackboard, assert_is_tensor
+        assert_in_blackboard(blackboard, "predictions.commitment_loss")
+        loss = blackboard.predictions["commitment_loss"]
+        assert_is_tensor(loss, msg=f"in {self.name} (commitment_loss)")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        elementwise_loss = blackboard.predictions.get("commitment_loss")
-        if elementwise_loss is None:
-            return {}
-
+        elementwise_loss = blackboard.predictions["commitment_loss"]
         elementwise_loss = elementwise_loss * self.loss_factor
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 

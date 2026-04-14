@@ -274,7 +274,7 @@ class ShapeValidatorComponent(PipelineComponent):
         self.validator.validate(blackboard.predictions, blackboard.targets)
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        self.validator.validate(blackboard.predictions, blackboard.targets)
+        """Shape validation is handled entirely in validate()."""
         return {}
 
 
@@ -306,10 +306,8 @@ class MetricEarlyStopComponent(PipelineComponent):
         )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        # Check both meta and losses for the metric
-        val = blackboard.meta.get(self.metric_key)
-        if val is None:
-            val = blackboard.losses.get(self.metric_key)
+        # Check both meta and losses for the metric (one is guaranteed by validate)
+        val = blackboard.meta.get(self.metric_key, blackboard.losses.get(self.metric_key))
 
         if val is not None:
             # Handle both scalars and tensors

@@ -134,42 +134,21 @@ class TicTacToeExpertComponent(PipelineComponent):
         return {Key("meta.action", Action): "new"}
 
     def validate(self, blackboard: Blackboard) -> None:
-        assert blackboard.data.get("obs") is not None, (
-            "TicTacToeExpertComponent: 'obs' missing from blackboard.data"
-        )
-
-    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        """
-        Compute and publish the expert's chosen action.
-
-        Args:
-            blackboard: The shared Blackboard for the current pipeline tick.
-
-        Returns:
-            Dictionary containing "meta.action".
-
-        Raises:
-            AssertionError: If ``blackboard.data["obs"]`` is None or has
-                an unexpected shape, or if ``legal_moves`` is empty.
-        """
-        obs = blackboard.data.get("obs")
-        assert obs is not None, (
-            "TicTacToeExpertComponent: 'obs' is missing from blackboard.data. "
-            "An observation component must run before this expert."
-        )
-
-        # Convert to NumPy if needed.
+        """Ensures observation exists and has the correct TicTacToe shape."""
+        from core.validation import assert_in_blackboard, assert_is_tensor
+        assert_in_blackboard(blackboard, "data.obs")
+        obs = blackboard.data["obs"]
+        
+        # Convert to NumPy for shape check if it isn't already
         if torch.is_tensor(obs):
-            obs_np: np.ndarray = obs.cpu().numpy()
+            obs_np = obs.cpu().numpy()
         else:
-            obs_np = np.asarray(obs, dtype=np.float32)
+            obs_np = np.asarray(obs)
 
-        # Strip optional batch dimension: [1, 2, 3, 3] → [2, 3, 3].
+        # Strip optional batch dimension
         if obs_np.ndim == 4:
             obs_np = obs_np[0]
-
-        # Handle frame stacking: take the 2 most recent planes.
-        # Observation is [2*k + 1, 3, 3]. Planes 0,1 are the current frame.
+        # Handle frame stacking
         if obs_np.shape[0] > 2:
             obs_np = obs_np[:2]
 
@@ -178,16 +157,33 @@ class TicTacToeExpertComponent(PipelineComponent):
             f"got {obs_np.shape}."
         )
 
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
+        """Compute and publish the expert's chosen action."""
+        obs = blackboard.data["obs"]
+
+        # Convert to NumPy
+        if torch.is_tensor(obs):
+            obs_np: np.ndarray = obs.cpu().numpy()
+        else:
+            obs_np = np.asarray(obs, dtype=np.float32)
+
+        # Reconstruct logical state (assuming validated shape from validate())
+        if obs_np.ndim == 4:
+            obs_np = obs_np[0]
+        if obs_np.shape[0] > 2:
+            obs_np = obs_np[:2]
+        
         # Reconstruct the logical board: +1 current player, -1 opponent.
         board: np.ndarray = obs_np[0] - obs_np[1]  # (3, 3)
 
-        info: dict = blackboard.data.get("info", {})
-        if info is None:
-            info = {}
+        info: dict = blackboard.data.get("info", {}) or {}
         legal_moves: list = info.get("legal_moves", list(range(_NUM_CELLS)))
 
-        if len(legal_moves) == 0:
+        if not legal_moves:
             legal_moves = list(range(_NUM_CELLS))
+
+        action: int = _select_tictactoe_action(board, legal_moves)
+        return {"meta.action": action}
 
         action: int = _select_tictactoe_action(board, legal_moves)
         return {"meta.action": action}
