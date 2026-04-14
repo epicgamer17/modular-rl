@@ -14,11 +14,12 @@ Blackboard key conventions:
 from __future__ import annotations
 
 import torch
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Type, Set
+from core.contracts import Key, ValueTarget, Reward, ActionDistribution, PolicyLogits, SemanticType
 
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import ValueTarget, PolicyLogits, ActionDistribution, Action, Reward
+from core.contracts import Key, ValueTarget, PolicyLogits, ActionDistribution, Action, Reward
 from modules.representations import BaseRepresentation, DiscreteSupportRepresentation, ClassificationRepresentation
 
 if TYPE_CHECKING:
@@ -63,6 +64,7 @@ class TwoHotProjectionComponent(PipelineComponent):
         v_min: Optional[float] = None,
         v_max: Optional[float] = None,
         bins: Optional[int] = None,
+        semantic_type: Type[SemanticType] = SemanticType,
     ) -> None:
         if representation is None:
             assert v_min is not None and v_max is not None and bins is not None, (
@@ -77,14 +79,15 @@ class TwoHotProjectionComponent(PipelineComponent):
         self._representation = representation
         self._source_key = source_key
         self._dest_key = dest_key
+        self._semantic_type = semantic_type
 
     @property
-    def requires(self) -> dict[str, type]:
-        return {self._source_key: ValueTarget}
+    def requires(self) -> Set[Key]:
+        return {Key(self._source_key, self._semantic_type)}
 
     @property
-    def provides(self) -> dict[str, type]:
-        return {f"targets.{self._dest_key}": ValueTarget}
+    def provides(self) -> Set[Key]:
+        return {Key(f"targets.{self._dest_key}", self._semantic_type)}
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -121,18 +124,20 @@ class ClassificationFormatterComponent(PipelineComponent):
         source_key: str,
         dest_key: str,
         representation: Optional[BaseRepresentation] = None,
+        semantic_type: Type[SemanticType] = SemanticType,
     ) -> None:
         self._source_key = source_key
         self._dest_key = dest_key
         self._representation = representation
+        self._semantic_type = semantic_type
 
     @property
-    def requires(self) -> set[str]:
-        return {self._source_key}
+    def requires(self) -> set[Key]:
+        return {Key(self._source_key, self._semantic_type)}
 
     @property
-    def provides(self) -> set[str]:
-        return {f"targets.{self._dest_key}"}
+    def provides(self) -> set[Key]:
+        return {Key(f"targets.{self._dest_key}", self._semantic_type)}
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -173,18 +178,20 @@ class ScalarFormatterComponent(PipelineComponent):
         source_key: str,
         dest_key: str,
         representation: Optional[BaseRepresentation] = None,
+        semantic_type: Type[SemanticType] = SemanticType,
     ) -> None:
         self._source_key = source_key
         self._dest_key = dest_key
         self._representation = representation
+        self._semantic_type = semantic_type
 
     @property
-    def requires(self) -> dict[str, type]:
-        return {self._source_key: Reward}
+    def requires(self) -> Set[Key]:
+        return {Key(self._source_key, self._semantic_type)}
 
     @property
-    def provides(self) -> dict[str, type]:
-        return {f"targets.{self._dest_key}": Reward}
+    def provides(self) -> Set[Key]:
+        return {Key(f"targets.{self._dest_key}", self._semantic_type)}
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -243,12 +250,12 @@ class ExpectedValueComponent(PipelineComponent):
         self._dest_key = dest_key
 
     @property
-    def requires(self) -> dict[str, type]:
-        return {f"predictions.{self._logits_key}": PolicyLogits}
+    def requires(self) -> set[Key]:
+        return {Key(f"predictions.{self._logits_key}", PolicyLogits)}
 
     @property
-    def provides(self) -> dict[str, type]:
-        return {f"targets.{self._dest_key}": ValueTarget}
+    def provides(self) -> set[Key]:
+        return {Key(f"targets.{self._dest_key}", ValueTarget)}
 
     def validate(self, blackboard: Blackboard) -> None:
         assert self._logits_key in blackboard.predictions
@@ -297,12 +304,12 @@ class OneHotPolicyTargetComponent(PipelineComponent):
         self._dest_key = dest_key
 
     @property
-    def requires(self) -> dict[str, type]:
-        return {self._source_key: Action}
+    def requires(self) -> set[Key]:
+        return {Key(self._source_key, Action)}
 
     @property
-    def provides(self) -> dict[str, type]:
-        return {f"targets.{self._dest_key}": ActionDistribution}
+    def provides(self) -> set[Key]:
+        return {Key(f"targets.{self._dest_key}", ActionDistribution)}
 
     def validate(self, blackboard: Blackboard) -> None:
         pass

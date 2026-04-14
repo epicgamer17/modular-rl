@@ -20,9 +20,10 @@ Writes:
 """
 
 import torch
-from typing import Any, Type
+from typing import Any, Type, Set
 
 from core import PipelineComponent, Blackboard
+from core.contracts import Key, Action, SemanticType
 
 # ---------------------------------------------------------------------------
 # Action-space encoding (mirrors the original CatanPlayerWrapper constants)
@@ -145,6 +146,17 @@ class CatanExpertComponent(PipelineComponent):
         **player_kwargs: Any,
     ) -> None:
         self.player = player_class(init_color, **player_kwargs)
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {Key("data.info", SemanticType)}
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {Key("meta.action", Action)}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         """

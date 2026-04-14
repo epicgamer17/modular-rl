@@ -1,4 +1,5 @@
-from typing import Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable, Type
+from dataclasses import dataclass
 
 @runtime_checkable
 class SemanticType(Protocol):
@@ -7,6 +8,16 @@ class SemanticType(Protocol):
     These types define meaning, not structure (e.g., shapes).
     """
     pass
+
+@dataclass(frozen=True)
+class Key:
+    """A semantic key that combines a blackboard path with a semantic type."""
+    path: str
+    semantic_type: Type[SemanticType]
+
+    def __str__(self):
+        return f"Key({self.path}, {self.semantic_type.__name__})"
+
 
 class Observation(SemanticType): pass
 class Action(SemanticType): pass

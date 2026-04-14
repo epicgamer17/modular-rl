@@ -1,6 +1,7 @@
 import torch
-from core import PipelineComponent
-from core import Blackboard
+from core import PipelineComponent, Blackboard
+from core.contracts import Key, Observation, SemanticType, Done, Reward, Action
+from typing import Set
 
 
 class GymObservationComponent(PipelineComponent):
@@ -20,6 +21,23 @@ class GymObservationComponent(PipelineComponent):
         self.terminated = False
         self.truncated = False
         self.done = False
+
+    @property
+    def requires(self) -> Set[Key]:
+        return set()
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {
+            Key("data.obs", Observation),
+            Key("data.info", SemanticType),
+            Key("data.terminated", Done),
+            Key("data.truncated", Done),
+            Key("data.done", Done),
+        }
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         if self.state is None or self.done:
@@ -55,6 +73,21 @@ class GymStepComponent(PipelineComponent):
     def __init__(self, env, obs_component: GymObservationComponent):
         self.env = env
         self.obs_component = obs_component
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {Key("meta.action", Action)}
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {
+            Key("data.reward", Reward),
+            Key("data.done", Done),
+            Key("data.next_obs", Observation),
+        }
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         # Pull action from blackboard

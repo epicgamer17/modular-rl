@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Dict, Type
-from core.contracts import SemanticType
+from typing import TYPE_CHECKING, Set
+from core.contracts import Key
 
 if TYPE_CHECKING:
     from core.blackboard import Blackboard
@@ -13,14 +13,14 @@ class PipelineComponent(ABC):
     
     @property
     @abstractmethod
-    def requires(self) -> Dict[str, Type[SemanticType]]:
-        """Dynamically resolved mapping of keys to semantic types this instance requires."""
+    def requires(self) -> Set[Key]:
+        """Dynamically resolved set of keys this instance requires."""
         pass
 
     @property
     @abstractmethod
-    def provides(self) -> Dict[str, Type[SemanticType]]:
-        """Dynamically resolved mapping of keys to semantic types this instance produces."""
+    def provides(self) -> Set[Key]:
+        """Dynamically resolved set of keys this instance produces."""
         pass
 
     @property

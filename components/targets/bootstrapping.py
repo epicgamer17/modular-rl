@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from core import PipelineComponent
 from core import Blackboard
-from core.contracts import Reward, Done, Observation, ValueTarget, Action, PolicyLogits
+from core.contracts import Key, Reward, Done, Observation, ValueTarget, Action, PolicyLogits
 
 
 class TDTargetComponent(PipelineComponent):
@@ -27,14 +27,18 @@ class TDTargetComponent(PipelineComponent):
         self.bootstrap_on_truncated = bootstrap_on_truncated
 
     @property
-    def requires(self) -> dict[str, type]:
-        return {"data.rewards": Reward, "data.dones": Done, "data.next_observations": Observation}
+    def requires(self) -> set[Key]:
+        return {
+            Key("data.rewards", Reward),
+            Key("data.dones", Done),
+            Key("data.next_observations", Observation)
+        }
 
     @property
-    def provides(self) -> dict[str, type]:
-        w = {"targets.values": ValueTarget}
+    def provides(self) -> set[Key]:
+        w = {Key("targets.values", ValueTarget)}
         if self.online_network is not None:
-            w["targets.next_actions"] = Action
+            w.add(Key("targets.next_actions", Action))
         return w
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -129,12 +133,19 @@ class DistributionalTargetComponent(PipelineComponent):
         self.bootstrap_on_truncated = bootstrap_on_truncated
 
     @property
-    def requires(self) -> dict[str, type]:
-        return {"data.rewards": Reward, "data.dones": Done, "data.next_observations": Observation}
+    def requires(self) -> set[Key]:
+        return {
+            Key("data.rewards", Reward),
+            Key("data.dones", Done),
+            Key("data.next_observations", Observation)
+        }
 
     @property
-    def provides(self) -> dict[str, type]:
-        return {"targets.q_logits": PolicyLogits, "targets.next_actions": Action}
+    def provides(self) -> set[Key]:
+        return {
+            Key("targets.q_logits", PolicyLogits),
+            Key("targets.next_actions", Action)
+        }
 
     def validate(self, blackboard: Blackboard) -> None:
         rewards = blackboard.data["rewards"]

@@ -25,6 +25,7 @@ from data.samplers.prioritized import UniformSampler
 from data.concurrency import TorchMPBackend
 
 from core import BlackboardEngine
+from core.contracts import Key, Observation, Action, Reward, ValueTarget, PolicyLogits, ToPlay, SemanticType, Done, Mask
 from components.neural import ForwardPassComponent
 from components.losses import OptimizerStepComponent
 from components.losses import LossAggregatorComponent
@@ -386,9 +387,31 @@ def make_muzero_learner(
     priority_comp = ExpectedValueErrorPriorityComponent(value_representation=val_rep)
     buffer_update = PriorityUpdateComponent(priority_update_fn=replay_buffer.update_priorities)
 
+    from core.contracts import Observation, Action, Reward, ValueTarget, PolicyLogits, ToPlay, SemanticType
+    learner_initial_keys = {
+        Key("data.observations", Observation),
+        Key("data.actions", Action),
+        Key("data.rewards", Reward),
+        Key("data.values", ValueTarget),
+        Key("data.policies", PolicyLogits),
+        Key("data.to_plays", ToPlay),
+        Key("data.terminated", SemanticType),
+        Key("data.truncated", SemanticType),
+        Key("data.dones", SemanticType),
+        Key("data.legal_masks", SemanticType),
+        Key("data.reward_mask", Mask),
+        Key("data.to_play_mask", Mask),
+        Key("data.policy_mask", Mask),
+        Key("data.is_same_game", Mask),
+        Key("data.ids", SemanticType),
+        Key("data.indices", SemanticType),
+        Key("data.training_steps", SemanticType),
+    }
+
     if isinstance(val_rep, DiscreteSupportRepresentation):
         v_loss = ValueLoss(
             target_key="targets.values_projected",
+            mask_key="targets.policy_mask",
             loss_fn=nn.functional.cross_entropy,
             loss_factor=1.0,
         )
@@ -396,20 +419,33 @@ def make_muzero_learner(
             source_key="targets.values",
             dest_key="values_projected",
             representation=val_rep,
+            semantic_type=ValueTarget,
         )
     else:
-        v_loss = ValueLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
+        v_loss = ValueLoss(
+            target_key="targets.values",
+            mask_key="targets.policy_mask",
+            loss_fn=nn.functional.mse_loss, 
+            loss_factor=1.0,
+        )
         v_formatter = ScalarFormatterComponent(
             source_key="targets.values",
             dest_key="values",
             representation=val_rep,
+            semantic_type=ValueTarget,
         )
 
-    p_loss = PolicyLoss(loss_fn=nn.functional.cross_entropy, loss_factor=1.0)
+    p_loss = PolicyLoss(
+        target_key="targets.policies",
+        mask_key="targets.policy_mask",
+        loss_fn=nn.functional.cross_entropy, 
+        loss_factor=1.0,
+    )
 
     if isinstance(rew_rep, DiscreteSupportRepresentation):
         r_loss = RewardLoss(
             target_key="targets.rewards_projected",
+            mask_key="targets.reward_mask",
             loss_fn=nn.functional.cross_entropy,
             loss_factor=1.0,
         )
@@ -417,16 +453,35 @@ def make_muzero_learner(
             source_key="targets.rewards",
             dest_key="rewards_projected",
             representation=rew_rep,
+            semantic_type=Reward,
         )
     else:
-        r_loss = RewardLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
+        r_loss = RewardLoss(
+            target_key="targets.rewards",
+            mask_key="targets.reward_mask",
+            loss_fn=nn.functional.mse_loss, 
+            loss_factor=1.0,
+        )
         r_formatter = ScalarFormatterComponent(
             source_key="targets.rewards",
             dest_key="rewards",
             representation=rew_rep,
+            semantic_type=Reward,
         )
 
-    tp_loss = ToPlayLoss(loss_fn=nn.functional.cross_entropy, loss_factor=1.0)
+    tp_loss = ToPlayLoss(
+        target_key="targets.to_plays",
+        mask_key="targets.to_play_mask",
+        loss_fn=nn.functional.cross_entropy, 
+        loss_factor=1.0,
+    )
+
+    loss_weights = {
+        "value_loss": 1.0,
+        "reward_loss": 1.0,
+        "policy_loss": 1.0,
+        "to_play_loss": 1.0,
+    }
 
     learner = BlackboardEngine(
         components=[
@@ -434,40 +489,38 @@ def make_muzero_learner(
             SequencePadderComponent(
                 unroll_steps,
                 keys=[
-                    "data.values",
-                    "data.rewards",
-                    "data.policies",
-                    "data.actions",
-                    "data.to_plays",
-                    "data.reward_mask",
-                    "data.to_play_mask",
-                    "data.policy_mask",
-                    "data.dones",
+                    Key("data.values", ValueTarget),
+                    Key("data.rewards", Reward),
+                    Key("data.policies", PolicyLogits),
+                    Key("data.actions", Action),
+                    Key("data.to_plays", ToPlay),
+                    Key("data.reward_mask", Mask),
+                    Key("data.to_play_mask", Mask),
+                    Key("data.policy_mask", Mask),
+                    Key("data.dones", SemanticType),
                 ],
             ),
             SequenceInfrastructureComponent(unroll_steps),
             SequenceMaskComponent(),
             v_formatter,
             ClassificationFormatterComponent(
-                source_key="targets.policies", dest_key="policies", representation=pol_rep
+                source_key="targets.policies", 
+                dest_key="policies", 
+                representation=pol_rep,
+                semantic_type=PolicyLogits,
             ),
             r_formatter,
             ScalarFormatterComponent(
-                source_key="targets.to_plays", dest_key="to_plays", representation=tp_rep
+                source_key="targets.to_plays", 
+                dest_key="to_plays", 
+                representation=tp_rep,
+                semantic_type=ToPlay,
             ),
             v_loss,
             p_loss,
             r_loss,
             tp_loss,
-            LossAggregatorComponent(
-                loss_weights={
-                    "value_loss": 1.0,
-                    "reward_loss": 1.0,
-                    "policy_loss": 1.0,
-                    "consistency_loss": 1.0,
-                    "to_play_loss": 1.0,
-                }
-            ),
+            LossAggregatorComponent(loss_weights=loss_weights),
             MuzeroMultiplayerTelemetry(value_representation=val_rep, num_players=1),
             priority_comp,
             buffer_update,
@@ -476,6 +529,7 @@ def make_muzero_learner(
                 optimizers={"default": optimizer},
             ),
         ],
+        initial_keys=learner_initial_keys,
         device=device,
     )
 
@@ -497,6 +551,12 @@ def make_muzero_actor_engine(
     """
     Creates a standard MuZero actor engine (BlackboardEngine).
     """
+    actor_initial_keys = {
+        Key("data.obs", Observation),
+        Key("data.info", SemanticType),
+        Key("data.player_id", ToPlay),
+    }
+
     is_pz = hasattr(env, "possible_agents") or (hasattr(env, "unwrapped") and hasattr(env.unwrapped, "possible_agents"))
 
     if is_pz:
@@ -542,4 +602,4 @@ def make_muzero_actor_engine(
     # Finally, add a terminator to signal the end of the episode to the ActorWorker
     components.append(SequenceTerminatorComponent())
 
-    return BlackboardEngine(components=components, device=device)
+    return BlackboardEngine(components=components, initial_keys=actor_initial_keys, device=device)

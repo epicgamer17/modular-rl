@@ -3,7 +3,7 @@ from typing import Any, Tuple
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
 
-from core.contracts import ToPlay, ValueEstimate, ValueTarget, LossScalar
+from core.contracts import Key, ToPlay, ValueEstimate, ValueTarget, LossScalar
 
 class MuzeroMultiplayerTelemetry(PipelineComponent):
     """
@@ -28,20 +28,20 @@ class MuzeroMultiplayerTelemetry(PipelineComponent):
         self.mask_key = mask_key
 
     @property
-    def requires(self) -> dict[str, type]:
+    def requires(self) -> set[Key]:
         return {
-            f"predictions.{self.to_play_pred_key}": ToPlay,
-            f"targets.{self.to_play_target_key}": ToPlay,
-            f"predictions.{self.value_pred_key}": ValueEstimate,
-            f"targets.{self.value_target_key}": ValueTarget,
+            Key(f"predictions.{self.to_play_pred_key}", ToPlay),
+            Key(f"targets.{self.to_play_target_key}", ToPlay),
+            Key(f"predictions.{self.value_pred_key}", ValueEstimate),
+            Key(f"targets.{self.value_target_key}", ValueTarget),
         }
 
     @property
-    def provides(self) -> dict[str, type]:
-        w = {}
+    def provides(self) -> set[Key]:
+        w = set()
         for p in range(self.num_players):
-            w[f"meta.tp_acc_p{p}"] = LossScalar
-            w[f"meta.val_mse_p{p}"] = LossScalar
+            w.add(Key(f"meta.tp_acc_p{p}", LossScalar))
+            w.add(Key(f"meta.val_mse_p{p}", LossScalar))
         return w
 
     def validate(self, blackboard: Blackboard) -> None:

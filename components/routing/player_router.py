@@ -34,9 +34,10 @@ Side-effects:
     Delegates to every ``PipelineComponent.execute()`` in the matching list.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from core import PipelineComponent, Blackboard
+from core.contracts import Key, ToPlay
 
 
 class PlayerRoutingComponent(PipelineComponent):
@@ -86,6 +87,31 @@ class PlayerRoutingComponent(PipelineComponent):
 
         self.player_components = player_components
         self.default_components = default_components
+
+    @property
+    def requires(self) -> Set[Key]:
+        r = {Key("data.player_id", ToPlay)}
+        for comps in self.player_components.values():
+            for c in comps:
+                r.update(c.requires)
+        if self.default_components:
+            for c in self.default_components:
+                r.update(c.requires)
+        return r
+
+    @property
+    def provides(self) -> Set[Key]:
+        p = set()
+        for comps in self.player_components.values():
+            for c in comps:
+                p.update(c.provides)
+        if self.default_components:
+            for c in self.default_components:
+                p.update(c.provides)
+        return p
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         """

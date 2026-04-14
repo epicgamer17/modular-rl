@@ -1,8 +1,8 @@
 import torch
-from typing import Optional, TYPE_CHECKING
 from core import PipelineComponent
 from core import Blackboard
-from core.contracts import Observation, ValueEstimate, PolicyLogits
+from core.contracts import Key, Observation, ValueEstimate, PolicyLogits, Reward, ToPlay
+from typing import TYPE_CHECKING, Optional, Set
 
 if TYPE_CHECKING:
     from modules.agent_nets.base import BaseAgentNetwork
@@ -19,12 +19,17 @@ class ForwardPassComponent(PipelineComponent):
         self.shape_validator = shape_validator
 
     @property
-    def requires(self) -> dict[str, type]:
-        return {"data.observations": Observation}
+    def requires(self) -> Set[Key]:
+        return {Key("data.observations", Observation)}
 
     @property
-    def provides(self) -> dict[str, type]:
-        return {"predictions.values": ValueEstimate, "predictions.policies": PolicyLogits}
+    def provides(self) -> Set[Key]:
+        return {
+            Key("predictions.values", ValueEstimate),
+            Key("predictions.policies", PolicyLogits),
+            Key("predictions.rewards", Reward),
+            Key("predictions.to_plays", ToPlay),
+        }
 
     def validate(self, blackboard: Blackboard) -> None:
         obs = blackboard.data.get("observations")

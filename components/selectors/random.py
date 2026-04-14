@@ -16,9 +16,10 @@ Writes:
 """
 
 import random
-from typing import Optional
+from typing import Optional, Set
 
 from core import PipelineComponent, Blackboard
+from core.contracts import Key, Action, SemanticType
 
 # Sentinel value used when no action could be determined (unreachable in
 # normal operation; kept to make the assertion message informative).
@@ -53,6 +54,17 @@ class RandomSelectorComponent(PipelineComponent):
 
     def __init__(self, num_actions: Optional[int] = None) -> None:
         self.num_actions = num_actions
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {Key("data.info", SemanticType)}
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {Key("meta.action", Action)}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         """

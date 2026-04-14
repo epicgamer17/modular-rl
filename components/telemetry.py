@@ -1,7 +1,8 @@
 import time
 import torch
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set
 from core import PipelineComponent, Blackboard
+from core.contracts import Key, Reward, Done, LossScalar, SemanticType
 
 
 class TelemetryComponent(PipelineComponent):
@@ -17,6 +18,22 @@ class TelemetryComponent(PipelineComponent):
         self._last_time = time.perf_counter()
         self.episode_reward: Optional[torch.Tensor] = None
         self.episode_length: Optional[torch.Tensor] = None
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {Key("data.reward", Reward), Key("data.done", Done)}
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {
+            Key("meta.score", LossScalar),
+            Key("meta.episode_length", LossScalar),
+            Key("meta.fps", LossScalar),
+            Key("meta.running_reward", LossScalar),
+        }
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         # 1. Extraction and Normalization
@@ -105,6 +122,16 @@ class SequenceTerminatorComponent(PipelineComponent):
 
     Supports Universal Time Mandate: Triggers if ANY environment in a batch is done.
     """
+    @property
+    def requires(self) -> Set[Key]:
+        return {Key("data.done", Done)}
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {Key("meta.stop_execution", SemanticType)}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         done = blackboard.meta.get("done")

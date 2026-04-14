@@ -1,9 +1,9 @@
 import torch
 import torch.nn.functional as F
-from typing import Any, Optional, Dict, Union, List
-from core import PipelineComponent
-from core import Blackboard
+from typing import Any, Optional, Dict, Union, List, Set
+from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
+from core.contracts import Key, PolicyLogits, ValueEstimate, Action, ValueTarget, LossScalar, SemanticType
 from .infrastructure import apply_infrastructure
 
 
@@ -37,12 +37,19 @@ class QBootstrappingLoss(PipelineComponent):
         self.name = name
 
     @property
-    def requires(self) -> set[str]:
-        return {f"predictions.{self.pred_key}", self.actions_key, self.target_key}
+    def requires(self) -> Set[Key]:
+        return {
+            Key(f"predictions.{self.pred_key}", PolicyLogits if self.is_categorical else ValueEstimate),
+            Key(self.actions_key, Action),
+            Key(self.target_key, PolicyLogits if self.is_categorical else ValueTarget)
+        }
 
     @property
-    def provides(self) -> set[str]:
-        return {f"losses.{self.name}", f"meta.{self.name}"}
+    def provides(self) -> Set[Key]:
+        return {
+            Key(f"losses.{self.name}", LossScalar),
+            Key(f"meta.{self.name}", SemanticType)
+        }
 
     def validate(self, blackboard: Blackboard) -> None:
         q_preds = blackboard.predictions[self.pred_key]

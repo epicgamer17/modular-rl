@@ -1,7 +1,8 @@
 import torch
 import time
-from typing import Any, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Optional, Tuple, TYPE_CHECKING, Set
 from core import PipelineComponent, Blackboard
+from core.contracts import Key, Observation, ValueEstimate, PolicyLogits, Reward, ToPlay, SemanticType
 
 if TYPE_CHECKING:
     from modules.agent_nets.base import BaseAgentNetwork
@@ -20,6 +21,24 @@ class NetworkInferenceComponent(PipelineComponent):
     ):
         self.agent_network = agent_network
         self.input_shape = input_shape
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {Key("data.obs", Observation)}
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {
+            Key("predictions.q_values", ValueEstimate),
+            Key("predictions.logits", PolicyLogits),
+            Key("predictions.value", ValueEstimate),
+            Key("predictions.reward", Reward),
+            Key("predictions.to_play", ToPlay),
+            Key("predictions.extra_metadata", SemanticType),
+        }
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         obs = blackboard.data["obs"]

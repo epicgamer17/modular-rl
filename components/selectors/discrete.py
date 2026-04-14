@@ -1,7 +1,8 @@
 import torch
 import numpy as np
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING, Set
 from core import PipelineComponent, Blackboard
+from core.contracts import Key, Action, SemanticType, ValueEstimate, PolicyLogits
 
 if TYPE_CHECKING:
     from utils.schedule import Schedule
@@ -110,6 +111,21 @@ class ActionSelectorComponent(PipelineComponent):
         self.schedule = schedule
         self.schedule_source = schedule_source
         self._last_step = -1
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {Key(f"predictions.{self.input_key}", SemanticType)}
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {
+            Key("meta.action", Action),
+            Key("meta.action_tensor", Action),
+            Key("meta.action_metadata", SemanticType),
+        }
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         if blackboard.data.get("done", False):
@@ -235,6 +251,21 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
     def __init__(self, epsilon: float = 0.05):
         self.epsilon = epsilon
 
+    @property
+    def requires(self) -> Set[Key]:
+        return {Key("predictions.q_values", ValueEstimate)}
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {
+            Key("meta.action", Action),
+            Key("meta.action_tensor", Action),
+            Key("meta.action_metadata", SemanticType),
+        }
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
+
     def execute(self, blackboard: Blackboard) -> None:
         if blackboard.data.get("done", False):
             write_to_blackboard(blackboard, torch.tensor([0]), {"action_is_none": True})
@@ -318,6 +349,24 @@ class NFSPSelectorComponent(PipelineComponent):
             input_key="q_values", temperature=0.0
         )
         self.avg_selector = ActionSelectorComponent(input_key="logits", temperature=0.0)
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {
+            Key(f"predictions.{self.br_prefix}q_values", ValueEstimate),
+            Key(f"predictions.{self.avg_prefix}logits", PolicyLogits),
+        }
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {
+            Key("meta.action", Action),
+            Key("meta.action_tensor", Action),
+            Key("meta.action_metadata", SemanticType),
+        }
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         import random

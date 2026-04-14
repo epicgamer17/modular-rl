@@ -1,37 +1,38 @@
 import torch
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import ValueTarget, Reward, Action, Mask, Return, ToPlay # Adjust as needed
-from typing import List, Optional
+from core.contracts import Key, ValueTarget, Reward, Action, Mask, Return, ToPlay, SemanticType, PolicyLogits
+from typing import List, Optional, Set
 
 
 class SequencePadderComponent(PipelineComponent):
     """Modifier: Pads transition-aligned data to state-aligned length."""
 
-    def __init__(self, unroll_steps: int, keys: Optional[List[str]] = None):
+    def __init__(self, unroll_steps: int, keys: List[Key]):
         self.T = unroll_steps + 1
-        self.keys = keys or ["values", "rewards", "policies", "actions", "to_plays", "reward_mask", "to_play_mask", "action_mask"]
+        self.keys = keys
 
     @property
-    def requires(self) -> dict[str, type]:
-        # SequencePadder is polymorphic, it just needs the keys to exist.
-        # We'll use SemanticType as a base since it can be anything.
-        from core.contracts import SemanticType
-        return {key: SemanticType for key in self.keys}
+    def requires(self) -> Set[Key]:
+        return set(self.keys)
 
     @property
-    def provides(self) -> dict[str, type]:
-        from core.contracts import SemanticType
-        return {f"targets.{key.split('.')[-1]}": SemanticType for key in self.keys}
+    def provides(self) -> Set[Key]:
+        # Maps data.X to targets.X preserving semantic type
+        return {
+            Key(f"targets.{k.path.split('.')[-1]}", k.semantic_type) 
+            for k in self.keys
+        }
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
     def execute(self, blackboard: Blackboard) -> None:
-        for key in self.keys:
+        for k in self.keys:
+            key_path = k.path
             try:
-                v = resolve_blackboard_path(blackboard, key)
-                dest_key = key.split(".")[-1]
+                v = resolve_blackboard_path(blackboard, key_path)
+                dest_key = key_path.split(".")[-1]
                 
                 if torch.is_tensor(v) and v.ndim >= 2:
                     current_len = v.shape[1]
@@ -63,16 +64,16 @@ class SequenceMaskComponent(PipelineComponent):
     """
 
     @property
-    def requires(self) -> dict[str, type]:
-        return {"data.is_same_game": Mask}
+    def requires(self) -> set[Key]:
+        return {Key("data.is_same_game", Mask)}
 
     @property
-    def provides(self) -> dict[str, type]:
+    def provides(self) -> set[Key]:
         return {
-            "targets.value_mask": Mask,
-            "targets.reward_mask": Mask,
-            "targets.to_play_mask": Mask,
-            "targets.policy_mask": Mask,
+            Key("targets.value_mask", Mask),
+            Key("targets.reward_mask", Mask),
+            Key("targets.to_play_mask", Mask),
+            Key("targets.policy_mask", Mask),
         }
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -131,12 +132,15 @@ class SequenceInfrastructureComponent(PipelineComponent):
         self.unroll_steps = unroll_steps
 
     @property
-    def requires(self) -> dict[str, type]:
-        return {"data.actions": Action}
+    def requires(self) -> set[Key]:
+        return {Key("data.actions", Action)}
 
     @property
-    def provides(self) -> dict[str, type]:
-        return {"meta.weights": Mask, "meta.gradient_scales": Reward} # Stand-in types
+    def provides(self) -> set[Key]:
+        return {
+            Key("meta.weights", Mask),
+            Key("meta.gradient_scales", Reward)
+        }
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -173,12 +177,12 @@ class ChanceTargetComponent(PipelineComponent):
     """Generator: Calculates chance outcomes for Stochastic MuZero."""
 
     @property
-    def requires(self) -> dict[str, type]:
-        return {"targets.values": ValueTarget}
+    def requires(self) -> set[Key]:
+        return {Key("targets.values", ValueTarget)}
 
     @property
-    def provides(self) -> dict[str, type]:
-        return {"targets.chance_values_next": ValueTarget}
+    def provides(self) -> set[Key]:
+        return {Key("targets.chance_values_next", ValueTarget)}
 
     def validate(self, blackboard: Blackboard) -> None:
         pass

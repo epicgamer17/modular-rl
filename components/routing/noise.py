@@ -1,6 +1,7 @@
 import torch
-from core import PipelineComponent
-from core import Blackboard
+from typing import Set
+from core import PipelineComponent, Blackboard
+from core.contracts import Key
 
 
 class ResetNoiseComponent(PipelineComponent):
@@ -8,6 +9,17 @@ class ResetNoiseComponent(PipelineComponent):
 
     def __init__(self, agent_network: torch.nn.Module):
         self.agent_network = agent_network
+
+    @property
+    def requires(self) -> Set[Key]:
+        return set()
+
+    @property
+    def provides(self) -> Set[Key]:
+        return set()
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         if hasattr(self.agent_network, "reset_noise"):

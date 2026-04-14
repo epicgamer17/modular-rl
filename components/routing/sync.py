@@ -1,7 +1,7 @@
 import torch
-from typing import Callable, TYPE_CHECKING
-from core import PipelineComponent
-from core import Blackboard
+from typing import Callable, TYPE_CHECKING, Set
+from core import PipelineComponent, Blackboard
+from core.contracts import Key, SemanticType
 
 if TYPE_CHECKING:
     from modules.agent_nets.base import BaseAgentNetwork
@@ -22,6 +22,17 @@ class TargetNetworkSyncComponent(PipelineComponent):
         self.soft_update = soft_update
         self.ema_beta = ema_beta
         self._step_counter = 0
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {Key("meta.agent_network", SemanticType)}
+
+    @property
+    def provides(self) -> Set[Key]:
+        return set()
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         self._step_counter += 1
@@ -60,6 +71,17 @@ class WeightBroadcastComponent(PipelineComponent):
     ):
         self.agent_network = agent_network
         self.weight_broadcast_fn = weight_broadcast_fn
+
+    @property
+    def requires(self) -> Set[Key]:
+        return set()
+
+    @property
+    def provides(self) -> Set[Key]:
+        return set()
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         self.weight_broadcast_fn(self.agent_network.state_dict())

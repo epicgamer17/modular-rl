@@ -4,7 +4,7 @@ from typing import Any
 from core import PipelineComponent
 from core import Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import ValueEstimate, ValueTarget, LossScalar
+from core.contracts import Key, ValueEstimate, ValueTarget, LossScalar
 from .infrastructure import apply_infrastructure
 
 
@@ -29,12 +29,15 @@ class ValueLoss(PipelineComponent):
         self.name = name
 
     @property
-    def requires(self) -> dict[str, type]:
-        return {"predictions.values": ValueEstimate, self.target_key: ValueTarget}
+    def requires(self) -> set[Key]:
+        return {
+            Key("predictions.values", ValueEstimate),
+            Key(self.target_key, ValueTarget)
+        }
 
     @property
-    def provides(self) -> dict[str, type]:
-        return {f"losses.{self.name}": LossScalar}
+    def provides(self) -> set[Key]:
+        return {Key(f"losses.{self.name}", LossScalar)}
 
     @property
     def constraints(self) -> list[str]:
@@ -116,16 +119,16 @@ class ClippedValueLoss(PipelineComponent):
         self.name = name
 
     @property
-    def requires(self) -> dict[str, type]:
+    def requires(self) -> set[Key]:
         return {
-            "predictions.values": ValueEstimate,
-            self.target_key: ValueTarget,
-            self.old_values_key: ValueEstimate,
+            Key("predictions.values", ValueEstimate),
+            Key(self.target_key, ValueTarget),
+            Key(self.old_values_key, ValueEstimate),
         }
 
     @property
-    def provides(self) -> dict[str, type]:
-        return {f"losses.{self.name}": LossScalar}
+    def provides(self) -> set[Key]:
+        return {Key(f"losses.{self.name}", LossScalar)}
 
     @property
     def constraints(self) -> list[str]:

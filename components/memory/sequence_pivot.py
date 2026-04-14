@@ -41,9 +41,10 @@ Writes:
 
 import time
 import numpy as np
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from core import PipelineComponent, Blackboard
+from core.contracts import Key, Observation, Action, Reward, Done, SemanticType
 from data.samplers.sequence import Sequence
 
 
@@ -97,6 +98,24 @@ class VectorToSequencePivotComponent(PipelineComponent):
         self._start_time: float = (
             episode_start_time if episode_start_time is not None else time.time()
         )
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {
+            Key("data.obs", Observation),
+            Key("meta.actions", Action),
+            Key("data.rewards", Reward),
+            Key("data.terminals", Done),
+            Key("data.truncations", Done),
+            Key("data.next_infos", SemanticType),
+        }
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {Key("meta.completed_sequences", SemanticType)}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     # ------------------------------------------------------------------
     # PipelineComponent interface

@@ -1,6 +1,6 @@
-import torch
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Set
 from core.component import PipelineComponent
+from core.contracts import Key, Observation, ActionDistribution, ValueEstimate
 
 if TYPE_CHECKING:
     from core.blackboard import Blackboard
@@ -23,6 +23,22 @@ class MCTSSearchComponent(PipelineComponent):
         """
         self.search_engine = search_engine
         self.agent_network = agent_network
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {Key("data.obs", Observation)}
+
+    @property
+    def provides(self) -> Set[Key]:
+        from core.contracts import PolicyLogits
+        return {
+            Key("predictions.search_policy", PolicyLogits),
+            Key("predictions.search_target_policy", PolicyLogits),
+            Key("predictions.search_value", ValueEstimate),
+        }
+
+    def validate(self, blackboard: "Blackboard") -> None:
+        pass
 
     def execute(self, blackboard: "Blackboard") -> None:
         """

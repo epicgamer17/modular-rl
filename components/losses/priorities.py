@@ -1,6 +1,7 @@
 import torch
-from typing import Any
+from typing import Any, Set
 from core import PipelineComponent, Blackboard
+from core.contracts import Key, SemanticType, PolicyLogits, ValueTarget, ValueEstimate
 
 
 class LossPriorityComponent(PipelineComponent):
@@ -15,6 +16,17 @@ class LossPriorityComponent(PipelineComponent):
         self.loss_key = loss_key
         assert reduction in ("root", "max"), f"Unknown reduction: {reduction}"
         self.reduction = reduction
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {Key("meta.elementwise_losses", SemanticType)}
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {Key("meta.priorities", SemanticType)}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         """Extracts priorities and stores them in blackboard.meta."""
@@ -46,6 +58,20 @@ class ExpectedValueErrorPriorityComponent(PipelineComponent):
         self.value_representation = value_representation
         self.target_key = target_key
         self.pred_key = pred_key
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {
+            Key(f"predictions.{self.pred_key}", ValueEstimate),
+            Key(f"targets.{self.target_key}", ValueTarget)
+        }
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {Key("meta.priorities", SemanticType)}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         """Computes MSE of expected value error at root and stores in blackboard.meta."""

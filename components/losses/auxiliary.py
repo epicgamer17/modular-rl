@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any
-from core import PipelineComponent
-from core import Blackboard
+from typing import Any, Set
+from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
+from core.contracts import Key, Reward, ToPlay, PolicyLogits, ValueTarget, LossScalar, SemanticType, Observation
 from .infrastructure import apply_infrastructure
 
 
@@ -24,6 +24,20 @@ class RewardLoss(PipelineComponent):
         self.mask_key = mask_key
         self.target_key = target_key
         self.name = name
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {
+            Key("predictions.rewards", Reward),
+            Key(self.target_key, Reward)
+        }
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {Key(f"losses.{self.name}", LossScalar)}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["rewards"]
@@ -68,6 +82,20 @@ class ToPlayLoss(PipelineComponent):
         self.target_key = target_key
         self.name = name
 
+    @property
+    def requires(self) -> Set[Key]:
+        return {
+            Key("predictions.to_plays", ToPlay),
+            Key(self.target_key, ToPlay)
+        }
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {Key(f"losses.{self.name}", LossScalar)}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
+
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions.get("to_plays")
         try:
@@ -111,6 +139,20 @@ class ChanceQLoss(PipelineComponent):
         self.target_key = target_key
         self.name = name
 
+    @property
+    def requires(self) -> Set[Key]:
+        return {
+            Key("predictions.chance_q_logits", PolicyLogits),
+            Key(self.target_key, ValueTarget)
+        }
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {Key(f"losses.{self.name}", LossScalar)}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
+
     def execute(self, blackboard: Blackboard) -> None:
         try:
             formatted_target = resolve_blackboard_path(blackboard, self.target_key)
@@ -153,6 +195,20 @@ class ConsistencyLoss(PipelineComponent):
         self.mask_key = mask_key
         self.name = name
 
+    @property
+    def requires(self) -> Set[Key]:
+        return {
+            Key("predictions.projected_latents", SemanticType),
+            Key("targets.consistency_targets", SemanticType)
+        }
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {Key(f"losses.{self.name}", LossScalar)}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
+
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions.get("projected_latents")
         targets = blackboard.targets.get("consistency_targets")
@@ -186,6 +242,20 @@ class SigmaLoss(PipelineComponent):
         self.mask_key = mask_key
         self.target_key = target_key
         self.name = name
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {
+            Key("predictions.sigma_logits", PolicyLogits),
+            Key(self.target_key, SemanticType)
+        }
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {Key(f"losses.{self.name}", LossScalar)}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions.get("sigma_logits")
@@ -224,6 +294,17 @@ class CommitmentLoss(PipelineComponent):
         self.mask_key = mask_key
         self.name = name
 
+    @property
+    def requires(self) -> Set[Key]:
+        return {Key("predictions.commitment_loss", LossScalar)}
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {Key(f"losses.{self.name}", LossScalar)}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
+
     def execute(self, blackboard: Blackboard) -> None:
         elementwise_loss = blackboard.predictions.get("commitment_loss")
         if elementwise_loss is None:
@@ -241,6 +322,17 @@ class LatentConsistencyComponent(PipelineComponent):
 
     def __init__(self, agent_network: nn.Module):
         self.agent_network = agent_network
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {Key("data.unroll_observations", Observation)}
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {Key("targets.consistency_targets", SemanticType)}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         real_obs = blackboard.data["unroll_observations"].float()

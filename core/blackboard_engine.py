@@ -1,31 +1,44 @@
-from typing import Dict, Any, Iterable, Iterator
+from typing import Dict, Any, Iterable, Iterator, List, Set, Type, Optional
 import torch
 import time
 
 from core.blackboard import Blackboard
 from core.component import PipelineComponent
+from core.contracts import Key
 
-def validate_recipe(components: list[PipelineComponent], initial_keys: set[str] = frozenset()):
+def validate_recipe(components: List[PipelineComponent], initial_keys: Set[Key]) -> None:
     """
-    Validates that the pipeline components' read/write contracts are satisfied.
-    Simulates the data flow through the Blackboard to catch DAG topology errors early.
+    Validates that all components in the pipeline have their requirements met.
+    Performs both path existence and semantic type checks.
     """
-    available_keys = set(initial_keys)
-    
+    available_contracts: Dict[str, Type] = {k.path: k.semantic_type for k in initial_keys}
+
     for i, component in enumerate(components):
-        # 1. Check if the component's read requirements are met by prior writes
-        missing_keys = {key for key in component.requires if key not in available_keys}
+        missing = []
+        type_mismatches = []
         
-        if missing_keys:
-            raise RuntimeError(
-                f"DAG Topology Error at Component [{i}] '{component.__class__.__name__}':\n"
-                f"Required keys {missing_keys} have not been written by any previous component or provided in the initial batch.\n"
-                f"Available keys at this stage: {sorted(list(available_keys))}"
-            )
-            
-        # 2. Simulate the component executing by adding its writes to the available pool
-        available_keys.update(component.provides)
-        
+        for req in component.requires:
+            if req.path not in available_contracts:
+                missing.append(req.path)
+            elif not issubclass(available_contracts[req.path], req.semantic_type):
+                type_mismatches.append(
+                    f"'{req.path}' expected {req.semantic_type.__name__}, "
+                    f"but found {available_contracts[req.path].__name__}"
+                )
+
+        if missing or type_mismatches:
+            error_msg = f"DAG Topology Error at Component [{i}] '{type(component).__name__}':\n"
+            if missing:
+                error_msg += f"  Missing keys: {missing}\n"
+            if type_mismatches:
+                error_msg += f"  Type mismatches: {type_mismatches}\n"
+            error_msg += f"  Available keys at this stage: {list(available_contracts.keys())}"
+            raise RuntimeError(error_msg)
+
+        # Update available keys with what this component provides
+        for prov in component.provides:
+            available_contracts[prov.path] = prov.semantic_type
+
     print(f"DAG Validation Passed: {len(components)} components verified.")
 
 
@@ -37,7 +50,7 @@ class BlackboardEngine:
         self, 
         components: list[PipelineComponent], 
         device: torch.device, 
-        initial_keys: set[str] | None = None,
+        initial_keys: Set[Key] = set(),
         strict: bool = False
     ):
         self.components = components
@@ -46,7 +59,7 @@ class BlackboardEngine:
         self.strict = strict
 
         # Validate the DAG before the first training step
-        validate_recipe(components, initial_keys or set())
+        validate_recipe(components, initial_keys)
 
     def step(self, batch_iterator: Iterable[Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
         t_last = time.perf_counter()

@@ -26,9 +26,10 @@ After ``PufferStepComponent.execute()``:
 
 import numpy as np
 import torch
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 from core import PipelineComponent, Blackboard
+from core.contracts import Key, Observation, Action, Reward, Done, SemanticType
 
 
 class PufferObservationComponent(PipelineComponent):
@@ -66,6 +67,20 @@ class PufferObservationComponent(PipelineComponent):
         self.num_envs = num_envs
         self.device = device
         self.input_shape = input_shape
+
+    @property
+    def requires(self) -> Set[Key]:
+        return set()
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {
+            Key("data.obs", Observation),
+            Key("data.infos", SemanticType)
+        }
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
         # Internal cache, populated externally before the first execute() call.
         # BasePufferActor sets these after _reset_env(); the StepComponent keeps
@@ -180,6 +195,23 @@ class PufferStepComponent(PipelineComponent):
     ) -> None:
         self.vec_env = vec_env
         self.obs_component = obs_component
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {Key("meta.actions", Action)} # Renamed to singular 'action' for consistency if needed, but the code says 'actions'
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {
+            Key("data.next_obs", Observation),
+            Key("data.rewards", Reward),
+            Key("data.terminals", Done),
+            Key("data.truncations", Done),
+            Key("data.next_infos", SemanticType),
+        }
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         """

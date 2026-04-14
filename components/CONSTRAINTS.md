@@ -21,32 +21,39 @@ This is achieved through a **layered contract system**:
 
 ## 1. Contracts are semantic, not structural
 
-Components communicate using **meaning**, not raw tensor shapes.
+Components communicate using **meaningful keys** and **semantic types**, not raw strings or tensor shapes.
 
 ### ✅ Good
 ```python
-requires = {"value": ValueEstimate}
+@property
+def requires(self) -> Set[Key]:
+    return {Key("predictions.values", ValueEstimate)}
+```
 ❌ Bad
-requires = {"value": Tensor[B, T, 51]}
+```python
+requires = {"value": "tensor"}
+```
 
 Rationale:
 
-Enables polymorphism (scalar, distributional, sequence)
-Prevents combinatorial explosion of components
-Decouples logic from representation
-2. Every component must declare contracts
+*   **Type Safety**: Prevents passing a `PolicyLogits` tensor into a `ValueLoss` component.
+*   **Polymorphism**: Enables components to accept specific types (e.g., `DiscreteValue`) where a base type (`ValueEstimate`) is expected.
+*   **Decoupling**: Logic is isolated from specific blackboard path naming conventions via configurable keys.
 
-Each component must define:
+## 2. Every component must declare bound contracts
 
-requires = {...}
-provides = {...}
+Contracts MUST be instance properties (`@property`), never class-level attributes. This allows components to be dynamic based on their configuration (e.g., different target keys).
+
+Each component MUST define:
+
+*   `requires` -> `Set[Key]`
+*   `provides` -> `Set[Key]`
 
 This enables:
 
-DAG construction
-dependency validation
-system introspection
-3. Constraints describe, validation enforces
+*   **DAG Validation**: Verifying data flow before anything runs.
+*   **Type Matching**: Using `issubclass(found_type, required_type)` to allow polymorphic data flow.
+*   **Path Resolution**: Mapping complex paths like `targets.policies` to semantic identifiers.
 
 We separate:
 
@@ -118,23 +125,44 @@ device placement
 internal network structure
 ❌ Redundant checks
 if adapters already normalize inputs
-Semantic Type System
 
-All components operate on a shared set of semantic types.
+### Semantic Type System
 
-Examples:
-Observation
-Action
-PolicyLogits
-ActionDistribution
-ValueEstimate
-ValueTarget
-Reward
-Trajectory
-HiddenState
-LossScalar
+All components operate on a shared hierarchy of `SemanticType` classes.
 
-These types define meaning, not structure.
+### Core Types
+*   `Observation`
+*   `Action`
+*   `PolicyLogits`
+*   `ActionDistribution`
+*   `ValueEstimate`
+*   `ValueTarget`
+*   `Reward`
+*   `LossScalar`
+*   `ToPlay`
+
+### Type Inheritance (Polymorphism)
+
+Systems often require specific data representations that still share a high-level meaning. We use standard Python inheritance to model this:
+
+```python
+class ValueTarget(SemanticType): pass
+class DiscreteValue(ValueTarget): pass
+class ProjectValue(ValueTarget): pass
+```
+
+If a component requires `ValueTarget`, it will accept `DiscreteValue` automatically because the DAG validator uses `issubclass()`.
+
+### The Key Object
+
+A `Key` binds a **blackboard path** (string) to a **semantic type**.
+
+```python
+Key("targets.policies", PolicyLogits)
+```
+
+*   **Path**: Used by `resolve_blackboard_path` to find tensors.
+*   **Type**: Used by the engine to validate DAG topology.
 
 Adapters (Normalization Layer)
 

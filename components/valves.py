@@ -1,6 +1,6 @@
-import torch
-from core import PipelineComponent
-from core import Blackboard
+from typing import Set
+from core import PipelineComponent, Blackboard
+from core.contracts import Key, SemanticType
 
 class GradientScaleValve(PipelineComponent):
     """
@@ -14,6 +14,17 @@ class GradientScaleValve(PipelineComponent):
     def __init__(self, key: str, scale: float):
         self.key = key
         self.scale = scale
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {Key(f"predictions.{self.key}", SemanticType)}
+
+    @property
+    def provides(self) -> Set[Key]:
+        return set()
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         """

@@ -1,8 +1,7 @@
 import torch
 import numpy as np
-from core import PipelineComponent
-from core import Blackboard
-from core.contracts import SemanticType, Observation, Action, Reward, Done, Mask # Adjust types as needed
+from core import PipelineComponent, Blackboard
+from core.contracts import Key, SemanticType, Observation, Action, Reward, Done, Mask
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -38,13 +37,13 @@ class BufferStoreComponent(PipelineComponent):
         return container
 
     @property
-    def requires(self) -> dict[str, type]:
+    def requires(self) -> set[Key]:
         # Polymorphic mapping
-        return {bb_path: SemanticType for bb_path in self.field_map.values()}
+        return {Key(bb_path, SemanticType) for bb_path in self.field_map.values()}
 
     @property
-    def provides(self) -> dict[str, type]:
-        return {}
+    def provides(self) -> set[Key]:
+        return set()
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -96,24 +95,25 @@ class SequenceBufferComponent(PipelineComponent):
             self._sequence = Sequence(self.num_players)
 
     @property
-    def requires(self) -> dict[str, type]:
+    def requires(self) -> set[Key]:
+        from core.contracts import Key, Observation, Action, Reward, Done
         r = {
-            "data.obs": Observation,
-            "data.done": Done,
-            "data.reward": Reward,
-            "meta.action": Action,
+            Key("data.obs", Observation),
+            Key("data.done", Done),
+            Key("data.reward", Reward),
+            Key("meta.action", Action),
         }
         if self.target_policy_key:
             from core.contracts import PolicyLogits
-            r[f"predictions.{self.target_policy_key}"] = PolicyLogits
+            r.add(Key(f"predictions.{self.target_policy_key}", PolicyLogits))
         if self.target_value_key:
             from core.contracts import ValueEstimate
-            r[f"predictions.{self.target_value_key}"] = ValueEstimate
+            r.add(Key(f"predictions.{self.target_value_key}", ValueEstimate))
         return r
 
     @property
-    def provides(self) -> dict[str, type]:
-        return {}
+    def provides(self) -> set[Key]:
+        return set()
 
     def validate(self, blackboard: Blackboard) -> None:
         pass

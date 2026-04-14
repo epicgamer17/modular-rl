@@ -1,7 +1,7 @@
 import torch
 import numpy as np
-from core import PipelineComponent
-from core import Blackboard
+from core import PipelineComponent, Blackboard
+from core.contracts import Key, Observation, Reward, Done, ToPlay, Action, SemanticType
 
 
 class PettingZooObservationComponent(PipelineComponent):
@@ -14,6 +14,23 @@ class PettingZooObservationComponent(PipelineComponent):
         self.env = env
         self._initialized = False
         self.done = False
+
+    @property
+    def requires(self) -> set[Key]:
+        return set()
+
+    @property
+    def provides(self) -> set[Key]:
+        return {
+            Key("data.obs", Observation),
+            Key("data.info", SemanticType),
+            Key("data.reward", Reward),
+            Key("data.done", Done),
+            Key("data.player_id", ToPlay),
+        }
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         if not self._initialized or self.done or not self.env.agents:
@@ -74,6 +91,21 @@ class PettingZooStepComponent(PipelineComponent):
     def __init__(self, env, obs_component: PettingZooObservationComponent):
         self.env = env
         self.obs_component = obs_component
+
+    @property
+    def requires(self) -> set[Key]:
+        return {Key("meta.action", Action)}
+
+    @property
+    def provides(self) -> set[Key]:
+        return {
+            Key("data.next_obs", Observation),
+            Key("data.reward", Reward),
+            Key("data.done", Done),
+        }
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         action = blackboard.meta["action"]

@@ -4,7 +4,7 @@ from typing import Any
 from core import PipelineComponent
 from core import Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import PolicyLogits, ActionDistribution, Action, Advantage, LossScalar
+from core.contracts import Key, PolicyLogits, ActionDistribution, Action, Advantage, LossScalar
 from .infrastructure import apply_infrastructure
 
 
@@ -33,12 +33,15 @@ class PolicyLoss(PipelineComponent):
         self.name = name
 
     @property
-    def requires(self) -> dict[str, type]:
-        return {"predictions.policies": PolicyLogits, self.target_key: ActionDistribution}
+    def requires(self) -> set[Key]:
+        return {
+            Key("predictions.policies", PolicyLogits),
+            Key(self.target_key, PolicyLogits)
+        }
 
     @property
-    def provides(self) -> dict[str, type]:
-        return {f"losses.{self.name}": LossScalar}
+    def provides(self) -> set[Key]:
+        return {Key(f"losses.{self.name}", LossScalar)}
 
     def validate(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["policies"]
@@ -106,17 +109,17 @@ class ClippedSurrogateLoss(PipelineComponent):
         self.name = name
 
     @property
-    def requires(self) -> dict[str, type]:
+    def requires(self) -> set[Key]:
         return {
-            "predictions.policies": PolicyLogits,
-            self.actions_key: Action,
-            self.old_log_probs_key: Advantage,  # Use Advantage as a stand-in for LogProbs if not explicit
-            self.advantages_key: Advantage,
+            Key("predictions.policies", PolicyLogits),
+            Key(self.actions_key, Action),
+            Key(self.old_log_probs_key, Advantage),  # Use Advantage as a stand-in for LogProbs if not explicit
+            Key(self.advantages_key, Advantage),
         }
 
     @property
-    def provides(self) -> dict[str, type]:
-        return {f"losses.{self.name}": LossScalar}
+    def provides(self) -> set[Key]:
+        return {Key(f"losses.{self.name}", LossScalar)}
 
     def validate(self, blackboard: Blackboard) -> None:
         logits = blackboard.predictions["policies"]

@@ -1,6 +1,7 @@
 import torch
-from typing import Any
+from typing import Any, Set
 from core import PipelineComponent, Blackboard
+from core.contracts import Key, SemanticType
 
 
 class PriorityUpdateComponent(PipelineComponent):
@@ -11,6 +12,20 @@ class PriorityUpdateComponent(PipelineComponent):
     """
     def __init__(self, priority_update_fn: Any):
         self.priority_update_fn = priority_update_fn
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {
+            Key("meta.priorities", SemanticType),
+            Key("data.indices", SemanticType),
+        }
+
+    @property
+    def provides(self) -> Set[Key]:
+        return set()
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         priorities = blackboard.meta.get("priorities")
@@ -27,6 +42,17 @@ class BetaScheduleComponent(PipelineComponent):
     def __init__(self, per_beta_schedule: Any, set_beta_fn: Any):
         self.per_beta_schedule = per_beta_schedule
         self.set_beta_fn = set_beta_fn
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {Key("meta.training_step", SemanticType)}
+
+    @property
+    def provides(self) -> Set[Key]:
+        return set()
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         step = blackboard.meta.get("training_step")

@@ -1,8 +1,8 @@
+from typing import Any, Dict, Optional, Set
 import torch
 import torch.nn as nn
-from typing import Any, Dict, Optional
-from core import PipelineComponent
-from core import Blackboard
+from core import PipelineComponent, Blackboard
+from core.contracts import Key, LossScalar, SemanticType
 from modules.utils import scale_gradient
 
 
@@ -24,12 +24,12 @@ class EpsilonDecayComponent(PipelineComponent):
         self.current_step = 0
 
     @property
-    def requires(self) -> set[str]:
+    def requires(self) -> set[Key]:
         return set()
 
     @property
-    def provides(self) -> set[str]:
-        return {"meta.epsilon"}
+    def provides(self) -> set[Key]:
+        return {Key("meta.epsilon", SemanticType)}
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -113,12 +113,15 @@ class LossAggregatorComponent(PipelineComponent):
         self.optimizer_key = optimizer_key
 
     @property
-    def requires(self) -> set[str]:
-        return {f"losses.{name}" for name in self.loss_weights.keys()}
+    def requires(self) -> set[Key]:
+        return {Key(f"losses.{name}", LossScalar) for name in self.loss_weights.keys()}
 
     @property
-    def provides(self) -> set[str]:
-        return {f"losses.total_loss.{self.optimizer_key}"}
+    def provides(self) -> Set[Key]:
+        return {
+            Key(f"losses.total_loss.{self.optimizer_key}", LossScalar),
+            Key("losses.total_loss", SemanticType)
+        }
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -164,11 +167,11 @@ class OptimizerStepComponent(PipelineComponent):
         self.max_grad_norm = max_grad_norm
 
     @property
-    def requires(self) -> set[str]:
-        return {"losses.total_loss"}
+    def requires(self) -> Set[Key]:
+        return {Key("losses.total_loss", SemanticType)}
 
     @property
-    def provides(self) -> set[str]:
+    def provides(self) -> set[Key]:
         return set()
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -242,12 +245,12 @@ class ShapeValidatorComponent(PipelineComponent):
         self.validator = validator
 
     @property
-    def requires(self) -> set[str]:
+    def requires(self) -> set[Key]:
         # Requires everything to validate shapes
-        return {"predictions", "targets"}
+        return {Key("predictions", SemanticType), Key("targets", SemanticType)}
 
     @property
-    def provides(self) -> set[str]:
+    def provides(self) -> set[Key]:
         return set()
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -264,12 +267,15 @@ class MetricEarlyStopComponent(PipelineComponent):
         self.threshold = threshold
 
     @property
-    def requires(self) -> set[str]:
-        return {f"meta.{self.metric_key}", f"losses.{self.metric_key}"}
+    def requires(self) -> set[Key]:
+        return {
+            Key(f"meta.{self.metric_key}", SemanticType),
+            Key(f"losses.{self.metric_key}", SemanticType)
+        }
 
     @property
-    def provides(self) -> set[str]:
-        return {"meta.stop_execution"}
+    def provides(self) -> set[Key]:
+        return {Key("meta.stop_execution", SemanticType)}
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
@@ -296,11 +302,11 @@ class MPSCacheClearComponent(PipelineComponent):
         self.step_count = 0
 
     @property
-    def requires(self) -> set[str]:
+    def requires(self) -> set[Key]:
         return set()
 
     @property
-    def provides(self) -> set[str]:
+    def provides(self) -> set[Key]:
         return set()
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -320,12 +326,12 @@ class DeviceTransferComponent(PipelineComponent):
         self.device = device
 
     @property
-    def requires(self) -> set[str]:
-        return {"data"}
+    def requires(self) -> set[Key]:
+        return {Key("data", SemanticType)}
 
     @property
-    def provides(self) -> set[str]:
-        return {"data"}
+    def provides(self) -> set[Key]:
+        return {Key("data", SemanticType)}
 
     def validate(self, blackboard: Blackboard) -> None:
         pass

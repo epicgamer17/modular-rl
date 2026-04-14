@@ -25,9 +25,10 @@ Writes:
 import random
 import numpy as np
 import torch
-from typing import Optional
+from typing import Optional, Set
 
 from core import PipelineComponent, Blackboard
+from core.contracts import Key, Observation, Action, SemanticType
 
 # Board shape constants.
 _BOARD_ROWS = 3
@@ -119,15 +120,21 @@ class TicTacToeExpertComponent(PipelineComponent):
 
     The component is stateless and can be used for any player seat in a
     ``PlayerRoutingComponent``.
-
-    Example pipeline usage::
-
-        pipeline = BlackboardEngine(components=[
-            PettingZooObservationComponent(env),
-            TicTacToeExpertComponent(),
-            PettingZooStepComponent(env, obs_component),
-        ])
     """
+
+    @property
+    def requires(self) -> Set[Key]:
+        return {
+            Key("data.obs", Observation),
+            Key("data.info", SemanticType)
+        }
+
+    @property
+    def provides(self) -> Set[Key]:
+        return {Key("meta.action", Action)}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         """
