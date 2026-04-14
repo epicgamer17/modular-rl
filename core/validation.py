@@ -78,3 +78,7 @@ def assert_representation_supports(representation: Any, tensor: torch.Tensor, ms
     elif hasattr(representation, "supports"):
         assert representation.supports(tensor), f"Representation {type(representation).__name__} does not support tensor {msg} with shape {tensor.shape}"
 
+def assert_same_bins(t1: torch.Tensor, t2: torch.Tensor, msg: str = ""):
+    """Asserts that two distributional tensors have matching number of atoms (last dim)."""
+    assert t1.shape[-1] == t2.shape[-1], f"Bin size mismatch {msg}: {t1.shape[-1]} vs {t2.shape[-1]}"
+

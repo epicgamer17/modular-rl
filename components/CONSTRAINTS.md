@@ -219,117 +219,34 @@ If a component requires `ValueTarget`, it will accept `DiscreteValue` automatica
 
 ### The Key Object
 
-A `Key` binds a **blackboard path** (string) to a **semantic type**.
+A `Key` binds a **blackboard path** (string) to a **semantic type**, and optionally, **metadata**.
 
 ```python
-Key("targets.policies", PolicyLogits)
+Key("targets.values", ValueTarget, metadata={"bins": 51})
 ```
 
 *   **Path**: Used by `resolve_blackboard_path` to find tensors.
 *   **Type**: Used by the engine to validate DAG topology.
+*   **Metadata**: Used to enforce cross-component invariants (e.g. matching bin counts).
 
-Adapters (Normalization Layer)
+---
 
-Adapters bridge representation differences.
+# 6. Global Pipeline Optimization & Execution Graph
 
-Examples:
-to_expectation(value)
-ensure_time_dim(x)
-align_batch(x, y)
-Rules:
-Components should rely on adapters instead of handling all cases manually
-Adapters should be centralized and reusable
-DAG Validation
-Build-time validation
+To ensure high-performance execution and global correctness, the system builds an explicit **Execution Graph** before the first training step.
 
-The system should:
+## Build-time Graph Optimization
+The `BlackboardEngine` performs several optimizations to minimize redundant computation:
 
-verify all required inputs are provided
-check type compatibility
-optionally check declarative constraints
-Runtime validation
+1.  **Terminal-Value Pruning**: The engine automatically identifies and skips components whose outputs are never consumed by downstream components or terminal sinks (losses, telemetry).
+2.  **Metadata Validation**: The engine enforces that all providers and consumers agree on semantic metadata (like `bins` or `support_range`), preventing subtle algorithmic bugs.
+3.  **Future Proofing**: The explicit graph enables future optimizations like **component fusion** (combining small mathematical transforms) and **batching optimization**.
 
-In debug mode:
+### Rules for Optimal Pipelines:
+*   **Avoid Hidden Dependencies**: Ensure every input is declared in `requires`. The pruner will remove components if it thinks their outputs aren't needed!
+*   **Use Parameters for Invariants**: If your logic depends on a specific configuration (e.g. 51 bins), declare it in your `Key` parameters.
+*   **Explicit Telemetry**: Ensure any component intended for logging writes to the `meta.` or `losses.` paths, as these are never pruned.
 
-run validate() for each component
-check invariants
-detect NaNs or invalid values
-Execution Modes
-Strict Mode (Debugging)
-run all validate() functions
-enforce additional checks
-slower but safer
-Relaxed Mode (Training)
-minimal validation
-rely on adapters
-optimized for performance
-Design Guidelines
-When to use declarative constraints
-
-Use if:
-
-the rule is simple
-it improves readability
-it helps tooling
-
-Otherwise → use validate()
-
-When to use programmatic validation
-
-Use if:
-
-logic depends on representation
-behavior is conditional
-correctness is critical
-When to add adapters
-
-Add adapters when:
-
-multiple representations exist
-components would otherwise duplicate logic
-normalization simplifies downstream components
-Anti-Patterns
-❌ Constraint-only systems
-insufficient for real RL complexity
-cannot handle polymorphism
-❌ Shape-driven design
-leads to rigid systems
-breaks composability
-❌ Per-representation components
-leads to explosion of variants
-hard to maintain
-❌ Hidden assumptions
-components silently expecting specific formats
-no validation or documentation
-Summary
-
-This system is built on three pillars:
-
-1. Semantic contracts
-
-Define what data means
-
-2. Programmatic validation
-
-Ensure correctness
-
-3. Adapters
-
-Handle representation differences
-
-Key Insight
-
-Components should agree on meaning, not representation.
-
-Philosophy
-Prefer flexibility over rigidity
-Prefer explicit validation over implicit assumptions
-Prefer composition over specialization
-Prefer simple rules over complex DSLs
-
-This approach enables:
-
-modular RL systems
-safe experimentation
-scalable architecture
-maintainable complexity
+## Runtime Pipeline Safety
+1. **Adaptive Execution**: The engine can skip branches of the DAG based on dynamic valves (e.g. `stop_execution`).
+2. **Transparent Dataflow**: Every mutation is explicit, allowing per-step tracing and bottleneck analysis.

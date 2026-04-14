@@ -1,5 +1,5 @@
-from typing import Protocol, runtime_checkable, Type
-from dataclasses import dataclass
+from typing import Protocol, runtime_checkable, Type, Dict, Any, Optional
+from dataclasses import dataclass, field
 
 @runtime_checkable
 class SemanticType(Protocol):
@@ -11,12 +11,14 @@ class SemanticType(Protocol):
 
 @dataclass(frozen=True)
 class Key:
-    """A semantic key that combines a blackboard path with a semantic type."""
+    """A semantic key that combines a blackboard path, a semantic type, and optional metadata."""
     path: str
     semantic_type: Type[SemanticType]
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __str__(self):
-        return f"Key({self.path}, {self.semantic_type.__name__})"
+        meta_str = f", metadata={self.metadata}" if self.metadata else ""
+        return f"Key({self.path}, {self.semantic_type.__name__}{meta_str})"
 
 
 class Observation(SemanticType): pass

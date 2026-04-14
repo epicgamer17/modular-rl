@@ -280,9 +280,17 @@ class ExpectedValueComponent(PipelineComponent):
         self._logits_key = logits_key
         self._dest_key = dest_key
         
-        # Deterministic contracts
-        self._requires = {Key(f"predictions.{self._logits_key}", PolicyLogits)}
-        self._provides = {Key(f"targets.{self._dest_key}", ValueTarget)}
+        # Deterministic contracts: Parameter-Aware
+        metadata = {}
+        if hasattr(representation, "bins"):
+            metadata["bins"] = representation.bins
+        
+        self._requires = {
+            Key(f"predictions.{self._logits_key}", PolicyLogits, metadata=metadata)
+        }
+        self._provides = {
+            Key(f"targets.{self._dest_key}", ValueTarget, metadata=metadata)
+        }
 
     @property
     def requires(self) -> Set[Key]:
