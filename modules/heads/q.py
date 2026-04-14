@@ -5,7 +5,8 @@ import torch
 from torch import nn, Tensor
 
 from .base import BaseHead
-from agents.learner.losses.representations import BaseRepresentation
+from modules.representations import BaseRepresentation
+from core.contracts import QValues
 from modules.layers.noisy_linear import build_linear_layer
 from modules.utils import build_normalization_layer
 
@@ -63,12 +64,14 @@ class QHead(BaseHead):
         self.num_actions = num_actions
         self.input_dim = self.flat_dim
 
-        self.hidden_layers, self._hidden_activation, hidden_out_width = _build_hidden_layers(
-            initial_width=self.input_dim,
-            widths=hidden_widths,
-            activation=activation,
-            noisy_sigma=noisy_sigma,
-            norm_type=norm_type,
+        self.hidden_layers, self._hidden_activation, hidden_out_width = (
+            _build_hidden_layers(
+                initial_width=self.input_dim,
+                widths=hidden_widths,
+                activation=activation,
+                noisy_sigma=noisy_sigma,
+                norm_type=norm_type,
+            )
         )
 
         # Output Layer (Overwrites BaseHead's output_layer)
@@ -88,6 +91,10 @@ class QHead(BaseHead):
         new_state = state if state is not None else {}
         inference = self.representation.to_inference(logits)
         return logits, new_state, inference
+
+    @property
+    def semantic_type(self) -> Any:
+        return QValues[self.get_structure()]
 
 
 class DuelingQHead(BaseHead):
@@ -117,12 +124,14 @@ class DuelingQHead(BaseHead):
         self.input_dim = self.flat_dim
 
         # Value Stream
-        self.value_hidden, self._value_activation, value_out_width = _build_hidden_layers(
-            initial_width=self.input_dim,
-            widths=value_hidden_widths,
-            activation=activation,
-            noisy_sigma=noisy_sigma,
-            norm_type=norm_type,
+        self.value_hidden, self._value_activation, value_out_width = (
+            _build_hidden_layers(
+                initial_width=self.input_dim,
+                widths=value_hidden_widths,
+                activation=activation,
+                noisy_sigma=noisy_sigma,
+                norm_type=norm_type,
+            )
         )
         self.value_output = build_linear_layer(
             in_features=value_out_width,
@@ -131,12 +140,14 @@ class DuelingQHead(BaseHead):
         )
 
         # Advantage Stream
-        self.advantage_hidden, self._advantage_activation, adv_out_width = _build_hidden_layers(
-            initial_width=self.input_dim,
-            widths=advantage_hidden_widths,
-            activation=activation,
-            noisy_sigma=noisy_sigma,
-            norm_type=norm_type,
+        self.advantage_hidden, self._advantage_activation, adv_out_width = (
+            _build_hidden_layers(
+                initial_width=self.input_dim,
+                widths=advantage_hidden_widths,
+                activation=activation,
+                noisy_sigma=noisy_sigma,
+                norm_type=norm_type,
+            )
         )
         self.advantage_output = build_linear_layer(
             in_features=adv_out_width,
@@ -171,3 +182,7 @@ class DuelingQHead(BaseHead):
         new_state = state if state is not None else {}
         inference = self.representation.to_inference(q)
         return q, new_state, inference
+
+    @property
+    def semantic_type(self) -> Any:
+        return QValues[self.get_structure()]

@@ -1,4 +1,4 @@
-from typing import Callable, Tuple, Dict, Any, List, Optional
+from typing import Callable, Tuple, Dict, Any, List, Optional, Type
 import torch
 from torch import nn, Tensor
 
@@ -11,9 +11,10 @@ from modules.world_models.muzero_world_model import MuzeroWorldModel
 from modules.heads.policy import PolicyHead
 from modules.heads.value import ValueHead
 from modules.heads.q import QHead, DuelingQHead
-from agents.learner.losses.representations import get_representation
+from modules.representations import get_representation
+from core.contracts import SemanticType, Scalar, ValueEstimate, QValues
 from modules.projectors.sim_siam import Projector
-from agents.learner.losses.shape_validator import ShapeValidator
+from components.losses import ShapeValidator
 
 
 class ModularAgentNetwork(BaseAgentNetwork):
@@ -61,8 +62,11 @@ class ModularAgentNetwork(BaseAgentNetwork):
         Universal Actor API: Translates raw observations based
         on the exact flow implied by the instantiated components.
         """
-        if not torch.is_tensor(obs):
-            obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+        assert torch.is_tensor(
+            obs
+        ), f"obs_inference expects a tensor, got {type(obs)}. Stage 2 (Tensor Routing) must happen outside the network."
+        # obs typically arrives as uint8 from Stage 2. Cast to float here (Neural Preprocessing).
+        obs = obs.float()
 
         # ----------------------------------------
         # MuZero Logic
@@ -144,7 +148,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
         """
         initial_observation = batch.get("observations")
         assert initial_observation is not None, "Batch must contain 'observations'"
-        initial_observation = initial_observation.to(self.device).float()
+        # Stage 2 (Tensor Routing) must have moved the batch to the correct device.
+        # We perform type casting here (Neural Preprocessing).
+        initial_observation = initial_observation.float()
 
         # ----------------------------------------
         # MuZero Logic
@@ -168,9 +174,14 @@ class ModularAgentNetwork(BaseAgentNetwork):
                     [target_observations[:, :-1], target_observations[:, 1:]], dim=2
                 )
 
+            # Slice actions to exclude the dummy root action (index 0)
+            # added by the NStepUnrollProcessor for target alignment.
+            # This ensures we unroll for exactly K steps, starting from s0.
+            unroll_actions = actions[:, 1:]
+
             physics_output = self.components["world_model"].unroll_physics(
                 initial_latent_state=latent,
-                actions=actions,
+                actions=unroll_actions,
                 encoder_inputs=encoder_inputs,
                 true_chance_codes=target_chance_codes,
                 head_state=head_state,
@@ -185,9 +196,6 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
             pred_features = self.components["prediction_backbone"](flat_latents)
             raw_values, _, _ = self.components["value_head"](pred_features)
-            raw_policies, _, _ = self.components["policy_head"](raw_values if "prediction_backbone" not in self.components else pred_features)
-            # Note: The above logic for policy_head input depends on the architecture. 
-            # In MuZero, policy and value heads often share the same backbone features.
             raw_policies, _, _ = self.components["policy_head"](pred_features)
 
             raw_values = raw_values.view(B, T_plus_1, -1)
@@ -200,7 +208,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
             # --- PAD TRANSITION OUTPUTS (Rewards/Chance) ---
             dummy_reward = torch.zeros(
-                B, 1, *physics_output.rewards.shape[2:],
+                B,
+                1,
+                *physics_output.rewards.shape[2:],
                 device=self.device,
                 dtype=physics_output.rewards.dtype,
             )
@@ -219,7 +229,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 )
                 stochastic_chance_values = raw_chance_values.view(B_as, T_as, -1)
                 dummy_chance_values = torch.zeros(
-                    B_as, 1, *stochastic_chance_values.shape[2:],
+                    B_as,
+                    1,
+                    *stochastic_chance_values.shape[2:],
                     device=self.device,
                     dtype=stochastic_chance_values.dtype,
                 )
@@ -229,7 +241,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
                 stochastic_chance_logits = physics_output.chance_logits
                 dummy_chance_logits = torch.zeros(
-                    B_as, 1, *stochastic_chance_logits.shape[2:],
+                    B_as,
+                    1,
+                    *stochastic_chance_logits.shape[2:],
                     device=self.device,
                     dtype=stochastic_chance_logits.dtype,
                 )
@@ -239,7 +253,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
 
                 chance_encoder_embeddings = physics_output.chance_encoder_embeddings
                 dummy_chance_embeddings = torch.zeros(
-                    B_as, 1, *chance_encoder_embeddings.shape[2:],
+                    B_as,
+                    1,
+                    *chance_encoder_embeddings.shape[2:],
                     device=self.device,
                     dtype=chance_encoder_embeddings.dtype,
                 )
@@ -254,6 +270,10 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 "to_plays": physics_output.to_plays,
                 "latents": stacked_latents,
             }
+
+            if "projector" in self.components:
+                proj = self.project(flat_latents, grad=True)
+                output["projected_latents"] = proj.view(B, T_plus_1, -1)
 
             if stochastic and latents_afterstates is not None:
                 output["latents_afterstates"] = latents_afterstates
@@ -333,6 +353,50 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 "Network components don't match any known learner inference pipeline."
             )
 
+    def get_learner_contract(self) -> Dict[str, Type[SemanticType]]:
+        """
+        Dynamically builds the learner output contract based on instantiated components.
+        """
+        contract = {}
+
+        # Core prediction heads
+        if "value_head" in self.components:
+            contract["values"] = self.components["value_head"].semantic_type
+        if "policy_head" in self.components:
+            contract["policies"] = self.components["policy_head"].semantic_type
+        if "q_head" in self.components:
+            q_head = self.components["q_head"]
+            contract["q_logits"] = q_head.semantic_type
+            # q_values semantic type depends on whether the representation is distributional
+            # For C51/Rainbow (distributional): use QValues with same structure as q_logits
+            # For standard DQN (scalar): use QValues[Scalar]
+            if (
+                hasattr(q_head, "representation")
+                and hasattr(q_head.representation, "bins")
+                and q_head.representation.bins > 1
+            ):
+                # Distributional (C51, Rainbow, etc.)
+                contract["q_values"] = q_head.semantic_type
+            else:
+                # Standard scalar Q-values (DQN, NFSP, etc.)
+                contract["q_values"] = QValues[Scalar()]
+
+        # World model components (Rewards, ToPlay)
+        if "world_model" in self.components:
+            wm = self.components["world_model"]
+            if hasattr(wm, "reward_head") and hasattr(wm.reward_head, "semantic_type"):
+                contract["rewards"] = wm.reward_head.semantic_type
+            if hasattr(wm, "to_play_head") and hasattr(
+                wm.to_play_head, "semantic_type"
+            ):
+                contract["to_plays"] = wm.to_play_head.semantic_type
+
+        # Supervised only policy
+        if "policy_head" in self.components and len(contract) == 0:
+            contract["policies"] = self.components["policy_head"].semantic_type
+
+        return contract
+
     # ==========================================
     # SEARCH API (Only relevant for MuZero routing)
     # ==========================================
@@ -408,12 +472,17 @@ class ModularAgentNetwork(BaseAgentNetwork):
         if "projector" not in self.components:
             raise NotImplementedError("Projector not configured for this architecture.")
 
+        import math
+
         original_shape = hidden_state.shape
-        flat_hidden = hidden_state.reshape(-1, self.flat_hidden_dim)
+        flat_hidden_dim = math.prod(
+            self.components["world_model"].representation.output_shape
+        )
+        flat_hidden = hidden_state.reshape(-1, flat_hidden_dim)
         proj = self.components["projector"].projection(flat_hidden)
 
         if grad:
-            proj = self.components["projector"].projection_head(proj)
+            proj = self.components["projector"].prediction_head(proj)
         else:
             proj = proj.detach()
 

@@ -9,21 +9,27 @@ from typing import Dict, Any
 from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.policy import PolicyHead
-from agents.learner.losses.representations import ClassificationRepresentation
-from agents.learner.base import UniversalLearner
-from agents.learner.losses import LossPipeline, ImitationLoss
-from agents.learner.target_builders import (
-    PassThroughTargetBuilder,
-    SingleStepFormatter,
-    TargetBuilderPipeline,
+from modules.representations import ClassificationRepresentation
+from core import BlackboardEngine
+from components.neural import ForwardPassComponent
+from components.losses import OptimizerStepComponent
+
+
+from components.losses import LossAggregatorComponent
+from components.losses import PolicyLoss
+from components.targets import (
+    ClassificationFormatterComponent,
 )
-from agents.learner.batch_iterators import RepeatSampleIterator
+from core import RepeatSampleIterator
+from envs.factories.wrappers.observation import ActionMaskInInfoWrapper
 import pytest
+from utils.plotting import plot_regression_results
+
 
 pytestmark = pytest.mark.regression
-from replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
-from replay_buffers.samplers import UniformSampler
-from agents.tictactoe_expert import TicTacToeBestAgent
+from data.storage.circular import BufferConfig, ModularReplayBuffer
+from data.samplers.prioritized import UniformSampler
+from components.experts.tictactoe import TicTacToeBestAgent
 from pettingzoo.classic import tictactoe_v3
 
 
@@ -39,44 +45,31 @@ def test_imitation_tictactoe_regression():
     torch.manual_seed(SEED)
 
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    LEARNING_RATE = 1e-3
-    TRAINING_STEPS = 3000  # Increased for better convergence
     BATCH_SIZE = 128
-    EXPERT_EPISODES = 1000  # Increased for more diverse coverage
+    LEARNING_RATE = 0.003
+    TRAINING_STEPS = 30000
+    EXPERT_EPISODES = 10000
 
-    # --- Setup Environment ---
-    print("Setting up raw TicTacToe environment...")
-    env = tictactoe_v3.env(render_mode=None)
-    env.reset()
-
-    # Raw TicTacToe observation is a dict: {"observation": ..., "action_mask": ...}
-    raw_obs_space = env.observation_space(env.possible_agents[0])
-    # observation: (3, 3, 2)
-    obs_shape = raw_obs_space["observation"].shape
-    num_actions = env.action_space(env.possible_agents[0]).n
-    print(
-        f"Obs shape: {obs_shape}, Num actions: {num_actions}, Agents: {env.possible_agents}"
-    )
-
-    # --- Setup Expert ---
+    # --- Setup Environment & Expert ---
+    env = tictactoe_v3.env()
+    env = ActionMaskInInfoWrapper(env)
     expert = TicTacToeBestAgent()
+
+    # TicTacToe observation space is (3, 3, 2), action space is Discrete(9)
+    obs_shape = (3, 3, 2)
+    num_actions = 9
 
     # --- Setup Network ---
     backbone = MLPBackbone(input_shape=obs_shape, widths=[128, 128])
-    policy_rep = ClassificationRepresentation(num_actions)
-    policy_head = PolicyHead(
+    head = PolicyHead(
         input_shape=backbone.output_shape,
-        representation=policy_rep,
+        representation=ClassificationRepresentation(num_actions),
     )
-
     agent_network = ModularAgentNetwork(
-        components={
-            "feature_block": backbone,
-            "policy_head": policy_head,
-        },
+        components={"feature_block": backbone, "policy_head": head}
     ).to(DEVICE)
 
-    # --- Setup Replay Buffer ---
+    # --- Setup Buffer ---
     buffer_configs = [
         BufferConfig("observations", shape=obs_shape, dtype=torch.float32),
         BufferConfig("actions", shape=(), dtype=torch.int64),
@@ -85,38 +78,39 @@ def test_imitation_tictactoe_regression():
     ]
 
     replay_buffer = ModularReplayBuffer(
-        max_size=50000,
+        max_size=20000,
         batch_size=BATCH_SIZE,
         buffer_configs=buffer_configs,
         sampler=UniformSampler(),
     )
 
-    # --- Data Collection (Expert) ---
-    print(f"Collecting {EXPERT_EPISODES} episodes of expert data...")
+    # --- Collect Expert Data ---
+    print(f"Collecting expert data for {EXPERT_EPISODES} episodes...")
     for _ in range(EXPERT_EPISODES):
         env.reset()
         for agent in env.agent_iter():
-            obs_dict, reward, termination, truncation, info = env.last()
+            obs, reward, termination, truncation, info = env.last()
+            mask = info["legal_moves"]
 
             if termination or truncation:
                 action = None
             else:
-                obs = obs_dict["observation"]
-                mask = obs_dict["action_mask"]
-
                 # Expert expects (2, 3, 3) observation
                 expert_obs = np.moveaxis(obs, -1, 0)
-                expert_info = {"legal_moves": np.where(mask)[0]}
+                expert_info = {"legal_moves": mask}
                 action = expert.select_actions(expert_obs, expert_info)
 
                 # Store one-hot target policy
                 target_policy = np.zeros(num_actions, dtype=np.float32)
                 target_policy[action] = 1.0
 
+                mask_bool = np.zeros(num_actions, dtype=bool)
+                mask_bool[mask] = True
+
                 replay_buffer.store(
                     observations=obs,
                     actions=action,
-                    legal_moves_masks=mask.astype(bool),
+                    legal_moves_masks=mask_bool,
                     policies=target_policy,
                 )
 
@@ -125,107 +119,140 @@ def test_imitation_tictactoe_regression():
     print(f"Buffer size: {replay_buffer.size}")
 
     # --- Setup Learner ---
-    optimizer = torch.optim.Adam(agent_network.parameters(), lr=LEARNING_RATE)
-    # BaseLoss requires functional-style loss_fn that accepts reduction="none"
-    loss_fn = F.cross_entropy
+    optimizer = {
+        "default": torch.optim.Adam(agent_network.parameters(), lr=LEARNING_RATE)
+    }
+    imitation_loss = PolicyLoss(
+        loss_fn=F.cross_entropy,
+        target_key="data.policies",
+    )
 
-    imitation_loss = ImitationLoss(
+    from core.contracts import (
+        Key,
+        Observation,
+        Action,
+        SemanticType,
+        Policy,
+        Mask,
+        Probs,
+        ShapeContract,
+    )
+
+    initial_keys = {
+        Key("data.observations", Observation),
+        Key("data.actions", Action),
+        Key("data.legal_moves_masks", Mask),
+        Key("data.policies", Policy[Probs], shape=ShapeContract(has_time=True)),
+    }
+
+    learner = BlackboardEngine(
+        components=[
+            ForwardPassComponent(agent_network, None),
+            imitation_loss,
+            LossAggregatorComponent(loss_weights={"policy_loss": 1.0}),
+            OptimizerStepComponent(
+                agent_network=agent_network,
+                optimizers=optimizer,
+            ),
+        ],
+        initial_keys=initial_keys,
         device=DEVICE,
-        loss_fn=loss_fn,
-    )
-
-    loss_pipeline = LossPipeline(
-        modules=[imitation_loss],
-        minibatch_size=BATCH_SIZE,
-        num_actions=num_actions,
-    )
-
-    target_builder = TargetBuilderPipeline(
-        [
-            PassThroughTargetBuilder(keys_to_keep=["policies", "actions"]),
-            SingleStepFormatter(temporal_keys=["policies", "actions"]),
-        ]
-    )
-
-    learner = UniversalLearner(
-        agent_network=agent_network,
-        device=DEVICE,
-        num_actions=num_actions,
-        observation_dimensions=obs_shape,
-        observation_dtype=torch.float32,
-        optimizer=optimizer,
-        loss_pipeline=loss_pipeline,
-        target_builder=target_builder,
     )
 
     # --- Training Loop ---
-    print(f"Starting Imitation Learning training for {TRAINING_STEPS} steps...")
+    print(f"Training for {TRAINING_STEPS} steps...")
+    total_losses = []
     for step in range(1, TRAINING_STEPS + 1):
         iterator = RepeatSampleIterator(replay_buffer, num_iterations=1, device=DEVICE)
         metrics = []
         for step_metrics in learner.step(iterator):
-            # UniversalLearner.step yields a dict containing 'loss' (total loss)
-            metrics.append(step_metrics["loss"])
+            # BlackboardEngine.step yields {"losses": ..., "total_losses": ..., "meta": ...}
+            loss_val = step_metrics["total_losses"]["default"]
+            metrics.append(loss_val)
+            total_losses.append(loss_val)
 
         if step % 500 == 0:
             loss_val = np.mean(metrics)
             print(f"Step {step} | Loss: {loss_val:.4f}")
 
     # --- Evaluation ---
-    print("\nEvaluating trained policy against random...")
-    num_eval_episodes = 50
-    wins = 0
-    draws = 0
-    losses = 0
-
-    our_agent_id = env.possible_agents[0]
-    print(f"Our agent ID for evaluation: {our_agent_id}")
-
+    print("Evaluating trained model against Random...")
     agent_network.eval()
-    for _ in range(num_eval_episodes):
-        env.reset()
-        episode_rewards = {a: 0 for a in env.possible_agents}
-        for agent in env.agent_iter():
-            obs_dict, reward, termination, truncation, info = env.last()
 
-            # Accumulate rewards for all agents present in rewards dict
-            for a, r in env.rewards.items():
-                if a in episode_rewards:
-                    episode_rewards[a] += r
+    def run_eval(opponent_type="random", num_episodes=100):
+        wins = 0
+        draws = 0
+        losses = 0
+        for _ in range(num_episodes):
+            env.reset()
+            for agent in env.agent_iter():
+                obs, reward, termination, truncation, info = env.last()
 
-            if termination or truncation:
-                action = None
-            else:
-                obs = obs_dict["observation"]
-                mask = obs_dict["action_mask"]
-                if agent == our_agent_id:  # Our Agent
-                    with torch.inference_mode():
-                        obs_t = torch.as_tensor(
-                            obs, device=DEVICE, dtype=torch.float32
-                        ).unsqueeze(0)
-                        result = agent_network.obs_inference(obs_t)
-                        dist = result.policy
-                        logits = dist.logits
-                        # Apply mask manually
-                        logits[0, mask == 0] = -1e9
-                        action = int(logits.argmax().item())
-                else:  # Random Opponent
-                    action = int(env.action_space(agent).sample(mask))
+                if agent == "player_1":
+                    if termination or truncation:
+                        if reward > 0:
+                            wins += 1
+                        elif reward < 0:
+                            losses += 1
+                        else:
+                            draws += 1
+                        action = None
+                    else:
+                        obs_tensor = (
+                            torch.from_numpy(obs).float().unsqueeze(0).to(DEVICE)
+                        )
+                        with torch.inference_mode():
+                            output = agent_network.obs_inference(obs_tensor)
+                            logits = output.policy.logits[0]
+                            mask = torch.zeros(
+                                num_actions, dtype=torch.bool, device=DEVICE
+                            )
+                            mask[info["legal_moves"]] = True
+                            logits[~mask] = -float("inf")
+                            action = torch.argmax(logits).item()
+                else:  # player_2 (the opponent)
+                    if termination or truncation:
+                        action = None
+                    else:
+                        mask = info["legal_moves"]
+                        if opponent_type == "random":
+                            action = int(random.choice(mask))
+                        else:  # expert
+                            expert_obs = np.moveaxis(obs, -1, 0)
+                            expert_info = {"legal_moves": mask}
+                            action = expert.select_actions(expert_obs, expert_info)
+                env.step(action)
+        return wins, draws, losses
 
-            env.step(action)
+    # 1. Eval against Random
+    rand_wins, rand_draws, rand_losses = run_eval("random", 100)
+    win_rate = rand_wins / 100
+    print(
+        f"Against Random | Wins: {rand_wins}, Draws: {rand_draws}, Losses: {rand_losses}"
+    )
 
-        final_reward = episode_rewards[our_agent_id]
-        if final_reward > 0:
-            wins += 1
-        elif final_reward == 0:
-            draws += 1
-        else:
-            losses += 1
+    # 2. Eval against Expert
+    exp_wins, exp_draws, exp_losses = run_eval("expert", 100)
+    print(
+        f"Against Expert | Wins: {exp_wins}, Draws: {exp_draws}, Losses: {exp_losses}"
+    )
 
-    print(f"Eval Results (50 games): Wins: {wins}, Draws: {draws}, Losses: {losses}")
+    # In TicTacToe imitation of a perfect expert, it should never lose against random.
+    # We assert it wins or draws almost all games.
+    assert rand_losses <= 1, f"Imitation agent lost {rand_losses} games against RANDOM."
+    assert win_rate >= 0.7, f"Imitation win rate {win_rate} against random is too low."
 
-    assert losses <= 5, f"Learned policy lost {losses} games against random!"
-    print("Regression test PASSED: Agent plays perfectly against random.")
+    # Against expert, it should at least draw most games if it learned correctly.
+    # A perfect player never loses Tic-Tac-Toe.
+    assert exp_losses <= 5, f"Imitation agent lost {exp_losses} games against EXPERT."
+
+    # Plot results (Note: No training scores as this is supervised learning)
+    plot_regression_results(
+        name="Imitation TicTacToe",
+        train_scores=[],
+        test_scores=[win_rate],
+        losses={"Policy Loss": total_losses},
+    )
 
 
 if __name__ == "__main__":

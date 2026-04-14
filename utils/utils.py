@@ -61,14 +61,11 @@ def get_legal_moves(info: dict | list[dict]):
 
     if isinstance(info, list):
         legal_moves = [_sanitize_moves(i.get("legal_moves", None)) for i in info]
-        for legal_list in legal_moves:
-            if legal_list is not None:
-                assert len(legal_list) > 0, "Legal moves list is empty"
+        # Skip assertion: empty legal moves are valid in terminal states
     else:
         lm = _sanitize_moves(info.get("legal_moves", None))
         if lm is None:
             return None
-        assert len(lm) > 0, "Legal moves list is empty"
         legal_moves = [lm]
     return legal_moves
 

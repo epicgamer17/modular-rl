@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from modules.heads.to_play import ToPlayHead
 from modules.heads.reward import RewardHead
-from agents.learner.losses.representations import get_representation
+from modules.representations import get_representation
 from modules.utils import scale_gradient, kernel_initializer_wrapper
 from modules.world_models.inference_output import (
     MuZeroNetworkState,
@@ -60,13 +60,6 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             self.dynamics.output_shape == self.representation.output_shape
         ), f"{self.dynamics.output_shape} = {self.representation.output_shape}"
 
-    @property
-    def device(self) -> torch.device:
-        return (
-            next(self.parameters()).device
-            if list(self.parameters())
-            else torch.device("cpu")
-        )
 
     def initialize(
         self, initializer: Optional[Union[Callable[[Tensor], None], str]] = None
@@ -89,17 +82,9 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         self.apply(init_weights)
 
     def initial_inference(self, observation: Tensor) -> WorldModelOutput:
-        # Ensure observation is a tensor
-        if not torch.is_tensor(observation):
-            observation = torch.as_tensor(
-                observation, dtype=torch.float32, device=self.device
-            )
-
-        # Ensure observation has batch dim
-        input_shape = getattr(self.representation, "input_shape", None)
-        if input_shape is not None and observation.dim() == len(input_shape):
-            observation = observation.unsqueeze(0)
-
+        # Stage 2 (Tensor Routing) must have handled as_tensor, device transfer, and unsqueezing.
+        # We perform type casting here (Neural Preprocessing).
+        assert torch.is_tensor(observation), f"initial_inference expects a tensor, got {type(observation)}"
         hidden_state = self.representation(observation.float())
         return WorldModelOutput(features=hidden_state)
 
@@ -342,9 +327,9 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         stacked_latents = torch.stack(latent_states, dim=1)
 
         # Rewards: size K (1...K)
-        stacked_rewards = torch.stack(rewards, dim=1) if rewards else torch.empty(0)
+        stacked_rewards = torch.stack(rewards, dim=1) if rewards else None
 
-        stacked_to_plays = torch.stack(to_plays, dim=1) if to_plays else torch.empty(0)
+        stacked_to_plays = torch.stack(to_plays, dim=1) if to_plays else None
 
         stacked_afterstates = None
         stacked_chance_logits = None

@@ -1,7 +1,7 @@
 from typing import Tuple, Optional, Dict, Any
 from torch import nn, Tensor
 from .base import BaseHead
-from agents.learner.losses.representations import ClassificationRepresentation
+from modules.representations import ClassificationRepresentation
 
 
 class ChanceProbabilityHead(BaseHead):

@@ -1,7 +1,8 @@
 from typing import Tuple, Optional, Callable, Dict, Any
 import torch
 from torch import nn, Tensor
-from agents.learner.losses.representations import BaseRepresentation
+from core.contracts import SemanticType, Structure
+from modules.representations import BaseRepresentation
 from modules.layers.noisy_linear import build_linear_layer
 
 
@@ -49,10 +50,12 @@ class BaseHead(nn.Module):
         return flat
 
     def reset_noise(self) -> None:
-        if hasattr(self.neck, "reset_noise"):
-            self.neck.reset_noise()
-        if self.output_layer is not None and hasattr(self.output_layer, "reset_noise"):
-            self.output_layer.reset_noise()
+        """Recursive reset_noise for all child modules."""
+        for module in self.modules():
+            if module is self:
+                continue
+            if hasattr(module, "reset_noise"):
+                module.reset_noise()
 
     def forward(
         self, x: Tensor, state: Optional[Dict[str, Any]] = None
@@ -68,3 +71,12 @@ class BaseHead(nn.Module):
         if x.dim() > 2:
             x = x.flatten(1, -1)
         return x
+
+    def get_structure(self) -> Structure:
+        """Returns the semantic structure of this head's output."""
+        return self.representation.get_structure()
+
+    @property
+    def semantic_type(self) -> Any:
+        """The base semantic class for this head's primary output."""
+        return SemanticType

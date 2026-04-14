@@ -52,7 +52,7 @@ Execution: Runs in milliseconds.
 CI Target: Runs on every single push.
 
 Tier 2: Integration (Component Wiring)
-Scope: Ensures modules wire together correctly without actual training (e.g., passing a dummy batch through the LossPipeline, testing Pufferlib environment adapters).
+Scope: Ensures modules wire together correctly without actual training (e.g., passing a dummy batch through the LossAggregator, testing Pufferlib environment adapters).
 
 Execution: Runs in seconds.
 

@@ -10,24 +10,26 @@ from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.policy import PolicyHead
 from modules.heads.q import QHead
-from agents.learner.losses.representations import (
+from modules.representations import (
     ClassificationRepresentation,
     ScalarRepresentation,
 )
-from agents.learner.base import UniversalLearner
-from agents.learner.losses import LossPipeline, ImitationLoss, QBootstrappingLoss
-from agents.learner.target_builders import (
-    PassThroughTargetBuilder,
-    SingleStepFormatter,
-    TemporalDifferenceBuilder,
-    TargetBuilderPipeline,
-)
-from agents.learner.batch_iterators import RepeatSampleIterator
+from core import BlackboardEngine
+from components.neural import ForwardPassComponent
+from components.losses import OptimizerStepComponent
+
+
+from components.losses import LossAggregatorComponent, PolicyLoss
+from components.targets import TDTargetComponent
+from components.losses import QBootstrappingLoss
+from core import RepeatSampleIterator
 import pytest
 
-pytestmark = pytest.mark.regression
-from replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
-from replay_buffers.samplers import UniformSampler
+pytestmark = [pytest.mark.regression, pytest.mark.slow]
+from utils.plotting import plot_regression_results
+
+from data.storage.circular import BufferConfig, ModularReplayBuffer
+from data.samplers.prioritized import UniformSampler
 from pettingzoo.classic import leduc_holdem_v4
 
 
@@ -64,11 +66,11 @@ class ReservoirBuffer:
             return None
         indices = np.random.choice(self.current_size, batch_size, replace=False)
 
-        # UniversalLearner expects [B, ...] for single-step logic in learner_inference
+        # BlackboardEngine expects [B, ...] for single-step logic in learner_inference
         obs = self.observations[indices].to(self.device)
         actions = self.actions[indices].to(self.device)
 
-        # ImitationLoss expects 'policies' key to match the head's output shape [B, T, num_actions] (after T=1 unsqueeze)
+        # PolicyLoss expects 'policies' key to match the head's output shape [B, T, num_actions] (after T=1 unsqueeze)
         # We provide [B, num_actions] here, and SingleStepFormatter will make it [B, 1, num_actions]
         one_hot_policies = (
             F.one_hot(self.actions[indices], num_classes=self.num_actions)
@@ -81,6 +83,38 @@ class ReservoirBuffer:
             "actions": actions,
             "policies": one_hot_policies,
         }
+
+
+def evaluate_nfsp(env, sl_network, num_eval_games, device):
+    """Helper to evaluate NFSP policy."""
+    total_reward = 0
+    sl_network.eval()
+    for _ in range(num_eval_games):
+        env.reset()
+        episode_reward = 0
+        for agent in env.agent_iter():
+            obs_dict, reward, termination, truncation, info = env.last()
+            if agent == "player_0":
+                episode_reward += reward
+            if termination or truncation:
+                action = None
+            else:
+                mask = obs_dict["action_mask"]
+                if agent == "player_0":
+                    obs = obs_dict["observation"]
+                    with torch.no_grad():
+                        obs_t = torch.as_tensor(
+                            obs, device=device, dtype=torch.float32
+                        ).unsqueeze(0)
+                        dist = sl_network.obs_inference(obs_t).policy
+                        logits = dist.logits
+                        logits[0, mask == 0] = -1e9
+                        action = int(logits.argmax().item())
+                else:
+                    action = int(env.action_space(agent).sample(mask))
+            env.step(action)
+        total_reward += episode_reward
+    return total_reward / num_eval_games
 
 
 def test_nfsp_leduc_regression():
@@ -97,7 +131,7 @@ def test_nfsp_leduc_regression():
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     LR_RL = 1e-2
     LR_SL = 1e-2
-    TRAINING_EPISODES = 10000
+    TRAINING_EPISODES = 50000
     BATCH_SIZE = 128
     ANTICIPATORY_PARAM = 0.1  # eta
     EPSILON_START = 0.06
@@ -145,51 +179,77 @@ def test_nfsp_leduc_regression():
 
     # --- Setup Learners ---
     # 1. RL Learner
-    rl_optimizer = torch.optim.Adam(rl_network.parameters(), lr=LR_RL)
-    rl_loss = QBootstrappingLoss(device=DEVICE)
-    rl_loss_pipeline = LossPipeline(
-        modules=[rl_loss], minibatch_size=BATCH_SIZE, num_actions=num_actions
+    rl_optimizer = {"default": torch.optim.Adam(rl_network.parameters(), lr=LR_RL)}
+    rl_loss = QBootstrappingLoss(
+        target_key="targets.values", actions_key="data.actions", is_categorical=False
     )
-    rl_target_builder = TargetBuilderPipeline(
-        [
-            TemporalDifferenceBuilder(
-                target_network=rl_target_network, gamma=0.99, n_step=1
+
+    from core.contracts import (
+        Key,
+        Observation,
+        Action,
+        Reward,
+        Done,
+        Mask,
+        SemanticType,
+        ValueTarget,
+    )
+
+    rl_initial_keys = {
+        Key("data.observations", Observation),
+        Key("data.actions", Action),
+        Key("data.rewards", Reward),
+        Key("data.dones", Done),
+        Key("data.next_observations", Observation),
+        Key("data.next_legal_moves_masks", Mask),
+    }
+
+    # RL target building components
+    rl_learner = BlackboardEngine(
+        components=[
+            ForwardPassComponent(rl_network, None),
+            TDTargetComponent(
+                target_network=rl_target_network,
+                online_network=rl_network,
+                gamma=1.0,
+                n_step=1,
             ),
-            SingleStepFormatter(),
-        ]
-    )
-    rl_learner = UniversalLearner(
-        agent_network=rl_network,
+            rl_loss,
+            LossAggregatorComponent(loss_weights={"q_loss": 1.0}),
+            OptimizerStepComponent(
+                agent_network=rl_network,
+                optimizers=rl_optimizer,
+            ),
+        ],
+        initial_keys=rl_initial_keys,
         device=DEVICE,
-        num_actions=num_actions,
-        observation_dimensions=obs_shape,
-        observation_dtype=torch.float32,
-        optimizer=rl_optimizer,
-        loss_pipeline=rl_loss_pipeline,
-        target_builder=rl_target_builder,
     )
 
     # 2. SL Learner
-    sl_optimizer = torch.optim.Adam(sl_network.parameters(), lr=LR_SL)
-    sl_loss = ImitationLoss(device=DEVICE, loss_fn=F.cross_entropy)
-    sl_loss_pipeline = LossPipeline(
-        modules=[sl_loss], minibatch_size=BATCH_SIZE, num_actions=num_actions
-    )
-    sl_target_builder = TargetBuilderPipeline(
-        [
-            PassThroughTargetBuilder(keys_to_keep=["policies", "actions"]),
-            SingleStepFormatter(),  # Use default to cover policies and actions
-        ]
-    )
-    sl_learner = UniversalLearner(
-        agent_network=sl_network,
+    sl_optimizer = {"default": torch.optim.Adam(sl_network.parameters(), lr=LR_SL)}
+    sl_loss = PolicyLoss(loss_fn=F.cross_entropy, target_key="data.policies")
+
+    from core.contracts import Key, Observation, Action, Policy
+
+    sl_initial_keys = {
+        Key("data.observations", Observation),
+        Key("data.actions", Action),
+        Key("data.policies", Policy),
+    }
+
+    # SL target building components
+    sl_learner = BlackboardEngine(
+        components=[
+            ForwardPassComponent(sl_network, None),
+            sl_loss,
+            LossAggregatorComponent(loss_weights={"policy_loss": 1.0}),
+            OptimizerStepComponent(
+                agent_network=sl_network,
+                optimizers=sl_optimizer,
+            ),
+        ],
+        initial_keys=sl_initial_keys,
         device=DEVICE,
-        num_actions=num_actions,
-        observation_dimensions=obs_shape,
-        observation_dtype=torch.float32,
-        optimizer=sl_optimizer,
-        loss_pipeline=sl_loss_pipeline,
-        target_builder=sl_target_builder,
     )
 
     # --- Setup Buffers ---
@@ -219,6 +279,10 @@ def test_nfsp_leduc_regression():
     print(f"Starting NFSP training for {TRAINING_EPISODES} episodes...")
 
     total_steps = 0
+    training_scores = []
+    rl_losses = []
+    sl_losses = []
+    eval_score_history = []
     for episode in range(1, TRAINING_EPISODES + 1):
         env.reset()
 
@@ -279,43 +343,63 @@ def test_nfsp_leduc_regression():
             env.step(action)
             total_steps += 1
 
-        # Perform learning steps
-        if episode > 100:
-            # RL Update
-            if rl_buffer.size >= BATCH_SIZE:
-                rl_iterator = RepeatSampleIterator(
-                    rl_buffer, num_iterations=1, device=DEVICE
-                )
-                # UniversalLearner.step returns an iterator of results
-                for _ in rl_learner.step(rl_iterator):
-                    pass
+            # Record score (simplified for MA environment - just recording if current agent got reward)
+            # This is a bit noisy for MA, but gives a sense of progress
+            if (termination or truncation) and agent == "player_0":
+                training_scores.append(reward)
 
-            # SL Update
-            sl_batch = sl_buffer.sample(BATCH_SIZE)
-            if sl_batch is not None:
+            if total_steps > 500 and total_steps % 4 == 0:
+                # RL Update
+                if rl_buffer.size >= BATCH_SIZE:
+                    rl_iterator = RepeatSampleIterator(
+                        rl_buffer, num_iterations=1, device=DEVICE
+                    )
+                    for metrics in rl_learner.step(rl_iterator):
+                        if (
+                            "total_losses" in metrics
+                            and "default" in metrics["total_losses"]
+                        ):
+                            rl_losses.append(metrics["total_losses"]["default"])
 
-                # UniversalLearner needs an iterator that yields dicts
-                class SimpleIterator:
-                    def __init__(self, data):
-                        self.data = data
-                        self.done = False
+                # SL Update
+                sl_batch = sl_buffer.sample(BATCH_SIZE)
+                if sl_batch is not None:
+                    # BlackboardEngine needs an iterator that yields dicts
+                    class SimpleIterator:
+                        def __init__(self, data):
+                            self.data = data
+                            self.done = False
 
-                    def __next__(self):
-                        if self.done:
-                            raise StopIteration
-                        self.done = True
-                        return self.data
+                        def __next__(self):
+                            if self.done:
+                                raise StopIteration
+                            self.done = True
+                            return self.data
 
-                    def __iter__(self):
-                        return self
+                        def __iter__(self):
+                            return self
 
-                for _ in sl_learner.step(SimpleIterator(sl_batch)):
-                    pass
+                    for metrics in sl_learner.step(SimpleIterator(sl_batch)):
+                        if (
+                            "total_losses" in metrics
+                            and "default" in metrics["total_losses"]
+                        ):
+                            sl_losses.append(metrics["total_losses"]["default"])
 
         if episode % 1000 == 0:
             print(f"Episode {episode} completed. Total steps: {total_steps}")
+
             # Target network sync
             rl_target_network.load_state_dict(rl_network.state_dict())
+
+        # Periodic evaluation to get a cleaner score curve
+        if episode % 500 == 0:
+            # reuse evaluation logic but limited trials
+            eval_reward = evaluate_nfsp(
+                env, sl_network, num_eval_games=20, device=DEVICE
+            )
+            eval_score_history.append(eval_reward)
+            sl_network.train()
 
     # --- Evaluation ---
     print("\nEvaluating NFSP Average Policy against Random...")
@@ -335,24 +419,37 @@ def test_nfsp_leduc_regression():
             if termination or truncation:
                 action = None
             else:
-                obs = obs_dict["observation"]
                 mask = obs_dict["action_mask"]
-                with torch.no_grad():
-                    obs_t = torch.as_tensor(
-                        obs, device=DEVICE, dtype=torch.float32
-                    ).unsqueeze(0)
-                    dist = sl_network.obs_inference(obs_t).policy
-                    logits = dist.logits
-                    logits[0, mask == 0] = -1e9
-                    action = int(logits.argmax().item())
+                if agent == "player_0":
+                    obs = obs_dict["observation"]
+                    with torch.no_grad():
+                        obs_t = torch.as_tensor(
+                            obs, device=DEVICE, dtype=torch.float32
+                        ).unsqueeze(0)
+                        dist = sl_network.obs_inference(obs_t).policy
+                        logits = dist.logits
+                        logits[0, mask == 0] = -1e9
+                        action = int(logits.argmax().item())
+                else:
+                    # Player 1 plays randomly
+                    action = int(env.action_space(agent).sample(mask))
             env.step(action)
         total_reward += episode_reward
 
     avg_reward = total_reward / num_eval_games
     print(f"Average Reward (Player 0) against Random: {avg_reward:.3f}")
+    eval_score_history.append(avg_reward)
+
+    # Plot results
+    plot_regression_results(
+        name="NFSP Leduc",
+        train_scores=training_scores,
+        test_scores=eval_score_history,
+        losses={"RL Loss": rl_losses, "SL Loss": sl_losses},
+    )
 
     # In Leduc, a basic strategy should always beat random (avg reward > 0)
-    assert avg_reward > 0.0, f"NFSP failed! Avg reward: {avg_reward}"
+    assert avg_reward > 0.3, f"NFSP failed! Avg reward: {avg_reward}"
     print("Regression test PASSED: NFSP policy evaluated successfully.")
 
 

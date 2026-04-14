@@ -1,7 +1,8 @@
 from typing import Tuple, Optional, Dict, Any
 from torch import nn, Tensor
 from .base import BaseHead
-from agents.learner.losses.representations import (
+from core.contracts import ToPlay
+from modules.representations import (
     BaseRepresentation,
     ClassificationRepresentation,
 )
@@ -33,6 +34,10 @@ class ToPlayHead(BaseHead):
         logits, new_state = super().forward(x, state)
         player_idx = self.representation.to_expected_value(logits).long()
         return logits, new_state, player_idx
+
+    @property
+    def semantic_type(self) -> Any:
+        return ToPlay[self.get_structure()]
 
 
 class RelativeToPlayHead(ToPlayHead):

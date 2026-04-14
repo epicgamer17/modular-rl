@@ -46,6 +46,14 @@ class MLPBackbone(nn.Module):
 
         self.output_shape = (current_width,)
 
+    def reset_noise(self) -> None:
+        """Recursive reset_noise for all child modules."""
+        for module in self.modules():
+            if module is self:
+                continue
+            if hasattr(module, "reset_noise"):
+                module.reset_noise()
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.dim() == 4:
             x = x.flatten(1, -1)

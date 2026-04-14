@@ -7,60 +7,26 @@ import gymnasium as gym
 import pytest
 import torch.multiprocessing as mp
 
-from modules.agent_nets.modular import ModularAgentNetwork
-from modules.embeddings.action_embedding import ActionEncoder
-from modules.backbones.resnet import ResNetBackbone
-from modules.backbones.conv import ConvBackbone
-from modules.heads.value import ValueHead
-from modules.heads.policy import PolicyHead
-from modules.heads.reward import RewardHead
-from modules.heads.to_play import ToPlayHead
-from modules.world_models.muzero_world_model import MuzeroWorldModel
-from modules.world_models.components.representation import Representation
-from modules.world_models.components.dynamics import Dynamics
-
-from agents.action_selectors.decorators import TemperatureSelector
-from agents.action_selectors.selectors import CategoricalSelector
-from agents.action_selectors.policy_sources import SearchPolicySource
-from search.search_py.modular_search import ModularSearch
+from registries import (
+    make_muzero_network,
+    make_muzero_search_engine,
+    make_muzero_replay_buffer,
+    make_muzero_learner,
+    make_muzero_actor_engine,
+)
+from core import SingleBatchIterator
+from actors.action_selectors.selectors import ActionSelector
 from utils.schedule import StepwiseSchedule
+from envs.factories.tictactoe import tictactoe_factory
+from components.experts.tictactoe import TicTacToeBestAgent, TicTacToeRandomAgent
+from executors.torch_mp_executor import TorchMPExecutor
+from executors.workers.actor_worker import ActorWorker
+from actors.workers.tester import Tester, VsAgentTest
+from utils.plotting import plot_regression_results
 
-from replay_buffers.modular_buffer import BufferConfig, ModularReplayBuffer
-from replay_buffers.sequence import Sequence
-from replay_buffers.processors import SequenceTensorProcessor, NStepUnrollProcessor
-from replay_buffers.writers import SharedCircularWriter
-from replay_buffers.samplers import UniformSampler
-from replay_buffers.concurrency import TorchMPBackend
-
-from agents.learner.base import UniversalLearner
-from agents.learner.batch_iterators import SingleBatchIterator
-from agents.learner.losses.loss_pipeline import LossPipeline
-from agents.learner.losses.value import ValueLoss
-from agents.learner.losses.policy import PolicyLoss
-from agents.learner.losses.reward import RewardLoss
-from agents.learner.losses.to_play import ToPlayLoss
-from agents.learner.losses.representations import (
-    ClassificationRepresentation,
-    ScalarRepresentation,
-)
-from agents.learner.losses.priorities import ExpectedValueErrorPriorityComputer
-from agents.learner.target_builders import (
-    TargetBuilderPipeline,
-    MCTSExtractor,
-    SequencePadder,
-    SequenceMaskBuilder,
-    SequenceInfrastructureBuilder,
-    TargetFormatter,
-)
-from agents.learner.losses.shape_validator import ShapeValidator
-from env_factories.tictactoe import tictactoe_factory
-from agents.tictactoe_expert import TicTacToeBestAgent
-from agents.executors.torch_mp_executor import TorchMPExecutor
-from agents.workers.actors import PettingZooActor
-from agents.workers.tester import Tester, VsAgentTest
 
 # Module-level marker for regression tests
-pytestmark = pytest.mark.regression
+pytestmark = [pytest.mark.regression, pytest.mark.slow]
 
 
 def setup_seeds(seed=42):
@@ -98,7 +64,7 @@ def test_muzero_tictactoe_full_training():
     TD_STEPS = 10
     BATCH_SIZE = 8
     LEARNING_RATE = 1e-3
-    TOTAL_TRAINING_STEPS = 10000
+    TOTAL_TRAINING_STEPS = 20000
     TRAIN_STEPS_PER_EPISODE = 10
     ACTION_EMBEDDING_DIM = 32
     DIRICHLET_FRACTION = 0.25
@@ -109,266 +75,84 @@ def test_muzero_tictactoe_full_training():
     NUM_WORKERS = 4
 
     # --- 1. Agent Network Architecture ---
-    action_encoder = ActionEncoder(num_actions, ACTION_EMBEDDING_DIM)
-
-    representation = Representation(
-        backbone=ResNetBackbone(
-            input_shape=obs_dim,
-            filters=[24, 24, 24],
-            kernel_sizes=[3, 3, 3],
-            strides=[1, 1, 1],
-            norm_type="batch",
-        )
-    )
-    hidden_state_shape = representation.output_shape
-
-    dynamics = Dynamics(
-        backbone=ResNetBackbone(
-            input_shape=hidden_state_shape,
-            filters=[24, 24, 24],
-            kernel_sizes=[3, 3, 3],
-            strides=[1, 1, 1],
-            norm_type="batch",
-        ),
-        action_encoder=action_encoder,
-        input_shape=hidden_state_shape,
-        action_embedding_dim=ACTION_EMBEDDING_DIM,
-    )
-
-    reward_head = RewardHead(
-        input_shape=hidden_state_shape,
-        representation=ScalarRepresentation(),
-        neck=ConvBackbone(
-            input_shape=hidden_state_shape,
-            filters=[16],
-            kernel_sizes=[1],
-            strides=[1],
-            norm_type="batch",
-        ),
-    )
-
-    to_play_head = ToPlayHead(
-        input_shape=hidden_state_shape,
-        num_players=2,
-        neck=ConvBackbone(
-            input_shape=hidden_state_shape,
-            filters=[16],
-            kernel_sizes=[1],
-            strides=[1],
-            norm_type="batch",
-        ),
-    )
-
-    world_model = MuzeroWorldModel(
-        representation=representation,
-        dynamics=dynamics,
-        reward_head=reward_head,
-        to_play_head=to_play_head,
+    agent_network = make_muzero_network(
+        obs_dim=obs_dim,
         num_actions=num_actions,
-    )
-
-    prediction_backbone = ResNetBackbone(
-        input_shape=hidden_state_shape,
-        filters=[24, 24, 24],
-        kernel_sizes=[3, 3, 3],
-        strides=[1, 1, 1],
-        norm_type="batch",
-    )
-
-    value_head = ValueHead(
-        input_shape=hidden_state_shape,
-        representation=ScalarRepresentation(),
-        neck=ConvBackbone(
-            input_shape=hidden_state_shape,
-            filters=[16],
-            kernel_sizes=[1],
-            strides=[1],
-            norm_type="batch",
-        ),
-    )
-
-    policy_head = PolicyHead(
-        input_shape=hidden_state_shape,
-        neck=ConvBackbone(
-            input_shape=hidden_state_shape,
-            filters=[16],
-            kernel_sizes=[1],
-            strides=[1],
-            norm_type="batch",
-        ),
-        representation=ClassificationRepresentation(num_classes=num_actions),
-    )
-
-    agent_network = ModularAgentNetwork(
-        components={
-            "world_model": world_model,
-            "prediction_backbone": prediction_backbone,
-            "value_head": value_head,
-            "policy_head": policy_head,
-        },
+        action_embedding_dim=ACTION_EMBEDDING_DIM,
+        resnet_filters=[24, 24, 24],
         unroll_steps=UNROLL_STEPS,
-        atom_size=1,
-    ).to(DEVICE)
+        device=DEVICE,
+    )
 
     # --- 2. Search Backend ---
-    search_engine = ModularSearch(
-        device=DEVICE,
+    search_engine = make_muzero_search_engine(
         num_actions=num_actions,
         num_simulations=NUM_SIMULATIONS,
         discount_factor=DISCOUNT_FACTOR,
         search_batch_size=SEARCH_BATCH_SIZE,
         use_virtual_mean=USE_VIRTUAL_MEAN,
-        use_dirichlet=True,
         dirichlet_alpha=DIRICHLET_ALPHA,
         dirichlet_fraction=DIRICHLET_FRACTION,
         num_players=2,
+        device=DEVICE,
     )
 
-    inner_selector = CategoricalSelector(exploration=True)
-    action_selector = TemperatureSelector(
-        inner_selector=inner_selector,
-        schedule=StepwiseSchedule(steps=[5, 10], values=[1.0, 0.5, 0.0]),
-    )
+    temperature_schedule = StepwiseSchedule(steps=[5, 10], values=[1.0, 0.5, 0.0])
 
     # --- 3. Replay Buffer ---
-    configs = [
-        BufferConfig(
-            "observations", shape=obs_dim, dtype=torch.float32, is_shared=True
-        ),
-        BufferConfig("actions", shape=(), dtype=torch.float16, is_shared=True),
-        BufferConfig("rewards", shape=(), dtype=torch.float32, is_shared=True),
-        BufferConfig("values", shape=(), dtype=torch.float32, is_shared=True),
-        BufferConfig(
-            "policies", shape=(num_actions,), dtype=torch.float32, is_shared=True
-        ),
-        BufferConfig("to_plays", shape=(), dtype=torch.int16, is_shared=True),
-        BufferConfig("chances", shape=(1,), dtype=torch.int16, is_shared=True),
-        BufferConfig("game_ids", shape=(), dtype=torch.int64, is_shared=True),
-        BufferConfig("ids", shape=(), dtype=torch.int64, is_shared=True),
-        BufferConfig("training_steps", shape=(), dtype=torch.int64, is_shared=True),
-        BufferConfig("terminated", shape=(), dtype=torch.bool, is_shared=True),
-        BufferConfig("truncated", shape=(), dtype=torch.bool, is_shared=True),
-        BufferConfig("dones", shape=(), dtype=torch.bool, is_shared=True),
-        BufferConfig(
-            "legal_masks", shape=(num_actions,), dtype=torch.bool, is_shared=True
-        ),
-    ]
-
-    input_processor = SequenceTensorProcessor(
-        num_actions, 2, {"player_1": 0, "player_2": 1}
-    )
-    output_processor = NStepUnrollProcessor(
-        UNROLL_STEPS, TD_STEPS, DISCOUNT_FACTOR, num_actions, 2, BUFFER_SIZE
-    )
-
-    replay_buffer = ModularReplayBuffer(
-        max_size=BUFFER_SIZE,
+    replay_buffer = make_muzero_replay_buffer(
+        obs_dim=obs_dim,
+        num_actions=num_actions,
+        buffer_size=BUFFER_SIZE,
         batch_size=BATCH_SIZE,
-        buffer_configs=configs,
-        input_processor=input_processor,
-        output_processor=output_processor,
-        writer=SharedCircularWriter(max_size=BUFFER_SIZE),
-        sampler=UniformSampler(),
-        backend=TorchMPBackend(),
+        unroll_steps=UNROLL_STEPS,
+        td_steps=TD_STEPS,
+        discount_factor=DISCOUNT_FACTOR,
+        num_players=2,
+        player_map={"player_1": 0, "player_2": 1},
     )
 
     # --- 4. Learner ---
-    optimizer = {
-        "default": torch.optim.Adam(
-            agent_network.parameters(), lr=LEARNING_RATE, eps=1e-5
-        )
-    }
-    val_rep = agent_network.components["value_head"].representation
-    pol_rep = agent_network.components["policy_head"].representation
-    rew_rep = agent_network.components["world_model"].reward_head.representation
-    tp_rep = agent_network.components["world_model"].to_play_head.representation
+    optimizer = torch.optim.Adam(agent_network.parameters(), lr=LEARNING_RATE, eps=1e-5)
 
-    shape_validator = ShapeValidator(
-        minibatch_size=BATCH_SIZE,
-        unroll_steps=UNROLL_STEPS,
-        num_actions=num_actions,
-        atom_size=1,
-    )
-    priority_computer = ExpectedValueErrorPriorityComputer(value_representation=val_rep)
-
-    loss_pipeline = LossPipeline(
-        modules=[
-            ValueLoss(device=DEVICE, loss_fn=nn.functional.mse_loss, loss_factor=1.0),
-            PolicyLoss(
-                device=DEVICE, loss_fn=nn.functional.cross_entropy, loss_factor=1.0
-            ),
-            RewardLoss(device=DEVICE, loss_fn=nn.functional.mse_loss, loss_factor=1.0),
-            ToPlayLoss(device=DEVICE, loss_factor=1.0),
-        ],
-        priority_computer=priority_computer,
-        minibatch_size=BATCH_SIZE,
-        unroll_steps=UNROLL_STEPS,
-        num_actions=num_actions,
-        atom_size=1,
-        representations={
-            "values": val_rep,
-            "policies": pol_rep,
-            "rewards": rew_rep,
-            "to_plays": tp_rep,
-        },
-        shape_validator=shape_validator,
-    )
-
-    target_builder = TargetBuilderPipeline(
-        builders=[
-            MCTSExtractor(),
-            SequencePadder(UNROLL_STEPS),
-            SequenceMaskBuilder(),
-            SequenceInfrastructureBuilder(UNROLL_STEPS),
-            TargetFormatter(
-                {
-                    "values": val_rep,
-                    "policies": pol_rep,
-                    "rewards": rew_rep,
-                    "to_plays": tp_rep,
-                }
-            ),
-        ]
-    )
-
-    learner = UniversalLearner(
+    learner = make_muzero_learner(
         agent_network=agent_network,
-        device=DEVICE,
+        replay_buffer=replay_buffer,
         optimizer=optimizer,
-        loss_pipeline=loss_pipeline,
-        target_builder=target_builder,
+        batch_size=BATCH_SIZE,
+        unroll_steps=UNROLL_STEPS,
         num_actions=num_actions,
-        observation_dimensions=obs_dim,
-        observation_dtype=torch.float32,
-        shape_validator=shape_validator,
+        device=DEVICE,
     )
 
     # --- 5. Executor Launch ---
+    # Share model parameters across processes so optimizer updates are visible to workers
+    agent_network.share_memory()
+
     executor = TorchMPExecutor()
 
-    # Match BaseActor.__init__ positional arguments
-    launch_args = (
-        tictactoe_factory,
-        agent_network,
-        action_selector,
-        replay_buffer,
-        2,  # num_players
-        torch.device("cpu"),  # worker device
-        obs_dim,
-        num_actions,
-        "muzero_worker",
-    )
-    launch_kwargs = {"search_engine": search_engine}
-
-    executor.launch(
-        PettingZooActor, launch_args, num_workers=NUM_WORKERS, **launch_kwargs
+    # Create Actor Engine
+    actor_engine = make_muzero_actor_engine(
+        env=tictactoe_factory(),
+        agent_network=agent_network,
+        search_engine=search_engine,
+        replay_buffer=replay_buffer,
+        obs_dim=obs_dim,
+        num_actions=num_actions,
+        num_players=2,
+        temperature_schedule=temperature_schedule,
+        exploration=True,
+        device=torch.device("cpu"),
     )
 
-    # Tester setup
+    executor.launch(ActorWorker, (actor_engine,), num_workers=NUM_WORKERS)
+
+    # Tester setup (greedy selector for evaluation - exploration=False forces temp=0)
+    test_selector = ActionSelector(input_key="probs")
     tester_launch_args = (
         tictactoe_factory,
         agent_network,
-        action_selector,
+        test_selector,
         None,  # replay_buffer
         2,
         torch.device("cpu"),
@@ -388,32 +172,76 @@ def test_muzero_tictactoe_full_training():
                 opponent=TicTacToeBestAgent(),
                 player_idx=1,
             ),
+            VsAgentTest(
+                name="vs_random_p0",
+                num_trials=100,
+                opponent=TicTacToeRandomAgent(),
+                player_idx=0,
+            ),
+            VsAgentTest(
+                name="vs_random_p1",
+                num_trials=100,
+                opponent=TicTacToeRandomAgent(),
+                player_idx=1,
+            ),
         ],
     )
-    executor.launch(Tester, tester_launch_args, num_workers=1, **launch_kwargs)
+    executor.launch(
+        Tester, tester_launch_args, num_workers=1, search_engine=search_engine
+    )
 
     # --- 6. Training Loop ---
     print(f"Starting MuZero Tic-Tac-Toe training for {TOTAL_TRAINING_STEPS} steps...")
     train_steps = 0
+    loss_history = {}  # Tracks all individual and total losses
+    training_scores = []
+    test_score_history = []
     while train_steps < TOTAL_TRAINING_STEPS:
+
         # 1. Data Collection
-        results, collect_stats = executor.collect_data(
-            min_samples=None, worker_type=PettingZooActor
-        )
+        results, _ = executor.collect_data(min_samples=None, worker_type=ActorWorker)
+        for res in results:
+            if "episode_score" in res:
+                # MuZero might return multiple players' scores or a mean
+                # For TicTacToe, score is usually per player
+                if isinstance(res["episode_score"], (list, tuple, np.ndarray)):
+                    training_scores.append(np.mean(res["episode_score"]))
+                else:
+                    training_scores.append(res["episode_score"])
 
         # 2. Learning
         if replay_buffer.size >= BATCH_SIZE:
             iterator = SingleBatchIterator(replay_buffer, DEVICE)
             for metrics in learner.step(iterator):
-                if train_steps % 1000 == 0:
-                    loss_val = metrics.get("loss", 0.0)
-                    print(f"Step {train_steps} | Loss: {loss_val:.4f}")
+                if train_steps % 100 == 0:
+                    loss_val = metrics["total_losses"].get("default")
+                    individual_losses = ", ".join(
+                        [f"{k}: {v:.4f}" for k, v in metrics["losses"].items()]
+                    )
+                    print(
+                        f"Step {train_steps} | Total Loss: {loss_val:.4f} | {individual_losses}"
+                    )
+
+                # Collect all individual losses
+                for loss_name, loss_val in metrics["losses"].items():
+                    if loss_name not in loss_history:
+                        loss_history[loss_name] = []
+                    loss_history[loss_name].append(loss_val)
+
+                # Collect total loss
+                if "total_loss" not in loss_history:
+                    loss_history["total_loss"] = []
+                loss_history["total_loss"].append(
+                    metrics["total_losses"].get("default", 0.0)
+                )
 
             train_steps += 1
 
-            # Update weights
+            # Update weights and hyperparameters
             if train_steps % TRANSFER_INTERVAL == 0:
-                executor.update_weights(agent_network.state_dict())
+                executor.update_weights(
+                    agent_network.state_dict(), params={"training_step": train_steps}
+                )
 
             # Periodic Testing
             if train_steps % TEST_INTERVAL == 0:
@@ -424,6 +252,17 @@ def test_muzero_tictactoe_full_training():
                     min_samples=None, worker_type=Tester
                 )
                 print(f"[Step {train_steps}] Test results: {test_results}")
+                if test_results:
+                    last_res = test_results[-1]
+                    p0 = last_res.get("vs_expert_p0", {}).get("score", 0.0)
+                    p1 = last_res.get("vs_expert_p1", {}).get("score", 0.0)
+                    test_score_history.append((p0 + p1) / 2)
+
+                    r0 = last_res.get("vs_random_p0", {}).get("score", 0.0)
+                    r1 = last_res.get("vs_random_p1", {}).get("score", 0.0)
+                    print(
+                        f"[Step {train_steps}] Vs Expert: {(p0+p1)/2:.2f} | Vs Random: {(r0+r1)/2:.2f}"
+                    )
 
     # Final Evaluation
     print("Performing final evaluation...")
@@ -440,20 +279,56 @@ def test_muzero_tictactoe_full_training():
     executor.stop()
     print(f"Final Test results: {test_results}")
 
+    # Plot results
+    plot_regression_results(
+        name="MuZero TicTacToe",
+        train_scores=training_scores,
+        test_scores=test_score_history,
+        losses={k.replace("_", " ").title(): v for k, v in loss_history.items()},
+    )
+
     if test_results:
         # Take the most recent evaluation
         last_res = test_results[-1]
-        p0_score = last_res.get("vs_expert_p0", {}).get("score")
-        p1_score = last_res.get("vs_expert_p1", {}).get("score")
+        p0_score = last_res.get("vs_expert_p0", {}).get("score", -1.0)
+        p1_score = last_res.get("vs_expert_p1", {}).get("score", -1.0)
         mean_score = (p0_score + p1_score) / 2
-        print(f"Final Mean Score: {mean_score:.4f}")
 
-        assert (
-            mean_score > -0.3
-        ), f"Performance too low! Final mean score {mean_score:.4f} is below threshold -0.3"
-        print("MuZero Regression Training complete and PASSED!")
+        r0_score = last_res.get("vs_random_p0", {}).get("score", -1.0)
+        r1_score = last_res.get("vs_random_p1", {}).get("score", -1.0)
+        mean_random_score = (r0_score + r1_score) / 2
+
+        print(f"Final Mean Score vs Expert: {mean_score:.4f}")
+        print(f"Final Mean Score vs Random: {mean_random_score:.4f}")
     else:
         print("MuZero Regression Training complete, but no test results collected!")
+        p0_score = p1_score = mean_score = -1.0
+        r0_score = r1_score = mean_random_score = -1.0
+
+    # assert to play loss is very very close to 0 (like maybe the mean of last 100 or 1000 is < 0.01)
+    if "to_play_loss" in loss_history:
+        final_tp_loss = np.mean(loss_history["to_play_loss"][-1000:])
+        assert (
+            final_tp_loss < 0.01
+        ), f"To-play loss is too high! Mean of last 1000: {final_tp_loss:.6f} > 0.01"
+        print(f"Final To-Play Loss (L1000): {final_tp_loss:.6f}")
+
+    assert (
+        mean_score > 0.15
+    ), f"Performance vs Expert too low! Final mean score {mean_score:.4f} is below threshold 0.15"
+    assert (
+        p0_score > 0.35 and p1_score > -0.05
+    ), f"Performance vs Expert too low! Final p0_score {p0_score:.4f} or p1_score {p1_score:.4f} is below threshold"
+
+    # Random Agent Assertions
+    assert (
+        mean_random_score > 0.8
+    ), f"Performance vs Random too low! Final mean score {mean_random_score:.4f} is below threshold 0.8"
+    assert (
+        r0_score >= 0 and r1_score >= 0
+    ), f"Agent lost to Random! p0_score: {r0_score}, p1_score: {r1_score}"
+
+    print("MuZero Regression Training complete and PASSED!")
 
     env.close()
 
