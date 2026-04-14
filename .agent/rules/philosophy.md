@@ -107,7 +107,7 @@ Action Masking is Ruthless: If an action mask is applied, the illegal logit must
 No Python Loops in Samplers: Replay buffer processors (like N-step target builders) must use vectorized tensor operations. Looping over a batch in Python will starve the GPU.
 
 6. Structured Contracts & DAG Validation
-Semantic Types with Structure: All contracts use parameterized types: ValueEstimate[Scalar], PolicyLogits[Categorical(bins=51)], Reward[Quantile(n=32)]. String-based distribution mapping is FORBIDDEN.
+Semantic Types with Structure: All contracts use parameterized types: ValueEstimate[Scalar], Policy[Categorical(bins=51)], Reward[Quantile(n=32)]. String-based distribution mapping is FORBIDDEN.
 
 Automated Discovery: Components MUST NOT manually define output contracts based on config strings. They must query the AgentNetwork's get_learner_contract() API.
 

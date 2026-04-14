@@ -25,7 +25,9 @@ class BufferStoreComponent(PipelineComponent):
             "next_observations": "data.next_obs",
         }
         # Deterministic contracts computed at initialization
-        self._requires = {Key(bb_path, SemanticType) for bb_path in self.field_map.values()}
+        self._requires = {
+            Key(bb_path, SemanticType) for bb_path in self.field_map.values()
+        }
         self._provides = {}
 
     def _resolve(self, blackboard: Blackboard, path: str) -> Any:
@@ -100,7 +102,8 @@ class SequenceBufferComponent(PipelineComponent):
         self._sequence: Any = None  # lazily imported Sequence
 
         # Deterministic contracts computed at initialization
-        from core.contracts import PolicyLogits, ValueEstimate
+        from core.contracts import Policy, ValueEstimate
+
         self._requires = {
             Key("data.obs", Observation),
             Key("data.done", Done),
@@ -108,9 +111,11 @@ class SequenceBufferComponent(PipelineComponent):
             Key("meta.action", Action),
         }
         if self.target_policy_key:
-            self._requires.add(Key(f"predictions.{self.target_policy_key}", PolicyLogits))
+            self._requires.add(Key(f"predictions.{self.target_policy_key}", Policy))
         if self.target_value_key:
-            self._requires.add(Key(f"predictions.{self.target_value_key}", ValueEstimate))
+            self._requires.add(
+                Key(f"predictions.{self.target_value_key}", ValueEstimate)
+            )
         self._provides = {}
 
     def _ensure_sequence(self) -> None:
@@ -129,12 +134,12 @@ class SequenceBufferComponent(PipelineComponent):
 
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures obs and done signals exist."""
-        assert blackboard.data.get("obs") is not None, (
-            "SequenceBufferComponent: 'obs' missing from blackboard.data"
-        )
-        assert blackboard.data.get("done") is not None, (
-            "SequenceBufferComponent: 'done' missing from blackboard.data"
-        )
+        assert (
+            blackboard.data.get("obs") is not None
+        ), "SequenceBufferComponent: 'obs' missing from blackboard.data"
+        assert (
+            blackboard.data.get("done") is not None
+        ), "SequenceBufferComponent: 'done' missing from blackboard.data"
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         self._ensure_sequence()
@@ -243,5 +248,5 @@ class SequenceBufferComponent(PipelineComponent):
             from data.samplers.sequence import Sequence
 
             self._sequence = Sequence(self.num_players)
-        
+
         return {}

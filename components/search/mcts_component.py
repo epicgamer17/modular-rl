@@ -3,9 +3,8 @@ from core.component import PipelineComponent
 from core.contracts import (
     Key,
     Observation,
-    ActionDistribution,
     ValueEstimate,
-    PolicyLogits,
+    Policy,
     Metric,
 )
 
@@ -36,8 +35,8 @@ class MCTSSearchComponent(PipelineComponent):
         # Deterministic contracts computed at initialization
         self._requires = {Key("data.obs", Observation)}
         self._provides = {
-            Key("predictions.search_policy", PolicyLogits): "new",
-            Key("predictions.search_target_policy", PolicyLogits): "new",
+            Key("predictions.search_policy", Policy): "new",
+            Key("predictions.search_target_policy", Policy): "new",
             Key("predictions.search_value", ValueEstimate): "new",
             Key("meta.mcts_simulations", Metric): "new",
         }

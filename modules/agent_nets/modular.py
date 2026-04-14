@@ -12,7 +12,7 @@ from modules.heads.policy import PolicyHead
 from modules.heads.value import ValueHead
 from modules.heads.q import QHead, DuelingQHead
 from modules.representations import get_representation
-from core.contracts import SemanticType, ActionDistribution, Scalar
+from core.contracts import SemanticType, Scalar, ValueEstimate, QValues
 from modules.projectors.sim_siam import Projector
 from components.losses import ShapeValidator
 
@@ -62,7 +62,9 @@ class ModularAgentNetwork(BaseAgentNetwork):
         Universal Actor API: Translates raw observations based
         on the exact flow implied by the instantiated components.
         """
-        assert torch.is_tensor(obs), f"obs_inference expects a tensor, got {type(obs)}. Stage 2 (Tensor Routing) must happen outside the network."
+        assert torch.is_tensor(
+            obs
+        ), f"obs_inference expects a tensor, got {type(obs)}. Stage 2 (Tensor Routing) must happen outside the network."
         # obs typically arrives as uint8 from Stage 2. Cast to float here (Neural Preprocessing).
         obs = obs.float()
 
@@ -172,7 +174,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
                     [target_observations[:, :-1], target_observations[:, 1:]], dim=2
                 )
 
-            # Slice actions to exclude the dummy root action (index 0) 
+            # Slice actions to exclude the dummy root action (index 0)
             # added by the NStepUnrollProcessor for target alignment.
             # This ensures we unroll for exactly K steps, starting from s0.
             unroll_actions = actions[:, 1:]
@@ -195,7 +197,6 @@ class ModularAgentNetwork(BaseAgentNetwork):
             pred_features = self.components["prediction_backbone"](flat_latents)
             raw_values, _, _ = self.components["value_head"](pred_features)
             raw_policies, _, _ = self.components["policy_head"](pred_features)
-
 
             raw_values = raw_values.view(B, T_plus_1, -1)
             raw_policies = raw_policies.view(B, T_plus_1, -1)
@@ -357,28 +358,42 @@ class ModularAgentNetwork(BaseAgentNetwork):
         Dynamically builds the learner output contract based on instantiated components.
         """
         contract = {}
-        
+
         # Core prediction heads
         if "value_head" in self.components:
             contract["values"] = self.components["value_head"].semantic_type
         if "policy_head" in self.components:
             contract["policies"] = self.components["policy_head"].semantic_type
         if "q_head" in self.components:
-            contract["q_logits"] = self.components["q_head"].semantic_type
-            # Q-values (expectations) are always scalars per action
-            contract["q_values"] = ActionDistribution[Scalar()]
+            q_head = self.components["q_head"]
+            contract["q_logits"] = q_head.semantic_type
+            # q_values semantic type depends on whether the representation is distributional
+            # For C51/Rainbow (distributional): use QValues with same structure as q_logits
+            # For standard DQN (scalar): use QValues[Scalar]
+            if (
+                hasattr(q_head, "representation")
+                and hasattr(q_head.representation, "bins")
+                and q_head.representation.bins > 1
+            ):
+                # Distributional (C51, Rainbow, etc.)
+                contract["q_values"] = q_head.semantic_type
+            else:
+                # Standard scalar Q-values (DQN, NFSP, etc.)
+                contract["q_values"] = QValues[Scalar()]
 
         # World model components (Rewards, ToPlay)
         if "world_model" in self.components:
             wm = self.components["world_model"]
             if hasattr(wm, "reward_head") and hasattr(wm.reward_head, "semantic_type"):
                 contract["rewards"] = wm.reward_head.semantic_type
-            if hasattr(wm, "to_play_head") and hasattr(wm.to_play_head, "semantic_type"):
+            if hasattr(wm, "to_play_head") and hasattr(
+                wm.to_play_head, "semantic_type"
+            ):
                 contract["to_plays"] = wm.to_play_head.semantic_type
-                
+
         # Supervised only policy
         if "policy_head" in self.components and len(contract) == 0:
-             contract["policies"] = self.components["policy_head"].semantic_type
+            contract["policies"] = self.components["policy_head"].semantic_type
 
         return contract
 
@@ -458,8 +473,11 @@ class ModularAgentNetwork(BaseAgentNetwork):
             raise NotImplementedError("Projector not configured for this architecture.")
 
         import math
+
         original_shape = hidden_state.shape
-        flat_hidden_dim = math.prod(self.components["world_model"].representation.output_shape)
+        flat_hidden_dim = math.prod(
+            self.components["world_model"].representation.output_shape
+        )
         flat_hidden = hidden_state.reshape(-1, flat_hidden_dim)
         proj = self.components["projector"].projection(flat_hidden)
 

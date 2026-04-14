@@ -3,7 +3,17 @@ import torch.nn.functional as F
 from typing import Any, Optional, Dict, Union, List, Set
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import Key, PolicyLogits, ValueEstimate, Action, ValueTarget, LossScalar, Metric, Scalar, Categorical, Logits
+from core.contracts import (
+    Key,
+    QValues,
+    QTargets,
+    Action,
+    LossScalar,
+    Metric,
+    Scalar,
+    Categorical,
+    Logits,
+)
 from .infrastructure import apply_infrastructure
 
 
@@ -23,11 +33,13 @@ class QBootstrappingLoss(PipelineComponent):
         self.is_categorical = is_categorical
         self.atom_size = atom_size
         self.pred_key = "q_logits" if is_categorical else "q_values"
-        
+
         if target_key:
             self.target_key = target_key
         else:
-            self.target_key = "q_logits" if is_categorical else "values"
+            # TODO: should this be hardcoded? what if it is in data?
+            # TODO: we use targets.values, should we use targets.q_values?
+            self.target_key = "targets.q_logits" if is_categorical else "targets.values"
 
         if loss_fn is None:
             self.loss_fn = F.cross_entropy if is_categorical else F.mse_loss
@@ -40,18 +52,17 @@ class QBootstrappingLoss(PipelineComponent):
 
         # Deterministic contracts computed at initialization
         if self.is_categorical:
-            # If atoms are used, we expect Categorical structure
-            struct = Categorical(bins=atom_size) if atom_size else Logits()
-            req_type = PolicyLogits[struct]
-            target_type = PolicyLogits[struct] # Or Probs if target is normalized
+            struct = Categorical(bins=self.atom_size) if self.atom_size else Logits()
+            req_type = QValues[struct]
+            target_type = QTargets[struct]
         else:
-            req_type = ValueEstimate[Scalar]
-            target_type = ValueTarget[Scalar]
+            req_type = QValues[Scalar]
+            target_type = QTargets[Scalar]
 
         self._requires = {
             Key(f"predictions.{self.pred_key}", req_type),
             Key(self.actions_key, Action),
-            Key(self.target_key, target_type)
+            Key(self.target_key, target_type),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",
@@ -69,7 +80,12 @@ class QBootstrappingLoss(PipelineComponent):
 
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures predictions, actions, and targets exist and are batch-aligned."""
-        from core.validation import assert_in_blackboard, assert_is_tensor, assert_same_batch
+        from core.validation import (
+            assert_in_blackboard,
+            assert_is_tensor,
+            assert_same_batch,
+        )
+
         assert_in_blackboard(blackboard, f"predictions.{self.pred_key}")
         assert_in_blackboard(blackboard, self.actions_key)
         assert_in_blackboard(blackboard, self.target_key)
@@ -82,9 +98,9 @@ class QBootstrappingLoss(PipelineComponent):
         assert_is_tensor(actions, msg=f"in {self.name} (actions)")
         assert_is_tensor(targets, msg=f"in {self.name} (targets)")
 
-        assert q_preds.shape[:2] == actions.shape[:2], (
-            f"Batch/Time mismatch in {self.name}: preds {q_preds.shape[:2]} vs actions {actions.shape[:2]}"
-        )
+        assert (
+            q_preds.shape[:2] == actions.shape[:2]
+        ), f"Batch/Time mismatch in {self.name}: preds {q_preds.shape[:2]} vs actions {actions.shape[:2]}"
         assert_same_batch(q_preds, targets, msg=f"in {self.name}")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
@@ -121,5 +137,5 @@ class QBootstrappingLoss(PipelineComponent):
         return {
             f"losses.{self.name}": scalar_loss,
             f"meta.{self.name}": scalar_loss.item(),
-            f"meta.elementwise_losses.{self.name}": elementwise_loss
+            f"meta.elementwise_losses.{self.name}": elementwise_loss,
         }

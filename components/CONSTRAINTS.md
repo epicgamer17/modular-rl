@@ -71,7 +71,7 @@ requires = {"value": "tensor"}
 
 Rationale:
 
-*   **Type Safety**: Prevents passing a `PolicyLogits` tensor into a `ValueLoss` component.
+*   **Type Safety**: Prevents passing a `Policy` tensor into a `ValueLoss` component.
 *   **Polymorphism**: Enables components to accept specific types (e.g., `DiscreteValue`) where a base type (`ValueEstimate`) is expected.
 *   **Decoupling**: Logic is isolated from specific blackboard path naming conventions via configurable keys.
 
@@ -207,8 +207,7 @@ All components operate on a shared hierarchy of `SemanticType` classes.
 ### Core Types
 *   `Observation`
 *   `Action`
-*   `PolicyLogits`
-*   `ActionDistribution`
+*   `Policy`
 *   `ValueEstimate`
 *   `ValueTarget`
 *   `Reward`

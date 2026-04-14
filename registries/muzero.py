@@ -25,7 +25,20 @@ from data.samplers.prioritized import UniformSampler
 from data.concurrency import TorchMPBackend
 
 from core import BlackboardEngine
-from core.contracts import Key, Observation, Action, Reward, ValueTarget, PolicyLogits, ToPlay, SemanticType, Done, Mask, Scalar, Probs
+from core.contracts import (
+    Key,
+    Observation,
+    Action,
+    Reward,
+    ValueTarget,
+    Policy,
+    ToPlay,
+    SemanticType,
+    Done,
+    Mask,
+    Scalar,
+    Probs,
+)
 from components.neural import ForwardPassComponent
 from components.losses import OptimizerStepComponent
 from components.losses import LossAggregatorComponent
@@ -50,7 +63,12 @@ from components.targets import (
     SequenceMaskComponent,
 )
 from components.losses import ShapeValidator
-from components.environments import PettingZooObservationComponent, PettingZooStepComponent, GymObservationComponent, GymStepComponent
+from components.environments import (
+    PettingZooObservationComponent,
+    PettingZooStepComponent,
+    GymObservationComponent,
+    GymStepComponent,
+)
 from components.selectors import (
     ActionSelectorComponent,
 )
@@ -385,16 +403,32 @@ def make_muzero_learner(
         atom_size=1,
     )
     priority_comp = ExpectedValueErrorPriorityComponent(value_representation=val_rep)
-    buffer_update = PriorityUpdateComponent(priority_update_fn=replay_buffer.update_priorities)
+    buffer_update = PriorityUpdateComponent(
+        priority_update_fn=replay_buffer.update_priorities
+    )
 
-    from core.contracts import Observation, Action, Reward, ValueTarget, PolicyLogits, ToPlay, SemanticType, Done, Mask
+    from core.contracts import (
+        Observation,
+        Action,
+        Reward,
+        ValueTarget,
+        Policy,
+        ToPlay,
+        SemanticType,
+        Done,
+        Mask,
+        Scalar,
+    )
+
     learner_initial_keys = {
         Key("data.observations", Observation),
         Key("data.actions", Action),
         Key("data.rewards", Reward[Scalar]),
         Key("data.values", ValueTarget[Scalar]),
-        Key("data.policies", PolicyLogits[Probs]),
-        Key("data.to_plays", ToPlay),
+        Key("data.policies", Policy[Probs]),
+        Key(
+            "data.to_plays", ToPlay[Scalar]
+        ),  # Fixed: need Scalar structure for formatter
         Key("data.terminated", SemanticType),
         Key("data.truncated", SemanticType),
         Key("data.dones", Done),
@@ -425,7 +459,7 @@ def make_muzero_learner(
         v_loss = ValueLoss(
             target_key="targets.values",
             mask_key="targets.policy_mask",
-            loss_fn=nn.functional.mse_loss, 
+            loss_fn=nn.functional.mse_loss,
             loss_factor=1.0,
         )
         v_formatter = ScalarFormatterComponent(
@@ -438,7 +472,7 @@ def make_muzero_learner(
     p_loss = PolicyLoss(
         target_key="targets.policies",
         mask_key="targets.policy_mask",
-        loss_fn=nn.functional.cross_entropy, 
+        loss_fn=nn.functional.cross_entropy,
         loss_factor=1.0,
     )
 
@@ -459,7 +493,7 @@ def make_muzero_learner(
         r_loss = RewardLoss(
             target_key="targets.rewards",
             mask_key="targets.reward_mask",
-            loss_fn=nn.functional.mse_loss, 
+            loss_fn=nn.functional.mse_loss,
             loss_factor=1.0,
         )
         r_formatter = ScalarFormatterComponent(
@@ -472,7 +506,7 @@ def make_muzero_learner(
     tp_loss = ToPlayLoss(
         target_key="targets.to_plays",
         mask_key="targets.to_play_mask",
-        loss_fn=nn.functional.cross_entropy, 
+        loss_fn=nn.functional.cross_entropy,
         loss_factor=1.0,
     )
 
@@ -491,7 +525,7 @@ def make_muzero_learner(
                 keys=[
                     Key("data.values", ValueTarget[Scalar]),
                     Key("data.rewards", Reward[Scalar]),
-                    Key("data.policies", PolicyLogits[Probs]),
+                    Key("data.policies", Policy[Probs]),
                     Key("data.actions", Action),
                     Key("data.to_plays", ToPlay),
                     Key("data.reward_mask", Mask),
@@ -504,15 +538,15 @@ def make_muzero_learner(
             SequenceMaskComponent(),
             v_formatter,
             ClassificationFormatterComponent(
-                source_key="targets.policies", 
-                dest_key="policies", 
+                source_key="data.policies",  # Read from data (buffer), not targets
+                dest_key="policies",
                 representation=pol_rep,
-                semantic_type=PolicyLogits,
+                semantic_type=Policy,
             ),
             r_formatter,
             ScalarFormatterComponent(
-                source_key="targets.to_plays", 
-                dest_key="to_plays", 
+                source_key="data.to_plays",  # Read from data (buffer), not targets
+                dest_key="to_plays",
                 representation=tp_rep,
                 semantic_type=ToPlay,
             ),
@@ -557,7 +591,9 @@ def make_muzero_actor_engine(
         Key("data.player_id", ToPlay),
     }
 
-    is_pz = hasattr(env, "possible_agents") or (hasattr(env, "unwrapped") and hasattr(env.unwrapped, "possible_agents"))
+    is_pz = hasattr(env, "possible_agents") or (
+        hasattr(env, "unwrapped") and hasattr(env.unwrapped, "possible_agents")
+    )
 
     if is_pz:
         obs_component = PettingZooObservationComponent(env)
@@ -582,7 +618,7 @@ def make_muzero_actor_engine(
             schedule_source="episode",
         )
     )
-    
+
     # Step the environment AFTER action selection
     components.append(step_component)
 
@@ -592,7 +628,7 @@ def make_muzero_actor_engine(
     if replay_buffer is not None:
         components.append(
             SequenceBufferComponent(
-                replay_buffer, 
+                replay_buffer,
                 num_players=num_players,
                 target_policy_key="search_target_policy",
                 target_value_key="search_value",
@@ -602,4 +638,6 @@ def make_muzero_actor_engine(
     # Finally, add a terminator to signal the end of the episode to the ActorWorker
     components.append(SequenceTerminatorComponent())
 
-    return BlackboardEngine(components=components, initial_keys=actor_initial_keys, device=device)
+    return BlackboardEngine(
+        components=components, initial_keys=actor_initial_keys, device=device
+    )

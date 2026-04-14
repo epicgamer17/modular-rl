@@ -4,7 +4,17 @@ import torch.nn.functional as F
 from typing import Any, Set, Dict
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import Key, Reward, ToPlay, PolicyLogits, ValueTarget, LossScalar, SemanticType, Observation, Metric
+from core.contracts import (
+    Key,
+    Reward,
+    ToPlay,
+    Policy,
+    ValueTarget,
+    LossScalar,
+    SemanticType,
+    Observation,
+    Metric,
+)
 from .infrastructure import apply_infrastructure
 from core.validation import assert_same_batch, assert_compatible_value
 
@@ -25,11 +35,11 @@ class RewardLoss(PipelineComponent):
         self.mask_key = mask_key
         self.target_key = target_key
         self.name = name
-        
+
         # Deterministic contracts computed at initialization
         self._requires = {
             Key("predictions.rewards", Reward),
-            Key(self.target_key, Reward)
+            Key(self.target_key, Reward),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",
@@ -74,7 +84,7 @@ class RewardLoss(PipelineComponent):
 
         return {
             f"losses.{self.name}": scalar_loss,
-            f"meta.{self.name}": scalar_loss.item()
+            f"meta.{self.name}": scalar_loss.item(),
         }
 
 
@@ -94,11 +104,11 @@ class ToPlayLoss(PipelineComponent):
         self.mask_key = mask_key
         self.target_key = target_key
         self.name = name
-        
+
         # Deterministic contracts computed at initialization
         self._requires = {
             Key("predictions.to_plays", ToPlay),
-            Key(self.target_key, ToPlay)
+            Key(self.target_key, ToPlay),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",
@@ -116,12 +126,13 @@ class ToPlayLoss(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures prediction and target exist and are batch-aligned."""
         from core.validation import assert_in_blackboard, assert_is_tensor
+
         assert_in_blackboard(blackboard, "predictions.to_plays")
         assert_in_blackboard(blackboard, self.target_key)
-        
+
         preds = blackboard.predictions["to_plays"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
-        
+
         assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
         assert_is_tensor(targets, msg=f"in {self.name} (targets)")
         assert_same_batch(preds, targets, msg=f"in {self.name}")
@@ -146,7 +157,7 @@ class ToPlayLoss(PipelineComponent):
 
         return {
             f"losses.{self.name}": scalar_loss,
-            f"meta.{self.name}": scalar_loss.item()
+            f"meta.{self.name}": scalar_loss.item(),
         }
 
 
@@ -164,11 +175,11 @@ class ChanceQLoss(PipelineComponent):
         self.mask_key = mask_key
         self.target_key = target_key
         self.name = name
-        
+
         # Deterministic contracts computed at initialization
         self._requires = {
-            Key("predictions.chance_q_logits", PolicyLogits),
-            Key(self.target_key, ValueTarget)
+            Key("predictions.chance_q_logits", Policy),
+            Key(self.target_key, ValueTarget),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",
@@ -186,6 +197,7 @@ class ChanceQLoss(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures prediction logits and target exist."""
         from core.validation import assert_in_blackboard, assert_is_tensor
+
         assert_in_blackboard(blackboard, "predictions.chance_q_logits")
         assert_in_blackboard(blackboard, self.target_key)
         preds = blackboard.predictions["chance_q_logits"]
@@ -209,7 +221,7 @@ class ChanceQLoss(PipelineComponent):
 
         return {
             f"losses.{self.name}": scalar_loss,
-            f"meta.{self.name}": scalar_loss.item()
+            f"meta.{self.name}": scalar_loss.item(),
         }
 
 
@@ -225,11 +237,11 @@ class ConsistencyLoss(PipelineComponent):
         self.loss_factor = loss_factor
         self.mask_key = mask_key
         self.name = name
-        
+
         # Deterministic contracts computed at initialization
         self._requires = {
             Key("predictions.projected_latents", SemanticType),
-            Key("targets.consistency_targets", SemanticType)
+            Key("targets.consistency_targets", SemanticType),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",
@@ -246,13 +258,18 @@ class ConsistencyLoss(PipelineComponent):
 
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures projected latents and consistency targets exist and are tensors."""
-        from core.validation import assert_in_blackboard, assert_is_tensor, assert_same_batch
+        from core.validation import (
+            assert_in_blackboard,
+            assert_is_tensor,
+            assert_same_batch,
+        )
+
         assert_in_blackboard(blackboard, "predictions.projected_latents")
         assert_in_blackboard(blackboard, "targets.consistency_targets")
-        
+
         preds = blackboard.predictions["projected_latents"]
         targets = blackboard.targets["consistency_targets"]
-        
+
         assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
         assert_is_tensor(targets, msg=f"in {self.name} (targets)")
         assert_same_batch(preds, targets, msg=f"in {self.name}")
@@ -271,7 +288,7 @@ class ConsistencyLoss(PipelineComponent):
 
         return {
             f"losses.{self.name}": scalar_loss,
-            f"meta.{self.name}": scalar_loss.item()
+            f"meta.{self.name}": scalar_loss.item(),
         }
 
 
@@ -289,11 +306,11 @@ class SigmaLoss(PipelineComponent):
         self.mask_key = mask_key
         self.target_key = target_key
         self.name = name
-        
+
         # Deterministic contracts computed at initialization
         self._requires = {
-            Key("predictions.sigma_logits", PolicyLogits),
-            Key(self.target_key, SemanticType)
+            Key("predictions.sigma_logits", Policy),
+            Key(self.target_key, SemanticType),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",
@@ -311,9 +328,10 @@ class SigmaLoss(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures sigma logits and targets exist and are tensors."""
         from core.validation import assert_in_blackboard, assert_is_tensor
+
         assert_in_blackboard(blackboard, "predictions.sigma_logits")
         assert_in_blackboard(blackboard, self.target_key)
-        
+
         preds = blackboard.predictions["sigma_logits"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
         assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
@@ -335,7 +353,7 @@ class SigmaLoss(PipelineComponent):
 
         return {
             f"losses.{self.name}": scalar_loss,
-            f"meta.{self.name}": scalar_loss.item()
+            f"meta.{self.name}": scalar_loss.item(),
         }
 
 
@@ -351,7 +369,7 @@ class CommitmentLoss(PipelineComponent):
         self.loss_factor = loss_factor
         self.mask_key = mask_key
         self.name = name
-        
+
         # Deterministic contracts computed at initialization
         self._requires = {Key("predictions.commitment_loss", LossScalar)}
         self._provides = {
@@ -370,6 +388,7 @@ class CommitmentLoss(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures commitment_loss exists and is a tensor."""
         from core.validation import assert_in_blackboard, assert_is_tensor
+
         assert_in_blackboard(blackboard, "predictions.commitment_loss")
         loss = blackboard.predictions["commitment_loss"]
         assert_is_tensor(loss, msg=f"in {self.name} (commitment_loss)")
@@ -381,7 +400,7 @@ class CommitmentLoss(PipelineComponent):
 
         return {
             f"losses.{self.name}": scalar_loss,
-            f"meta.{self.name}": scalar_loss.item()
+            f"meta.{self.name}": scalar_loss.item(),
         }
 
 
@@ -404,6 +423,7 @@ class LatentConsistencyComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures unroll observations exist and are tensors."""
         from core.validation import assert_in_blackboard, assert_is_tensor
+
         assert_in_blackboard(blackboard, "data.unroll_observations")
         obs = blackboard.data["unroll_observations"]
         assert_is_tensor(obs, msg="in LatentConsistencyComponent (unroll_observations)")

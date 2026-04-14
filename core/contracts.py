@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True)
 class Structure:
     """Base for semantic structures."""
+
     pass
 
 
@@ -48,31 +49,36 @@ class Quantile(Structure):
         return f"Quantile(n={self.n})"
 
 
-_STRUCTURED_TYPE_CACHE: Dict[Tuple[Type["SemanticType"], Structure], Type["SemanticType"]] = {}
+_STRUCTURED_TYPE_CACHE: Dict[
+    Tuple[Type["SemanticType"], Structure], Type["SemanticType"]
+] = {}
 
 
 class SemanticType:
     """
     Base for all semantic types in the RL pipeline.
-    These types define meaning, not structure (e.g., shapes), 
+    These types define meaning, not structure (e.g., shapes),
     but can be parameterized with a Structure (e.g. ValueEstimate[Scalar]).
     """
+
     structure: Optional[Structure] = None
 
-    def __class_getitem__(cls, structure: Union[Type[Structure], Structure]) -> Type["SemanticType"]:
+    def __class_getitem__(
+        cls, structure: Union[Type[Structure], Structure]
+    ) -> Type["SemanticType"]:
         if isinstance(structure, type):
             if issubclass(structure, (Scalar, Logits, Probs, LogProbs)):
                 structure = structure()
             else:
                 # For Categorical/Quantile, we expect an instance or we can't know bins/n
-                raise TypeError(f"Structure type {structure} must be instantiated (e.g. {structure.__name__}(...))")
-        
+                raise TypeError(
+                    f"Structure type {structure} must be instantiated (e.g. {structure.__name__}(...))"
+                )
+
         cache_key = (cls, structure)
         if cache_key not in _STRUCTURED_TYPE_CACHE:
             _STRUCTURED_TYPE_CACHE[cache_key] = type(
-                f"{cls.__name__}[{structure}]",
-                (cls,),
-                {"structure": structure}
+                f"{cls.__name__}[{structure}]", (cls,), {"structure": structure}
             )
         return _STRUCTURED_TYPE_CACHE[cache_key]
 
@@ -191,11 +197,7 @@ class Action(SemanticType):
     pass
 
 
-class PolicyLogits(SemanticType):
-    pass
-
-
-class ActionDistribution(SemanticType):
+class Policy(SemanticType):
     pass
 
 
@@ -204,6 +206,14 @@ class ValueEstimate(SemanticType):
 
 
 class ValueTarget(SemanticType):
+    pass
+
+
+class QValues(SemanticType):
+    pass
+
+
+class QTargets(SemanticType):
     pass
 
 

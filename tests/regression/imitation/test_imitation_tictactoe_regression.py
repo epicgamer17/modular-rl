@@ -127,12 +127,22 @@ def test_imitation_tictactoe_regression():
         target_key="data.policies",
     )
 
-    from core.contracts import Key, Observation, Action, SemanticType, PolicyLogits, Mask
+    from core.contracts import (
+        Key,
+        Observation,
+        Action,
+        SemanticType,
+        Policy,
+        Mask,
+        Probs,
+        ShapeContract,
+    )
+
     initial_keys = {
         Key("data.observations", Observation),
         Key("data.actions", Action),
         Key("data.legal_moves_masks", Mask),
-        Key("data.policies", PolicyLogits),
+        Key("data.policies", Policy[Probs], shape=ShapeContract(has_time=True)),
     }
 
     learner = BlackboardEngine(

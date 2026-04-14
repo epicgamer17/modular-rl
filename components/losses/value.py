@@ -4,7 +4,15 @@ from typing import Any, Set, Dict
 from core import PipelineComponent
 from core import Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import Key, ShapeContract, ValueEstimate, ValueTarget, LossScalar, Metric, Scalar
+from core.contracts import (
+    Key,
+    ShapeContract,
+    ValueEstimate,
+    ValueTarget,
+    LossScalar,
+    Metric,
+    Scalar,
+)
 from .infrastructure import apply_infrastructure
 from core.validation import assert_same_batch, assert_compatible_value
 
@@ -30,10 +38,12 @@ class ValueLoss(PipelineComponent):
         self.name = name
 
         # Deterministic contracts computed at initialization
+        # TODO: shape contracts? how do we handle time dimension from unrolls or from LSTM memory vs single step DQN, A2C, PPO, etc?
         self._requires = {
-            Key("predictions.values", ValueEstimate[Scalar],
-                shape=ShapeContract(has_time=True)),
-            Key(self.target_key, ValueTarget[Scalar]),
+            Key(
+                "predictions.values", ValueEstimate
+            ),  # Accept any structure (scalar or categorical)
+            Key(self.target_key, ValueTarget),  # Accept any structure
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",

@@ -57,6 +57,7 @@ make_efficient_zero_search_engine = make_muzero_search_engine
 make_efficient_zero_replay_buffer = make_muzero_replay_buffer
 make_efficient_zero_actor_engine = make_muzero_actor_engine
 
+
 def make_efficient_zero_network(
     obs_dim: Tuple[int, ...],
     num_actions: int,
@@ -68,7 +69,7 @@ def make_efficient_zero_network(
 ) -> ModularAgentNetwork:
     """
     Creates an EfficientZero v1 network, characterized by a SimSiam projector
-    and a ValuePrefixRewardHead. 
+    and a ValuePrefixRewardHead.
     """
     action_encoder = ActionEncoder(num_actions, action_embedding_dim)
 
@@ -161,7 +162,7 @@ def make_efficient_zero_network(
         ),
         representation=ClassificationRepresentation(num_classes=num_actions),
     )
-    
+
     # SimSiam Projector
     flat_dim = math.prod(hidden_state_shape)
     projector = Projector(
@@ -212,15 +213,31 @@ def make_efficient_zero_learner(
         atom_size=1,
     )
     priority_comp = ExpectedValueErrorPriorityComponent(value_representation=val_rep)
-    buffer_update = PriorityUpdateComponent(priority_update_fn=replay_buffer.update_priorities)
+    buffer_update = PriorityUpdateComponent(
+        priority_update_fn=replay_buffer.update_priorities
+    )
 
-    from core.contracts import Key, Observation, Action, Reward, ValueTarget, PolicyLogits, ToPlay, SemanticType, Mask, Done, Scalar, Probs
+    from core.contracts import (
+        Key,
+        Observation,
+        Action,
+        Reward,
+        ValueTarget,
+        Policy,
+        ToPlay,
+        SemanticType,
+        Mask,
+        Done,
+        Scalar,
+        Probs,
+    )
+
     initial_keys = {
         Key("data.observations", Observation),
         Key("data.actions", Action),
         Key("data.rewards", Reward[Scalar]),
         Key("data.values", ValueTarget[Scalar]),
-        Key("data.policies", PolicyLogits[Probs]),
+        Key("data.policies", Policy[Probs]),
         Key("data.to_plays", ToPlay),
         Key("data.terminated", SemanticType),
         Key("data.truncated", SemanticType),
@@ -235,9 +252,9 @@ def make_efficient_zero_learner(
     p_loss = PolicyLoss(loss_fn=nn.functional.cross_entropy, loss_factor=1.0)
     r_loss = RewardLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
     tp_loss = ToPlayLoss(loss_fn=nn.functional.cross_entropy, loss_factor=1.0)
-    
+
     # EfficientZero consistency loss
-    c_loss = ConsistencyLoss(loss_factor=1.0) # Using "masks" as default
+    c_loss = ConsistencyLoss(loss_factor=1.0)  # Using "masks" as default
 
     learner = BlackboardEngine(
         components=[
@@ -249,7 +266,7 @@ def make_efficient_zero_learner(
                 keys=[
                     Key("data.values", ValueTarget[Scalar]),
                     Key("data.rewards", Reward[Scalar]),
-                    Key("data.policies", PolicyLogits[Probs]),
+                    Key("data.policies", Policy[Probs]),
                     Key("data.actions", Action),
                     Key("data.to_plays", ToPlay),
                     Key("data.reward_mask", Mask),
@@ -260,35 +277,47 @@ def make_efficient_zero_learner(
             ),
             SequenceInfrastructureComponent(unroll_steps),
             SequenceMaskComponent(),
-            TwoHotProjectionComponent(
-                source_key="targets.values",
-                dest_key="values",
-                representation=val_rep,
-            ) if isinstance(val_rep, DiscreteSupportRepresentation) else ScalarFormatterComponent(
-                source_key="targets.values",
-                dest_key="values",
-                representation=val_rep,
+            (
+                TwoHotProjectionComponent(
+                    source_key="targets.values",
+                    dest_key="values",
+                    representation=val_rep,
+                )
+                if isinstance(val_rep, DiscreteSupportRepresentation)
+                else ScalarFormatterComponent(
+                    source_key="targets.values",
+                    dest_key="values",
+                    representation=val_rep,
+                )
             ),
             ClassificationFormatterComponent(
-                source_key="targets.policies", dest_key="policies", representation=pol_rep
+                source_key="targets.policies",
+                dest_key="policies",
+                representation=pol_rep,
             ),
-            TwoHotProjectionComponent(
-                source_key="targets.rewards",
-                dest_key="rewards",
-                representation=rew_rep,
-            ) if isinstance(rew_rep, DiscreteSupportRepresentation) else ScalarFormatterComponent(
-                source_key="targets.rewards",
-                dest_key="rewards",
-                representation=rew_rep,
+            (
+                TwoHotProjectionComponent(
+                    source_key="targets.rewards",
+                    dest_key="rewards",
+                    representation=rew_rep,
+                )
+                if isinstance(rew_rep, DiscreteSupportRepresentation)
+                else ScalarFormatterComponent(
+                    source_key="targets.rewards",
+                    dest_key="rewards",
+                    representation=rew_rep,
+                )
             ),
             ScalarFormatterComponent(
-                source_key="targets.to_plays", dest_key="to_plays", representation=tp_rep
+                source_key="targets.to_plays",
+                dest_key="to_plays",
+                representation=tp_rep,
             ),
             v_loss,
             p_loss,
             r_loss,
             tp_loss,
-            c_loss, # Add consistency loss explicitly
+            c_loss,  # Add consistency loss explicitly
             LossAggregatorComponent(
                 loss_weights={
                     "value_loss": 1.0,

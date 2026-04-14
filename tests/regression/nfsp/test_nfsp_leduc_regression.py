@@ -180,9 +180,21 @@ def test_nfsp_leduc_regression():
     # --- Setup Learners ---
     # 1. RL Learner
     rl_optimizer = {"default": torch.optim.Adam(rl_network.parameters(), lr=LR_RL)}
-    rl_loss = QBootstrappingLoss()
+    rl_loss = QBootstrappingLoss(
+        target_key="targets.values", actions_key="data.actions", is_categorical=False
+    )
 
-    from core.contracts import Key, Observation, Action, Reward, Done, Mask, SemanticType
+    from core.contracts import (
+        Key,
+        Observation,
+        Action,
+        Reward,
+        Done,
+        Mask,
+        SemanticType,
+        ValueTarget,
+    )
+
     rl_initial_keys = {
         Key("data.observations", Observation),
         Key("data.actions", Action),
@@ -217,11 +229,12 @@ def test_nfsp_leduc_regression():
     sl_optimizer = {"default": torch.optim.Adam(sl_network.parameters(), lr=LR_SL)}
     sl_loss = PolicyLoss(loss_fn=F.cross_entropy, target_key="data.policies")
 
-    from core.contracts import Key, Observation, Action, PolicyLogits
+    from core.contracts import Key, Observation, Action, Policy
+
     sl_initial_keys = {
         Key("data.observations", Observation),
         Key("data.actions", Action),
-        Key("data.policies", PolicyLogits),
+        Key("data.policies", Policy),
     }
 
     # SL target building components

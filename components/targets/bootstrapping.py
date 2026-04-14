@@ -3,7 +3,18 @@ import torch.nn as nn
 from typing import Dict, Any, Optional, TYPE_CHECKING, Set
 from core import PipelineComponent
 from core import Blackboard
-from core.contracts import Key, Reward, Done, Observation, ValueTarget, Action, PolicyLogits, Metric
+from core.contracts import (
+    Key,
+    Reward,
+    Done,
+    Observation,
+    QTargets,
+    Action,
+    Policy,
+    Metric,
+    Scalar,
+    Categorical,
+)
 
 
 class TDTargetComponent(PipelineComponent):
@@ -30,9 +41,9 @@ class TDTargetComponent(PipelineComponent):
         self._requires = {
             Key("data.rewards", Reward),
             Key("data.dones", Done),
-            Key("data.next_observations", Observation)
+            Key("data.next_observations", Observation),
         }
-        self._provides = {Key("targets.values", ValueTarget): "new"}
+        self._provides = {Key("targets.values", QTargets[Scalar]): "new"}
         if self.online_network is not None:
             self._provides[Key("targets.next_actions", Action)] = "new"
 
@@ -48,7 +59,9 @@ class TDTargetComponent(PipelineComponent):
         rewards = blackboard.data["rewards"]
         dones = blackboard.data["dones"]
         next_obs = blackboard.data["next_observations"]
-        assert rewards.shape[0] == dones.shape[0] == next_obs.shape[0], "Batch size mismatch in TDTargetComponent"
+        assert (
+            rewards.shape[0] == dones.shape[0] == next_obs.shape[0]
+        ), "Batch size mismatch in TDTargetComponent"
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         data = blackboard.data
@@ -130,6 +143,7 @@ class DistributionalTargetComponent(PipelineComponent):
         gamma: float = 0.99,
         n_step: int = 1,
         bootstrap_on_truncated: bool = False,
+        atom_size: int = 51,
     ):
         self.target_network = target_network
         self.online_network = online_network
@@ -140,10 +154,11 @@ class DistributionalTargetComponent(PipelineComponent):
         self._requires = {
             Key("data.rewards", Reward),
             Key("data.dones", Done),
-            Key("data.next_observations", Observation)
+            Key("data.next_observations", Observation),
         }
+        struct = Categorical(bins=atom_size)
         self._provides = {
-            Key("targets.q_logits", PolicyLogits): "new",
+            Key("targets.q_logits", QTargets[struct]): "new",
             Key("targets.next_actions", Action): "new",
         }
 
@@ -231,5 +246,5 @@ class DistributionalTargetComponent(PipelineComponent):
 
         return {
             "targets.q_logits": target_distribution.unsqueeze(1),
-            "targets.next_actions": next_actions.unsqueeze(1)
+            "targets.next_actions": next_actions.unsqueeze(1),
         }

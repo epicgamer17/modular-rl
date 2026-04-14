@@ -2,7 +2,15 @@ from typing import Any, Set, Dict
 import torch
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import Key, SemanticType, PolicyLogits, ValueTarget, ValueEstimate, Priority, Metric
+from core.contracts import (
+    Key,
+    SemanticType,
+    Policy,
+    ValueTarget,
+    ValueEstimate,
+    Priority,
+    Metric,
+)
 
 
 class LossPriorityComponent(PipelineComponent):
@@ -13,13 +21,14 @@ class LossPriorityComponent(PipelineComponent):
     - "root": Uses loss at the root step (t=0). Standard for MuZero.
     - "max": Uses the maximum loss over the entire sequence. Standard for DQN/Rainbow.
     """
+
     def __init__(self, loss_key: str = "q_loss", reduction: str = "max"):
         self.loss_key = loss_key
         assert reduction in ("root", "max"), f"Unknown reduction: {reduction}"
         self.reduction = reduction
 
         # Deterministic contracts computed at initialization
-        self._requires = {Key("meta.elementwise_losses", Metric)}
+        self._requires = {Key(f"meta.elementwise_losses.{self.loss_key}", Metric)}
         self._provides = {Key("meta.priorities", Priority): "new"}
 
     @property
@@ -32,23 +41,23 @@ class LossPriorityComponent(PipelineComponent):
 
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures elementwise_losses dict exists and contains the target loss key."""
-        elementwise_losses = blackboard.meta.get("elementwise_losses", {})
-        if self.loss_key in elementwise_losses:
-            loss = elementwise_losses[self.loss_key]
-            assert torch.is_tensor(loss), f"Expected tensor for elementwise loss '{self.loss_key}', got {type(loss)}"
+        elementwise_losses = blackboard.meta["elementwise_losses"]
+        loss = elementwise_losses[self.loss_key]
+        assert torch.is_tensor(
+            loss
+        ), f"Expected tensor for elementwise loss '{self.loss_key}', got {type(loss)}"
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """Extracts priorities and stores them in blackboard.meta."""
-        elementwise_losses = blackboard.meta.get("elementwise_losses", {})
-        if self.loss_key in elementwise_losses:
-            loss = elementwise_losses[self.loss_key]
-            # [B, T] -> [B]
-            if loss.ndim == 1:
-                return {"meta.priorities": loss.detach()}
-            elif self.reduction == "root":
-                return {"meta.priorities": loss[:, 0].detach()}
-            else:
-                return {"meta.priorities": loss.max(dim=1).values.detach()}
+        elementwise_losses = blackboard.meta["elementwise_losses"]
+        loss = elementwise_losses[self.loss_key]
+        # [B, T] -> [B]
+        if loss.ndim == 1:
+            return {"meta.priorities": loss.detach()}
+        elif self.reduction == "root":
+            return {"meta.priorities": loss[:, 0].detach()}
+        else:
+            return {"meta.priorities": loss.max(dim=1).values.detach()}
         return {}
 
 
@@ -59,6 +68,7 @@ class ExpectedValueErrorPriorityComponent(PipelineComponent):
     This prevents priorities from being skewed by different math scales.
     [B, T, bins] -> [B, T] -> [B]
     """
+
     def __init__(
         self,
         value_representation: Any,
@@ -70,7 +80,7 @@ class ExpectedValueErrorPriorityComponent(PipelineComponent):
         self.prediction_key = prediction_key
         self.target_key = target_key
         self.dest_key = dest_key
-        
+
         # Deterministic contracts computed at initialization
         self._requires = {
             Key(self.prediction_key, ValueEstimate),
@@ -88,17 +98,30 @@ class ExpectedValueErrorPriorityComponent(PipelineComponent):
 
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures prediction and target keys exist and are tensors with time dimension."""
-        from core.validation import assert_in_blackboard, assert_is_tensor, assert_shape_sanity
+        from core.validation import (
+            assert_in_blackboard,
+            assert_is_tensor,
+            assert_shape_sanity,
+        )
+
         try:
             pred_logits = resolve_blackboard_path(blackboard, self.prediction_key)
             target_scalars = resolve_blackboard_path(blackboard, self.target_key)
         except (KeyError, AttributeError):
             return  # Keys may not exist yet; execute() handles gracefully
 
-        assert_is_tensor(pred_logits, msg=f"in ExpectedValueErrorPriorityComponent (predictions)")
-        assert_is_tensor(target_scalars, msg=f"in ExpectedValueErrorPriorityComponent (targets)")
-        assert pred_logits.ndim >= 2, f"Predictions must have at least [B, T], got {pred_logits.shape}"
-        assert target_scalars.ndim >= 1, f"Targets must have at least [B], got {target_scalars.shape}"
+        assert_is_tensor(
+            pred_logits, msg=f"in ExpectedValueErrorPriorityComponent (predictions)"
+        )
+        assert_is_tensor(
+            target_scalars, msg=f"in ExpectedValueErrorPriorityComponent (targets)"
+        )
+        assert (
+            pred_logits.ndim >= 2
+        ), f"Predictions must have at least [B, T], got {pred_logits.shape}"
+        assert (
+            target_scalars.ndim >= 1
+        ), f"Targets must have at least [B], got {target_scalars.shape}"
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """Computes MSE of expected value error at root and stores in blackboard.meta."""

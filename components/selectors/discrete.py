@@ -2,7 +2,15 @@ import torch
 import numpy as np
 from typing import Any, Dict, Optional, TYPE_CHECKING, Set
 from core import PipelineComponent, Blackboard
-from core.contracts import Key, Action, SemanticType, ValueEstimate, PolicyLogits, LogProb, Metric
+from core.contracts import (
+    Key,
+    Action,
+    SemanticType,
+    ValueEstimate,
+    Policy,
+    LogProb,
+    Metric,
+)
 
 if TYPE_CHECKING:
     from utils.schedule import Schedule
@@ -83,7 +91,7 @@ def get_action_selection_outputs(
     return {
         "meta.action": raw_action,
         "meta.action_tensor": sq_action,
-        "meta.action_metadata": metadata
+        "meta.action_metadata": metadata,
     }
 
 
@@ -113,7 +121,7 @@ class ActionSelectorComponent(PipelineComponent):
         self.schedule = schedule
         self.schedule_source = schedule_source
         self._last_step = -1
-        
+
         # Deterministic contracts
         self._requires = {Key(f"predictions.{self.input_key}", SemanticType)}
         self._provides = {
@@ -135,7 +143,7 @@ class ActionSelectorComponent(PipelineComponent):
         """Ensures prediction input key exists and is valid."""
         if blackboard.data.get("done", False):
             return  # No validation needed when done
-        
+
         values = blackboard.predictions.get(self.input_key)
         assert values is not None, (
             f"ActionSelectorComponent: '{self.input_key}' not found in blackboard.predictions. "
@@ -146,15 +154,19 @@ class ActionSelectorComponent(PipelineComponent):
         is_prob = any(k in self.input_key for k in ["prob", "policy"])
         if is_prob:
             # 🚨 INTEGRITY CHECK: Probabilities must be valid distributions
-            assert torch.all(values >= -1e-7), f"[{self.input_key}] Probabilities must be non-negative"
+            assert torch.all(
+                values >= -1e-7
+            ), f"[{self.input_key}] Probabilities must be non-negative"
             sum_val = values.sum(dim=-1)
-            assert torch.allclose(sum_val, torch.ones_like(sum_val), atol=1e-3), (
-                f"[{self.input_key}] Probabilities must sum to 1.0, got {sum_val}"
-            )
+            assert torch.allclose(
+                sum_val, torch.ones_like(sum_val), atol=1e-3
+            ), f"[{self.input_key}] Probabilities must sum to 1.0, got {sum_val}"
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if blackboard.data.get("done", False):
-            outputs = get_action_selection_outputs(torch.tensor([0]), {"action_is_none": True})
+            outputs = get_action_selection_outputs(
+                torch.tensor([0]), {"action_is_none": True}
+            )
             outputs["meta.action"] = None
             return outputs
 
@@ -171,7 +183,7 @@ class ActionSelectorComponent(PipelineComponent):
         # Select the source of action values using the required input_key
         values = blackboard.predictions[self.input_key]
         is_prob = any(k in self.input_key for k in ["prob", "policy"])
-        
+
         # Apply masking
         if is_prob:
             # For probabilities, we mask with 0 and re-normalize later if needed
@@ -197,7 +209,7 @@ class ActionSelectorComponent(PipelineComponent):
         metadata = {
             "temperature": self.temperature,
         }
-        
+
         # Include value and reward if they were predicted
         if "value" in blackboard.predictions:
             metadata["value"] = blackboard.predictions["value"]
@@ -262,7 +274,7 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
 
     def __init__(self, epsilon: float = 0.05):
         self.epsilon = epsilon
-        
+
         # Deterministic contracts
         self._requires = {Key("predictions.q_values", ValueEstimate)}
         self._provides = {
@@ -284,11 +296,14 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
         if blackboard.data.get("done", False):
             return
         from core.validation import assert_in_blackboard
+
         assert_in_blackboard(blackboard, "predictions.q_values")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if blackboard.data.get("done", False):
-            outputs = get_action_selection_outputs(torch.tensor([0]), {"action_is_none": True})
+            outputs = get_action_selection_outputs(
+                torch.tensor([0]), {"action_is_none": True}
+            )
             outputs["meta.action"] = None
             return outputs
 
@@ -365,11 +380,11 @@ class NFSPSelectorComponent(PipelineComponent):
             input_key="q_values", temperature=0.0
         )
         self.avg_selector = ActionSelectorComponent(input_key="logits", temperature=0.0)
-        
+
         # Deterministic contracts
         self._requires = {
             Key(f"predictions.{self.br_prefix}q_values", ValueEstimate),
-            Key(f"predictions.{self.avg_prefix}logits", PolicyLogits),
+            Key(f"predictions.{self.avg_prefix}logits", Policy),
         }
         self._provides = {
             Key("meta.action", Action): "new",
@@ -388,6 +403,7 @@ class NFSPSelectorComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures both BR and average strategy prediction keys exist."""
         from core.validation import assert_in_blackboard
+
         assert_in_blackboard(blackboard, f"predictions.{self.br_prefix}q_values")
         assert_in_blackboard(blackboard, f"predictions.{self.avg_prefix}logits")
 
@@ -418,5 +434,5 @@ class NFSPSelectorComponent(PipelineComponent):
 
             updates.update(self.avg_selector.execute(blackboard))
             blackboard.predictions = original_preds
-        
+
         return updates

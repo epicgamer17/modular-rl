@@ -6,7 +6,7 @@ from torch import nn, Tensor
 
 from .base import BaseHead
 from modules.representations import BaseRepresentation
-from core.contracts import ActionDistribution
+from core.contracts import QValues
 from modules.layers.noisy_linear import build_linear_layer
 from modules.utils import build_normalization_layer
 
@@ -94,7 +94,7 @@ class QHead(BaseHead):
 
     @property
     def semantic_type(self) -> Any:
-        return ActionDistribution[self.get_structure()]
+        return QValues[self.get_structure()]
 
 
 class DuelingQHead(BaseHead):
@@ -185,4 +185,4 @@ class DuelingQHead(BaseHead):
 
     @property
     def semantic_type(self) -> Any:
-        return ActionDistribution[self.get_structure()]
+        return QValues[self.get_structure()]

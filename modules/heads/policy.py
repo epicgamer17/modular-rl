@@ -2,7 +2,7 @@ from typing import Tuple, Optional, Dict, Any
 import torch
 from torch import nn, Tensor
 from .base import BaseHead
-from core.contracts import PolicyLogits
+from core.contracts import Policy
 from modules.representations import BaseRepresentation
 
 
@@ -33,4 +33,4 @@ class PolicyHead(BaseHead):
 
     @property
     def semantic_type(self) -> Any:
-        return PolicyLogits[self.get_structure()]
+        return Policy[self.get_structure()]

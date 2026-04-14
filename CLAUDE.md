@@ -38,7 +38,7 @@ This framework is built on **Strict Separation of Concerns and Perfect Polymorph
 
 | Directory | Domain | Rule |
 |---|---|---|
-| `core/` | Primitives | The Graph Execution Engine. Contains `Blackboard`, `BlackboardEngine`, and `PipelineComponent`. |
+| `core/` | Primitives | The DAG Execution Engine. Contains `Blackboard`, `BlackboardEngine`, `PipelineComponent`, `ExecutionGraph`, contract system (`Key`, `ShapeContract`, `SemanticType`), and debugging tools (`blackboard_diff`). |
 | `modules/` | Pure PyTorch Neural Networks | No knowledge of envs, buffers, or loss functions. Tensors in → tensors out. |
 | `agents/learners/` | Loss Pipeline & Optimizer | Calls `learner_inference(batch) -> LearningOutput`, unpacks it, routes raw tensors to `LossAggregator`. Never contains graph routing loops. |
 | `agents/action_selectors/` | Math → Action bridge | Where game rules meet network math. Action masking happens here via `mask_actions()`. |
@@ -136,30 +136,123 @@ Must call `obs_inference`. Must apply action mask directly to Distribution logit
 ### `BlackboardEngine`
 ```python
 # core/blackboard_engine.py
-def step(self, stats=None) -> Optional[Dict[str, Any]]
-def compute_step_result(self, batch: Dict[str, Any], stats=None) -> StepResult
-def save_checkpoint(self, path: str)
-def load_checkpoint(self, path: str)
+BlackboardEngine(
+    components: List[PipelineComponent],
+    device: torch.device,
+    initial_keys: Set[Key] = set(),
+    strict: bool = False,      # Runtime validation via component.validate()
+    lazy: bool = False,         # Demand-driven execution (skip satisfied components)
+    diff: bool = False,         # Per-component blackboard change tracking
+    **kwargs,                   # Forward-compatibility
+)
+def step(self, batch_iterator) -> Iterator[Dict[str, Any]]
+```
 
-@dataclass
-class StepResult:
-    loss: Tensor
-    loss_dict: Dict[str, float]
-    priorities: Optional[Tensor] = None
-    predictions: Dict[str, Tensor] = ...
-    targets: Dict[str, Tensor] = ...
-    meta: Dict[str, Any] = ...
-
-### DAG Build-Time Validation
-The `BlackboardEngine` enforces contract consistency before the first training step via `validate_recipe()`:
+#### DAG Build-Time Validation
+The engine enforces contract consistency before the first training step via `validate_recipe()`:
 1. **Dependency Resolution**: All `requires` paths must exist in the namespace.
 2. **Semantic Compatibility**: `SemanticType` subclassing check (Provider ⊆ Consumer).
 3. **Representation Consistency**: Exact match of metadata (vmin, vmax, bins, num_classes) between providers and consumers.
-4. **Shape Integrity**: Lightweight validation of dimensionality and structural properties.
+4. **Shape Integrity**: Lightweight validation of dimensionality and structural properties via `ShapeContract`.
+
+#### Execution Graph (`core/execution_graph.py`)
+The `ExecutionGraph` is an immutable DAG computed once at engine construction time:
+1. **Provider Map**: Maps each blackboard path to the component index that produces it.
+2. **Dependency Edges**: Derived from `requires`/`provides` contracts (component *i* depends on *j* if *i* requires a path *j* provides).
+3. **Topological Sort**: Kahn's algorithm with original-index tiebreaker for deterministic ordering.
+4. **Backward-Reachability Pruning**: Walk backward from terminal sinks (`losses.*`, `meta.*`, side-effect components with no provides). Components that don't feed any sink are pruned at build time.
+5. **Consumer Map**: For each component, which downstream components read its outputs (used by lazy execution).
+
+```python
+# Read-only access for introspection
+engine.execution_graph.summary()           # "ExecutionGraph: 8 components → 7 active, 1 pruned"
+engine.execution_graph.active_components() # Topologically sorted, pruned list
+engine.execution_graph.consumer_map        # {comp_idx: frozenset(downstream_indices)}
+engine.execution_graph.terminal_indices    # frozenset of terminal sink indices
 ```
+
+#### Lazy Execution (`lazy=True`)
+Demand-driven per-step resolution. Before each batch, walks the execution order in reverse:
+- **Terminal sinks** always execute.
+- **Mutating components** (write mode `"overwrite"` or `"append"`) always execute.
+- **Pure producers** (write mode `"new"`) are skipped if ALL their demanded outputs are already on the blackboard (e.g. provided by the batch).
+- Skipping cascades backward: if B is skipped, A (which only B consumed) may also be skipped.
+- Reports `meta["lazy_skipped"]` per step.
+
+#### Blackboard Diffing (`diff=True`)
+Per-component change tracking via `core/blackboard_diff.py`. For each component that executes:
+- **Added**: New paths that appeared on the blackboard.
+- **Removed**: Paths that disappeared (rare).
+- **Overwritten**: Paths where the value object changed (detected via `id()` — O(1), no tensor copies).
+  - For overwritten tensors: captures `TensorStats` (mean, std, min, max, has_nan, has_inf).
+
+```python
+# Access after step
+for diff in result["meta"]["blackboard_diffs"]:
+    print(diff.detail())
+    # [ForwardPassComponent] +2 added
+    #   + predictions.values
+    #   + predictions.policies
+    # [ValueLoss] +1 added, ~1 overwritten
+    #   + losses.value_loss
+    #   ~ predictions.values  mean=0.0234 std=1.012 [-2.31, 3.14]
+```
+
 Cannot loop over network modules. Calls `learner_inference(batch)`, unpacks `LearningOutput`, routes raw tensors to `LossAggregator`.
 
 Algorithm-specific learners/wrappers: `PPOLearner`. DQN-style and supervised learning are now assembled by trainers using `BlackboardEngine` + `TargetBuilder` + `LossAggregator` + callbacks (e.g. `TargetNetworkSyncCallback`).
+
+### `PipelineComponent` (ABC)
+```python
+# core/component.py
+class PipelineComponent(ABC):
+    @property
+    def requires(self) -> Set[Key]:          # Input contract
+    @property
+    def provides(self) -> Dict[Key, str]:    # Output contract with write modes
+    @property
+    def constraints(self) -> list[str]:      # Declarative constraint descriptions
+    def validate(self, blackboard) -> None:  # Runtime validation (strict mode)
+    def execute(self, blackboard) -> Dict[str, Any]:  # Core logic
+```
+
+**Write Modes** (in `provides`):
+- `"new"`: Path must not already exist. Eligible for lazy-execution skip.
+- `"overwrite"`: Path must already exist. Never skipped by lazy execution.
+- `"append"`: Data is added to an existing collection. Never skipped by lazy execution.
+- `"optional"`: Path may or may not be produced. Eligible for lazy-execution skip.
+
+Both `requires` and `provides` must be deterministic after `__init__`.
+
+### Contract System (`core/contracts.py`)
+```python
+Key(
+    path: str,                        # Dotted blackboard path (e.g. "predictions.values")
+    semantic_type: Type[SemanticType], # What the data means (e.g. ValueEstimate, Policy)
+    metadata: Dict[str, Any] = {},    # Representation params (vmin, vmax, bins) — compare=False
+    shape: Optional[ShapeContract] = None,  # Structural schema — compare=False
+)
+
+ShapeContract(
+    ndim: Optional[int] = None,              # Expected tensor rank
+    has_time: Optional[bool] = None,         # Whether tensor has a time/sequence dimension
+    time_dim: Optional[int] = None,          # Axis index of time dimension (typically 1)
+    feature_shape: Optional[Tuple[int, ...]] = None,  # Non-batch, non-time shape
+)
+```
+
+Key identity (hash/equality) is `(path, semantic_type)` only. Metadata and shape are validation-only annotations.
+
+**Parameterized Semantic Types**: Semantic types support structural parameterization via `__class_getitem__`:
+```python
+ValueEstimate[Scalar]                 # Scalar value estimate
+ValueEstimate[Categorical(bins=51)]   # C51 distributional value
+Policy[Logits]                  # Raw policy logits
+```
+
+Available structures: `Scalar`, `Logits`, `Probs`, `LogProbs`, `Categorical(bins)`, `Quantile(n)`.
+
+Shape validation is opt-in: checks only fire when BOTH provider and consumer declare a field.
 
 ### `LossAggregator`
 ```python
@@ -213,7 +306,7 @@ def load_from_checkpoint(cls, env, config_class, dir_path, training_step, device
 - **No `deepcopy`:** Never `copy.deepcopy()` observations. Use `.copy()` for NumPy arrays.
 - **Action Masking is Ruthless:** Illegal logits → `-inf`. If Softmax/Gumbel follows, re-apply mask to set illegal probability to exactly `0.0` before sampling.
 - **No Python Loops in Samplers/Processors:** `OutputProcessor` and- **No Python loops over tensor dimensions.** Vectorize everything.
-- **Structured Semantic Types Required:** Use parameterized types like `ValueEstimate[Scalar]` or `PolicyLogits[Categorical(bins=51)]`. String-based mapping (e.g. `dist="scalar"`) is deprecated.
+- **Structured Semantic Types Required:** Use parameterized types like `ValueEstimate[Scalar]` or `Policy[Categorical(bins=51)]`. String-based mapping (e.g. `dist="scalar"`) is deprecated.
 - **No Dummy Configs in Tests:** Never hand-craft `config = {"batch_size": 2}` inline. Always use fixtures from `tests/conftest.py`.
 
 ---
@@ -274,6 +367,7 @@ Key mixin fields (partial list):
 ### Production vs. Debug
 - `autograd.detect_anomaly`, profiler, `gradcheck` must be gated behind `config.debug`. `detect_anomaly` slows training 300–500%.
 - Disable `torch.compile` first when investigating correctness issues.
+- `BlackboardEngine` debug flags (`strict`, `diff`, `lazy`) should be disabled in production. `diff=True` adds snapshot overhead per component; `strict=True` runs `validate()` per component per step.
 
 ---
 

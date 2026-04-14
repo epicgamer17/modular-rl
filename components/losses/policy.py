@@ -7,8 +7,7 @@ from core.path_resolver import resolve_blackboard_path
 from core.contracts import (
     Key,
     ShapeContract,
-    PolicyLogits,
-    ActionDistribution,
+    Policy,
     Action,
     Advantage,
     LogProb,
@@ -48,11 +47,10 @@ class PolicyLoss(PipelineComponent):
         self.log_kl = log_kl
 
         # Deterministic contracts computed at initialization
+        # TODO: shape contracts? how do we handle time dimension from unrolls or from LSTM memory vs single step DQN, A2C, PPO, etc?
         self._requires = {
-            Key("predictions.policies", PolicyLogits[Logits],
-                shape=ShapeContract(has_time=True)),
-            Key(self.target_key, PolicyLogits[Probs],
-                shape=ShapeContract(has_time=True)),
+            Key("predictions.policies", Policy),  # Accept any structure
+            Key(self.target_key, Policy),  # Accept any structure
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",
@@ -178,7 +176,7 @@ class ClippedSurrogateLoss(PipelineComponent):
 
         # Deterministic contracts computed at initialization
         self._requires = {
-            Key("predictions.policies", PolicyLogits[Logits]),
+            Key("predictions.policies", Policy),  # Accept any structure
             Key(self.actions_key, Action),
             Key(self.old_log_probs_key, LogProb[LogProbs]),
             Key(self.advantages_key, Advantage[Scalar]),

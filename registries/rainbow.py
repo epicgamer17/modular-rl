@@ -191,7 +191,11 @@ def make_rainbow_learner(
     if per_beta_schedule is None:
         per_beta_schedule = ConstantSchedule(0.6)
 
-    q_loss = QBootstrappingLoss(is_categorical=True, atom_size=agent_network.atom_size, name="q_loss")
+    q_loss = QBootstrappingLoss(
+        is_categorical=True,
+        atom_size=agent_network.components["q_head"].representation.bins,
+        name="q_loss"
+    )
     priority_comp = LossPriorityComponent(loss_key="q_loss", reduction="max")
     buffer_update = PriorityUpdateComponent(priority_update_fn=replay_buffer.update_priorities)
 
@@ -205,6 +209,8 @@ def make_rainbow_learner(
         Key("data.truncated", SemanticType),
         Key("data.dones", Done),
         Key("data.next_legal_moves_masks", Mask),
+        Key("data.indices", SemanticType),  # Needed by PriorityUpdateComponent
+        Key("actions", Action),  # Needed by QBootstrappingLoss (default actions_key)
     }
 
     return BlackboardEngine(
@@ -215,6 +221,7 @@ def make_rainbow_learner(
                 online_network=agent_network,
                 gamma=gamma,
                 n_step=n_step,
+                atom_size=agent_network.components["q_head"].representation.bins,
             ),
             q_loss,
             LossAggregatorComponent(loss_weights={"q_loss": 1.0}),
@@ -225,10 +232,7 @@ def make_rainbow_learner(
                 max_grad_norm=clip_norm,
             ),
             buffer_update,
-            BetaScheduleComponent(
-                set_beta_fn=replay_buffer.set_beta,
-                per_beta_schedule=per_beta_schedule,
-            ),
+            # BetaScheduleComponent removed - should be called from training loop, not learner
             ResetNoiseComponent(agent_network=agent_network),
         ],
         initial_keys=initial_keys,

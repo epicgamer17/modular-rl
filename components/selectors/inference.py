@@ -3,7 +3,16 @@ import time
 from typing import Any, Optional, Tuple, TYPE_CHECKING, Set, Dict
 
 from core import PipelineComponent, Blackboard
-from core.contracts import Key, Observation, ValueEstimate, PolicyLogits, Reward, ToPlay, SemanticType, Metric
+from core.contracts import (
+    Key,
+    Observation,
+    ValueEstimate,
+    Policy,
+    Reward,
+    ToPlay,
+    SemanticType,
+    Metric,
+)
 
 if TYPE_CHECKING:
     from modules.agent_nets.base import BaseAgentNetwork
@@ -26,8 +35,8 @@ class NetworkInferenceComponent(PipelineComponent):
         self._requires = {Key("data.obs", Observation)}
         self._provides = {
             Key("predictions.q_values", ValueEstimate): "optional",
-            Key("predictions.logits", PolicyLogits): "optional",
-            Key("predictions.probs", PolicyLogits): "optional",
+            Key("predictions.logits", Policy): "optional",
+            Key("predictions.probs", Policy): "optional",
             Key("predictions.value", ValueEstimate): "optional",
             Key("predictions.reward", Reward): "optional",
             Key("predictions.to_play", ToPlay): "optional",
@@ -45,6 +54,7 @@ class NetworkInferenceComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures observation tensor exists."""
         from core.validation import assert_is_tensor
+
         obs = blackboard.data.get("obs")
         if obs is not None and not blackboard.data.get("done", False):
             assert_is_tensor(obs, msg="for NetworkInferenceComponent")
