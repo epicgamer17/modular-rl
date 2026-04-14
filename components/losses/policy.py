@@ -49,11 +49,23 @@ class PolicyLoss(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
+        """Ensures both prediction and target exist, are tensors, and aligned."""
+        from core.validation import assert_in_blackboard, assert_is_tensor, assert_same_batch
+        
+        assert_in_blackboard(blackboard, "predictions.policies")
+        assert_in_blackboard(blackboard, self.target_key)
+        
         preds = blackboard.predictions["policies"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
+        
+        assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
+        assert_is_tensor(targets, msg=f"in {self.name} (targets)")
+        
         assert_same_batch(preds, targets, msg=f"in {self.name}")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
+        """Compute policy loss and write to losses."""
+        # execute() trusts validate() for basic existence and type
         preds = blackboard.predictions["policies"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
         # TODO: enforce always time dimension some how.
@@ -134,15 +146,32 @@ class ClippedSurrogateLoss(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
+        """Ensures all required tensors for PPO surrogate loss exist and match."""
+        from core.validation import assert_in_blackboard, assert_is_tensor, assert_same_batch, assert_time_dim
+        
+        # Existence checks
+        assert_in_blackboard(blackboard, "predictions.policies")
+        assert_in_blackboard(blackboard, self.actions_key)
+        assert_in_blackboard(blackboard, self.old_log_probs_key)
+        assert_in_blackboard(blackboard, self.advantages_key)
+        
+        # Extraction for refined checks
         logits = blackboard.predictions["policies"]
         actions = resolve_blackboard_path(blackboard, self.actions_key)
         old_log_probs = resolve_blackboard_path(blackboard, self.old_log_probs_key)
         advantages = resolve_blackboard_path(blackboard, self.advantages_key)
         
+        # Type and Shape alignment
+        assert_is_tensor(logits, msg=f"in {self.name} (logits)")
+        assert_is_tensor(actions, msg=f"in {self.name} (actions)")
+        assert_is_tensor(old_log_probs, msg=f"in {self.name} (old_log_probs)")
+        assert_is_tensor(advantages, msg=f"in {self.name} (advantages)")
+        
         B, T = logits.shape[:2]
         assert_same_batch(logits, actions, msg=f"in {self.name}")
         assert_time_dim(actions, T, msg=f"in {self.name}")
         assert_time_dim(advantages, T, msg=f"in {self.name}")
+        assert_same_batch(old_log_probs, advantages, msg=f"in {self.name}")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         policy_logits = blackboard.predictions["policies"]

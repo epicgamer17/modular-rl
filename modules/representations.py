@@ -37,6 +37,25 @@ class BaseRepresentation(ABC):
         """Converts mathematically pure targets into the target distribution expected by the loss engine."""
         pass
 
+    def supports(self, logits: Tensor) -> bool:
+        """Returns True if this representation can interpret the given logits."""
+        try:
+            self.validate_logits(logits)
+            return True
+        except (AssertionError, ValueError, TypeError):
+            return False
+
+    def validate_logits(self, logits: Tensor) -> None:
+        """
+        Validates that the given logits are compatible with this representation.
+        Raises AssertionError if incompatible.
+        """
+        assert torch.is_tensor(logits), f"Expected torch.Tensor, got {type(logits)}"
+        assert logits.ndim >= 2, f"Logits must have at least 2 dims (B, bins), got {logits.ndim}"
+        assert logits.shape[-1] == self.num_features, (
+            f"Expected {self.num_features} features in last dim, got {logits.shape[-1]}"
+        )
+
     def format_target(
         self, targets: Dict[str, Tensor], target_key: str = "values"
     ) -> Tensor:
@@ -93,9 +112,6 @@ class DiscreteSupportRepresentation(BaseRepresentation):
 
     def to_expected_value(self, logits: Tensor) -> Tensor:
         """Expected value over the support: [B, T, bins] -> [B, T]"""
-        assert (
-            logits.shape[-1] == self.bins
-        ), f"Expected last dimension to be {self.bins}, got {logits.shape[-1]}"
         orig_shape = logits.shape
         flat_logits = logits.reshape(-1, self.bins)
 
@@ -252,9 +268,6 @@ class ClassificationRepresentation(BaseRepresentation):
         return torch.distributions.Categorical(logits=logits)
 
     def to_expected_value(self, logits: Tensor) -> Tensor:
-        assert (
-            logits.shape[-1] == self._num_classes
-        ), f"Expected last dimension to be {self._num_classes}, got {logits.shape[-1]}"
         orig_shape = logits.shape
         flat_logits = logits.reshape(-1, self._num_classes)
         flat_scalar = torch.argmax(flat_logits, dim=-1).float()

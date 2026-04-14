@@ -38,8 +38,11 @@ class ForwardPassComponent(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
+        """Ensures observations exist and have at least 2 dims."""
+        from core.validation import assert_in_blackboard, assert_is_tensor
+        assert_in_blackboard(blackboard, f"data.{self._obs_key}")
         obs = blackboard.data.get(self._obs_key)
-        assert obs is not None, f"ForwardPassComponent requires '{self._obs_key}' in blackboard.data"
+        assert_is_tensor(obs, msg=f"for ForwardPassComponent ({self._obs_key})")
         assert obs.ndim >= 2, f"Observation must have at least [B, T] or [B, *] dimensions, got {obs.shape}"
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:

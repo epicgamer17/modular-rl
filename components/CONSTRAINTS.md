@@ -127,23 +127,30 @@ If a constraint requires explanation, it belongs in validate().
 
 2. Programmatic Validation (Required)
 
-Each component may define a `validate()` method. To ensure consistency and reduce duplication, components SHOULD use centralized validation helpers from `core.validation`.
+Each component MUST define a `validate()` method that enforces its data assumptions. To ensure consistency and reduce duplication, components SHOULD use centralized validation helpers from `core.validation`.
+
+### Validation Principles
+1. **Robust Checks**: Don't just check for key existence. Check types (`assert_is_tensor`), rank (`assert_shape_sanity`), and compatibility.
+2. **Delegate to Strategy**: If a component uses a `BaseRepresentation` or similar strategy object, delegate the validation of specific math invariants to that object (e.g., `rep.validate_logits(tensor)`).
+3. **Source of Truth**: `validate()` should be the single source of truth for correctness. `execute()` should be lean and trust the validation layer.
 
 ### Validation Helpers
-*   `assert_same_batch(t1, t2)`: Ensures dim 0 matches.
-*   `assert_time_dim(t, expected)`: Ensures dim 1 matches search unroll or sequence length.
-*   `assert_compatible_value(pred, target)`: Checks distributional vs scalar compatibility.
+*   `assert_in_blackboard(bb, key)`: Verifies key or path existence.
+*   `assert_is_tensor(obj)`: Ensures object is a PyTorch tensor.
+*   `assert_shape_sanity(t, min_ndim, max_ndim)`: Verifies tensor rank (B, T, D alignment).
+*   `assert_same_batch(t1, t2)`: Ensures dim 0 matches across tensors.
+*   `assert_compatible_value(pred, target)`: Verifies distributional vs scalar compatibility.
+*   `assert_representation_supports(rep, tensor)`: Delegates detailed math validation to a representation strategy.
 
 ### Example
 ```python
-from core.validation import assert_same_batch, assert_compatible_value
+from core.validation import assert_in_blackboard, assert_is_tensor, assert_representation_supports
 
 def validate(self, bb: Blackboard):
-    pred = bb.predictions["values"]
-    target = bb.targets["values"]
-
-    assert_same_batch(pred, target)
-    assert_compatible_value(pred, target)
+    assert_in_blackboard(bb, f"predictions.{self._logits_key}")
+    logits = bb.predictions[self._logits_key]
+    assert_is_tensor(logits)
+    assert_representation_supports(self._representation, logits)
 ```
 
 ### Explicit vs. Implicit Mutations (`execute`)

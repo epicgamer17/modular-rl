@@ -59,6 +59,22 @@ def assert_in_blackboard(bb: "Blackboard", key: str, msg: str = ""):
         except (KeyError, AttributeError):
             assert False, f"Key {key} not found in blackboard {msg}"
     else:
-        # direct access
-        assert hasattr(bb, key) or key in bb.data or key in bb.meta, f"Key {key} not found in blackboard {msg}"
+        assert hasattr(bb, parts[0]) or parts[0] in bb.data or parts[0] in bb.meta, f"Key {key} not found in blackboard {msg}"
+
+def assert_is_tensor(obj: Any, msg: str = ""):
+    """Asserts that an object is a torch.Tensor."""
+    assert torch.is_tensor(obj), f"Expected torch.Tensor {msg}, got {type(obj)}"
+
+def assert_shape_sanity(t: torch.Tensor, min_ndim: int = 1, max_ndim: int = 3, msg: str = ""):
+    """Asserts that a tensor has a standard rank (e.g. [B], [B, T], [B, T, D])."""
+    assert min_ndim <= t.ndim <= max_ndim, (
+        f"Tensor rank mismatch {msg}: expected {min_ndim}-{max_ndim} dims, got {t.ndim} ({t.shape})"
+    )
+
+def assert_representation_supports(representation: Any, tensor: torch.Tensor, msg: str = ""):
+    """Asserts that a representation strategy can correctly process a tensor."""
+    if hasattr(representation, "validate_logits"):
+        representation.validate_logits(tensor)
+    elif hasattr(representation, "supports"):
+        assert representation.supports(tensor), f"Representation {type(representation).__name__} does not support tensor {msg} with shape {tensor.shape}"
 

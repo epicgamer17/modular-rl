@@ -94,7 +94,14 @@ class TwoHotProjectionComponent(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures source key exists and contains a scalar tensor."""
+        from core.validation import assert_in_blackboard, assert_is_tensor, assert_shape_sanity
+        assert_in_blackboard(blackboard, self._source_key)
+        
+        raw = resolve_blackboard_path(blackboard, self._source_key)
+        assert_is_tensor(raw, msg=f"for {self.__class__.__name__} ({self._source_key})")
+        # Two-hot usually expects [B] or [B, T]
+        assert_shape_sanity(raw, min_ndim=1, max_ndim=2, msg=f"for {self.__class__.__name__}")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """Project scalar targets to two-hot distributions and write back."""
@@ -148,7 +155,15 @@ class ClassificationFormatterComponent(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures source exists and is a tensor."""
+        from core.validation import assert_in_blackboard, assert_is_tensor
+        assert_in_blackboard(blackboard, self._source_key)
+        val = resolve_blackboard_path(blackboard, self._source_key)
+        assert_is_tensor(val, msg=f"for {self.__class__.__name__} ({self._source_key})")
+        
+        # If representation exists, it might have its own validation logic
+        if self._representation is not None and hasattr(self._representation, "validate_logits"):
+            self._representation.validate_logits(val)
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         val = resolve_blackboard_path(blackboard, self._source_key)
@@ -206,7 +221,11 @@ class ScalarFormatterComponent(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures source exists and is a tensor."""
+        from core.validation import assert_in_blackboard, assert_is_tensor
+        assert_in_blackboard(blackboard, self._source_key)
+        val = resolve_blackboard_path(blackboard, self._source_key)
+        assert_is_tensor(val, msg=f"for {self.__class__.__name__} ({self._source_key})")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         val = resolve_blackboard_path(blackboard, self._source_key)
@@ -274,17 +293,18 @@ class ExpectedValueComponent(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        assert self._logits_key in blackboard.predictions
+        """Ensures logits exist, are tensors, and match representation specs."""
+        from core.validation import assert_in_blackboard
+        assert_in_blackboard(blackboard, f"predictions.{self._logits_key}")
+        
+        logits = blackboard.predictions[self._logits_key]
+        self._representation.validate_logits(logits)
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """Compute expected value from logits and write to targets."""
-        assert self._logits_key in blackboard.predictions, (
-            f"ExpectedValueComponent: expected '{self._logits_key}' in "
-            f"blackboard.predictions, but found keys: "
-            f"{list(blackboard.predictions.keys())}"
-        )
-
+        # execute() trusts validate() in debug mode, but we still use safe access
         logits: torch.Tensor = blackboard.predictions[self._logits_key]
+        
         # Shape: [B, T, bins] or [B, bins] — to_expected_value handles both.
         scalar: torch.Tensor = self._representation.to_expected_value(logits)
         # Shape: [B, T] or [B]
@@ -332,7 +352,14 @@ class OneHotPolicyTargetComponent(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        """Ensures action indices exist and are correctly shaped."""
+        from core.validation import assert_in_blackboard, assert_is_tensor, assert_shape_sanity
+        assert_in_blackboard(blackboard, self._source_key)
+        
+        indices = resolve_blackboard_path(blackboard, self._source_key)
+        assert_is_tensor(indices, msg=f"for {self.__class__.__name__}")
+        # Indices are usually [B], [B, T], or [B, T, 1]
+        assert_shape_sanity(indices, min_ndim=1, max_ndim=3, msg=f"for {self.__class__.__name__}")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """Read indices from source, convert to one-hot, and write to dest."""

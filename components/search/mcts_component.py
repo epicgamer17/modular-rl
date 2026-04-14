@@ -38,7 +38,12 @@ class MCTSSearchComponent(PipelineComponent):
         }
 
     def validate(self, blackboard: "Blackboard") -> None:
-        pass
+        """Ensures observations exist and have at least 2 dims."""
+        from core.validation import assert_in_blackboard, assert_is_tensor
+        assert_in_blackboard(blackboard, "data.obs")
+        obs = blackboard.data["obs"]
+        assert_is_tensor(obs, msg="for MCTSSearchComponent")
+        assert obs.ndim >= 2, f"Observation must have at least 2 dims (B, *), got {obs.ndim}"
 
     def execute(self, blackboard: "Blackboard") -> Dict[str, Any]:
         """
