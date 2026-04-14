@@ -5,7 +5,7 @@ import time
 from core.blackboard import Blackboard
 from core.component import PipelineComponent
 from core.contracts import Key, check_shape_compatibility
-from core.execution_graph import ExecutionGraph, build_execution_graph
+from core.execution_graph import ExecutionGraph, build_execution_graph, _get_provides_paths, _get_provides_with_modes
 from core.path_resolver import resolve_blackboard_path, write_blackboard_path
 
 def apply_updates(blackboard: Blackboard, updates: Dict[str, Any]) -> None:
@@ -100,6 +100,69 @@ def validate_recipe(components: List[PipelineComponent], initial_keys: Set[Key])
     print(f"DAG Validation Passed: {len(components)} components verified.")
 
 
+def _blackboard_has_path(blackboard: Blackboard, path: str) -> bool:
+    """Check if a dotted path already exists on the blackboard."""
+    parts = path.split(".")
+    if parts[0] in ("data", "targets", "predictions", "meta", "losses"):
+        container = getattr(blackboard, parts[0])
+        sub_parts = parts[1:]
+    else:
+        return False
+
+    current = container
+    for key in sub_parts:
+        if not isinstance(current, dict) or key not in current:
+            return False
+        current = current[key]
+    return True
+
+
+def _resolve_lazy_plan(
+    graph: ExecutionGraph,
+    blackboard: Blackboard,
+) -> List[int]:
+    """Demand-driven backward resolution for lazy execution.
+
+    Walks the execution order in reverse. A component is included if:
+    - It is a terminal sink (always executes), OR
+    - It uses a mutating write mode (overwrite/append) on any path, OR
+    - At least one of its provided paths is demanded by a downstream
+      component that will execute, AND that path is not already present
+      on the blackboard.
+
+    Returns the filtered execution order (indices into graph.components).
+    """
+    must_execute: Set[int] = set()
+    demanded_paths: Set[str] = set()
+
+    for idx in reversed(graph.execution_order):
+        comp = graph.components[idx]
+        provides_modes = _get_provides_with_modes(comp)
+        provides_paths = set(provides_modes.keys())
+        is_terminal = idx in graph.terminal_indices
+
+        # Components that mutate existing data can never be skipped
+        has_mutation = any(
+            mode in ("overwrite", "append") for mode in provides_modes.values()
+        )
+
+        if is_terminal or has_mutation:
+            must_execute.add(idx)
+            demanded_paths.update(req.path for req in comp.requires)
+        elif provides_paths & demanded_paths:
+            # This component provides something demanded downstream.
+            # Only skip if ALL demanded outputs are already on the blackboard.
+            needed = provides_paths & demanded_paths
+            already_satisfied = all(
+                _blackboard_has_path(blackboard, p) for p in needed
+            )
+            if not already_satisfied:
+                must_execute.add(idx)
+                demanded_paths.update(req.path for req in comp.requires)
+
+    return [idx for idx in graph.execution_order if idx in must_execute]
+
+
 class BlackboardEngine:
     """
     The Unchanging Orchestrator. Manages the lifecycle of the Blackboard
@@ -109,6 +172,8 @@ class BlackboardEngine:
     - Topological ordering derived from requires/provides contracts
     - Backward-reachability pruning from terminal sinks (losses.*, meta.*)
     - Cycle detection at build time
+    - Optional lazy execution: skip components whose outputs are already
+      present on the blackboard (enabled via ``lazy=True``)
     """
     def __init__(
         self, 
@@ -116,12 +181,14 @@ class BlackboardEngine:
         device: torch.device, 
         initial_keys: Set[Key] = set(),
         strict: bool = False,
+        lazy: bool = False,
         **kwargs: Any,
     ):
         self.components = components
         self.device = device
         self.training_step = 0
         self.strict = strict
+        self.lazy = lazy
 
         # Build the DAG execution graph (includes dependency + cycle checks)
         self._graph: ExecutionGraph = build_execution_graph(components, initial_keys)
@@ -137,8 +204,8 @@ class BlackboardEngine:
     def step(self, batch_iterator: Iterable[Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
         t_last = time.perf_counter()
 
-        # Pre-resolve the execution plan once per call
-        active_components = self._graph.active_components()
+        # Pre-resolve the static execution plan (used when lazy=False)
+        static_plan = self._graph.active_components()
 
         for batch in batch_iterator:
             # 1. Universal Time Mandate: Move Batch to Device explicitly here
@@ -148,9 +215,16 @@ class BlackboardEngine:
             }
             blackboard = Blackboard(data=device_batch)
             
-            # 2. DAG-sorted Pipeline Execution with Profiling
+            # 2. Resolve execution plan (lazy or static)
+            if self.lazy:
+                lazy_order = _resolve_lazy_plan(self._graph, blackboard)
+                plan = [self._graph.components[i] for i in lazy_order]
+            else:
+                plan = static_plan
+
+            # 3. DAG-sorted Pipeline Execution with Profiling
             profiles = {}
-            for component in active_components:
+            for component in plan:
                 comp_name = type(component).__name__
                 t0 = time.perf_counter()
                 
@@ -166,16 +240,17 @@ class BlackboardEngine:
                 if blackboard.meta.get("stop_execution"):
                     break
             
-            # 3. Telemetry Output
+            # 4. Telemetry Output
             t_now = time.perf_counter()
             throughput = len(device_batch.get("actions", [0])) / (t_now - t_last)
             t_last = t_now
             
             blackboard.meta["learner_throughput"] = throughput
-            # Add profiling metadata (bottleneck detection)
             blackboard.meta["component_profiles_ms"] = {
                 k: round(v * 1000, 3) for k, v in profiles.items()
             }
+            if self.lazy:
+                blackboard.meta["lazy_skipped"] = len(static_plan) - len(plan)
             
             self.training_step += 1
             

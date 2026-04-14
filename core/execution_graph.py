@@ -6,6 +6,7 @@ Replaces the linear ``for component in components: execute()`` model with:
 2. Kahn's-algorithm topological sort (stable: preserves user ordering as tiebreaker).
 3. Backward-reachability pruning from terminal sinks.
 4. Cycle detection with actionable error messages.
+5. Consumer tracking for runtime lazy execution.
 
 The ``ExecutionGraph`` is an immutable snapshot computed once at engine
 construction time.  The ``BlackboardEngine`` iterates over its
@@ -35,13 +36,18 @@ class ExecutionGraph:
     """Immutable dependency graph built from component contracts.
 
     Attributes:
-        components:      The original component list (index-stable).
-        edges:           ``{comp_idx: frozenset_of_prerequisite_indices}``.
-                         An edge ``j in edges[i]`` means *i* depends on *j*.
-        execution_order: Topologically sorted component indices (pruned).
-        pruned_indices:  Indices of components removed during pruning.
-        provider_map:    ``{path: comp_idx}`` — who provides each path.
-                         ``_INITIAL (-1)`` for paths in ``initial_keys``.
+        components:       The original component list (index-stable).
+        edges:            ``{comp_idx: frozenset_of_prerequisite_indices}``.
+                          An edge ``j in edges[i]`` means *i* depends on *j*.
+        execution_order:  Topologically sorted component indices (pruned).
+        pruned_indices:   Indices of components removed during pruning.
+        provider_map:     ``{path: comp_idx}`` — who provides each path.
+                          ``_INITIAL (-1)`` for paths in ``initial_keys``.
+        consumer_map:     ``{comp_idx: frozenset_of_downstream_consumer_indices}``.
+                          For each active component, which later active components
+                          read at least one of its provided paths.
+        terminal_indices: Indices of components that are terminal sinks
+                          (losses.*, meta.*, or side-effect components).
     """
 
     components: Tuple[PipelineComponent, ...]
@@ -49,6 +55,8 @@ class ExecutionGraph:
     execution_order: Tuple[int, ...]
     pruned_indices: FrozenSet[int]
     provider_map: Dict[str, int]
+    consumer_map: Dict[int, FrozenSet[int]]
+    terminal_indices: FrozenSet[int]
 
     # ── convenience ──────────────────────────────────────────────────
 
@@ -65,6 +73,27 @@ class ExecutionGraph:
             f"ExecutionGraph: {n_total} components → "
             f"{n_active} active, {n_pruned} pruned"
         )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────────────
+
+def _get_provides_paths(component: PipelineComponent) -> Set[str]:
+    """Extract the set of provided path strings from a component."""
+    provides = component.provides
+    provides_items = (
+        provides.items() if isinstance(provides, dict) else [(k, "new") for k in provides]
+    )
+    return {k.path for k, _ in provides_items}
+
+def _get_provides_with_modes(component: PipelineComponent) -> Dict[str, str]:
+    """Extract {path: write_mode} from a component's provides."""
+    provides = component.provides
+    provides_items = (
+        provides.items() if isinstance(provides, dict) else [(k, "new") for k in provides]
+    )
+    return {k.path: mode for k, mode in provides_items}
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -110,12 +139,8 @@ def build_execution_graph(
 
     # Register each component's provides
     for idx, comp in enumerate(components):
-        provides = comp.provides
-        provides_items = (
-            provides.items() if isinstance(provides, dict) else [(k, "new") for k in provides]
-        )
-        for prov_key, _mode in provides_items:
-            provider_map[prov_key.path] = idx
+        for path in _get_provides_paths(comp):
+            provider_map[path] = idx
 
     # ── 2. Build dependency edges ────────────────────────────────────
     edges: Dict[int, Set[int]] = {i: set() for i in range(n)}
@@ -152,12 +177,17 @@ def build_execution_graph(
 
     execution_order = tuple(i for i in topo_order if i not in pruned)
 
+    # ── 5. Build consumer map (for lazy execution) ───────────────────
+    consumer_map = _build_consumer_map(components, execution_order, provider_map)
+
     graph = ExecutionGraph(
         components=comp_tuple,
         edges=frozen_edges,
         execution_order=execution_order,
         pruned_indices=pruned,
         provider_map=provider_map,
+        consumer_map=consumer_map,
+        terminal_indices=frozenset(terminal_indices),
     )
 
     print(graph.summary())
@@ -199,11 +229,6 @@ def _topological_sort(n: int, edges: Dict[int, Set[int]]) -> Tuple[int, ...]:
 
     if len(order) != n:
         visited = set(order)
-        cycle_members = [
-            f"[{i}] {type(edges).__name__}"  # placeholder — caller has components
-            for i in range(n)
-            if i not in visited
-        ]
         raise RuntimeError(
             f"Dependency cycle detected among {n - len(order)} components. "
             f"Nodes in cycle: indices {[i for i in range(n) if i not in visited]}"
@@ -225,11 +250,7 @@ def _find_terminal_sinks(
     """
     terminals: Set[int] = set()
     for idx, comp in enumerate(components):
-        provides = comp.provides
-        provides_items = (
-            provides.items() if isinstance(provides, dict) else [(k, "new") for k in provides]
-        )
-        provides_paths = [k.path for k, _ in provides_items]
+        provides_paths = _get_provides_paths(comp)
 
         # No provides → side-effect component, always keep
         if not provides_paths:
@@ -268,3 +289,25 @@ def _backward_reachability(
                 stack.append(prereq)
 
     return reachable
+
+
+def _build_consumer_map(
+    components: List[PipelineComponent],
+    execution_order: Tuple[int, ...],
+    provider_map: Dict[str, int],
+) -> Dict[int, FrozenSet[int]]:
+    """Build a map of provider_idx → {consumer indices that read its outputs}.
+
+    Only considers active (non-pruned) components in *execution_order*.
+    """
+    active_set = set(execution_order)
+    consumers: Dict[int, Set[int]] = defaultdict(set)
+
+    for idx in execution_order:
+        comp = components[idx]
+        for req in comp.requires:
+            provider_idx = provider_map.get(req.path, _INITIAL)
+            if provider_idx != _INITIAL and provider_idx in active_set:
+                consumers[provider_idx].add(idx)
+
+    return {idx: frozenset(s) for idx, s in consumers.items()}
