@@ -36,6 +36,14 @@ class BufferStoreComponent(PipelineComponent):
             container = container[key]
         return container
 
+    @property
+    def reads(self) -> set[str]:
+        return set(self.field_map.values()) | {"meta.action_metadata", "meta.info"}
+
+    @property
+    def writes(self) -> set[str]:
+        return set()
+
     def execute(self, blackboard: Blackboard) -> None:
         transition = {}
         for buffer_key, bb_path in self.field_map.items():
@@ -81,6 +89,24 @@ class SequenceBufferComponent(PipelineComponent):
             from data.samplers.sequence import Sequence
 
             self._sequence = Sequence(self.num_players)
+
+    @property
+    def reads(self) -> set[str]:
+        r = {
+            "data.obs",
+            "data.done",
+            "data.reward",
+            "meta.action",
+        }
+        if self.target_policy_key:
+            r.add(f"predictions.{self.target_policy_key}")
+        if self.target_value_key:
+            r.add(f"predictions.{self.target_value_key}")
+        return r
+
+    @property
+    def writes(self) -> set[str]:
+        return set()
 
     def execute(self, blackboard: Blackboard) -> None:
         self._ensure_sequence()

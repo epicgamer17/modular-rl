@@ -25,6 +25,21 @@ class TDTargetComponent(PipelineComponent):
         self.discount = gamma**n_step
         self.bootstrap_on_truncated = bootstrap_on_truncated
 
+    @property
+    def reads(self) -> set[str]:
+        keys = {"data.rewards", "data.dones", "data.next_observations"}
+        # 'terminated' and 'next_legal_moves_masks' are optional in some buffers
+        # but if we want strict validation, we should decide if they are required.
+        # For now, let's assume 'terminated' is a fallback for 'dones' if missing.
+        return keys
+
+    @property
+    def writes(self) -> set[str]:
+        w = {"targets.values"}
+        if self.online_network is not None:
+            w.add("targets.next_actions")
+        return w
+
     def execute(self, blackboard: Blackboard) -> None:
         data = blackboard.data
         rewards = data["rewards"].float()
@@ -109,6 +124,14 @@ class DistributionalTargetComponent(PipelineComponent):
         self.online_network = online_network
         self.discount = gamma**n_step
         self.bootstrap_on_truncated = bootstrap_on_truncated
+
+    @property
+    def reads(self) -> set[str]:
+        return {"data.rewards", "data.dones", "data.next_observations"}
+
+    @property
+    def writes(self) -> set[str]:
+        return {"targets.q_logits", "targets.next_actions"}
 
     def execute(self, blackboard: Blackboard) -> None:
         data = blackboard.data

@@ -31,6 +31,14 @@ class PolicyLoss(PipelineComponent):
         self.log_kl = log_kl
         self.name = name
 
+    @property
+    def reads(self) -> set[str]:
+        return {"predictions.policies", self.target_key}
+
+    @property
+    def writes(self) -> set[str]:
+        return {f"losses.{self.name}", f"meta.{self.name}"}
+
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["policies"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
@@ -90,6 +98,19 @@ class ClippedSurrogateLoss(PipelineComponent):
         self.old_log_probs_key = old_log_probs_key
         self.advantages_key = advantages_key
         self.name = name
+
+    @property
+    def reads(self) -> set[str]:
+        return {
+            "predictions.policies",
+            self.actions_key,
+            self.old_log_probs_key,
+            self.advantages_key,
+        }
+
+    @property
+    def writes(self) -> set[str]:
+        return {f"losses.{self.name}", f"meta.{self.name}"}
 
     def execute(self, blackboard: Blackboard) -> None:
         policy_logits = blackboard.predictions["policies"]

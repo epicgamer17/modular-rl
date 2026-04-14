@@ -36,6 +36,14 @@ class QBootstrappingLoss(PipelineComponent):
         self.actions_key = actions_key
         self.name = name
 
+    @property
+    def reads(self) -> set[str]:
+        return {f"predictions.{self.pred_key}", self.actions_key, self.target_key}
+
+    @property
+    def writes(self) -> set[str]:
+        return {f"losses.{self.name}", f"meta.{self.name}"}
+
     def execute(self, blackboard: Blackboard) -> None:
         q_preds = blackboard.predictions[self.pred_key]
         actions = resolve_blackboard_path(blackboard, self.actions_key).long()

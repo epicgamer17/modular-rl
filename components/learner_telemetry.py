@@ -25,6 +25,23 @@ class MuzeroMultiplayerTelemetry(PipelineComponent):
         self.value_target_key = value_target_key
         self.mask_key = mask_key
 
+    @property
+    def reads(self) -> set[str]:
+        return {
+            f"predictions.{self.to_play_pred_key}",
+            f"targets.{self.to_play_target_key}",
+            f"predictions.{self.value_pred_key}",
+            f"targets.{self.value_target_key}",
+        }
+
+    @property
+    def writes(self) -> set[str]:
+        w = set()
+        for p in range(self.num_players):
+            w.add(f"meta.tp_acc_p{p}")
+            w.add(f"meta.val_mse_p{p}")
+        return w
+
     def execute(self, blackboard: Blackboard) -> None:
         if self.to_play_pred_key not in blackboard.predictions:
             return

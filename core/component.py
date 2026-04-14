@@ -10,8 +10,20 @@ class PipelineComponent(ABC):
     Components read from and write to the shared 'Blackboard'.
     """
     
+    @property
     @abstractmethod
-    def execute(self, blackboard: 'Blackboard') -> None:
+    def reads(self) -> set[str]:
+        """Dynamically resolved set of keys this instance requires."""
+        pass
+
+    @property
+    @abstractmethod
+    def writes(self) -> set[str]:
+        """Dynamically resolved set of keys this instance produces."""
+        pass
+
+    @abstractmethod
+    def execute(self, blackboard: "Blackboard") -> None:
         """
         Execute this component's logic, mutating the blackboard in place.
         """

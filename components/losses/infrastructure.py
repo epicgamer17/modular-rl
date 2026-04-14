@@ -23,6 +23,14 @@ class EpsilonDecayComponent(PipelineComponent):
         self.decay_steps = decay_steps
         self.current_step = 0
 
+    @property
+    def reads(self) -> set[str]:
+        return set()
+
+    @property
+    def writes(self) -> set[str]:
+        return {"meta.epsilon"}
+
     def execute(self, blackboard: Blackboard) -> None:
         if self.decay_steps > 0:
             epsilon = self.initial_epsilon - (
@@ -101,6 +109,14 @@ class LossAggregatorComponent(PipelineComponent):
         self.loss_weights = loss_weights
         self.optimizer_key = optimizer_key
 
+    @property
+    def reads(self) -> set[str]:
+        return {f"losses.{name}" for name in self.loss_weights.keys()}
+
+    @property
+    def writes(self) -> set[str]:
+        return {f"losses.total_loss.{self.optimizer_key}"}
+
     def execute(self, blackboard: Blackboard) -> None:
         if not blackboard.losses:
             return
@@ -140,6 +156,14 @@ class OptimizerStepComponent(PipelineComponent):
         self.agent_network = agent_network
         self.optimizers = optimizers
         self.max_grad_norm = max_grad_norm
+
+    @property
+    def reads(self) -> set[str]:
+        return {"losses.total_loss"}
+
+    @property
+    def writes(self) -> set[str]:
+        return set()
 
     def execute(self, blackboard: Blackboard) -> None:
         total_losses = blackboard.losses.get("total_loss", {})
@@ -208,6 +232,15 @@ class ShapeValidatorComponent(PipelineComponent):
     def __init__(self, validator: ShapeValidator):
         self.validator = validator
 
+    @property
+    def reads(self) -> set[str]:
+        # Reads all predictions and targets for validation
+        return {"predictions", "targets"}
+
+    @property
+    def writes(self) -> set[str]:
+        return set()
+
     def execute(self, blackboard: Blackboard) -> None:
         self.validator.validate(blackboard.predictions, blackboard.targets)
 
@@ -217,6 +250,14 @@ class MetricEarlyStopComponent(PipelineComponent):
     def __init__(self, threshold: float, metric_key: str = "approx_kl"):
         self.metric_key = metric_key
         self.threshold = threshold
+
+    @property
+    def reads(self) -> set[str]:
+        return {f"meta.{self.metric_key}", f"losses.{self.metric_key}"}
+
+    @property
+    def writes(self) -> set[str]:
+        return {"meta.stop_execution"}
 
     def execute(self, blackboard: Blackboard) -> None:
         # Check both meta and losses for the metric
@@ -239,6 +280,14 @@ class MPSCacheClearComponent(PipelineComponent):
         self.interval = interval
         self.step_count = 0
 
+    @property
+    def reads(self) -> set[str]:
+        return set()
+
+    @property
+    def writes(self) -> set[str]:
+        return set()
+
     def execute(self, blackboard: Blackboard) -> None:
         if self.device.type == "mps":
             self.step_count += 1
@@ -251,6 +300,14 @@ class DeviceTransferComponent(PipelineComponent):
 
     def __init__(self, device: torch.device):
         self.device = device
+
+    @property
+    def reads(self) -> set[str]:
+        return {"data"}
+
+    @property
+    def writes(self) -> set[str]:
+        return {"data"}
 
     def execute(self, blackboard: Blackboard) -> None:
         for k, v in blackboard.data.items():

@@ -17,6 +17,16 @@ class ForwardPassComponent(PipelineComponent):
         self.agent_network = agent_network
         self.shape_validator = shape_validator
 
+    @property
+    def reads(self) -> set[str]:
+        return {"data.observations"}
+
+    @property
+    def writes(self) -> set[str]:
+        # Declares standard predictions. 
+        # ModularAgentNetwork merges its output dict into blackboard.predictions.
+        return {"predictions.values", "predictions.policies"}
+
     def execute(self, blackboard: Blackboard) -> None:
         """
         Runs learner_inference on the data dictionary.

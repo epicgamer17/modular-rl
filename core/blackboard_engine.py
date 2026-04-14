@@ -5,14 +5,43 @@ import time
 from core.blackboard import Blackboard
 from core.component import PipelineComponent
 
+def validate_recipe(components: list[PipelineComponent], initial_keys: set[str] = frozenset()):
+    """
+    Validates that the pipeline components' read/write contracts are satisfied.
+    Simulates the data flow through the Blackboard to catch DAG topology errors early.
+    """
+    available_keys = set(initial_keys)
+    
+    for i, component in enumerate(components):
+        # 1. Check if the component's read requirements are met by prior writes
+        # We handle both absolute keys (e.g. "obs") and nested paths (e.g. "predictions.values")
+        missing_keys = {key for key in component.reads if key not in available_keys}
+        
+        if missing_keys:
+            raise RuntimeError(
+                f"DAG Topology Error at Component [{i}] '{component.__class__.__name__}':\n"
+                f"Required keys {missing_keys} have not been written by any previous component or provided in the initial batch.\n"
+                f"Available keys at this stage: {sorted(list(available_keys))}"
+            )
+            
+        # 2. Simulate the component executing by adding its writes to the available pool
+        available_keys.update(component.writes)
+        
+    print(f"DAG Validation Passed: {len(components)} components verified.")
+
+
 class BlackboardEngine:
     """
     The Unchanging Orchestrator. Manages the lifecycle of the Blackboard dictionary by routing it through sequential components.
     """
-    def __init__(self, components: list[PipelineComponent], device: torch.device):
+    def __init__(self, components: list[PipelineComponent], device: torch.device, initial_keys: set[str] | None = None):
         self.components = components
         self.device = device
         self.training_step = 0
+
+        # Validate the DAG before the first training step
+        # Note: In a real run, 'initial_keys' would come from the Buffer's batch structure
+        validate_recipe(components, initial_keys or set())
 
     def step(self, batch_iterator: Iterable[Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
         t_last = time.perf_counter()

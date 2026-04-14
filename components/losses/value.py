@@ -27,6 +27,14 @@ class ValueLoss(PipelineComponent):
         self.loss_factor = loss_factor
         self.name = name
 
+    @property
+    def reads(self) -> set[str]:
+        return {"predictions.values", self.target_key}
+
+    @property
+    def writes(self) -> set[str]:
+        return {f"losses.{self.name}", f"meta.{self.name}"}
+
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["values"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
@@ -91,6 +99,14 @@ class ClippedValueLoss(PipelineComponent):
         self.mask_key = mask_key
         self.loss_factor = loss_factor
         self.name = name
+
+    @property
+    def reads(self) -> set[str]:
+        return {"predictions.values", self.target_key, self.old_values_key}
+
+    @property
+    def writes(self) -> set[str]:
+        return {f"losses.{self.name}", f"meta.{self.name}"}
 
     def execute(self, blackboard: Blackboard) -> None:
         # 1. Extract inputs

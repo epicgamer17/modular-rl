@@ -77,6 +77,14 @@ class TwoHotProjectionComponent(PipelineComponent):
         self._source_key = source_key
         self._dest_key = dest_key
 
+    @property
+    def reads(self) -> set[str]:
+        return {self._source_key}
+
+    @property
+    def writes(self) -> set[str]:
+        return {f"targets.{self._dest_key}"}
+
     def execute(self, blackboard: Blackboard) -> None:
         """Project scalar targets to two-hot distributions and write back."""
         raw = resolve_blackboard_path(blackboard, self._source_key)
@@ -113,6 +121,14 @@ class ClassificationFormatterComponent(PipelineComponent):
         self._source_key = source_key
         self._dest_key = dest_key
         self._representation = representation
+
+    @property
+    def reads(self) -> set[str]:
+        return {self._source_key}
+
+    @property
+    def writes(self) -> set[str]:
+        return {f"targets.{self._dest_key}"}
 
     def execute(self, blackboard: Blackboard) -> None:
         val = resolve_blackboard_path(blackboard, self._source_key)
@@ -154,6 +170,14 @@ class ScalarFormatterComponent(PipelineComponent):
         self._source_key = source_key
         self._dest_key = dest_key
         self._representation = representation
+
+    @property
+    def reads(self) -> set[str]:
+        return {self._source_key}
+
+    @property
+    def writes(self) -> set[str]:
+        return {f"targets.{self._dest_key}"}
 
     def execute(self, blackboard: Blackboard) -> None:
         val = resolve_blackboard_path(blackboard, self._source_key)
@@ -208,6 +232,14 @@ class ExpectedValueComponent(PipelineComponent):
         self._logits_key = logits_key
         self._dest_key = dest_key
 
+    @property
+    def reads(self) -> set[str]:
+        return {f"predictions.{self._logits_key}"}
+
+    @property
+    def writes(self) -> set[str]:
+        return {f"targets.{self._dest_key}"}
+
     def execute(self, blackboard: Blackboard) -> None:
         """Compute expected value from logits and write to targets."""
         assert self._logits_key in blackboard.predictions, (
@@ -250,6 +282,14 @@ class OneHotPolicyTargetComponent(PipelineComponent):
         self._representation = ClassificationRepresentation(num_actions)
         self._source_key = source_key
         self._dest_key = dest_key
+
+    @property
+    def reads(self) -> set[str]:
+        return {self._source_key}
+
+    @property
+    def writes(self) -> set[str]:
+        return {f"targets.{self._dest_key}"}
 
     def execute(self, blackboard: Blackboard) -> None:
         """Read indices from source, convert to one-hot, and write to dest."""

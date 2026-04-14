@@ -12,6 +12,14 @@ class SequencePadderComponent(PipelineComponent):
         self.T = unroll_steps + 1
         self.keys = keys or ["values", "rewards", "policies", "actions", "to_plays", "reward_mask", "to_play_mask", "action_mask"]
 
+    @property
+    def reads(self) -> set[str]:
+        return set(self.keys)
+
+    @property
+    def writes(self) -> set[str]:
+        return {f"targets.{key.split('.')[-1]}" for key in self.keys}
+
     def execute(self, blackboard: Blackboard) -> None:
         for key in self.keys:
             try:
@@ -46,6 +54,19 @@ class SequenceMaskComponent(PipelineComponent):
     If masks already exist in blackboard.data (e.g. from NStepUnrollProcessor),
     it moves them to blackboard.targets. Otherwise, it generates them from is_same_game.
     """
+
+    @property
+    def reads(self) -> set[str]:
+        return {"data.is_same_game"}  # Minimum required for generation
+
+    @property
+    def writes(self) -> set[str]:
+        return {
+            "targets.value_mask",
+            "targets.reward_mask",
+            "targets.to_play_mask",
+            "targets.policy_mask",
+        }
 
     def execute(self, blackboard: Blackboard) -> None:
         data = blackboard.data
@@ -99,6 +120,14 @@ class SequenceInfrastructureComponent(PipelineComponent):
     def __init__(self, unroll_steps: int):
         self.unroll_steps = unroll_steps
 
+    @property
+    def reads(self) -> set[str]:
+        return {"data.actions"}
+
+    @property
+    def writes(self) -> set[str]:
+        return {"meta.weights", "meta.gradient_scales"}
+
     def execute(self, blackboard: Blackboard) -> None:
         data = blackboard.data
         device = torch.device("cpu")
@@ -129,6 +158,14 @@ class SequenceInfrastructureComponent(PipelineComponent):
 
 class ChanceTargetComponent(PipelineComponent):
     """Generator: Calculates chance outcomes for Stochastic MuZero."""
+
+    @property
+    def reads(self) -> set[str]:
+        return {"targets.values"}
+
+    @property
+    def writes(self) -> set[str]:
+        return {"targets.chance_values_next"}
 
     def execute(self, blackboard: Blackboard) -> None:
         # Stochastic MuZero shifts the value target by 1 step for chance nodes
