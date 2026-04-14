@@ -145,6 +145,22 @@ def validate(self, bb: Blackboard):
     assert_same_batch(pred, target)
     assert_compatible_value(pred, target)
 ```
+
+### Explicit vs. Implicit Mutations (`execute`)
+While components MAY mutate the blackboard in-place for performance or complexity reasons, they SHOULD return a dictionary of their primary outputs.
+
+*   **Implicit (In-place)**: `blackboard.losses["v"] = loss`. Flexible but hard to trace.
+*   **Explicit (Return)**: `return {"losses.v": loss}`. Enables the framework to log, trace, and validate every change.
+
+Components that return their changes are easier to debug and test in isolation.
+
+Example:
+```python
+def execute(self, blackboard) -> Dict[str, Any]:
+    loss = self.compute(blackboard)
+    return {f"losses.{self.name}": loss}
+```
+
 This is the source of truth for correctness. Use it for representation-specific checks and complex invariants.
 What constraints SHOULD enforce
 1. Relationships between data

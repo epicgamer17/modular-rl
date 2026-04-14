@@ -1,7 +1,7 @@
+from typing import Set, Dict, Any
 import torch
 from core import PipelineComponent, Blackboard
 from core.contracts import Key, Observation, SemanticType, Done, Reward, Action
-from typing import Set
 
 
 class GymObservationComponent(PipelineComponent):
@@ -39,7 +39,7 @@ class GymObservationComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if self.state is None or self.done:
             result = self.env.reset()
             if isinstance(result, tuple) and len(result) == 2:
@@ -57,11 +57,13 @@ class GymObservationComponent(PipelineComponent):
             # for a single environment loop.
             obs_tensor = obs_tensor.unsqueeze(0)
 
-        blackboard.data["obs"] = obs_tensor
-        blackboard.data["info"] = self.info
-        blackboard.data["terminated"] = self.terminated
-        blackboard.data["truncated"] = self.truncated
-        blackboard.data["done"] = self.terminated or self.truncated
+        return {
+            "data.obs": obs_tensor,
+            "data.info": self.info,
+            "data.terminated": self.terminated,
+            "data.truncated": self.truncated,
+            "data.done": self.terminated or self.truncated
+        }
 
 
 class GymStepComponent(PipelineComponent):
@@ -89,7 +91,7 @@ class GymStepComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         # Pull action from blackboard
         if "action" in blackboard.meta:
             action = blackboard.meta["action"]
@@ -103,23 +105,23 @@ class GymStepComponent(PipelineComponent):
         next_obs, reward, terminated, truncated, info = self.env.step(action)
         done = terminated or truncated
 
-        # Write transition data to blackboard
-        blackboard.data["reward"] = float(reward)
-        blackboard.data["done"] = done
-        blackboard.data["terminated"] = terminated
-        blackboard.data["truncated"] = truncated
-        blackboard.data["next_obs"] = next_obs
-
-        # Also write to meta for TelemetryComponent and tests
-        blackboard.meta["reward"] = float(reward)
-        blackboard.meta["done"] = done
-        blackboard.meta["terminated"] = terminated
-        blackboard.meta["truncated"] = truncated
-        blackboard.meta["info"] = info
-
         # Update observation component for next tick
         self.obs_component.state = next_obs
         self.obs_component.info = info
         self.obs_component.done = done
         self.obs_component.terminated = terminated
         self.obs_component.truncated = truncated
+
+        # Write transition data to blackboard via return
+        return {
+            "data.reward": float(reward),
+            "data.done": done,
+            "data.terminated": terminated,
+            "data.truncated": truncated,
+            "data.next_obs": next_obs,
+            "meta.reward": float(reward),
+            "meta.done": done,
+            "meta.terminated": terminated,
+            "meta.truncated": truncated,
+            "meta.info": info
+        }

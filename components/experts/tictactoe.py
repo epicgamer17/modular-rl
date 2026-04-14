@@ -25,7 +25,7 @@ Writes:
 import random
 import numpy as np
 import torch
-from typing import Optional, Set
+from typing import Optional, Set, Dict, Any
 
 from core import PipelineComponent, Blackboard
 from core.contracts import Key, Observation, Action, SemanticType
@@ -136,12 +136,15 @@ class TicTacToeExpertComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """
         Compute and publish the expert's chosen action.
 
         Args:
             blackboard: The shared Blackboard for the current pipeline tick.
+
+        Returns:
+            Dictionary containing "meta.action".
 
         Raises:
             AssertionError: If ``blackboard.data["obs"]`` is None or has
@@ -185,7 +188,7 @@ class TicTacToeExpertComponent(PipelineComponent):
             legal_moves = list(range(_NUM_CELLS))
 
         action: int = _select_tictactoe_action(board, legal_moves)
-        blackboard.meta["action"] = action
+        return {"meta.action": action}
 
 
 class TicTacToeBestAgent:

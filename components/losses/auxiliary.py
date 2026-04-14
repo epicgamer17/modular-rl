@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Set
+from typing import Any, Set, Dict
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
 from core.contracts import Key, Reward, ToPlay, PolicyLogits, ValueTarget, LossScalar, SemanticType, Observation
@@ -47,7 +47,7 @@ class RewardLoss(PipelineComponent):
         assert_same_batch(preds, targets, msg=f"in {self.name}")
         assert_compatible_value(preds, targets, msg=f"in {self.name}")
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         preds = blackboard.predictions["rewards"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
 
@@ -69,8 +69,10 @@ class RewardLoss(PipelineComponent):
 
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
-        blackboard.losses[self.name] = scalar_loss
-        blackboard.meta[self.name] = scalar_loss.item()
+        return {
+            f"losses.{self.name}": scalar_loss,
+            f"meta.{self.name}": scalar_loss.item()
+        }
 
 
 class ToPlayLoss(PipelineComponent):
@@ -111,7 +113,7 @@ class ToPlayLoss(PipelineComponent):
         if preds is not None:
             assert_same_batch(preds, targets, msg=f"in {self.name}")
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         preds = blackboard.predictions.get("to_plays")
         try:
             targets = resolve_blackboard_path(blackboard, self.target_key)
@@ -119,7 +121,7 @@ class ToPlayLoss(PipelineComponent):
             targets = None
 
         if preds is None or targets is None:
-            return
+            return {}
 
         B, T = preds.shape[:2]
 
@@ -135,8 +137,10 @@ class ToPlayLoss(PipelineComponent):
 
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
-        blackboard.losses[self.name] = scalar_loss
-        blackboard.meta[self.name] = scalar_loss.item()
+        return {
+            f"losses.{self.name}": scalar_loss,
+            f"meta.{self.name}": scalar_loss.item()
+        }
 
 
 class ChanceQLoss(PipelineComponent):
@@ -172,7 +176,7 @@ class ChanceQLoss(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         try:
             formatted_target = resolve_blackboard_path(blackboard, self.target_key)
         except KeyError:
@@ -197,8 +201,10 @@ class ChanceQLoss(PipelineComponent):
 
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
-        blackboard.losses[self.name] = scalar_loss
-        blackboard.meta[self.name] = scalar_loss.item()
+        return {
+            f"losses.{self.name}": scalar_loss,
+            f"meta.{self.name}": scalar_loss.item()
+        }
 
 
 class ConsistencyLoss(PipelineComponent):
@@ -232,12 +238,12 @@ class ConsistencyLoss(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         preds = blackboard.predictions.get("projected_latents")
         targets = blackboard.targets.get("consistency_targets")
 
         if preds is None or targets is None:
-            return
+            return {}
 
         B, T = preds.shape[:2]
 
@@ -247,8 +253,10 @@ class ConsistencyLoss(PipelineComponent):
         elementwise_loss = -(preds_norm * targets_norm).sum(dim=-1) * self.loss_factor
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
-        blackboard.losses[self.name] = scalar_loss
-        blackboard.meta[self.name] = scalar_loss.item()
+        return {
+            f"losses.{self.name}": scalar_loss,
+            f"meta.{self.name}": scalar_loss.item()
+        }
 
 
 class SigmaLoss(PipelineComponent):
@@ -284,7 +292,7 @@ class SigmaLoss(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         preds = blackboard.predictions.get("sigma_logits")
         try:
             targets = resolve_blackboard_path(blackboard, self.target_key)
@@ -292,7 +300,7 @@ class SigmaLoss(PipelineComponent):
             targets = None
 
         if preds is None or targets is None:
-            return
+            return {}
 
         B, T = preds.shape[:2]
         raw_loss = F.cross_entropy(
@@ -304,8 +312,10 @@ class SigmaLoss(PipelineComponent):
         elementwise_loss = raw_loss.reshape(B, T) * self.loss_factor
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
-        blackboard.losses[self.name] = scalar_loss
-        blackboard.meta[self.name] = scalar_loss.item()
+        return {
+            f"losses.{self.name}": scalar_loss,
+            f"meta.{self.name}": scalar_loss.item()
+        }
 
 
 class CommitmentLoss(PipelineComponent):
@@ -336,16 +346,18 @@ class CommitmentLoss(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         elementwise_loss = blackboard.predictions.get("commitment_loss")
         if elementwise_loss is None:
-            return
+            return {}
 
         elementwise_loss = elementwise_loss * self.loss_factor
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
-        blackboard.losses[self.name] = scalar_loss
-        blackboard.meta[self.name] = scalar_loss.item()
+        return {
+            f"losses.{self.name}": scalar_loss,
+            f"meta.{self.name}": scalar_loss.item()
+        }
 
 
 class LatentConsistencyComponent(PipelineComponent):
@@ -365,7 +377,7 @@ class LatentConsistencyComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         real_obs = blackboard.data["unroll_observations"].float()
         batch_size, unroll_len = real_obs.shape[:2]
         flat_obs = real_obs.flatten(0, 1)
@@ -378,6 +390,8 @@ class LatentConsistencyComponent(PipelineComponent):
                 proj_targets, p=2.0, dim=-1, eps=1e-5
             )
 
-        blackboard.targets["consistency_targets"] = normalized_targets.reshape(
-            batch_size, unroll_len, -1
-        ).detach()
+        return {
+            "targets.consistency_targets": normalized_targets.reshape(
+                batch_size, unroll_len, -1
+            ).detach()
+        }

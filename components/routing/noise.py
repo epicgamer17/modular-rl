@@ -1,8 +1,7 @@
 import torch
-from typing import Set
+from typing import Set, Dict, Any
 from core import PipelineComponent, Blackboard
 from core.contracts import Key
-
 
 class ResetNoiseComponent(PipelineComponent):
     """Resets noisy network parameters after each execution."""
@@ -21,6 +20,7 @@ class ResetNoiseComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if hasattr(self.agent_network, "reset_noise"):
             self.agent_network.reset_noise()
+        return {}

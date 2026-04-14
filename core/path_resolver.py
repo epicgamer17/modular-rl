@@ -53,3 +53,34 @@ def resolve_blackboard_path(blackboard: Blackboard, path: str) -> Any:
         val = val.unsqueeze(1)
         
     return val
+
+def write_blackboard_path(blackboard: Blackboard, path: str, value: Any) -> None:
+    """
+    Writes a value to a path on the blackboard.
+    Supports dotted notation (e.g., 'losses.value_loss').
+    """
+    parts = path.split(".")
+    if len(parts) < 2:
+        # Default to meta if unqualified
+        blackboard.meta[parts[0]] = value
+        return
+
+    root = parts[0]
+    if root not in ["data", "targets", "predictions", "meta", "losses"]:
+        # Default to meta if root is unknown
+        blackboard.meta[path] = value
+        return
+
+    container = getattr(blackboard, root)
+    sub_parts = parts[1:]
+    
+    # Traverse to the parent of the final key
+    current = container
+    for key in sub_parts[:-1]:
+        if key not in current or not isinstance(current[key], dict):
+            current[key] = {}
+        current = current[key]
+    
+    # Write the value
+    current[sub_parts[-1]] = value
+

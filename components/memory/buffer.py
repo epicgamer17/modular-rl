@@ -48,7 +48,7 @@ class BufferStoreComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         transition = {}
         for buffer_key, bb_path in self.field_map.items():
             val = self._resolve(blackboard, bb_path)
@@ -70,6 +70,7 @@ class BufferStoreComponent(PipelineComponent):
                     transition[k] = v
 
         self.replay_buffer.store(**transition)
+        return {}
 
 
 class SequenceBufferComponent(PipelineComponent):
@@ -95,7 +96,7 @@ class SequenceBufferComponent(PipelineComponent):
             self._sequence = Sequence(self.num_players)
 
     @property
-    def requires(self) -> set[Key]:
+    def requires(self) -> Set[Key]:
         from core.contracts import Key, Observation, Action, Reward, Done
         r = {
             Key("data.obs", Observation),
@@ -112,13 +113,13 @@ class SequenceBufferComponent(PipelineComponent):
         return r
 
     @property
-    def provides(self) -> set[Key]:
+    def provides(self) -> Set[Key]:
         return set()
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         self._ensure_sequence()
 
         obs = blackboard.data.get("obs")
@@ -225,3 +226,5 @@ class SequenceBufferComponent(PipelineComponent):
             from data.samplers.sequence import Sequence
 
             self._sequence = Sequence(self.num_players)
+        
+        return {}

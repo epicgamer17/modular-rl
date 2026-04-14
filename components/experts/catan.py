@@ -20,7 +20,7 @@ Writes:
 """
 
 import torch
-from typing import Any, Type, Set
+from typing import Any, Type, Set, Dict
 
 from core import PipelineComponent, Blackboard
 from core.contracts import Key, Action, SemanticType
@@ -158,12 +158,15 @@ class CatanExpertComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """
         Query the catanatron player and publish the chosen action.
 
         Args:
             blackboard: The shared Blackboard for the current pipeline tick.
+
+        Returns:
+            Dictionary containing "meta.action".
 
         Raises:
             AssertionError: If ``blackboard.data["info"]["env"]`` is missing.
@@ -186,4 +189,4 @@ class CatanExpertComponent(PipelineComponent):
         action = self.player.decide(game, game.playable_actions)
         action_int: int = _to_action_space(action)
 
-        blackboard.meta["action"] = action_int
+        return {"meta.action": action_int}

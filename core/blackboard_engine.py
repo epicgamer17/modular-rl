@@ -5,6 +5,17 @@ import time
 from core.blackboard import Blackboard
 from core.component import PipelineComponent
 from core.contracts import Key
+from core.path_resolver import resolve_blackboard_path, write_blackboard_path
+
+def apply_updates(blackboard: Blackboard, updates: Dict[str, Any]) -> None:
+    """
+    Applies a dictionary of path-based updates to the blackboard.
+    Used by the engine and meta-components to apply returned mutations.
+    """
+    if not updates:
+        return
+    for path, value in updates.items():
+        write_blackboard_path(blackboard, path, value)
 
 def validate_recipe(components: List[PipelineComponent], initial_keys: Set[Key]) -> None:
     """
@@ -43,7 +54,6 @@ def validate_recipe(components: List[PipelineComponent], initial_keys: Set[Key])
         for prov, mode in provides_items:
             if mode == "new" and prov.path in available_contracts:
                 # Optional: warn or error if "new" is used but key exists
-                # For now, let's just update the type
                 pass
             elif mode == "overwrite":
                 if prov.path not in available_contracts:
@@ -90,7 +100,10 @@ class BlackboardEngine:
                 if self.strict:
                     component.validate(blackboard)
                 
-                component.execute(blackboard)
+                # Support both in-place mutation and explicit return dicts
+                outputs = component.execute(blackboard)
+                apply_updates(blackboard, outputs)
+
                 if blackboard.meta.get("stop_execution"):
                     break
             

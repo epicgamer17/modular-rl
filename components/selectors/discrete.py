@@ -64,10 +64,10 @@ def mask_actions(
     return torch.where(mask_tensor, values, torch.tensor(mask_value, device=device))
 
 
-def write_to_blackboard(
-    blackboard: Blackboard, action: torch.Tensor, metadata: Dict[str, Any]
-) -> None:
-    """Writes action selection results to the blackboard."""
+def get_action_selection_outputs(
+    action: torch.Tensor, metadata: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Prepares action selection outputs for the blackboard."""
     # Squeeze for single-actor consistency
     if action.dim() > 0 and action.shape[0] == 1:
         raw_action = action.item()
@@ -80,9 +80,11 @@ def write_to_blackboard(
         if torch.is_tensor(v) and v.dim() > 0 and v.shape[0] == 1:
             metadata[k] = v.squeeze(0)
 
-    blackboard.meta["action"] = raw_action
-    blackboard.meta["action_tensor"] = sq_action
-    blackboard.meta["action_metadata"] = metadata
+    return {
+        "meta.action": raw_action,
+        "meta.action_tensor": sq_action,
+        "meta.action_metadata": metadata
+    }
 
 
 class ActionSelectorComponent(PipelineComponent):
@@ -131,11 +133,11 @@ class ActionSelectorComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if blackboard.data.get("done", False):
-            write_to_blackboard(blackboard, torch.tensor([0]), {"action_is_none": True})
-            blackboard.meta["action"] = None
-            return
+            outputs = get_action_selection_outputs(torch.tensor([0]), {"action_is_none": True})
+            outputs["meta.action"] = None
+            return outputs
 
         # Update temperature from schedule if provided
         if self.schedule is not None:
@@ -198,9 +200,10 @@ class ActionSelectorComponent(PipelineComponent):
         if "reward" in blackboard.predictions:
             metadata["reward"] = blackboard.predictions["reward"]
 
+        outputs = {}
         if dist is not None:
             log_prob = dist.log_prob(action).detach()
-            blackboard.predictions["log_prob"] = log_prob
+            outputs["predictions.log_prob"] = log_prob
             metadata["log_prob"] = log_prob
             metadata["policy_dist"] = dist
             metadata["policy"] = dist.probs.detach().cpu()
@@ -221,7 +224,8 @@ class ActionSelectorComponent(PipelineComponent):
         if extra:
             metadata.update(extra)
 
-        write_to_blackboard(blackboard, action, metadata)
+        outputs.update(get_action_selection_outputs(action, metadata))
+        return outputs
 
     def _update_from_episode(self, blackboard: Blackboard) -> None:
         """Update temperature from episode step schedule."""
@@ -274,11 +278,11 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if blackboard.data.get("done", False):
-            write_to_blackboard(blackboard, torch.tensor([0]), {"action_is_none": True})
-            blackboard.meta["action"] = None
-            return
+            outputs = get_action_selection_outputs(torch.tensor([0]), {"action_is_none": True})
+            outputs["meta.action"] = None
+            return outputs
 
         info = blackboard.meta.get("info", blackboard.data.get("info", {}))
 
@@ -286,8 +290,7 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
         probs = blackboard.predictions.get("probs")
 
         if q_values is None:
-            blackboard.meta["action"] = None
-            return
+            return {"meta.action": None}
 
         if q_values.dim() == 2:
             batch_size = q_values.shape[0]
@@ -335,7 +338,7 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
         if extra:
             metadata.update(extra)
 
-        write_to_blackboard(blackboard, action, metadata)
+        return get_action_selection_outputs(action, metadata)
 
 
 class NFSPSelectorComponent(PipelineComponent):
@@ -380,13 +383,14 @@ class NFSPSelectorComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         import random
 
         eta = blackboard.meta.get("eta", self.eta)
+        updates = {}
 
         if random.random() < eta:
-            blackboard.meta["policy_used"] = "best_response"
+            updates["meta.policy_used"] = "best_response"
             # Swap prefixed keys to standard keys for the child selector
             original_preds = blackboard.predictions.copy()
             for key in ["logits", "probs", "q_values", "value", "extra_metadata"]:
@@ -394,15 +398,17 @@ class NFSPSelectorComponent(PipelineComponent):
                 if prefixed_key in original_preds:
                     blackboard.predictions[key] = original_preds[prefixed_key]
 
-            self.br_selector.execute(blackboard)
+            updates.update(self.br_selector.execute(blackboard))
             blackboard.predictions = original_preds
         else:
-            blackboard.meta["policy_used"] = "average_strategy"
+            updates["meta.policy_used"] = "average_strategy"
             original_preds = blackboard.predictions.copy()
             for key in ["logits", "probs", "q_values", "value", "extra_metadata"]:
                 prefixed_key = self.avg_prefix + key
                 if prefixed_key in original_preds:
                     blackboard.predictions[key] = original_preds[prefixed_key]
 
-            self.avg_selector.execute(blackboard)
+            updates.update(self.avg_selector.execute(blackboard))
             blackboard.predictions = original_preds
+        
+        return updates

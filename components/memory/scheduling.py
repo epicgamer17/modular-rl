@@ -1,5 +1,5 @@
+from typing import Any, Set, Dict
 import torch
-from typing import Any, Set
 from core import PipelineComponent, Blackboard
 from core.contracts import Key, SemanticType
 
@@ -27,7 +27,7 @@ class PriorityUpdateComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         priorities = blackboard.meta.get("priorities")
         indices = blackboard.data.get("indices")
         ids = blackboard.data.get("ids")
@@ -35,6 +35,8 @@ class PriorityUpdateComponent(PipelineComponent):
         if priorities is not None and indices is not None:
             # We must move to CPU before sending to the buffer
             self.priority_update_fn(indices, priorities.detach().cpu(), ids=ids)
+        
+        return {}
 
 
 class BetaScheduleComponent(PipelineComponent):
@@ -54,6 +56,8 @@ class BetaScheduleComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         step = blackboard.meta.get("training_step")
-        self.set_beta_fn(self.per_beta_schedule.get_value(step=step))
+        if step is not None:
+            self.set_beta_fn(self.per_beta_schedule.get_value(step=step))
+        return {}

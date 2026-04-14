@@ -96,14 +96,14 @@ class TwoHotProjectionComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """Project scalar targets to two-hot distributions and write back."""
         raw = resolve_blackboard_path(blackboard, self._source_key)
         
         # projected: [B, T, bins] (or [B, bins] if raw was 1-D)
         projected: torch.Tensor = self._representation.to_representation(raw)
 
-        blackboard.targets[self._dest_key] = projected
+        return {f"targets.{self._dest_key}": projected}
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +150,7 @@ class ClassificationFormatterComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         val = resolve_blackboard_path(blackboard, self._source_key)
         
         if self._representation is not None:
@@ -161,7 +161,7 @@ class ClassificationFormatterComponent(PipelineComponent):
             # Simple identity fallback if no representation is provided
             formatted = val
             
-        blackboard.targets[self._dest_key] = formatted
+        return {f"targets.{self._dest_key}": formatted}
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +208,7 @@ class ScalarFormatterComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         val = resolve_blackboard_path(blackboard, self._source_key)
         
         if self._representation is not None:
@@ -222,7 +222,7 @@ class ScalarFormatterComponent(PipelineComponent):
             else:
                 formatted = val
 
-        blackboard.targets[self._dest_key] = formatted
+        return {f"targets.{self._dest_key}": formatted}
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +276,7 @@ class ExpectedValueComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         assert self._logits_key in blackboard.predictions
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """Compute expected value from logits and write to targets."""
         assert self._logits_key in blackboard.predictions, (
             f"ExpectedValueComponent: expected '{self._logits_key}' in "
@@ -289,7 +289,7 @@ class ExpectedValueComponent(PipelineComponent):
         scalar: torch.Tensor = self._representation.to_expected_value(logits)
         # Shape: [B, T] or [B]
 
-        blackboard.targets[self._dest_key] = scalar
+        return {f"targets.{self._dest_key}": scalar}
 
 # ---------------------------------------------------------------------------
 # OneHotPolicyTargetComponent
@@ -334,7 +334,7 @@ class OneHotPolicyTargetComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """Read indices from source, convert to one-hot, and write to dest."""
         indices = resolve_blackboard_path(blackboard, self._source_key)
         
@@ -344,4 +344,4 @@ class OneHotPolicyTargetComponent(PipelineComponent):
             
         # [B, T] -> [B, T, K]
         one_hot = self._representation.to_representation(indices)
-        blackboard.targets[self._dest_key] = one_hot
+        return {f"targets.{self._dest_key}": one_hot}

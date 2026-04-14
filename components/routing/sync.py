@@ -1,5 +1,4 @@
-import torch
-from typing import Callable, TYPE_CHECKING, Set
+from typing import Callable, TYPE_CHECKING, Set, Dict, Any
 from core import PipelineComponent, Blackboard
 from core.contracts import Key, SemanticType
 
@@ -34,16 +33,16 @@ class TargetNetworkSyncComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         self._step_counter += 1
         if self.sync_interval <= 0 or self._step_counter % self.sync_interval != 0:
-            return
+            return {}
 
         from modules.utils import get_clean_state_dict
 
         source_network = blackboard.meta.get("agent_network")
         if source_network is None:
-            return
+            return {}
 
         with torch.no_grad():
             clean_state = get_clean_state_dict(source_network)
@@ -59,6 +58,8 @@ class TargetNetworkSyncComponent(PipelineComponent):
                         target_state[k].copy_(v.detach())
             else:
                 self.target_network.load_state_dict(clean_state, strict=False)
+        
+        return {}
 
 
 class WeightBroadcastComponent(PipelineComponent):
@@ -83,5 +84,6 @@ class WeightBroadcastComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         self.weight_broadcast_fn(self.agent_network.state_dict())
+        return {}

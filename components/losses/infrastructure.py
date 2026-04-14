@@ -37,7 +37,7 @@ class EpsilonDecayComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if self.decay_steps > 0:
             epsilon = self.initial_epsilon - (
                 (self.initial_epsilon - self.min_epsilon)
@@ -46,8 +46,8 @@ class EpsilonDecayComponent(PipelineComponent):
         else:
             epsilon = self.min_epsilon
 
-        blackboard.meta["epsilon"] = epsilon
         self.current_step += 1
+        return {"meta.epsilon": epsilon}
 
 
 def apply_infrastructure(
@@ -133,9 +133,9 @@ class LossAggregatorComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if not blackboard.losses:
-            return
+            return {}
 
         total_loss = None
 
@@ -148,14 +148,12 @@ class LossAggregatorComponent(PipelineComponent):
                     total_loss = total_loss + weighted_loss
 
         if total_loss is None:
-            return
+            return {}
 
-        # Write the final backward-ready tensor to the blackboard
-        # Grouped by optimizer_key in case of disjoint networks (e.g., separate Actor/Critic opts)
-        if "total_loss" not in blackboard.losses:
-            blackboard.losses["total_loss"] = {}
-
-        blackboard.losses["total_loss"][self.optimizer_key] = total_loss
+        return {
+            f"losses.total_loss.{self.optimizer_key}": total_loss,
+            "losses.total_loss": total_loss # Also keep it simple if needed
+        }
 
 
 class OptimizerStepComponent(PipelineComponent):
@@ -186,7 +184,7 @@ class OptimizerStepComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         assert_in_blackboard(blackboard, "losses.total_loss")
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         total_losses = blackboard.losses.get("total_loss", {})
 
         for opt_key, loss_tensor in total_losses.items():
@@ -201,6 +199,8 @@ class OptimizerStepComponent(PipelineComponent):
                 )
 
             opt.step()
+        
+        return {}
 
 
 class ShapeValidator:
@@ -266,8 +266,9 @@ class ShapeValidatorComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         self.validator.validate(blackboard.predictions, blackboard.targets)
+        return {}
 
 
 class MetricEarlyStopComponent(PipelineComponent):
@@ -292,18 +293,20 @@ class MetricEarlyStopComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         # Check both meta and losses for the metric
         val = blackboard.meta.get(self.metric_key)
         if val is None:
             val = blackboard.losses.get(self.metric_key)
 
         if val is not None:
-            # Handle both tensors and scalars
+            # Handle both scalars and tensors
             scalar_val = val.item() if torch.is_tensor(val) else val
             if scalar_val >= self.threshold:
                 print(f"Early Stopping: {self.metric_key} reached {scalar_val} >= {self.threshold}")
-                blackboard.meta["stop_execution"] = True
+                return {"meta.stop_execution": True}
+        
+        return {}
 
 
 class MPSCacheClearComponent(PipelineComponent):
@@ -326,11 +329,12 @@ class MPSCacheClearComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if self.device.type == "mps":
             self.step_count += 1
             if self.step_count % self.interval == 0:
                 torch.mps.empty_cache()
+        return {}
 
 
 class DeviceTransferComponent(PipelineComponent):
@@ -352,7 +356,9 @@ class DeviceTransferComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
+        updates = {}
         for k, v in blackboard.data.items():
             if torch.is_tensor(v):
-                blackboard.data[k] = v.to(self.device)
+                updates[f"data.{k}"] = v.to(self.device)
+        return updates

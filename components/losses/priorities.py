@@ -1,5 +1,5 @@
+from typing import Any, Set, Dict
 import torch
-from typing import Any, Set
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
 from core.contracts import Key, SemanticType, PolicyLogits, ValueTarget, ValueEstimate
@@ -29,18 +29,19 @@ class LossPriorityComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """Extracts priorities and stores them in blackboard.meta."""
         elementwise_losses = blackboard.meta.get("elementwise_losses", {})
         if self.loss_key in elementwise_losses:
             loss = elementwise_losses[self.loss_key]
             # [B, T] -> [B]
             if loss.ndim == 1:
-                blackboard.meta['priorities'] = loss.detach()
+                return {"meta.priorities": loss.detach()}
             elif self.reduction == "root":
-                blackboard.meta['priorities'] = loss[:, 0].detach()
+                return {"meta.priorities": loss[:, 0].detach()}
             else:
-                blackboard.meta['priorities'] = loss.max(dim=1).values.detach()
+                return {"meta.priorities": loss.max(dim=1).values.detach()}
+        return {}
 
 
 class ExpectedValueErrorPriorityComponent(PipelineComponent):
@@ -80,13 +81,13 @@ class ExpectedValueErrorPriorityComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """Computes MSE of expected value error at root and stores in blackboard.meta."""
         try:
             pred_logits = resolve_blackboard_path(blackboard, self.prediction_key)
             target_scalars = resolve_blackboard_path(blackboard, self.target_key)
         except (KeyError, AttributeError):
-            return
+            return {}
 
         # 1. Predictions: Distribution -> Expected Scalar Value [B, T]
         pred_scalars = self.value_representation.to_expected_value(pred_logits)
@@ -108,4 +109,4 @@ class ExpectedValueErrorPriorityComponent(PipelineComponent):
         )
 
         error = (root_target - root_pred) ** 2
-        blackboard.meta['priorities'] = error.detach()
+        return {"meta.priorities": error.detach()}

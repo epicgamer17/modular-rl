@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Set
+from typing import TYPE_CHECKING, Any, Set, Dict
 from core.component import PipelineComponent
 from core.contracts import Key, Observation, ActionDistribution, ValueEstimate
 
@@ -40,9 +40,12 @@ class MCTSSearchComponent(PipelineComponent):
     def validate(self, blackboard: "Blackboard") -> None:
         pass
 
-    def execute(self, blackboard: "Blackboard") -> None:
+    def execute(self, blackboard: "Blackboard") -> Dict[str, Any]:
         """
-        Execute search and update the blackboard with results.
+        Execute search and return the updates for the blackboard.
+
+        Returns:
+            Dictionary of blackboard mutations.
         """
         # Fails fast if previous components didn't provide obs
         if "obs" not in blackboard.data:
@@ -58,8 +61,8 @@ class MCTSSearchComponent(PipelineComponent):
 
         # Check for tournament end / terminal state
         if blackboard.data.get("done") or blackboard.data.get("terminated") or blackboard.meta.get("done"):
-            blackboard.meta["stop_execution"] = True
-            return
+            return {"meta.stop_execution": True}
+
         # --- STABILITY GUARD: ENSURE EVAL MODE ---
         # When using BatchNorm, we MUST be in eval mode during search to prevent 
         # small MCTS batches from polluting the running statistics and slowing down learning.
@@ -72,26 +75,28 @@ class MCTSSearchComponent(PipelineComponent):
         if was_training:
             self.agent_network.train()
 
-        
+        updates = {}
         if len(results) == 5:
             root_value, exploratory_policy, target_policy, best_action, search_meta = results
             
             # --- ABSOLUTE SEARCH CONTRACT ---
-            blackboard.predictions["search_policy"] = exploratory_policy
-            blackboard.predictions["search_target_policy"] = target_policy
-            blackboard.predictions["search_value"] = root_value
+            updates["predictions.search_policy"] = exploratory_policy
+            updates["predictions.search_target_policy"] = target_policy
+            updates["predictions.search_value"] = root_value
         elif len(results) == 3:
             policy, value, search_meta = results
             # Fallback if the search engine doesn't split them
-            blackboard.predictions["search_policy"] = policy
-            blackboard.predictions["search_target_policy"] = policy
-            blackboard.predictions["search_value"] = value
+            updates["predictions.search_policy"] = policy
+            updates["predictions.search_target_policy"] = policy
+            updates["predictions.search_value"] = value
         else:
             raise ValueError(f"Unexpected number of return values from search_engine.run: {len(results)}")
 
         if isinstance(search_meta, dict) and "simulations" in search_meta:
-            blackboard.meta["mcts_simulations"] = search_meta["simulations"]
+            updates["meta.mcts_simulations"] = search_meta["simulations"]
         elif isinstance(search_meta, dict) and "num_simulations" in search_meta:
-            blackboard.meta["mcts_simulations"] = search_meta["num_simulations"]
+            updates["meta.mcts_simulations"] = search_meta["num_simulations"]
         else:
-            blackboard.meta["mcts_simulations"] = getattr(self.search_engine, "num_simulations", None)
+            updates["meta.mcts_simulations"] = getattr(self.search_engine, "num_simulations", None)
+
+        return updates

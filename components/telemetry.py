@@ -35,7 +35,7 @@ class TelemetryComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         # 1. Extraction and Normalization
         reward = blackboard.meta.get("reward", 0.0)
         done = blackboard.meta.get("done", False)
@@ -69,8 +69,13 @@ class TelemetryComponent(PipelineComponent):
         self.episode_reward += reward.sum(dim=1)
         self.episode_length += T
 
-        # 4. Finalize Statistics for Finished Episodes
-        any_done = done.any(dim=1)  # [B]
+        # Env-level finishes: shape [B]
+        any_done = done.any(dim=1)
+
+        outputs = {
+            "meta.running_reward": self.episode_reward.mean().item(),
+            "meta.running_length": self.episode_length.float().mean().item()
+        }
 
         if any_done.any():
             indices = torch.where(any_done)[0]
@@ -83,10 +88,12 @@ class TelemetryComponent(PipelineComponent):
             mean_score = finished_scores.mean().item()
             mean_length = finished_lengths.float().mean().item()
 
-            blackboard.meta["num_samples"] = mean_length
-            blackboard.meta["score"] = mean_score
-            blackboard.meta["episode_score"] = mean_score
-            blackboard.meta["episode_length"] = mean_length
+            outputs.update({
+                "meta.num_samples": mean_length,
+                "meta.score": mean_score,
+                "meta.episode_score": mean_score,
+                "meta.episode_length": mean_length
+            })
 
             # Throughput / FPS calculation
             t_now = time.perf_counter()
@@ -95,21 +102,18 @@ class TelemetryComponent(PipelineComponent):
 
             if duration > 0:
                 # Total steps across all finished environments / time taken
-                blackboard.meta["fps"] = finished_lengths.sum().item() / duration
+                outputs["meta.fps"] = finished_lengths.sum().item() / duration
 
             # 5. Reset tracking only for those specific environments
             self.episode_reward[indices] = 0.0
             self.episode_length[indices] = 0
 
-        # Expose current running stats (mean across all active environments)
-        # We do this after reset so that if an episode just finished, it starts from 0 for the next step's telemetry
-        blackboard.meta["running_reward"] = self.episode_reward.mean().item()
-        blackboard.meta["running_length"] = self.episode_length.float().mean().item()
-
         # Promote search metadata if available
         sm = blackboard.meta.get("search_metadata")
         if sm and isinstance(sm, dict):
-            pass
+            outputs.update({f"meta.search.{k}": v for k, v in sm.items()})
+
+        return outputs
 
 
 class SequenceTerminatorComponent(PipelineComponent):
@@ -133,7 +137,7 @@ class SequenceTerminatorComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         done = blackboard.meta.get("done")
         if done is None:
             done = blackboard.data.get("done")
@@ -141,6 +145,8 @@ class SequenceTerminatorComponent(PipelineComponent):
         if done is not None:
             if torch.is_tensor(done):
                 if done.any():
-                    blackboard.meta["stop_execution"] = True
+                    return {"meta.stop_execution": True}
             elif done:
-                blackboard.meta["stop_execution"] = True
+                return {"meta.stop_execution": True}
+        
+        return {}

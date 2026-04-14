@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Dict, Any, Set
 from core import PipelineComponent
 from core import Blackboard
 from core.contracts import Key, Reward, Done, Observation, ValueTarget, Action, PolicyLogits
@@ -27,7 +27,7 @@ class TDTargetComponent(PipelineComponent):
         self.bootstrap_on_truncated = bootstrap_on_truncated
 
     @property
-    def requires(self) -> set[Key]:
+    def requires(self) -> Set[Key]:
         return {
             Key("data.rewards", Reward),
             Key("data.dones", Done),
@@ -35,7 +35,7 @@ class TDTargetComponent(PipelineComponent):
         }
 
     @property
-    def provides(self) -> set[Key]:
+    def provides(self) -> Set[Key]:
         w = {Key("targets.values", ValueTarget)}
         if self.online_network is not None:
             w.add(Key("targets.next_actions", Action))
@@ -47,7 +47,7 @@ class TDTargetComponent(PipelineComponent):
         next_obs = blackboard.data["next_observations"]
         assert rewards.shape[0] == dones.shape[0] == next_obs.shape[0], "Batch size mismatch in TDTargetComponent"
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         data = blackboard.data
         rewards = data["rewards"].float()
         dones = data["dones"].bool()
@@ -57,6 +57,7 @@ class TDTargetComponent(PipelineComponent):
 
         terminal_mask = terminated if self.bootstrap_on_truncated else dones
         batch_size = rewards.shape[0]
+        updates = {}
 
         with torch.no_grad():
             if self.online_network is not None:
@@ -86,7 +87,7 @@ class TDTargetComponent(PipelineComponent):
                 max_next_q = target_q_values[
                     torch.arange(batch_size, device=rewards.device), next_actions
                 ]
-                blackboard.targets["next_actions"] = next_actions.unsqueeze(1)
+                updates["targets.next_actions"] = next_actions.unsqueeze(1)
             else:
                 # Standard Q-Learning: Evaluate next states on target network
                 target_out = self.target_network.learner_inference(
@@ -108,9 +109,9 @@ class TDTargetComponent(PipelineComponent):
 
         # Write directly to the Universal targets dict
         # Force [B, T=1] dimension to satisfy the Universal Time Mandate
-        blackboard.targets["values"] = target_q.unsqueeze(1)
-        if self.online_network is not None:
-             blackboard.targets["next_actions"] = next_actions.unsqueeze(1)
+        updates["targets.values"] = target_q.unsqueeze(1)
+
+        return updates
 
 
 class DistributionalTargetComponent(PipelineComponent):
@@ -133,7 +134,7 @@ class DistributionalTargetComponent(PipelineComponent):
         self.bootstrap_on_truncated = bootstrap_on_truncated
 
     @property
-    def requires(self) -> set[Key]:
+    def requires(self) -> Set[Key]:
         return {
             Key("data.rewards", Reward),
             Key("data.dones", Done),
@@ -141,7 +142,7 @@ class DistributionalTargetComponent(PipelineComponent):
         }
 
     @property
-    def provides(self) -> set[Key]:
+    def provides(self) -> Set[Key]:
         return {
             Key("targets.q_logits", PolicyLogits),
             Key("targets.next_actions", Action)
@@ -151,7 +152,7 @@ class DistributionalTargetComponent(PipelineComponent):
         rewards = blackboard.data["rewards"]
         assert rewards.ndim >= 1, "Rewards must be at least [B]"
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         data = blackboard.data
         rewards = data["rewards"].float()
         dones = data["dones"].bool()
@@ -221,5 +222,7 @@ class DistributionalTargetComponent(PipelineComponent):
             shifted_support=shifted_support, probabilities=next_probs
         )
 
-        blackboard.targets["q_logits"] = target_distribution.unsqueeze(1)
-        blackboard.targets["next_actions"] = next_actions.unsqueeze(1)
+        return {
+            "targets.q_logits": target_distribution.unsqueeze(1),
+            "targets.next_actions": next_actions.unsqueeze(1)
+        }

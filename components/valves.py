@@ -1,4 +1,4 @@
-from typing import Set
+from typing import Set, Dict, Any
 from core import PipelineComponent, Blackboard
 from core.contracts import Key, SemanticType
 
@@ -26,7 +26,7 @@ class GradientScaleValve(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """
         Finds the specified key in predictions and registers the scaling hook.
         
@@ -45,3 +45,4 @@ class GradientScaleValve(PipelineComponent):
         # Capture scale and register hook
         scale = self.scale
         tensor.register_hook(lambda grad: grad * scale)
+        return {}

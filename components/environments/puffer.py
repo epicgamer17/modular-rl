@@ -1,33 +1,6 @@
-"""
-Puffer Environment Components
-==============================
-Pipeline components that bridge PufferLib's vectorized ``vec_env`` interface
-to the ``Blackboard`` data-flow model.
-
-Architecture boundary
----------------------
-These components own the **I/O layer** with ``vec_env``; they know nothing
-about sequences, replay buffers, or episode logic.  That pivoting work lives
-in ``components/memory/sequence_pivot.py``.
-
-Blackboard contract
--------------------
-After ``PufferObservationComponent.execute()``:
-    blackboard.data["obs"]   : torch.Tensor  [B, *obs_shape]
-    blackboard.data["infos"] : List[Dict[str, Any]]
-
-After ``PufferStepComponent.execute()``:
-    blackboard.data["next_obs"]   : np.ndarray   [B, *obs_shape]
-    blackboard.data["rewards"]    : np.ndarray   [B]
-    blackboard.data["terminals"]  : np.ndarray   [B]  (bool)
-    blackboard.data["truncations"]: np.ndarray   [B]  (bool)
-    blackboard.data["next_infos"] : List[Dict[str, Any]]
-"""
-
+from typing import Any, Dict, List, Optional, Tuple, Set
 import numpy as np
 import torch
-from typing import Any, Dict, List, Optional, Tuple, Set
-
 from core import PipelineComponent, Blackboard
 from core.contracts import Key, Observation, Action, Reward, Done, SemanticType
 
@@ -67,6 +40,11 @@ class PufferObservationComponent(PipelineComponent):
         self.num_envs = num_envs
         self.device = device
         self.input_shape = input_shape
+        # Internal cache, populated externally before the first execute() call.
+        # BasePufferActor sets these after _reset_env(); the StepComponent keeps
+        # them updated after each environment step.
+        self._obs: Optional[np.ndarray] = None
+        self._infos: Optional[List[Dict[str, Any]]] = None
 
     @property
     def requires(self) -> Set[Key]:
@@ -81,12 +59,6 @@ class PufferObservationComponent(PipelineComponent):
 
     def validate(self, blackboard: Blackboard) -> None:
         pass
-
-        # Internal cache, populated externally before the first execute() call.
-        # BasePufferActor sets these after _reset_env(); the StepComponent keeps
-        # them updated after each environment step.
-        self._obs: Optional[np.ndarray] = None
-        self._infos: Optional[List[Dict[str, Any]]] = None
 
     # ------------------------------------------------------------------
     # Public helpers – called by BasePufferActor to seed initial state
@@ -110,16 +82,19 @@ class PufferObservationComponent(PipelineComponent):
     # PipelineComponent interface
     # ------------------------------------------------------------------
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """
         Publish the current observation batch onto the Blackboard.
 
         Converts the cached NumPy array to a Float32 tensor (on
-        ``self.device``) and writes it to ``blackboard.data["obs"]``.
-        The raw info list is stored at ``blackboard.data["infos"]``.
+        ``self.device``) and returns it for writing to ``blackboard.data["obs"]``.
+        The raw info list is returned for ``blackboard.data["infos"]``.
 
         Args:
             blackboard: The shared Blackboard for the current pipeline tick.
+
+        Returns:
+            Dictionary containing "data.obs" and "data.infos".
 
         Raises:
             AssertionError: If ``set_obs`` has not been called yet.
@@ -153,8 +128,10 @@ class PufferObservationComponent(PipelineComponent):
                 f"got shape {tuple(obs_tensor.shape)}."
             )
 
-        blackboard.data["obs"] = obs_tensor          # [B, *obs_shape]
-        blackboard.data["infos"] = self._infos        # List[Dict]
+        return {
+            "data.obs": obs_tensor,          # [B, *obs_shape]
+            "data.infos": self._infos        # List[Dict]
+        }
 
 
 class PufferStepComponent(PipelineComponent):
@@ -165,8 +142,7 @@ class PufferStepComponent(PipelineComponent):
 
     The component reads ``blackboard.meta["actions"]`` (a NumPy int array of
     shape ``[num_envs]``) and writes the full step result back onto the
-    Blackboard so that downstream components (e.g. ``VectorToSequencePivotComponent``)
-    can consume them without knowing anything about ``vec_env``.
+    Blackboard via return so that downstream components can consume them.
 
     It also updates the ``PufferObservationComponent`` internal cache so that
     the *next* pipeline tick sees the fresh observations returned by the reset.
@@ -198,7 +174,7 @@ class PufferStepComponent(PipelineComponent):
 
     @property
     def requires(self) -> Set[Key]:
-        return {Key("meta.actions", Action)} # Renamed to singular 'action' for consistency if needed, but the code says 'actions'
+        return {Key("meta.actions", Action)}
 
     @property
     def provides(self) -> Set[Key]:
@@ -213,7 +189,7 @@ class PufferStepComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """
         Send actions to the vectorised environment and receive the next batch.
 
@@ -222,6 +198,10 @@ class PufferStepComponent(PipelineComponent):
 
         Args:
             blackboard: The shared Blackboard for the current pipeline tick.
+
+        Returns:
+            Dictionary containing "data.next_obs", "data.rewards", 
+            "data.terminals", "data.truncations", and "data.next_infos".
 
         Raises:
             KeyError: If ``blackboard.meta["actions"]`` is not set by an
@@ -242,19 +222,18 @@ class PufferStepComponent(PipelineComponent):
         self.vec_env.send(actions)
 
         # Block until all workers have finished; unpack the 7-tuple PufferLib returns.
-        # Shape: next_obs [B, *obs], rewards [B], terminals [B], truncs [B],
-        #        next_infos List[Dict], episode_returns, episode_lengths
         next_obs, rewards, terminals, truncations, next_infos, _, _ = (
             self.vec_env.recv()
         )
 
-        # Write step results to the Blackboard for downstream components.
-        blackboard.data["next_obs"] = next_obs           # np.ndarray [B, *obs_shape]
-        blackboard.data["rewards"] = rewards             # np.ndarray [B]
-        blackboard.data["terminals"] = terminals         # np.ndarray [B]  bool
-        blackboard.data["truncations"] = truncations     # np.ndarray [B]  bool
-        blackboard.data["next_infos"] = next_infos       # List[Dict]
-
         # Advance the observation-component's cache so the next tick sees the
         # post-reset observations (PufferLib auto-resets completed envs).
         self.obs_component.set_obs(next_obs, next_infos)
+
+        return {
+            "data.next_obs": next_obs,           # np.ndarray [B, *obs_shape]
+            "data.rewards": rewards,             # np.ndarray [B]
+            "data.terminals": terminals,         # np.ndarray [B]  bool
+            "data.truncations": truncations,     # np.ndarray [B]  bool
+            "data.next_infos": next_infos        # List[Dict]
+        }

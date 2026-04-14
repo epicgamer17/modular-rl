@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from typing import Any, Set
+from typing import Any, Set, Dict
 from core import PipelineComponent
 from core import Blackboard
 from core.path_resolver import resolve_blackboard_path
@@ -53,7 +53,7 @@ class PolicyLoss(PipelineComponent):
         targets = resolve_blackboard_path(blackboard, self.target_key)
         assert_same_batch(preds, targets, msg=f"in {self.name}")
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         preds = blackboard.predictions["policies"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
         # TODO: enforce always time dimension some how.
@@ -79,17 +79,20 @@ class PolicyLoss(PipelineComponent):
         # Pass through infrastructure
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
+        outputs = {
+            f"losses.{self.name}": scalar_loss,
+            f"meta.{self.name}": scalar_loss.item()
+        }
+
         # KL divergence logging (only meaningful for soft distribution targets)
         if self.log_kl and targets.shape == preds.shape:
             with torch.no_grad():
                 log_q = F.log_softmax(preds, dim=-1)
                 log_p = torch.log(targets + 1e-10)
                 kl = (targets * (log_p - log_q)).sum(dim=-1).mean()
-                blackboard.meta["approx_kl"] = kl.item()
+                outputs["meta.approx_kl"] = kl.item()
 
-        # Write out
-        blackboard.losses[self.name] = scalar_loss
-        blackboard.meta[self.name] = scalar_loss.item()
+        return outputs
 
 
 class ClippedSurrogateLoss(PipelineComponent):
@@ -141,7 +144,7 @@ class ClippedSurrogateLoss(PipelineComponent):
         assert_time_dim(actions, T, msg=f"in {self.name}")
         assert_time_dim(advantages, T, msg=f"in {self.name}")
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         policy_logits = blackboard.predictions["policies"]
         actions = resolve_blackboard_path(blackboard, self.actions_key)
         old_log_probs = resolve_blackboard_path(blackboard, self.old_log_probs_key)
@@ -162,9 +165,13 @@ class ClippedSurrogateLoss(PipelineComponent):
 
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
+        outputs = {
+            f"losses.{self.name}": scalar_loss,
+            f"meta.{self.name}": scalar_loss.item()
+        }
+
         with torch.no_grad():
             approx_kl = (old_log_probs - log_probs).mean()
-            blackboard.meta["approx_kl"] = approx_kl.item()
+            outputs["meta.approx_kl"] = approx_kl.item()
 
-        blackboard.losses[self.name] = scalar_loss
-        blackboard.meta[self.name] = scalar_loss.item()
+        return outputs

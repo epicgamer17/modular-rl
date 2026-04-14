@@ -1,3 +1,4 @@
+from typing import Set, Dict, Any
 import torch
 import numpy as np
 from core import PipelineComponent, Blackboard
@@ -16,11 +17,11 @@ class PettingZooObservationComponent(PipelineComponent):
         self.done = False
 
     @property
-    def requires(self) -> set[Key]:
+    def requires(self) -> Set[Key]:
         return set()
 
     @property
-    def provides(self) -> set[Key]:
+    def provides(self) -> Set[Key]:
         return {
             Key("data.obs", Observation),
             Key("data.info", SemanticType),
@@ -32,7 +33,7 @@ class PettingZooObservationComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if not self._initialized or self.done or not self.env.agents:
             self.env.reset()
             self._initialized = True
@@ -65,22 +66,26 @@ class PettingZooObservationComponent(PipelineComponent):
                 # Ultimate fallback - we might have to rely on previous obs shape
                 pass
 
+        updates = {}
         # Convert to tensor and ensure batch dimension [1, ...]
         if obs is not None:
             obs_tensor = torch.as_tensor(obs, dtype=torch.float32)
             if obs_tensor.dim() > 0:
                 obs_tensor = obs_tensor.unsqueeze(0)
-            blackboard.data["obs"] = obs_tensor
+            updates["data.obs"] = obs_tensor
         else:
-            blackboard.data["obs"] = None
+            updates["data.obs"] = None
 
-        blackboard.data["info"] = info
-        blackboard.data["terminated"] = termination
-        blackboard.data["truncated"] = truncation
-        blackboard.data["done"] = termination or truncation
-        blackboard.data["reward"] = reward
-        blackboard.data["player_id"] = player_idx
-        blackboard.data["agent"] = agent
+        updates.update({
+            "data.info": info,
+            "data.terminated": termination,
+            "data.truncated": truncation,
+            "data.done": termination or truncation,
+            "data.reward": reward,
+            "data.player_id": player_idx,
+            "data.agent": agent
+        })
+        return updates
 
 
 class PettingZooStepComponent(PipelineComponent):
@@ -93,11 +98,11 @@ class PettingZooStepComponent(PipelineComponent):
         self.obs_component = obs_component
 
     @property
-    def requires(self) -> set[Key]:
+    def requires(self) -> Set[Key]:
         return {Key("meta.action", Action)}
 
     @property
-    def provides(self) -> set[Key]:
+    def provides(self) -> Set[Key]:
         return {
             Key("data.next_obs", Observation),
             Key("data.reward", Reward),
@@ -107,7 +112,7 @@ class PettingZooStepComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         action = blackboard.meta["action"]
         agent = blackboard.data["agent"]
         self.env.step(action)
@@ -132,11 +137,13 @@ class PettingZooStepComponent(PipelineComponent):
             next_player_id = self.env.possible_agents.index(next_agent)
         except (ValueError, AttributeError, StopIteration):
             next_player_id = None
-        blackboard.data["next_player_id"] = next_player_id
-
-        blackboard.data["reward"] = float(reward)
-        blackboard.data["done"] = self.obs_component.done
-        blackboard.data["terminated"] = term
-        blackboard.data["truncated"] = trunc
-        blackboard.data["next_obs"] = obs
-        blackboard.meta["next_info"] = info
+        
+        return {
+            "data.next_player_id": next_player_id,
+            "data.reward": float(reward),
+            "data.done": self.obs_component.done,
+            "data.terminated": term,
+            "data.truncated": trunc,
+            "data.next_obs": obs,
+            "meta.next_info": info
+        }

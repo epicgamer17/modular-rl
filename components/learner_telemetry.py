@@ -1,5 +1,5 @@
 import torch
-from typing import Any, Tuple
+from typing import Any, Tuple, Dict, Set
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
 
@@ -28,7 +28,7 @@ class MuzeroMultiplayerTelemetry(PipelineComponent):
         self.mask_key = mask_key
 
     @property
-    def requires(self) -> set[Key]:
+    def requires(self) -> Set[Key]:
         return {
             Key(f"predictions.{self.to_play_pred_key}", ToPlay),
             Key(f"targets.{self.to_play_target_key}", ToPlay),
@@ -37,7 +37,7 @@ class MuzeroMultiplayerTelemetry(PipelineComponent):
         }
 
     @property
-    def provides(self) -> set[Key]:
+    def provides(self) -> Set[Key]:
         w = set()
         for p in range(self.num_players):
             w.add(Key(f"meta.tp_acc_p{p}", LossScalar))
@@ -47,9 +47,9 @@ class MuzeroMultiplayerTelemetry(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if self.to_play_pred_key not in blackboard.predictions:
-            return
+            return {}
 
         # 1. Extract standard tensors
         tp_preds = blackboard.predictions[self.to_play_pred_key]
@@ -87,6 +87,7 @@ class MuzeroMultiplayerTelemetry(PipelineComponent):
             
         val_error = (val_scalars - val_targets)**2
         
+        updates = {}
         # 4. Split and Log
         for p in range(self.num_players):
             p_mask = (target_ids == p) & mask.bool()
@@ -96,11 +97,11 @@ class MuzeroMultiplayerTelemetry(PipelineComponent):
                 acc = (correct[p_mask]).mean().item()
                 mse = (val_error[p_mask]).mean().item()
                 
-                blackboard.meta[f"tp_acc_p{p}"] = acc
-                blackboard.meta[f"val_mse_p{p}"] = mse
+                updates[f"meta.tp_acc_p{p}"] = acc
+                updates[f"meta.val_mse_p{p}"] = mse
                 
                 # Also expose directly to learner metrics for printing
-                if "losses" not in blackboard.meta:
-                    blackboard.meta["losses"] = {}
-                blackboard.meta["losses"][f"tp_acc_p{p}"] = acc
-                blackboard.meta["losses"][f"val_mse_p{p}"] = mse
+                updates[f"meta.losses.tp_acc_p{p}"] = acc
+                updates[f"meta.losses.val_mse_p{p}"] = mse
+
+        return updates

@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from typing import Any, Set
+from typing import Any, Set, Dict
 from core import PipelineComponent
 from core import Blackboard
 from core.path_resolver import resolve_blackboard_path
@@ -57,7 +57,7 @@ class ValueLoss(PipelineComponent):
         assert_same_batch(preds, targets, msg=f"in {self.name}")
         assert_compatible_value(preds, targets, msg=f"in {self.name}")
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         preds = blackboard.predictions["values"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
         B, T = preds.shape[:2]
@@ -91,13 +91,11 @@ class ValueLoss(PipelineComponent):
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
         # Write out
-        blackboard.losses[self.name] = scalar_loss
-        blackboard.meta[self.name] = scalar_loss.item()
-
-        # Store elementwise loss for priority computation
-        if "elementwise_losses" not in blackboard.meta:
-            blackboard.meta["elementwise_losses"] = {}
-        blackboard.meta["elementwise_losses"][self.name] = elementwise_loss
+        return {
+            f"losses.{self.name}": scalar_loss,
+            f"meta.{self.name}": scalar_loss.item(),
+            f"meta.elementwise_losses.{self.name}": elementwise_loss
+        }
 
 
 class ClippedValueLoss(PipelineComponent):
@@ -153,7 +151,7 @@ class ClippedValueLoss(PipelineComponent):
         assert_same_batch(values, old_values, msg=f"in {self.name}")
         assert values.shape == returns.shape == old_values.shape, f"Shape mismatch in {self.name}"
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         # 1. Extract inputs
         values = blackboard.predictions.get(
             "values_expected", blackboard.predictions["values"]
@@ -184,10 +182,8 @@ class ClippedValueLoss(PipelineComponent):
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
         # Write out
-        blackboard.losses[self.name] = scalar_loss
-        blackboard.meta[self.name] = scalar_loss.item()
-
-        # Store elementwise loss for priority computation
-        if "elementwise_losses" not in blackboard.meta:
-            blackboard.meta["elementwise_losses"] = {}
-        blackboard.meta["elementwise_losses"][self.name] = elementwise_loss
+        return {
+            f"losses.{self.name}": scalar_loss,
+            f"meta.{self.name}": scalar_loss.item(),
+            f"meta.elementwise_losses.{self.name}": elementwise_loss
+        }

@@ -1,6 +1,7 @@
 import torch
 import time
-from typing import Any, Optional, Tuple, TYPE_CHECKING, Set
+from typing import Any, Optional, Tuple, TYPE_CHECKING, Set, Dict
+
 from core import PipelineComponent, Blackboard
 from core.contracts import Key, Observation, ValueEstimate, PolicyLogits, Reward, ToPlay, SemanticType
 
@@ -31,6 +32,7 @@ class NetworkInferenceComponent(PipelineComponent):
         return {
             Key("predictions.q_values", ValueEstimate),
             Key("predictions.logits", PolicyLogits),
+            Key("predictions.probs", PolicyLogits),
             Key("predictions.value", ValueEstimate),
             Key("predictions.reward", Reward),
             Key("predictions.to_play", ToPlay),
@@ -40,45 +42,46 @@ class NetworkInferenceComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         obs = blackboard.data["obs"]
         done = blackboard.data.get("done", False)
         if obs is None or done:
-            return
+            return {}
 
         # Ensure batch dimension [1, ...] if single observation
         if obs.dim() == len(self.input_shape):
             obs = obs.unsqueeze(0)
 
+        updates = {}
         with torch.inference_mode():
             output = self.agent_network.obs_inference(obs)
 
-            # Write results directly to blackboard
+            # Route results through the updates dictionary
             q_values = getattr(output, "q_values", None)
             if q_values is not None:
-                blackboard.predictions["q_values"] = q_values
+                updates["predictions.q_values"] = q_values
 
             policy = getattr(output, "policy", None)
             if policy is not None:
                 logits = getattr(policy, "logits", None)
                 if logits is not None:
-                    blackboard.predictions["logits"] = logits
+                    updates["predictions.logits"] = logits
                 else:
                     probs = getattr(policy, "probs", None)
                     if probs is not None:
-                        blackboard.predictions["probs"] = probs
+                        updates["predictions.probs"] = probs
 
             value = getattr(output, "value", None)
             if value is not None:
                 if not isinstance(value, torch.Tensor):
                     value = torch.as_tensor([value], device=obs.device)
-                blackboard.predictions["value"] = value
+                updates["predictions.value"] = value
 
             reward = getattr(output, "reward", None)
             if reward is not None:
                 if not isinstance(reward, torch.Tensor):
                     reward = torch.as_tensor([reward], device=obs.device)
-                blackboard.predictions["reward"] = reward
+                updates["predictions.reward"] = reward
 
             to_play = getattr(output, "to_play", None)
             if to_play is not None:
@@ -86,8 +89,10 @@ class NetworkInferenceComponent(PipelineComponent):
                     to_play = torch.as_tensor(
                         [to_play], device=obs.device, dtype=torch.long
                     )
-                blackboard.predictions["to_play"] = to_play
+                updates["predictions.to_play"] = to_play
 
             extras = getattr(output, "extras", None) or {}
             if extras:
-                blackboard.predictions["extra_metadata"] = extras
+                updates["predictions.extra_metadata"] = extras
+
+        return updates

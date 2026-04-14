@@ -16,7 +16,7 @@ Writes:
 """
 
 import random
-from typing import Optional, Set
+from typing import Optional, Set, Any, Dict
 
 from core import PipelineComponent, Blackboard
 from core.contracts import Key, Action, SemanticType
@@ -66,7 +66,7 @@ class RandomSelectorComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """
         Sample a legal action uniformly at random and publish it.
 
@@ -96,4 +96,4 @@ class RandomSelectorComponent(PipelineComponent):
             )
             action = random.randrange(self.num_actions)
 
-        blackboard.meta["action"] = action
+        return {"meta.action": action}

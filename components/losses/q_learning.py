@@ -56,7 +56,7 @@ class QBootstrappingLoss(PipelineComponent):
         actions = resolve_blackboard_path(blackboard, self.actions_key)
         assert q_preds.shape[:2] == actions.shape[:2], "Batch/Time mismatch in QBootstrappingLoss"
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         q_preds = blackboard.predictions[self.pred_key]
         actions = resolve_blackboard_path(blackboard, self.actions_key).long()
         formatted_target = resolve_blackboard_path(blackboard, self.target_key)
@@ -87,9 +87,8 @@ class QBootstrappingLoss(PipelineComponent):
 
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
-        blackboard.losses[self.name] = scalar_loss
-        blackboard.meta[self.name] = scalar_loss.item()
-
-        if "elementwise_losses" not in blackboard.meta:
-            blackboard.meta["elementwise_losses"] = {}
-        blackboard.meta["elementwise_losses"][self.name] = elementwise_loss
+        return {
+            f"losses.{self.name}": scalar_loss,
+            f"meta.{self.name}": scalar_loss.item(),
+            f"meta.elementwise_losses.{self.name}": elementwise_loss
+        }

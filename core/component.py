@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Set
+from typing import TYPE_CHECKING, Set, Optional, Any, Dict
 from core.contracts import Key
 
 if TYPE_CHECKING:
@@ -50,8 +50,12 @@ class PipelineComponent(ABC):
         pass
 
     @abstractmethod
-    def execute(self, blackboard: "Blackboard") -> None:
+    def execute(self, blackboard: "Blackboard") -> Dict[str, Any]:
         """
-        Execute this component's logic, mutating the blackboard in place.
+        Execute this component's logic and return a dictionary of changes
+        to be written by the framework. Returning an empty dict {} is valid
+        if the component only performs in-place mutations (not recommended).
+        
+        Example Return: {"losses.value_loss": tensor}
         """
         pass

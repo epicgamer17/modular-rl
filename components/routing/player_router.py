@@ -34,10 +34,11 @@ Side-effects:
     Delegates to every ``PipelineComponent.execute()`` in the matching list.
 """
 
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Any
 
 from core import PipelineComponent, Blackboard
 from core.contracts import Key, ToPlay
+from core.blackboard_engine import apply_updates
 
 
 class PlayerRoutingComponent(PipelineComponent):
@@ -113,12 +114,15 @@ class PlayerRoutingComponent(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         pass
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """
         Look up the active player's component list and execute each component.
 
         Args:
             blackboard: The shared Blackboard for the current pipeline tick.
+
+        Returns:
+            Aggregated dictionary of mutations from all executed sub-components.
 
         Raises:
             AssertionError: If ``blackboard.data["player_id"]`` is missing.
@@ -145,5 +149,16 @@ class PlayerRoutingComponent(PipelineComponent):
                 f"default_components were provided."
             )
 
+        combined_updates = {}
         for component in components:
-            component.execute(blackboard)
+            # Execute sub-component and capture its returned mutations
+            result = component.execute(blackboard)
+            if result:
+                # Meta-components must manually apply or return updates if they impact downstream routed nodes
+                # However, for now, we assume routed nodes need results from previous routed nodes in-place to function.
+                # To maintain side-effect safety, we'll manually apply them here for the NEXT component in the router's loop.
+                # This mirrors BlackboardEngine logic.
+                apply_updates(blackboard, result)
+                combined_updates.update(result)
+        
+        return combined_updates

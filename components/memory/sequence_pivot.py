@@ -121,16 +121,19 @@ class VectorToSequencePivotComponent(PipelineComponent):
     # PipelineComponent interface
     # ------------------------------------------------------------------
 
-    def execute(self, blackboard: Blackboard) -> None:
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """
         Append one step to every active sequence, flush completed episodes.
 
-        After execution, ``blackboard.meta["completed_sequences"]`` contains
-        a (possibly empty) list of ``Sequence`` objects ready for the replay
+        After execution, the returned updates contain "meta.completed_sequences" 
+        with a (possibly empty) list of ``Sequence`` objects ready for the replay
         buffer.
 
         Args:
             blackboard: The shared Blackboard for the current pipeline tick.
+
+        Returns:
+            Dictionary containing "meta.completed_sequences".
 
         Raises:
             AssertionError: If any required Blackboard key is missing or has
@@ -275,8 +278,8 @@ class VectorToSequencePivotComponent(PipelineComponent):
                 # meaningful duration.
                 self._start_time = time.time()
 
-        # ---- Publish completed sequences to the Blackboard ----------------
-        blackboard.meta["completed_sequences"] = completed
+        # ---- Return completed sequences updates ---------------------------
+        return {"meta.completed_sequences": completed}
 
     # ------------------------------------------------------------------
     # Private helpers
