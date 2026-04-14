@@ -6,6 +6,7 @@ from core.blackboard import Blackboard
 from core.component import PipelineComponent
 from core.contracts import Key, check_shape_compatibility
 from core.execution_graph import ExecutionGraph, build_execution_graph, _get_provides_paths, _get_provides_with_modes
+from core.blackboard_diff import snapshot_blackboard, diff_snapshots, BlackboardDiff
 from core.path_resolver import resolve_blackboard_path, write_blackboard_path
 
 def apply_updates(blackboard: Blackboard, updates: Dict[str, Any]) -> None:
@@ -182,6 +183,7 @@ class BlackboardEngine:
         initial_keys: Set[Key] = set(),
         strict: bool = False,
         lazy: bool = False,
+        diff: bool = False,
         **kwargs: Any,
     ):
         self.components = components
@@ -189,6 +191,7 @@ class BlackboardEngine:
         self.training_step = 0
         self.strict = strict
         self.lazy = lazy
+        self.diff = diff
 
         # Build the DAG execution graph (includes dependency + cycle checks)
         self._graph: ExecutionGraph = build_execution_graph(components, initial_keys)
@@ -224,6 +227,7 @@ class BlackboardEngine:
 
             # 3. DAG-sorted Pipeline Execution with Profiling
             profiles = {}
+            diffs: List[BlackboardDiff] = []
             for component in plan:
                 comp_name = type(component).__name__
                 t0 = time.perf_counter()
@@ -232,9 +236,18 @@ class BlackboardEngine:
                 if self.strict:
                     component.validate(blackboard)
                 
+                # Snapshot before (if diffing)
+                if self.diff:
+                    snap_before = snapshot_blackboard(blackboard)
+
                 outputs = component.execute(blackboard)
                 apply_updates(blackboard, outputs)
                 
+                # Snapshot after and compute diff
+                if self.diff:
+                    snap_after = snapshot_blackboard(blackboard)
+                    diffs.append(diff_snapshots(comp_name, snap_before, snap_after, blackboard))
+
                 profiles[comp_name] = profiles.get(comp_name, 0) + (time.perf_counter() - t0)
 
                 if blackboard.meta.get("stop_execution"):
@@ -251,6 +264,8 @@ class BlackboardEngine:
             }
             if self.lazy:
                 blackboard.meta["lazy_skipped"] = len(static_plan) - len(plan)
+            if self.diff:
+                blackboard.meta["blackboard_diffs"] = diffs
             
             self.training_step += 1
             
