@@ -121,8 +121,8 @@ class TwoHotProjectionComponent(PipelineComponent):
         """Project scalar targets to two-hot distributions and write back."""
         raw = resolve_blackboard_path(blackboard, self._source_key)
 
-        # projected: [B, T, bins] (or [B, bins] if raw was 1-D)
-        projected: torch.Tensor = self._representation.to_representation(raw)
+        # Use format_target for built-in validation of ingredients and output
+        projected = self._representation.format_target({self._dest_key: raw}, target_key=self._dest_key)
 
         return {f"targets.{self._dest_key}": projected}
 
@@ -337,6 +337,7 @@ class ExpectedValueComponent(PipelineComponent):
         # Shape: [B, T, bins] or [B, bins] — to_expected_value handles both.
         scalar: torch.Tensor = self._representation.to_expected_value(logits)
         # Shape: [B, T] or [B]
+        self._representation.validate_expected_value(scalar)
 
         return {f"targets.{self._dest_key}": scalar}
 
@@ -398,6 +399,6 @@ class OneHotPolicyTargetComponent(PipelineComponent):
         if indices.ndim == 3 and indices.shape[-1] == 1:
             indices = indices.squeeze(-1)
             
-        # [B, T] -> [B, T, K]
-        one_hot = self._representation.to_representation(indices)
+        # Use format_target for built-in validation
+        one_hot = self._representation.format_target({self._dest_key: indices}, target_key=self._dest_key)
         return {f"targets.{self._dest_key}": one_hot}

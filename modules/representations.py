@@ -58,14 +58,37 @@ class BaseRepresentation(ABC):
     def validate_logits(self, logits: Tensor) -> None:
         """
         Validates that the given logits are compatible with this representation.
-        Raises AssertionError if incompatible.
+        Checks for: tensor type, rank, and feature dimension alignment.
         """
-        assert torch.is_tensor(logits), f"Expected torch.Tensor, got {type(logits)}"
-        assert logits.ndim >= 2, f"Logits must have at least 2 dims (B, bins), got {logits.ndim}"
+        assert torch.is_tensor(logits), f"Representation Error: Expected Tensor, got {type(logits)}"
+        assert logits.ndim >= 2, f"Representation Error: Logits must be at least [B, Features], got {logits.shape}"
         assert logits.shape[-1] == self.num_features, (
-            f"Expected {self.num_features} features in last dim, got {logits.shape[-1]}"
+            f"Representation Error: Head mismatch. Strategy expects {self.num_features} features, "
+            f"but logits have {logits.shape[-1]}."
         )
 
+    def validate_targets(self, targets: Tensor) -> None:
+        """
+        Validates the raw target ingredients before conversion.
+        """
+        assert torch.is_tensor(targets), f"Representation Error: Targets must be Tensor, got {type(targets)}"
+
+    def validate_representation(self, representation: Tensor) -> None:
+        """
+        Validates the output of to_representation or a direct target distribution.
+        Ensures consistency with the feature dimension and mathematical properties (e.g. sum-to-one).
+        """
+        assert torch.is_tensor(representation), "Representation Error: Target conversion failed to return a Tensor"
+        assert representation.shape[-1] == self.num_features, (
+            f"Representation Error: target feature dimension mismatch. Expected {self.num_features}, got {representation.shape[-1]}"
+        )
+
+    def validate_expected_value(self, expected_value: Tensor) -> None:
+        """
+        Validates the result of to_expected_value.
+        """
+        assert torch.is_tensor(expected_value), "Representation Error: Expected value conversion failed to return a Tensor"
+    
     def format_target(
         self, targets: Dict[str, Tensor], target_key: str = "values"
     ) -> Tensor:
@@ -73,7 +96,11 @@ class BaseRepresentation(ABC):
         Converts raw target ingredients from the TargetBuilder into the final target representation.
         Default implementation handles simple scalar values.
         """
-        return self.to_representation(targets[target_key])
+        raw = targets[target_key]
+        self.validate_targets(raw)
+        converted = self.to_representation(raw)
+        self.validate_representation(converted)
+        return converted
 
 
 class ScalarRepresentation(BaseRepresentation):
@@ -98,6 +125,11 @@ class ScalarRepresentation(BaseRepresentation):
 
     def get_structure(self) -> Structure:
         return Scalar()
+
+    def validate_representation(self, representation: Tensor) -> None:
+        """Enforces that the representation has feature dimension 1."""
+        super().validate_representation(representation)
+        # No sum check for scalar, just feature dim (handled by super)
 
 
 class DiscreteSupportRepresentation(BaseRepresentation):
@@ -170,6 +202,15 @@ class DiscreteSupportRepresentation(BaseRepresentation):
 
     def get_metadata(self) -> Dict[str, Any]:
         return {"vmin": self.vmin, "vmax": self.vmax, "bins": self.bins}
+
+    def validate_representation(self, representation: Tensor) -> None:
+        """Enforces bin count and sum-to-one probability integrity."""
+        super().validate_representation(representation)
+        if representation.ndim > 1:
+            sum_val = representation.sum(dim=-1)
+            assert torch.allclose(sum_val, torch.ones_like(sum_val), atol=1e-3), (
+                f"DiscreteSupport Error: Representation sum mismatch. Expected 1.0, got {sum_val.mean().item()}"
+            )
 
     def format_target(
         self, targets: Dict[str, Tensor], target_key: str = "values"
@@ -309,6 +350,15 @@ class ClassificationRepresentation(BaseRepresentation):
 
     def get_metadata(self) -> Dict[str, Any]:
         return {"num_classes": self._num_classes}
+
+    def validate_representation(self, representation: Tensor) -> None:
+        """Enforces class count alignment and sum-to-one integrity."""
+        super().validate_representation(representation)
+        if representation.ndim > 1:
+            sum_val = representation.sum(dim=-1)
+            assert torch.allclose(sum_val, torch.ones_like(sum_val), atol=1e-3), (
+                f"Classification Error: Representation sum mismatch. Expected 1.0, got {sum_val.mean().item()}"
+            )
 
     def format_target(
         self, targets: Dict[str, Tensor], target_key: str = "values"
