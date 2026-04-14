@@ -18,15 +18,19 @@ class GradientScaleValve(PipelineComponent):
     def execute(self, blackboard: Blackboard) -> None:
         """
         Finds the specified key in predictions and registers the scaling hook.
-        If the tensor does not require gradients (e.g. inference passes), it is skipped.
+        
+        Raises:
+            KeyError: If the target key is missing from predictions.
+            RuntimeError: If the tensor is detached from the autograd graph.
         """
-        if self.key in blackboard.predictions:
-            tensor = blackboard.predictions[self.key]
+        # Fail loud and fast. If this component is in the Recipe, its prerequisites MUST exist.
+        tensor = blackboard.predictions.get(self.key)
+        
+        if tensor is None:
+            raise KeyError(f"[{self.__class__.__name__}] Target '{self.key}' missing from predictions.")
+        if not tensor.requires_grad:
+            raise RuntimeError(f"[{self.__class__.__name__}] Tensor '{self.key}' is detached from the autograd graph.")
             
-            # Tensors derived from inference_mode or without requires_grad
-            # cannot have hooks registered on them.
-            if torch.is_tensor(tensor) and tensor.requires_grad:
-                # Capture scale in closure
-                scale = self.scale
-                # Use a fast inplace lambda to avoid overhead
-                tensor.register_hook(lambda grad: grad * scale)
+        # Capture scale and register hook
+        scale = self.scale
+        tensor.register_hook(lambda grad: grad * scale)

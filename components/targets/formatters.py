@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Optional
 
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
-from modules.representations import BaseRepresentation, DiscreteSupportRepresentation
+from modules.representations import BaseRepresentation, DiscreteSupportRepresentation, ClassificationRepresentation
 
 if TYPE_CHECKING:
     pass  # guard only used for type annotations if needed in future
@@ -222,3 +222,43 @@ class ExpectedValueComponent(PipelineComponent):
         # Shape: [B, T] or [B]
 
         blackboard.targets[self._dest_key] = scalar
+
+# ---------------------------------------------------------------------------
+# OneHotPolicyTargetComponent
+# ---------------------------------------------------------------------------
+
+
+class OneHotPolicyTargetComponent(PipelineComponent):
+    """Generator: Converts action indices into one-hot policy distributions.
+
+    This ensures policy losses (e.g. for Behavioral Cloning) receive a 
+    consistent [B, T, K] distribution, removing the need for magic shape-matching 
+    logic inside the loss components.
+
+    Args:
+        num_actions: Total number of discrete actions.
+        source_key: Blackboard path to action indices (default: "data.actions").
+        dest_key: Blackboard key for the one-hot target (default: "policies").
+    """
+
+    def __init__(
+        self,
+        num_actions: int,
+        source_key: str = "data.actions",
+        dest_key: str = "policies",
+    ) -> None:
+        self._representation = ClassificationRepresentation(num_actions)
+        self._source_key = source_key
+        self._dest_key = dest_key
+
+    def execute(self, blackboard: Blackboard) -> None:
+        """Read indices from source, convert to one-hot, and write to dest."""
+        indices = resolve_blackboard_path(blackboard, self._source_key)
+        
+        # Standardisation: [B, T, 1] -> [B, T]
+        if indices.ndim == 3 and indices.shape[-1] == 1:
+            indices = indices.squeeze(-1)
+            
+        # [B, T] -> [B, T, K]
+        one_hot = self._representation.to_representation(indices)
+        blackboard.targets[self._dest_key] = one_hot

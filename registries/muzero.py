@@ -16,10 +16,6 @@ from modules.world_models.components.representation import Representation
 from modules.world_models.components.dynamics import Dynamics
 
 from search.backends.py_search.modular_search import ModularSearch
-from actors.action_selectors.policy_sources import (
-    BasePolicySource,
-)
-from actors.action_selectors.selectors import ActionSelector
 from utils.schedule import StepwiseSchedule
 
 from data.storage.circular import BufferConfig, ModularReplayBuffer

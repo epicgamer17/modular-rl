@@ -1,2 +1,2 @@
 from .forward import ForwardPassComponent
-from .recurrent import BurnInComponent
+# from .recurrent import BurnInComponent

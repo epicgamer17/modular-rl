@@ -204,7 +204,7 @@ def test_nfsp_leduc_regression():
 
     # 2. SL Learner
     sl_optimizer = {"default": torch.optim.Adam(sl_network.parameters(), lr=LR_SL)}
-    sl_loss = PolicyLoss(loss_fn=F.cross_entropy, target_key="data.actions")
+    sl_loss = PolicyLoss(loss_fn=F.cross_entropy, target_key="data.policies")
 
     # SL target building components
     sl_learner = BlackboardEngine(

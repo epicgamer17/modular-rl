@@ -40,16 +40,13 @@ class PolicyLoss(PipelineComponent):
         if targets.ndim == preds.ndim - 1:
             targets = targets.unsqueeze(1)
 
-        # 3. Handle shape mismatch: if targets aren't the same shape as preds,
-        # treat them as class indices (e.g. imitation learning / behavioral cloning)
-        if targets.shape == preds.shape:
-            flat_targets = targets.flatten(0, 1)
-        else:
-            flat_targets = targets.flatten(0, 1).long()
-            # If targets were [B, T, 1], flatten(0, 1) is [B*T, 1].
-            # Cross entropy expects [B*T] for indices.
-            if flat_targets.ndim == 2 and flat_targets.shape[-1] == 1:
-                flat_targets = flat_targets.squeeze(-1)
+        # 3. Enforce shape matching (strictly require distributions)
+        assert targets.shape == preds.shape, (
+            f"PolicyLoss Contract Violation: targets {targets.shape} must match "
+            f"predictions {preds.shape}. For index-based targets (BC), use "
+            f"OneHotPolicyTargetComponent first."
+        )
+        flat_targets = targets.flatten(0, 1)
 
         raw_loss = self.loss_fn(preds.flatten(0, 1), flat_targets, reduction="none")
         if raw_loss.ndim > 1:
