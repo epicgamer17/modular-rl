@@ -14,13 +14,21 @@ class PipelineComponent(ABC):
     @property
     @abstractmethod
     def requires(self) -> Set[Key]:
-        """Dynamically resolved set of keys this instance requires."""
+        """
+        Required keys for this component. 
+        MUST be deterministic after initialization. 
+        Recommended: Compute once in __init__ and return a private attribute.
+        """
         pass
 
     @property
     @abstractmethod
     def provides(self) -> Set[Key]:
-        """Dynamically resolved set of keys this instance produces."""
+        """
+        Keys produced by this component. 
+        MUST be deterministic after initialization. 
+        Recommended: Compute once in __init__ and return a private attribute.
+        """
         pass
 
     @property

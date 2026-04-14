@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from core import PipelineComponent, Blackboard
 from core.contracts import Key, LossScalar, SemanticType
+from core.validation import assert_in_blackboard
 from modules.utils import scale_gradient
 
 
@@ -183,7 +184,7 @@ class OptimizerStepComponent(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        assert "total_loss" in blackboard.losses
+        assert_in_blackboard(blackboard, "losses.total_loss")
 
     def execute(self, blackboard: Blackboard) -> None:
         total_losses = blackboard.losses.get("total_loss", {})

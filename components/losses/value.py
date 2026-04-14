@@ -6,6 +6,7 @@ from core import Blackboard
 from core.path_resolver import resolve_blackboard_path
 from core.contracts import Key, ValueEstimate, ValueTarget, LossScalar
 from .infrastructure import apply_infrastructure
+from core.validation import assert_same_batch, assert_compatible_value
 
 
 class ValueLoss(PipelineComponent):
@@ -53,9 +54,8 @@ class ValueLoss(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["values"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
-        assert preds.shape[0] == targets.shape[0], f"Batch size mismatch: {preds.shape[0]} vs {targets.shape[0]}"
-        # Semantic check: Target must be scalar if we are using MSE without atom logic
-        assert targets.ndim <= 3, "ValueLoss expects scalar or simple vector targets."
+        assert_same_batch(preds, targets, msg=f"in {self.name}")
+        assert_compatible_value(preds, targets, msg=f"in {self.name}")
 
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["values"]
@@ -121,18 +121,22 @@ class ClippedValueLoss(PipelineComponent):
         self.mask_key = mask_key
         self.loss_factor = loss_factor
         self.name = name
-
-    @property
-    def requires(self) -> set[Key]:
-        return {
+        
+        # Deterministic contracts computed at initialization
+        self._requires = {
             Key("predictions.values", ValueEstimate),
             Key(self.target_key, ValueTarget),
             Key(self.old_values_key, ValueEstimate),
         }
+        self._provides = {Key(f"losses.{self.name}", LossScalar)}
 
     @property
-    def provides(self) -> set[Key]:
-        return {Key(f"losses.{self.name}", LossScalar)}
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     @property
     def constraints(self) -> list[str]:
@@ -144,7 +148,10 @@ class ClippedValueLoss(PipelineComponent):
         values = blackboard.predictions.get("values_expected", blackboard.predictions["values"])
         returns = resolve_blackboard_path(blackboard, self.target_key)
         old_values = resolve_blackboard_path(blackboard, self.old_values_key)
-        assert values.shape == returns.shape == old_values.shape, "Shape mismatch in ClippedValueLoss"
+        
+        assert_same_batch(values, returns, msg=f"in {self.name}")
+        assert_same_batch(values, old_values, msg=f"in {self.name}")
+        assert values.shape == returns.shape == old_values.shape, f"Shape mismatch in {self.name}"
 
     def execute(self, blackboard: Blackboard) -> None:
         # 1. Extract inputs

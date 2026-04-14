@@ -6,6 +6,7 @@ from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
 from core.contracts import Key, Reward, ToPlay, PolicyLogits, ValueTarget, LossScalar, SemanticType, Observation
 from .infrastructure import apply_infrastructure
+from core.validation import assert_same_batch, assert_compatible_value
 
 
 class RewardLoss(PipelineComponent):
@@ -41,7 +42,10 @@ class RewardLoss(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        preds = blackboard.predictions["rewards"]
+        targets = resolve_blackboard_path(blackboard, self.target_key)
+        assert_same_batch(preds, targets, msg=f"in {self.name}")
+        assert_compatible_value(preds, targets, msg=f"in {self.name}")
 
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["rewards"]
@@ -102,7 +106,10 @@ class ToPlayLoss(PipelineComponent):
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        preds = blackboard.predictions.get("to_plays")
+        targets = resolve_blackboard_path(blackboard, self.target_key)
+        if preds is not None:
+            assert_same_batch(preds, targets, msg=f"in {self.name}")
 
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions.get("to_plays")

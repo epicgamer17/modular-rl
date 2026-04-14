@@ -6,6 +6,7 @@ from core import Blackboard
 from core.path_resolver import resolve_blackboard_path
 from core.contracts import Key, PolicyLogits, ActionDistribution, Action, Advantage, LossScalar
 from .infrastructure import apply_infrastructure
+from core.validation import assert_same_batch, assert_time_dim
 
 
 class PolicyLoss(PipelineComponent):
@@ -50,7 +51,7 @@ class PolicyLoss(PipelineComponent):
     def validate(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["policies"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
-        assert preds.shape[0] == targets.shape[0], f"Batch size mismatch in PolicyLoss: {preds.shape[0]} vs {targets.shape[0]}"
+        assert_same_batch(preds, targets, msg=f"in {self.name}")
 
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["policies"]
@@ -111,19 +112,23 @@ class ClippedSurrogateLoss(PipelineComponent):
         self.old_log_probs_key = old_log_probs_key
         self.advantages_key = advantages_key
         self.name = name
-
-    @property
-    def requires(self) -> set[Key]:
-        return {
+        
+        # Deterministic contracts computed at initialization
+        self._requires = {
             Key("predictions.policies", PolicyLogits),
             Key(self.actions_key, Action),
             Key(self.old_log_probs_key, Advantage),  # Use Advantage as a stand-in for LogProbs if not explicit
             Key(self.advantages_key, Advantage),
         }
+        self._provides = {Key(f"losses.{self.name}", LossScalar)}
 
     @property
-    def provides(self) -> set[Key]:
-        return {Key(f"losses.{self.name}", LossScalar)}
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Set[Key]:
+        return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
         logits = blackboard.predictions["policies"]
@@ -132,8 +137,9 @@ class ClippedSurrogateLoss(PipelineComponent):
         advantages = resolve_blackboard_path(blackboard, self.advantages_key)
         
         B, T = logits.shape[:2]
-        assert actions.shape[:2] == (B, T), f"Action shape mismatch: {actions.shape} vs {(B, T)}"
-        assert advantages.shape[:2] == (B, T), f"Advantage shape mismatch: {advantages.shape} vs {(B, T)}"
+        assert_same_batch(logits, actions, msg=f"in {self.name}")
+        assert_time_dim(actions, T, msg=f"in {self.name}")
+        assert_time_dim(advantages, T, msg=f"in {self.name}")
 
     def execute(self, blackboard: Blackboard) -> None:
         policy_logits = blackboard.predictions["policies"]

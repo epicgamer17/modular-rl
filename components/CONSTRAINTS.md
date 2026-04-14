@@ -109,28 +109,25 @@ If a constraint requires explanation, it belongs in validate().
 
 2. Programmatic Validation (Required)
 
-Each component may define:
+Each component may define a `validate()` method. To ensure consistency and reduce duplication, components SHOULD use centralized validation helpers from `core.validation`.
 
-def validate(bb):
-    assert same_batch(bb["value"], bb["target"])
-This is the source of truth for correctness
-Use for:
-polymorphic logic
-conditional constraints
-representation-specific checks
-complex invariants
-Example:
-def validate(bb):
-    value = bb["value"]
-    target = bb["target"]
+### Validation Helpers
+*   `assert_same_batch(t1, t2)`: Ensures dim 0 matches.
+*   `assert_time_dim(t, expected)`: Ensures dim 1 matches search unroll or sequence length.
+*   `assert_compatible_value(pred, target)`: Checks distributional vs scalar compatibility.
 
-    assert same_batch(value, target)
+### Example
+```python
+from core.validation import assert_same_batch, assert_compatible_value
 
-    if is_distributional(value):
-        assert value.num_atoms == target.num_atoms
-    else:
-        assert is_scalar(target)
-Constraint Scope
+def validate(self, bb: Blackboard):
+    pred = bb.predictions["values"]
+    target = bb.targets["values"]
+
+    assert_same_batch(pred, target)
+    assert_compatible_value(pred, target)
+```
+This is the source of truth for correctness. Use it for representation-specific checks and complex invariants.
 What constraints SHOULD enforce
 1. Relationships between data
 batch alignment
