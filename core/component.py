@@ -23,11 +23,17 @@ class PipelineComponent(ABC):
 
     @property
     @abstractmethod
-    def provides(self) -> Set[Key]:
+    def provides(self) -> dict[Key, str]:
         """
-        Keys produced by this component. 
+        Keys produced by this component and their write modes. 
         MUST be deterministic after initialization. 
         Recommended: Compute once in __init__ and return a private attribute.
+        
+        Write Modes:
+        - "new": Key must not already exist (default).
+        - "overwrite": Key must exist.
+        - "append": Data is added to an existing collection.
+        - "optional": Key may or may not be produced.
         """
         pass
 

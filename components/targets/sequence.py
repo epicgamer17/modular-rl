@@ -2,7 +2,7 @@ import torch
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
 from core.contracts import Key, ValueTarget, Reward, Action, Mask, Return, ToPlay, SemanticType, PolicyLogits
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Dict
 
 
 class SequencePadderComponent(PipelineComponent):
@@ -15,7 +15,7 @@ class SequencePadderComponent(PipelineComponent):
         # Deterministic contracts computed at initialization
         self._requires = set(keys)
         self._provides = {
-            Key(f"targets.{k.path.split('.')[-1]}", k.semantic_type) 
+            Key(f"targets.{k.path.split('.')[-1]}", k.semantic_type): "new"
             for k in keys
         }
 
@@ -24,7 +24,7 @@ class SequencePadderComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -69,10 +69,10 @@ class SequenceMaskComponent(PipelineComponent):
     def __init__(self):
         self._requires = {Key("data.is_same_game", Mask)}
         self._provides = {
-            Key("targets.value_mask", Mask),
-            Key("targets.reward_mask", Mask),
-            Key("targets.to_play_mask", Mask),
-            Key("targets.policy_mask", Mask),
+            Key("targets.value_mask", Mask): "new",
+            Key("targets.reward_mask", Mask): "new",
+            Key("targets.to_play_mask", Mask): "new",
+            Key("targets.policy_mask", Mask): "new",
         }
 
     @property
@@ -80,7 +80,7 @@ class SequenceMaskComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -139,8 +139,8 @@ class SequenceInfrastructureComponent(PipelineComponent):
         self.unroll_steps = unroll_steps
         self._requires = {Key("data.actions", Action)}
         self._provides = {
-            Key("meta.weights", Mask),
-            Key("meta.gradient_scales", Reward)
+            Key("meta.weights", Mask): "new",
+            Key("meta.gradient_scales", Reward): "new"
         }
 
     @property
@@ -148,7 +148,7 @@ class SequenceInfrastructureComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -187,14 +187,14 @@ class ChanceTargetComponent(PipelineComponent):
 
     def __init__(self):
         self._requires = {Key("targets.values", ValueTarget)}
-        self._provides = {Key("targets.chance_values_next", ValueTarget)}
+        self._provides = {Key("targets.chance_values_next", ValueTarget): "new"}
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:

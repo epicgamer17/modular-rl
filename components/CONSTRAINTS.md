@@ -73,7 +73,25 @@ Contracts MUST be instance properties (`@property`), never class-level attribute
 Each component MUST define:
 
 *   `requires` -> `Set[Key]`
-*   `provides` -> `Set[Key]`
+*   `provides` -> `Dict[Key, str]`
+
+### Write Modes (`provides`)
+Components communicate their intent for writing data using write modes. The `provides` method SHOULD return a dictionary mapping `Key` to a `WriteMode` string.
+
+*   `"new"`: (Default) Expects the key to NOT exist. Used for first-time production of data.
+*   `"overwrite"`: Expects the key to exist. Explicitly signals that a downstream component is modifying an upstream value (e.g., gradient scaling).
+*   `"append"`: For collections (lists/dicts) where data is added rather than replaced.
+*   `"optional"`: Signals that the key MAY be produced depending on internal logic.
+
+### Example:
+```python
+def provides(self) -> Dict[Key, str]:
+    return {
+        Key("predictions.values", ValueEstimate): "new",
+        Key("meta.processed", SemanticType): "overwrite"
+    }
+```
+
 
 This enables:
 

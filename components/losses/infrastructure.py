@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional, Set, Dict as TypedDict
 import torch
 import torch.nn as nn
 from core import PipelineComponent, Blackboard
@@ -118,8 +118,8 @@ class LossAggregatorComponent(PipelineComponent):
         # Deterministic contracts computed at initialization
         self._requires = {Key(f"losses.{name}", LossScalar) for name in self.loss_weights.keys()}
         self._provides = {
-            Key(f"losses.total_loss.{self.optimizer_key}", LossScalar),
-            Key("losses.total_loss", SemanticType)
+            Key(f"losses.total_loss.{self.optimizer_key}", LossScalar): "new",
+            Key("losses.total_loss", SemanticType): "overwrite" if "total_loss" in self.loss_weights else "new"
         }
 
     @property
@@ -127,7 +127,7 @@ class LossAggregatorComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:

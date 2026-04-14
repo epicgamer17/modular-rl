@@ -36,7 +36,19 @@ def validate_recipe(components: List[PipelineComponent], initial_keys: Set[Key])
             raise RuntimeError(error_msg)
 
         # Update available keys with what this component provides
-        for prov in component.provides:
+        provides = component.provides
+        # Support both old Set[Key] and new Dict[Key, str] during transition
+        provides_items = provides.items() if isinstance(provides, dict) else [(k, "new") for k in provides]
+        
+        for prov, mode in provides_items:
+            if mode == "new" and prov.path in available_contracts:
+                # Optional: warn or error if "new" is used but key exists
+                # For now, let's just update the type
+                pass
+            elif mode == "overwrite":
+                if prov.path not in available_contracts:
+                    raise RuntimeError(f"DAG Topology Error: Component '{type(component).__name__}' attempts to overwrite non-existent key '{prov.path}'")
+            
             available_contracts[prov.path] = prov.semantic_type
 
     print(f"DAG Validation Passed: {len(components)} components verified.")

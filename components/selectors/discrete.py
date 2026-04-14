@@ -115,9 +115,9 @@ class ActionSelectorComponent(PipelineComponent):
         # Deterministic contracts
         self._requires = {Key(f"predictions.{self.input_key}", SemanticType)}
         self._provides = {
-            Key("meta.action", Action),
-            Key("meta.action_tensor", Action),
-            Key("meta.action_metadata", SemanticType),
+            Key("meta.action", Action): "new",
+            Key("meta.action_tensor", Action): "new",
+            Key("meta.action_metadata", SemanticType): "new",
         }
 
     @property
@@ -125,7 +125,7 @@ class ActionSelectorComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -258,9 +258,9 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
         # Deterministic contracts
         self._requires = {Key("predictions.q_values", ValueEstimate)}
         self._provides = {
-            Key("meta.action", Action),
-            Key("meta.action_tensor", Action),
-            Key("meta.action_metadata", SemanticType),
+            Key("meta.action", Action): "new",
+            Key("meta.action_tensor", Action): "new",
+            Key("meta.action_metadata", SemanticType): "new",
         }
 
     @property
@@ -268,7 +268,7 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -364,9 +364,9 @@ class NFSPSelectorComponent(PipelineComponent):
             Key(f"predictions.{self.avg_prefix}logits", PolicyLogits),
         }
         self._provides = {
-            Key("meta.action", Action),
-            Key("meta.action_tensor", Action),
-            Key("meta.action_metadata", SemanticType),
+            Key("meta.action", Action): "new",
+            Key("meta.action_tensor", Action): "new",
+            Key("meta.action_metadata", SemanticType): "new",
         }
 
     @property
@@ -374,7 +374,7 @@ class NFSPSelectorComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
