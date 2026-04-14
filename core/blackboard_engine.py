@@ -4,7 +4,7 @@ import time
 
 from core.blackboard import Blackboard
 from core.component import PipelineComponent
-from core.contracts import Key
+from core.contracts import Key, check_shape_compatibility
 from core.path_resolver import resolve_blackboard_path, write_blackboard_path
 
 def apply_updates(blackboard: Blackboard, updates: Dict[str, Any]) -> None:
@@ -55,6 +55,11 @@ def validate_recipe(components: List[PipelineComponent], initial_keys: Set[Key])
                         f"Metadata mismatch for '{req.path}.{m_name}': expected {m_value}, "
                         f"found {found_key.metadata[m_name]}"
                     )
+
+            # 3. Shape Contract Check (ndim, time, distribution compatibility)
+            shape_issues = check_shape_compatibility(provider=found_key, consumer=req)
+            for issue in shape_issues:
+                incompatibilities.append(f"Shape contract for '{req.path}': {issue}")
 
         if missing or incompatibilities:
             error_msg = f"DAG Topology Error at Component [{i}] '{type(component).__name__}':\n"

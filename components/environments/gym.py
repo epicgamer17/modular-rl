@@ -1,7 +1,7 @@
 from typing import Set, Dict, Any
 import torch
 from core import PipelineComponent, Blackboard
-from core.contracts import Key, Observation, SemanticType, Done, Reward, Action
+from core.contracts import Key, Observation, SemanticType, Done, Reward, Action, Metric
 
 
 class GymObservationComponent(PipelineComponent):
@@ -27,17 +27,19 @@ class GymObservationComponent(PipelineComponent):
         return set()
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return {
-            Key("data.obs", Observation),
-            Key("data.info", SemanticType),
-            Key("data.terminated", Done),
-            Key("data.truncated", Done),
-            Key("data.done", Done),
+            Key("data.obs", Observation): "new",
+            Key("data.info", SemanticType): "new",
+            Key("data.terminated", Done): "new",
+            Key("data.truncated", Done): "new",
+            Key("data.done", Done): "new",
         }
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        assert self.env is not None, (
+            "GymObservationComponent: env is None"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if self.state is None or self.done:
@@ -81,15 +83,25 @@ class GymStepComponent(PipelineComponent):
         return {Key("meta.action", Action)}
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return {
-            Key("data.reward", Reward),
-            Key("data.done", Done),
-            Key("data.next_obs", Observation),
+            Key("data.reward", Reward): "new",
+            Key("data.done", Done): "overwrite",
+            Key("data.next_obs", Observation): "new",
+            Key("data.terminated", Done): "overwrite",
+            Key("data.truncated", Done): "overwrite",
+            Key("meta.reward", Metric): "new",
+            Key("meta.done", Metric): "new",
+            Key("meta.terminated", Metric): "new",
+            Key("meta.truncated", Metric): "new",
+            Key("meta.info", SemanticType): "new",
         }
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        assert "action" in blackboard.meta or "actions" in blackboard.predictions, (
+            "GymStepComponent: no action found in blackboard.meta['action'] "
+            "or blackboard.predictions['actions']"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         # Pull action from blackboard

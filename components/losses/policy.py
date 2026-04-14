@@ -6,6 +6,7 @@ from core import Blackboard
 from core.path_resolver import resolve_blackboard_path
 from core.contracts import (
     Key,
+    ShapeContract,
     PolicyLogits,
     ActionDistribution,
     Action,
@@ -44,8 +45,10 @@ class PolicyLoss(PipelineComponent):
 
         # Deterministic contracts computed at initialization
         self._requires = {
-            Key("predictions.policies", PolicyLogits),
-            Key(self.target_key, PolicyLogits),
+            Key("predictions.policies", PolicyLogits,
+                shape=ShapeContract(has_time=True, distribution="logits")),
+            Key(self.target_key, PolicyLogits,
+                shape=ShapeContract(has_time=True, distribution="probs")),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",
@@ -171,10 +174,13 @@ class ClippedSurrogateLoss(PipelineComponent):
 
         # Deterministic contracts computed at initialization
         self._requires = {
-            Key("predictions.policies", PolicyLogits),
+            Key("predictions.policies", PolicyLogits,
+                shape=ShapeContract(distribution="logits")),
             Key(self.actions_key, Action),
-            Key(self.old_log_probs_key, LogProb),
-            Key(self.advantages_key, Advantage),
+            Key(self.old_log_probs_key, LogProb,
+                shape=ShapeContract(distribution="log_probs")),
+            Key(self.advantages_key, Advantage,
+                shape=ShapeContract(distribution="scalar")),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",

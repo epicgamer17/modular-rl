@@ -24,6 +24,7 @@ from data.samplers.prioritized import WholeBufferSampler
 from core import BlackboardEngine
 from core.contracts import (
     Key,
+    ShapeContract,
     Observation,
     Action,
     Reward,
@@ -182,10 +183,14 @@ def make_ppo_learner(
         Key("data.actions", Action),
         Key("data.rewards", Reward),
         Key("data.dones", Done),
-        Key("data.values", ValueEstimate),
-        Key("data.old_log_probs", LogProb),
-        Key("data.advantages", Advantage),
-        Key("data.returns", ValueTarget),
+        Key("data.values", ValueEstimate,
+            shape=ShapeContract(distribution="scalar")),
+        Key("data.old_log_probs", LogProb,
+            shape=ShapeContract(distribution="log_probs")),
+        Key("data.advantages", Advantage,
+            shape=ShapeContract(distribution="scalar")),
+        Key("data.returns", ValueTarget,
+            shape=ShapeContract(distribution="scalar")),
         Key("data.legal_moves_masks", Mask),
     }
 

@@ -130,11 +130,13 @@ class TicTacToeExpertComponent(PipelineComponent):
         }
 
     @property
-    def provides(self) -> Set[Key]:
-        return {Key("meta.action", Action)}
+    def provides(self) -> Dict[Key, str]:
+        return {Key("meta.action", Action): "new"}
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        assert blackboard.data.get("obs") is not None, (
+            "TicTacToeExpertComponent: 'obs' missing from blackboard.data"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """

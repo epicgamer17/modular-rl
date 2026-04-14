@@ -2,7 +2,7 @@ from typing import Set, Dict, Any
 import torch
 import numpy as np
 from core import PipelineComponent, Blackboard
-from core.contracts import Key, Observation, Reward, Done, ToPlay, Action, SemanticType
+from core.contracts import Key, Observation, Reward, Done, ToPlay, Action, SemanticType, Metric
 
 
 class PettingZooObservationComponent(PipelineComponent):
@@ -21,17 +21,22 @@ class PettingZooObservationComponent(PipelineComponent):
         return set()
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return {
-            Key("data.obs", Observation),
-            Key("data.info", SemanticType),
-            Key("data.reward", Reward),
-            Key("data.done", Done),
-            Key("data.player_id", ToPlay),
+            Key("data.obs", Observation): "new",
+            Key("data.info", SemanticType): "new",
+            Key("data.reward", Reward): "new",
+            Key("data.done", Done): "new",
+            Key("data.player_id", ToPlay): "new",
+            Key("data.terminated", Done): "new",
+            Key("data.truncated", Done): "new",
+            Key("data.agent", SemanticType): "new",
         }
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        assert self.env is not None, (
+            "PettingZooObservationComponent: env is None"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if not self._initialized or self.done or not self.env.agents:
@@ -102,15 +107,24 @@ class PettingZooStepComponent(PipelineComponent):
         return {Key("meta.action", Action)}
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return {
-            Key("data.next_obs", Observation),
-            Key("data.reward", Reward),
-            Key("data.done", Done),
+            Key("data.next_obs", Observation): "new",
+            Key("data.reward", Reward): "overwrite",
+            Key("data.done", Done): "overwrite",
+            Key("data.terminated", Done): "overwrite",
+            Key("data.truncated", Done): "overwrite",
+            Key("data.next_player_id", ToPlay): "new",
+            Key("meta.next_info", SemanticType): "new",
         }
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        assert "action" in blackboard.meta, (
+            "PettingZooStepComponent: 'action' missing from blackboard.meta"
+        )
+        assert "agent" in blackboard.data, (
+            "PettingZooStepComponent: 'agent' missing from blackboard.data"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         action = blackboard.meta["action"]

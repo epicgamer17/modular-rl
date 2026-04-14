@@ -4,7 +4,7 @@ from typing import Any, Set, Dict
 from core import PipelineComponent
 from core import Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import Key, ValueEstimate, ValueTarget, LossScalar, Metric
+from core.contracts import Key, ShapeContract, ValueEstimate, ValueTarget, LossScalar, Metric
 from .infrastructure import apply_infrastructure
 from core.validation import assert_same_batch, assert_compatible_value
 
@@ -31,8 +31,10 @@ class ValueLoss(PipelineComponent):
 
         # Deterministic contracts computed at initialization
         self._requires = {
-            Key("predictions.values", ValueEstimate),
-            Key(self.target_key, ValueTarget),
+            Key("predictions.values", ValueEstimate,
+                shape=ShapeContract(has_time=True, distribution="scalar")),
+            Key(self.target_key, ValueTarget,
+                shape=ShapeContract(distribution="scalar")),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",
@@ -154,9 +156,12 @@ class ClippedValueLoss(PipelineComponent):
 
         # Deterministic contracts computed at initialization
         self._requires = {
-            Key("predictions.values", ValueEstimate),
-            Key(self.target_key, ValueTarget),
-            Key(self.old_values_key, ValueEstimate),
+            Key("predictions.values", ValueEstimate,
+                shape=ShapeContract(distribution="scalar")),
+            Key(self.target_key, ValueTarget,
+                shape=ShapeContract(distribution="scalar")),
+            Key(self.old_values_key, ValueEstimate,
+                shape=ShapeContract(distribution="scalar")),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",

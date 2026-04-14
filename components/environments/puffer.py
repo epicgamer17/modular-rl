@@ -51,14 +51,17 @@ class PufferObservationComponent(PipelineComponent):
         return set()
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return {
-            Key("data.obs", Observation),
-            Key("data.infos", SemanticType)
+            Key("data.obs", Observation): "new",
+            Key("data.infos", SemanticType): "new",
         }
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        assert self._obs is not None, (
+            "PufferObservationComponent: obs cache is None. "
+            "Call set_obs() before executing."
+        )
 
     # ------------------------------------------------------------------
     # Public helpers – called by BasePufferActor to seed initial state
@@ -177,17 +180,19 @@ class PufferStepComponent(PipelineComponent):
         return {Key("meta.actions", Action)}
 
     @property
-    def provides(self) -> Set[Key]:
+    def provides(self) -> Dict[Key, str]:
         return {
-            Key("data.next_obs", Observation),
-            Key("data.rewards", Reward),
-            Key("data.terminals", Done),
-            Key("data.truncations", Done),
-            Key("data.next_infos", SemanticType),
+            Key("data.next_obs", Observation): "new",
+            Key("data.rewards", Reward): "new",
+            Key("data.terminals", Done): "new",
+            Key("data.truncations", Done): "new",
+            Key("data.next_infos", SemanticType): "new",
         }
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        assert "actions" in blackboard.meta, (
+            "PufferStepComponent: 'actions' missing from blackboard.meta"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """

@@ -19,7 +19,7 @@ from core.contracts import Key, ValueTarget, Reward, ActionDistribution, PolicyL
 
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
-from core.contracts import Key, ValueTarget, PolicyLogits, ActionDistribution, Action, Reward
+from core.contracts import Key, ShapeContract, ValueTarget, PolicyLogits, ActionDistribution, Action, Reward
 from modules.representations import BaseRepresentation, DiscreteSupportRepresentation, ClassificationRepresentation
 
 if TYPE_CHECKING:
@@ -82,8 +82,12 @@ class TwoHotProjectionComponent(PipelineComponent):
         self._semantic_type = semantic_type
         
         # Deterministic contracts
-        self._requires = {Key(self._source_key, self._semantic_type)}
-        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type): "new"}
+        bins = getattr(self._representation, 'bins', None)
+        atoms_dist = f"atoms_{bins}" if bins is not None else None
+        self._requires = {Key(self._source_key, self._semantic_type,
+                              shape=ShapeContract(distribution="scalar"))}
+        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type,
+                              shape=ShapeContract(distribution=atoms_dist)): "new"}
 
     @property
     def requires(self) -> Set[Key]:
@@ -209,8 +213,10 @@ class ScalarFormatterComponent(PipelineComponent):
         self._semantic_type = semantic_type
 
         # Deterministic contracts
-        self._requires = {Key(self._source_key, self._semantic_type)}
-        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type): "new"}
+        self._requires = {Key(self._source_key, self._semantic_type,
+                              shape=ShapeContract(distribution="scalar"))}
+        self._provides = {Key(f"targets.{self._dest_key}", self._semantic_type,
+                              shape=ShapeContract(distribution="scalar")): "new"}
 
     @property
     def requires(self) -> Set[Key]:
@@ -349,7 +355,8 @@ class OneHotPolicyTargetComponent(PipelineComponent):
         
         # Deterministic contracts
         self._requires = {Key(self._source_key, Action)}
-        self._provides = {Key(f"targets.{self._dest_key}", ActionDistribution): "new"}
+        self._provides = {Key(f"targets.{self._dest_key}", ActionDistribution,
+                              shape=ShapeContract(distribution="probs")): "new"}
 
     @property
     def requires(self) -> Set[Key]:

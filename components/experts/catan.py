@@ -152,11 +152,14 @@ class CatanExpertComponent(PipelineComponent):
         return {Key("data.info", SemanticType)}
 
     @property
-    def provides(self) -> Set[Key]:
-        return {Key("meta.action", Action)}
+    def provides(self) -> Dict[Key, str]:
+        return {Key("meta.action", Action): "new"}
 
     def validate(self, blackboard: Blackboard) -> None:
-        pass
+        info = blackboard.data.get("info")
+        assert info is not None and "env" in info, (
+            "CatanExpertComponent: expected 'env' inside blackboard.data['info']"
+        )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         """
