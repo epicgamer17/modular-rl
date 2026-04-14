@@ -5,6 +5,7 @@ import time
 from core.blackboard import Blackboard
 from core.component import PipelineComponent
 from core.contracts import Key, check_shape_compatibility
+from core.execution_graph import ExecutionGraph, build_execution_graph
 from core.path_resolver import resolve_blackboard_path, write_blackboard_path
 
 def apply_updates(blackboard: Blackboard, updates: Dict[str, Any]) -> None:
@@ -101,69 +102,43 @@ def validate_recipe(components: List[PipelineComponent], initial_keys: Set[Key])
 
 class BlackboardEngine:
     """
-    The Unchanging Orchestrator. Manages the lifecycle of the Blackboard dictionary by routing it through sequential components.
-    
-    Now includes basic Execution Graph capabilities for #6 Optimization:
-    - Pruning: Skips components whose outputs are never read by downstream components or the engine output.
+    The Unchanging Orchestrator. Manages the lifecycle of the Blackboard
+    dictionary by routing it through a DAG-sorted pipeline of components.
+
+    Uses an ExecutionGraph for:
+    - Topological ordering derived from requires/provides contracts
+    - Backward-reachability pruning from terminal sinks (losses.*, meta.*)
+    - Cycle detection at build time
     """
     def __init__(
         self, 
         components: List[PipelineComponent], 
         device: torch.device, 
         initial_keys: Set[Key] = set(),
-        strict: bool = False
+        strict: bool = False,
+        **kwargs: Any,
     ):
         self.components = components
         self.device = device
         self.training_step = 0
         self.strict = strict
 
-        # Validate the DAG before the first training step
-        validate_recipe(components, initial_keys)
-        
-        # Build the optimized execution order
-        self._execution_plan = self._build_execution_plan(components, initial_keys)
+        # Build the DAG execution graph (includes dependency + cycle checks)
+        self._graph: ExecutionGraph = build_execution_graph(components, initial_keys)
 
-    def _build_execution_plan(self, components: List[PipelineComponent], initial_keys: Set[Key]) -> List[PipelineComponent]:
-        """
-        Builds the final list of components to execute.
-        Currently performs simple 'Terminal-Value Pruning':
-        If a component's provides are never required by a later component,
-        it is potentially removable (unless it provides 'meta', 'losses', or terminal outputs).
-        """
-        # 1. Determine which keys are 'Terminal Targets' (always required for engine output)
-        terminal_paths = {
-            "meta.stop_execution",
-            "meta.learner_throughput"
-        }
-        
-        active_components = []
-        required_downstream = set(terminal_paths)
-        
-        # Iterate backwards to find dependencies
-        # Any component providing a key required by a later component (or terminal) is kept.
-        for component in reversed(components):
-            provides = component.provides
-            provides_keys = provides.keys() if isinstance(provides, dict) else provides
-            provides_paths = {k.path for k in provides_keys}
-            
-            # Heuristic: Components writing to 'losses' or 'meta' are currently never pruned
-            is_telemetry = any(p.startswith("losses.") or p.startswith("meta.") for p in provides_paths)
-            
-            # If this component produces something someone else needs, we must keep it.
-            # OR if it's a telemetry/output component.
-            # OR if it has NO provides (side-effect component like a buffer writer)
-            if (provides_paths & required_downstream) or is_telemetry or not provides_paths:
-                active_components.append(component)
-                # Add its requirements to the list of what we need from earlier components
-                required_downstream.update({k.path for k in component.requires})
-        
-        plan = list(reversed(active_components))
-        print(f"Execution Graph Built: Optimized {len(components)} -> {len(plan)} active components.")
-        return plan
+        # Validate semantic contracts on the active (topologically sorted) components
+        validate_recipe(self._graph.active_components(), initial_keys)
+
+    @property
+    def execution_graph(self) -> ExecutionGraph:
+        """Read-only access to the execution graph for introspection."""
+        return self._graph
 
     def step(self, batch_iterator: Iterable[Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
         t_last = time.perf_counter()
+
+        # Pre-resolve the execution plan once per call
+        active_components = self._graph.active_components()
 
         for batch in batch_iterator:
             # 1. Universal Time Mandate: Move Batch to Device explicitly here
@@ -173,9 +148,9 @@ class BlackboardEngine:
             }
             blackboard = Blackboard(data=device_batch)
             
-            # 2. Optimized Pipeline Execution with Profiling
+            # 2. DAG-sorted Pipeline Execution with Profiling
             profiles = {}
-            for component in self._execution_plan:
+            for component in active_components:
                 comp_name = type(component).__name__
                 t0 = time.perf_counter()
                 
