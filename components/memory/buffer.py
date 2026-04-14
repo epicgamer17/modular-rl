@@ -1,8 +1,9 @@
 import torch
 import numpy as np
-from typing import Any, Dict, Optional, TYPE_CHECKING
 from core import PipelineComponent
 from core import Blackboard
+from core.contracts import SemanticType, Observation, Action, Reward, Done, Mask # Adjust types as needed
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from data.storage.circular import ModularReplayBuffer
@@ -37,12 +38,16 @@ class BufferStoreComponent(PipelineComponent):
         return container
 
     @property
-    def reads(self) -> set[str]:
-        return set(self.field_map.values()) | {"meta.action_metadata", "meta.info"}
+    def requires(self) -> dict[str, type]:
+        # Polymorphic mapping
+        return {bb_path: SemanticType for bb_path in self.field_map.values()}
 
     @property
-    def writes(self) -> set[str]:
-        return set()
+    def provides(self) -> dict[str, type]:
+        return {}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         transition = {}
@@ -91,22 +96,27 @@ class SequenceBufferComponent(PipelineComponent):
             self._sequence = Sequence(self.num_players)
 
     @property
-    def reads(self) -> set[str]:
+    def requires(self) -> dict[str, type]:
         r = {
-            "data.obs",
-            "data.done",
-            "data.reward",
-            "meta.action",
+            "data.obs": Observation,
+            "data.done": Done,
+            "data.reward": Reward,
+            "meta.action": Action,
         }
         if self.target_policy_key:
-            r.add(f"predictions.{self.target_policy_key}")
+            from core.contracts import PolicyLogits
+            r[f"predictions.{self.target_policy_key}"] = PolicyLogits
         if self.target_value_key:
-            r.add(f"predictions.{self.target_value_key}")
+            from core.contracts import ValueEstimate
+            r[f"predictions.{self.target_value_key}"] = ValueEstimate
         return r
 
     @property
-    def writes(self) -> set[str]:
-        return set()
+    def provides(self) -> dict[str, type]:
+        return {}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         self._ensure_sequence()

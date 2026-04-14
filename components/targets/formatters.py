@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Optional
 
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
+from core.contracts import ValueTarget, PolicyLogits, ActionDistribution, Action, Reward
 from modules.representations import BaseRepresentation, DiscreteSupportRepresentation, ClassificationRepresentation
 
 if TYPE_CHECKING:
@@ -78,12 +79,15 @@ class TwoHotProjectionComponent(PipelineComponent):
         self._dest_key = dest_key
 
     @property
-    def reads(self) -> set[str]:
-        return {self._source_key}
+    def requires(self) -> dict[str, type]:
+        return {self._source_key: ValueTarget}
 
     @property
-    def writes(self) -> set[str]:
-        return {f"targets.{self._dest_key}"}
+    def provides(self) -> dict[str, type]:
+        return {f"targets.{self._dest_key}": ValueTarget}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         """Project scalar targets to two-hot distributions and write back."""
@@ -123,12 +127,15 @@ class ClassificationFormatterComponent(PipelineComponent):
         self._representation = representation
 
     @property
-    def reads(self) -> set[str]:
+    def requires(self) -> set[str]:
         return {self._source_key}
 
     @property
-    def writes(self) -> set[str]:
+    def provides(self) -> set[str]:
         return {f"targets.{self._dest_key}"}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         val = resolve_blackboard_path(blackboard, self._source_key)
@@ -172,12 +179,15 @@ class ScalarFormatterComponent(PipelineComponent):
         self._representation = representation
 
     @property
-    def reads(self) -> set[str]:
-        return {self._source_key}
+    def requires(self) -> dict[str, type]:
+        return {self._source_key: Reward}
 
     @property
-    def writes(self) -> set[str]:
-        return {f"targets.{self._dest_key}"}
+    def provides(self) -> dict[str, type]:
+        return {f"targets.{self._dest_key}": Reward}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         val = resolve_blackboard_path(blackboard, self._source_key)
@@ -233,12 +243,15 @@ class ExpectedValueComponent(PipelineComponent):
         self._dest_key = dest_key
 
     @property
-    def reads(self) -> set[str]:
-        return {f"predictions.{self._logits_key}"}
+    def requires(self) -> dict[str, type]:
+        return {f"predictions.{self._logits_key}": PolicyLogits}
 
     @property
-    def writes(self) -> set[str]:
-        return {f"targets.{self._dest_key}"}
+    def provides(self) -> dict[str, type]:
+        return {f"targets.{self._dest_key}": ValueTarget}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        assert self._logits_key in blackboard.predictions
 
     def execute(self, blackboard: Blackboard) -> None:
         """Compute expected value from logits and write to targets."""
@@ -284,12 +297,15 @@ class OneHotPolicyTargetComponent(PipelineComponent):
         self._dest_key = dest_key
 
     @property
-    def reads(self) -> set[str]:
-        return {self._source_key}
+    def requires(self) -> dict[str, type]:
+        return {self._source_key: Action}
 
     @property
-    def writes(self) -> set[str]:
-        return {f"targets.{self._dest_key}"}
+    def provides(self) -> dict[str, type]:
+        return {f"targets.{self._dest_key}": ActionDistribution}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         """Read indices from source, convert to one-hot, and write to dest."""

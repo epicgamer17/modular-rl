@@ -2,6 +2,7 @@ import torch
 from typing import Optional, TYPE_CHECKING
 from core import PipelineComponent
 from core import Blackboard
+from core.contracts import Observation, ValueEstimate, PolicyLogits
 
 if TYPE_CHECKING:
     from modules.agent_nets.base import BaseAgentNetwork
@@ -10,22 +11,25 @@ if TYPE_CHECKING:
 
 class ForwardPassComponent(PipelineComponent):
     """
-    Executes the main neural network forward pass.
-    Reads inputs from Blackboard batch and writes outputs to Blackboard predictions.
+    Component for the neural network forward pass.
     """
-    def __init__(self, agent_network: 'BaseAgentNetwork', shape_validator: Optional['ShapeValidator'] = None):
+
+    def __init__(self, agent_network: "BaseAgentNetwork", shape_validator: Optional['ShapeValidator'] = None):
         self.agent_network = agent_network
         self.shape_validator = shape_validator
 
     @property
-    def reads(self) -> set[str]:
-        return {"data.observations"}
+    def requires(self) -> dict[str, type]:
+        return {"data.observations": Observation}
 
     @property
-    def writes(self) -> set[str]:
-        # Declares standard predictions. 
-        # ModularAgentNetwork merges its output dict into blackboard.predictions.
-        return {"predictions.values", "predictions.policies"}
+    def provides(self) -> dict[str, type]:
+        return {"predictions.values": ValueEstimate, "predictions.policies": PolicyLogits}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        obs = blackboard.data.get("observations")
+        assert obs is not None, "ForwardPassComponent requires 'observations' in blackboard.data"
+        assert obs.ndim >= 2, f"Observation must have at least [B, T] or [B, *] dimensions, got {obs.shape}"
 
     def execute(self, blackboard: Blackboard) -> None:
         """

@@ -24,12 +24,15 @@ class EpsilonDecayComponent(PipelineComponent):
         self.current_step = 0
 
     @property
-    def reads(self) -> set[str]:
+    def requires(self) -> set[str]:
         return set()
 
     @property
-    def writes(self) -> set[str]:
+    def provides(self) -> set[str]:
         return {"meta.epsilon"}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         if self.decay_steps > 0:
@@ -110,12 +113,15 @@ class LossAggregatorComponent(PipelineComponent):
         self.optimizer_key = optimizer_key
 
     @property
-    def reads(self) -> set[str]:
+    def requires(self) -> set[str]:
         return {f"losses.{name}" for name in self.loss_weights.keys()}
 
     @property
-    def writes(self) -> set[str]:
+    def provides(self) -> set[str]:
         return {f"losses.total_loss.{self.optimizer_key}"}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         if not blackboard.losses:
@@ -158,12 +164,15 @@ class OptimizerStepComponent(PipelineComponent):
         self.max_grad_norm = max_grad_norm
 
     @property
-    def reads(self) -> set[str]:
+    def requires(self) -> set[str]:
         return {"losses.total_loss"}
 
     @property
-    def writes(self) -> set[str]:
+    def provides(self) -> set[str]:
         return set()
+
+    def validate(self, blackboard: Blackboard) -> None:
+        assert "total_loss" in blackboard.losses
 
     def execute(self, blackboard: Blackboard) -> None:
         total_losses = blackboard.losses.get("total_loss", {})
@@ -233,13 +242,16 @@ class ShapeValidatorComponent(PipelineComponent):
         self.validator = validator
 
     @property
-    def reads(self) -> set[str]:
-        # Reads all predictions and targets for validation
+    def requires(self) -> set[str]:
+        # Requires everything to validate shapes
         return {"predictions", "targets"}
 
     @property
-    def writes(self) -> set[str]:
+    def provides(self) -> set[str]:
         return set()
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         self.validator.validate(blackboard.predictions, blackboard.targets)
@@ -252,12 +264,15 @@ class MetricEarlyStopComponent(PipelineComponent):
         self.threshold = threshold
 
     @property
-    def reads(self) -> set[str]:
+    def requires(self) -> set[str]:
         return {f"meta.{self.metric_key}", f"losses.{self.metric_key}"}
 
     @property
-    def writes(self) -> set[str]:
+    def provides(self) -> set[str]:
         return {"meta.stop_execution"}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         # Check both meta and losses for the metric
@@ -281,12 +296,15 @@ class MPSCacheClearComponent(PipelineComponent):
         self.step_count = 0
 
     @property
-    def reads(self) -> set[str]:
+    def requires(self) -> set[str]:
         return set()
 
     @property
-    def writes(self) -> set[str]:
+    def provides(self) -> set[str]:
         return set()
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         if self.device.type == "mps":
@@ -302,12 +320,15 @@ class DeviceTransferComponent(PipelineComponent):
         self.device = device
 
     @property
-    def reads(self) -> set[str]:
+    def requires(self) -> set[str]:
         return {"data"}
 
     @property
-    def writes(self) -> set[str]:
+    def provides(self) -> set[str]:
         return {"data"}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         for k, v in blackboard.data.items():

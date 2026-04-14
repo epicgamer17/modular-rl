@@ -3,6 +3,8 @@ from typing import Any, Tuple
 from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
 
+from core.contracts import ToPlay, ValueEstimate, ValueTarget, LossScalar
+
 class MuzeroMultiplayerTelemetry(PipelineComponent):
     """
     Learner telemetry component to track performance metrics split by player (0 vs 1).
@@ -26,21 +28,24 @@ class MuzeroMultiplayerTelemetry(PipelineComponent):
         self.mask_key = mask_key
 
     @property
-    def reads(self) -> set[str]:
+    def requires(self) -> dict[str, type]:
         return {
-            f"predictions.{self.to_play_pred_key}",
-            f"targets.{self.to_play_target_key}",
-            f"predictions.{self.value_pred_key}",
-            f"targets.{self.value_target_key}",
+            f"predictions.{self.to_play_pred_key}": ToPlay,
+            f"targets.{self.to_play_target_key}": ToPlay,
+            f"predictions.{self.value_pred_key}": ValueEstimate,
+            f"targets.{self.value_target_key}": ValueTarget,
         }
 
     @property
-    def writes(self) -> set[str]:
-        w = set()
+    def provides(self) -> dict[str, type]:
+        w = {}
         for p in range(self.num_players):
-            w.add(f"meta.tp_acc_p{p}")
-            w.add(f"meta.val_mse_p{p}")
+            w[f"meta.tp_acc_p{p}"] = LossScalar
+            w[f"meta.val_mse_p{p}"] = LossScalar
         return w
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         if self.to_play_pred_key not in blackboard.predictions:

@@ -1,8 +1,8 @@
 import torch
-from typing import List, Optional
-from core import PipelineComponent
-from core import Blackboard
+from core import PipelineComponent, Blackboard
 from core.path_resolver import resolve_blackboard_path
+from core.contracts import ValueTarget, Reward, Action, Mask, Return, ToPlay # Adjust as needed
+from typing import List, Optional
 
 
 class SequencePadderComponent(PipelineComponent):
@@ -13,12 +13,19 @@ class SequencePadderComponent(PipelineComponent):
         self.keys = keys or ["values", "rewards", "policies", "actions", "to_plays", "reward_mask", "to_play_mask", "action_mask"]
 
     @property
-    def reads(self) -> set[str]:
-        return set(self.keys)
+    def requires(self) -> dict[str, type]:
+        # SequencePadder is polymorphic, it just needs the keys to exist.
+        # We'll use SemanticType as a base since it can be anything.
+        from core.contracts import SemanticType
+        return {key: SemanticType for key in self.keys}
 
     @property
-    def writes(self) -> set[str]:
-        return {f"targets.{key.split('.')[-1]}" for key in self.keys}
+    def provides(self) -> dict[str, type]:
+        from core.contracts import SemanticType
+        return {f"targets.{key.split('.')[-1]}": SemanticType for key in self.keys}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         for key in self.keys:
@@ -56,17 +63,20 @@ class SequenceMaskComponent(PipelineComponent):
     """
 
     @property
-    def reads(self) -> set[str]:
-        return {"data.is_same_game"}  # Minimum required for generation
+    def requires(self) -> dict[str, type]:
+        return {"data.is_same_game": Mask}
 
     @property
-    def writes(self) -> set[str]:
+    def provides(self) -> dict[str, type]:
         return {
-            "targets.value_mask",
-            "targets.reward_mask",
-            "targets.to_play_mask",
-            "targets.policy_mask",
+            "targets.value_mask": Mask,
+            "targets.reward_mask": Mask,
+            "targets.to_play_mask": Mask,
+            "targets.policy_mask": Mask,
         }
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         data = blackboard.data
@@ -121,12 +131,15 @@ class SequenceInfrastructureComponent(PipelineComponent):
         self.unroll_steps = unroll_steps
 
     @property
-    def reads(self) -> set[str]:
-        return {"data.actions"}
+    def requires(self) -> dict[str, type]:
+        return {"data.actions": Action}
 
     @property
-    def writes(self) -> set[str]:
-        return {"meta.weights", "meta.gradient_scales"}
+    def provides(self) -> dict[str, type]:
+        return {"meta.weights": Mask, "meta.gradient_scales": Reward} # Stand-in types
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         data = blackboard.data
@@ -160,12 +173,15 @@ class ChanceTargetComponent(PipelineComponent):
     """Generator: Calculates chance outcomes for Stochastic MuZero."""
 
     @property
-    def reads(self) -> set[str]:
-        return {"targets.values"}
+    def requires(self) -> dict[str, type]:
+        return {"targets.values": ValueTarget}
 
     @property
-    def writes(self) -> set[str]:
-        return {"targets.chance_values_next"}
+    def provides(self) -> dict[str, type]:
+        return {"targets.chance_values_next": ValueTarget}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        pass
 
     def execute(self, blackboard: Blackboard) -> None:
         # Stochastic MuZero shifts the value target by 1 step for chance nodes

@@ -37,12 +37,17 @@ class QBootstrappingLoss(PipelineComponent):
         self.name = name
 
     @property
-    def reads(self) -> set[str]:
+    def requires(self) -> set[str]:
         return {f"predictions.{self.pred_key}", self.actions_key, self.target_key}
 
     @property
-    def writes(self) -> set[str]:
+    def provides(self) -> set[str]:
         return {f"losses.{self.name}", f"meta.{self.name}"}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        q_preds = blackboard.predictions[self.pred_key]
+        actions = resolve_blackboard_path(blackboard, self.actions_key)
+        assert q_preds.shape[:2] == actions.shape[:2], "Batch/Time mismatch in QBootstrappingLoss"
 
     def execute(self, blackboard: Blackboard) -> None:
         q_preds = blackboard.predictions[self.pred_key]

@@ -4,6 +4,7 @@ from typing import Any
 from core import PipelineComponent
 from core import Blackboard
 from core.path_resolver import resolve_blackboard_path
+from core.contracts import PolicyLogits, ActionDistribution, Action, Advantage, LossScalar
 from .infrastructure import apply_infrastructure
 
 
@@ -32,12 +33,17 @@ class PolicyLoss(PipelineComponent):
         self.name = name
 
     @property
-    def reads(self) -> set[str]:
-        return {"predictions.policies", self.target_key}
+    def requires(self) -> dict[str, type]:
+        return {"predictions.policies": PolicyLogits, self.target_key: ActionDistribution}
 
     @property
-    def writes(self) -> set[str]:
-        return {f"losses.{self.name}", f"meta.{self.name}"}
+    def provides(self) -> dict[str, type]:
+        return {f"losses.{self.name}": LossScalar}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        preds = blackboard.predictions["policies"]
+        targets = resolve_blackboard_path(blackboard, self.target_key)
+        assert preds.shape[0] == targets.shape[0], f"Batch size mismatch in PolicyLoss: {preds.shape[0]} vs {targets.shape[0]}"
 
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["policies"]
@@ -100,17 +106,27 @@ class ClippedSurrogateLoss(PipelineComponent):
         self.name = name
 
     @property
-    def reads(self) -> set[str]:
+    def requires(self) -> dict[str, type]:
         return {
-            "predictions.policies",
-            self.actions_key,
-            self.old_log_probs_key,
-            self.advantages_key,
+            "predictions.policies": PolicyLogits,
+            self.actions_key: Action,
+            self.old_log_probs_key: Advantage,  # Use Advantage as a stand-in for LogProbs if not explicit
+            self.advantages_key: Advantage,
         }
 
     @property
-    def writes(self) -> set[str]:
-        return {f"losses.{self.name}", f"meta.{self.name}"}
+    def provides(self) -> dict[str, type]:
+        return {f"losses.{self.name}": LossScalar}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        logits = blackboard.predictions["policies"]
+        actions = resolve_blackboard_path(blackboard, self.actions_key)
+        old_log_probs = resolve_blackboard_path(blackboard, self.old_log_probs_key)
+        advantages = resolve_blackboard_path(blackboard, self.advantages_key)
+        
+        B, T = logits.shape[:2]
+        assert actions.shape[:2] == (B, T), f"Action shape mismatch: {actions.shape} vs {(B, T)}"
+        assert advantages.shape[:2] == (B, T), f"Advantage shape mismatch: {advantages.shape} vs {(B, T)}"
 
     def execute(self, blackboard: Blackboard) -> None:
         policy_logits = blackboard.predictions["policies"]

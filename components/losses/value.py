@@ -4,6 +4,7 @@ from typing import Any
 from core import PipelineComponent
 from core import Blackboard
 from core.path_resolver import resolve_blackboard_path
+from core.contracts import ValueEstimate, ValueTarget, LossScalar
 from .infrastructure import apply_infrastructure
 
 
@@ -28,12 +29,26 @@ class ValueLoss(PipelineComponent):
         self.name = name
 
     @property
-    def reads(self) -> set[str]:
-        return {"predictions.values", self.target_key}
+    def requires(self) -> dict[str, type]:
+        return {"predictions.values": ValueEstimate, self.target_key: ValueTarget}
 
     @property
-    def writes(self) -> set[str]:
-        return {f"losses.{self.name}", f"meta.{self.name}"}
+    def provides(self) -> dict[str, type]:
+        return {f"losses.{self.name}": LossScalar}
+
+    @property
+    def constraints(self) -> list[str]:
+        return [
+            f"same_batch(predictions.values, {self.target_key})",
+            "time_aligned(predictions.values, targets)"
+        ]
+
+    def validate(self, blackboard: Blackboard) -> None:
+        preds = blackboard.predictions["values"]
+        targets = resolve_blackboard_path(blackboard, self.target_key)
+        assert preds.shape[0] == targets.shape[0], f"Batch size mismatch: {preds.shape[0]} vs {targets.shape[0]}"
+        # Semantic check: Target must be scalar if we are using MSE without atom logic
+        assert targets.ndim <= 3, "ValueLoss expects scalar or simple vector targets."
 
     def execute(self, blackboard: Blackboard) -> None:
         preds = blackboard.predictions["values"]
@@ -101,12 +116,28 @@ class ClippedValueLoss(PipelineComponent):
         self.name = name
 
     @property
-    def reads(self) -> set[str]:
-        return {"predictions.values", self.target_key, self.old_values_key}
+    def requires(self) -> dict[str, type]:
+        return {
+            "predictions.values": ValueEstimate,
+            self.target_key: ValueTarget,
+            self.old_values_key: ValueEstimate,
+        }
 
     @property
-    def writes(self) -> set[str]:
-        return {f"losses.{self.name}", f"meta.{self.name}"}
+    def provides(self) -> dict[str, type]:
+        return {f"losses.{self.name}": LossScalar}
+
+    @property
+    def constraints(self) -> list[str]:
+        return [
+            "clipped_surrogate_invariant(returns, values, old_values)"
+        ]
+
+    def validate(self, blackboard: Blackboard) -> None:
+        values = blackboard.predictions.get("values_expected", blackboard.predictions["values"])
+        returns = resolve_blackboard_path(blackboard, self.target_key)
+        old_values = resolve_blackboard_path(blackboard, self.old_values_key)
+        assert values.shape == returns.shape == old_values.shape, "Shape mismatch in ClippedValueLoss"
 
     def execute(self, blackboard: Blackboard) -> None:
         # 1. Extract inputs

@@ -3,6 +3,7 @@ import torch.nn as nn
 from typing import Optional
 from core import PipelineComponent
 from core import Blackboard
+from core.contracts import Reward, Done, Observation, ValueTarget, Action, PolicyLogits
 
 
 class TDTargetComponent(PipelineComponent):
@@ -26,19 +27,21 @@ class TDTargetComponent(PipelineComponent):
         self.bootstrap_on_truncated = bootstrap_on_truncated
 
     @property
-    def reads(self) -> set[str]:
-        keys = {"data.rewards", "data.dones", "data.next_observations"}
-        # 'terminated' and 'next_legal_moves_masks' are optional in some buffers
-        # but if we want strict validation, we should decide if they are required.
-        # For now, let's assume 'terminated' is a fallback for 'dones' if missing.
-        return keys
+    def requires(self) -> dict[str, type]:
+        return {"data.rewards": Reward, "data.dones": Done, "data.next_observations": Observation}
 
     @property
-    def writes(self) -> set[str]:
-        w = {"targets.values"}
+    def provides(self) -> dict[str, type]:
+        w = {"targets.values": ValueTarget}
         if self.online_network is not None:
-            w.add("targets.next_actions")
+            w["targets.next_actions"] = Action
         return w
+
+    def validate(self, blackboard: Blackboard) -> None:
+        rewards = blackboard.data["rewards"]
+        dones = blackboard.data["dones"]
+        next_obs = blackboard.data["next_observations"]
+        assert rewards.shape[0] == dones.shape[0] == next_obs.shape[0], "Batch size mismatch in TDTargetComponent"
 
     def execute(self, blackboard: Blackboard) -> None:
         data = blackboard.data
@@ -126,12 +129,16 @@ class DistributionalTargetComponent(PipelineComponent):
         self.bootstrap_on_truncated = bootstrap_on_truncated
 
     @property
-    def reads(self) -> set[str]:
-        return {"data.rewards", "data.dones", "data.next_observations"}
+    def requires(self) -> dict[str, type]:
+        return {"data.rewards": Reward, "data.dones": Done, "data.next_observations": Observation}
 
     @property
-    def writes(self) -> set[str]:
-        return {"targets.q_logits", "targets.next_actions"}
+    def provides(self) -> dict[str, type]:
+        return {"targets.q_logits": PolicyLogits, "targets.next_actions": Action}
+
+    def validate(self, blackboard: Blackboard) -> None:
+        rewards = blackboard.data["rewards"]
+        assert rewards.ndim >= 1, "Rewards must be at least [B]"
 
     def execute(self, blackboard: Blackboard) -> None:
         data = blackboard.data
