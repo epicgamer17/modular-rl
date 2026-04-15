@@ -53,6 +53,7 @@ class Categorical(Structure):
 
 @dataclass(frozen=True)
 class Quantile(Structure):
+    # TODO: what is this actually used for?
     n: int
 
     def __repr__(self) -> str:
@@ -138,7 +139,9 @@ def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
 
     p = provider.shape
     if p is None:
-        return [f"contract gap: consumer requires {c}, but provider is opaque (no shape contract)"]
+        return [
+            f"contract gap: consumer requires {c}, but provider is opaque (no shape contract)"
+        ]
 
     issues: List[str] = []
 
@@ -166,7 +169,7 @@ def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
 
     if c.time_dim is not None:
         if p.time_dim is None:
-             issues.append(
+            issues.append(
                 f"time_dim gap: consumer requires dim {c.time_dim}, but provider does not declare it"
             )
         elif c.time_dim != p.time_dim:
@@ -183,7 +186,7 @@ def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
             # We assume tensors are right-aligned (standard PyTorch broadcasting).
             p_feat = p.feature_shape
             c_feat = c.feature_shape
-            
+
             is_compatible = True
             if len(p_feat) > len(c_feat):
                 is_compatible = False
@@ -194,7 +197,7 @@ def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
                     if p_dim != c_dim and p_dim != 1 and c_dim != 1:
                         is_compatible = False
                         break
-            
+
             if not is_compatible:
                 issues.append(
                     f"shape mismatch (unsafe broadcasting): consumer expects {c.feature_shape}, "
@@ -204,7 +207,7 @@ def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
     # Stage 4.4: Symbolic Dimensions Consistency
     if c.symbolic is not None:
         if p.symbolic is None:
-             issues.append(
+            issues.append(
                 f"symbolic gap: consumer requires {c.symbolic}, but provider does not declare symbolic names"
             )
         elif len(c.symbolic) != len(p.symbolic):
@@ -221,7 +224,7 @@ def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
     # Stage 4.5: Dtype check
     if c.dtype is not None:
         if p.dtype is None:
-             issues.append(
+            issues.append(
                 f"dtype gap: consumer requires {c.dtype}, but provider does not declare one"
             )
         elif c.dtype != p.dtype:

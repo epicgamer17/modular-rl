@@ -31,6 +31,17 @@ from core.contracts import Key, WriteMode, check_shape_compatibility
 
 _INITIAL: int = -1  # sentinel index for paths provided by initial_keys
 
+# Viz Styling Constants (Material Design Colors)
+_COLOR_INITIAL_FILL = "#FFF9C4"
+_COLOR_INITIAL_BORDER = "#FBC02D"
+_COLOR_PRUNED_FILL = "#F5F5F5"
+_COLOR_PRUNED_BORDER = "#BDBDBD"
+_COLOR_PRUNED_FONT = "#9E9E9E"
+_COLOR_TERMINAL_FILL = "#C8E6C9"
+_COLOR_TERMINAL_BORDER = "#388E3C"
+_COLOR_ACTIVE_FILL = "#FFFFFF"
+_COLOR_ACTIVE_BORDER = "#1976D2"
+
 
 @dataclass(frozen=True)
 class ExecutionGraph:
@@ -93,6 +104,86 @@ class ExecutionGraph:
         target_indices = _find_target_components(list(self.components), self.provider_map, target_keys)
         reachable = _backward_reachability(len(self.components), self.edges, target_indices)
         return [idx for idx in self.execution_order if idx in reachable]
+
+    def to_dot(self) -> str:
+        """Render the execution graph as a Graphviz DOT string for visualization.
+
+        This is used for debugging complex pipelines, showing dependencies,
+        active/pruned components, and the flow of keys.
+
+        Returns:
+            A string in DOT format.
+        """
+        dot = ["digraph ExecutionGraph {"]
+        dot.append("  rankdir=LR;")
+        dot.append('  node [shape=box, fontname="Helvetica", fontsize=10, style=filled];')
+        dot.append('  edge [fontname="Helvetica", fontsize=8];')
+        dot.append("")
+
+        # 1. Identify and group input keys from the "Initial" state
+        initial_keys = {k for k, v in self.provider_map.items() if v == _INITIAL}
+        consumed_initial: Dict[int, List[str]] = defaultdict(list)
+        for i, comp in enumerate(self.components):
+            for req in comp.requires:
+                if req in initial_keys:
+                    consumed_initial[i].append(req.path)
+
+        if consumed_initial:
+            all_paths = sorted({path for paths in consumed_initial.values() for path in paths})
+            paths_str = "\\n".join(all_paths)
+            label = f"INITIAL_KEYS\\n{'-'*12}\\n{paths_str}"
+            dot.append(f'  initial [label="{label}", fillcolor="{_COLOR_INITIAL_FILL}", color="{_COLOR_INITIAL_BORDER}"];')
+
+        # 2. Define component nodes
+        for i, comp in enumerate(self.components):
+            name = type(comp).__name__
+            is_active = i in self.execution_order
+            is_terminal = i in self.terminal_indices
+
+            styles = ["filled"]
+            if not is_active:
+                fillcolor = _COLOR_PRUNED_FILL
+                color = _COLOR_PRUNED_BORDER
+                fontcolor = _COLOR_PRUNED_FONT
+                styles.append("dashed")
+            elif is_terminal:
+                fillcolor = _COLOR_TERMINAL_FILL
+                color = _COLOR_TERMINAL_BORDER
+                fontcolor = "#000000"
+                styles.append("bold")
+            else:
+                fillcolor = _COLOR_ACTIVE_FILL
+                color = _COLOR_ACTIVE_BORDER
+                fontcolor = "#000000"
+
+            style_str = ",".join(styles)
+            label = f"[{i}] {name}"
+            dot.append(
+                f'  node_{i} [label="{label}", fillcolor="{fillcolor}", '
+                f'color="{color}", fontcolor="{fontcolor}", style="{style_str}"];'
+            )
+
+        # 3. Define edges between components
+        # We group multiple keys between the same two nodes to reduce clutter.
+        edge_groups: Dict[Tuple[str, str], List[str]] = defaultdict(list)
+
+        # Edges from Initial
+        for i, paths in consumed_initial.items():
+            edge_groups[("initial", f"node_{i}")].extend(paths)
+
+        # Edges from providers
+        for i, comp in enumerate(self.components):
+            for req in comp.requires:
+                p_idx = self.provider_map.get(req)
+                if p_idx is not None and p_idx != _INITIAL:
+                    edge_groups[(f"node_{p_idx}", f"node_{i}")].append(req.path)
+
+        for (src, dst), paths in edge_groups.items():
+            label = "\\n".join(sorted(set(paths)))
+            dot.append(f'  {src} -> {dst} [label="{label}"];')
+
+        dot.append("}")
+        return "\n".join(dot)
 
 
 # ──────────────────────────────────────────────────────────────────────
