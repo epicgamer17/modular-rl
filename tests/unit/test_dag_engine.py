@@ -78,7 +78,7 @@ def test_dag_validation_shape_mismatch():
     c1 = MockComponent("P", requires=set(), provides={k_p: WriteMode.NEW})
     c2 = MockComponent("C", requires={k_c}, provides={})
     
-    with pytest.raises(RuntimeError, match="ndim mismatch"):
+    with pytest.raises(RuntimeError, match="Rank mismatch"):
         BlackboardEngine(components=[c1, c2], device=torch.device("cpu"))
 
 def test_engine_execution_flow():

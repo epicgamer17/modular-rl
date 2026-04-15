@@ -546,9 +546,19 @@ def _validate_contracts(graph: ExecutionGraph, initial_keys: Set[Key]) -> None:
             # Stage 4: Shape Integrity (Shape, Dtype, Symbolic)
             shape_issues = check_shape_compatibility(provider=found_key, consumer=req)
             for issue in shape_issues:
+                # [B, T, 128] style formatting
+                p_shape_str = found_key.shape.format_shape() if found_key.shape else "opaque"
+                c_shape_str = req.shape.format_shape() if req.shape else "opaque"
+
                 incompatibilities.append(
-                    f"SHAPE ERROR for '{req.path}': {issue}\n"
-                    f"      - Consumer [{idx}] '{type(component).__name__}' vs Provider {provider_name}"
+                    f"Component A (Key: {found_key.path}, Provider: {provider_name})\n"
+                    f"    provides: shape {p_shape_str}\n"
+                    f"\n"
+                    f"Component B (Key: {req.path}, Consumer: [{idx}] {type(component).__name__})\n"
+                    f"    requires: shape {c_shape_str}\n"
+                    f"\n"
+                    f"Error:\n"
+                    f"    {issue}"
                 )
 
         if missing or incompatibilities:
@@ -559,7 +569,9 @@ def _validate_contracts(graph: ExecutionGraph, initial_keys: Set[Key]) -> None:
             if incompatibilities:
                 error_msg.append("  Contract Violations:")
                 for inc in incompatibilities:
-                    error_msg.append(f"    - {inc}")
+                    # Indent the block
+                    indented_inc = "\n".join("    " + line for line in inc.split("\n"))
+                    error_msg.append(indented_inc)
 
             error_msg.append(
                 f"  Available keys in namespace: {sorted(list(available_contracts.keys()))}"

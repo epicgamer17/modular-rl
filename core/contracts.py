@@ -162,6 +162,27 @@ class ShapeContract:
                     f"must match event_shape {self.event_shape} + batch/time (expected {expected_len})"
                 )
 
+    def format_shape(self) -> str:
+        """Return a human-readable shape string using symbolic names if available."""
+        if self.symbolic:
+            return f"({', '.join(self.symbolic)})"
+
+        # Fallback to building from ndim/event_shape/time_dim
+        parts = ["B"]
+        if self.time_dim is not None:
+            parts.append("T")
+
+        if self.event_shape is not None:
+            for s in self.event_shape:
+                parts.append(str(s))
+        elif self.ndim is not None:
+            # Add placeholders for unknown dims
+            needed = self.ndim - len(parts)
+            for _ in range(needed):
+                parts.append("?")
+
+        return f"({', '.join(parts)})"
+
 
 def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
     """
@@ -191,24 +212,24 @@ def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
             )
         elif c.ndim != p.ndim:
             issues.append(
-                f"ndim mismatch: consumer requires rank {c.ndim}, provider declares {p.ndim}"
+                f"Rank mismatch: consumer requires {c.ndim} dimensions, but provider gives {p.ndim}"
             )
 
     # Stage 4.2: Time dimension presence and position
     if c.time_dim is not None:
         if p.time_dim is None:
             issues.append(
-                f"time_dim gap: consumer requires sequence dim at {c.time_dim}, but provider declares no sequence dimension"
+                f"Time dimension gap: consumer requires sequence dim at {c.time_dim}, but provider declares no sequence dimension"
             )
         elif c.time_dim != p.time_dim:
             issues.append(
-                f"time_dim position mismatch: consumer expects sequence dim at {c.time_dim}, "
+                f"Time dimension position mismatch: consumer expects sequence dim at {c.time_dim}, "
                 f"provider declares sequence dim at {p.time_dim}"
             )
     elif p.time_dim is not None:
         # Consumer explicitly expects NO time dimension (time_dim=None), but provider HAS one
         issues.append(
-            f"time_dim mismatch: consumer expects no sequence dimension, but provider declares one at dim {p.time_dim}"
+            f"Time dimension mismatch: provider has a sequence dimension (T), but consumer does not expect one"
         )
 
     # Stage 4.3: Event shape and Safe Broadcasting

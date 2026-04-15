@@ -19,7 +19,7 @@ def test_time_dim_compatibility_mismatch():
     k_c = Key("data.x", Observation, shape=ShapeContract(time_dim=2))
     
     issues = check_shape_compatibility(k_p, k_c)
-    assert any("time_dim position mismatch" in i for i in issues)
+    assert any("Time dimension position mismatch" in i for i in issues)
 
 def test_time_dim_gap_provider_missing():
     """Verifies that if consumer requires time_dim but provider doesn't have it, it fails."""
@@ -27,7 +27,7 @@ def test_time_dim_gap_provider_missing():
     k_c = Key("data.x", Observation, shape=ShapeContract(time_dim=1))
     
     issues = check_shape_compatibility(k_p, k_c)
-    assert any("time_dim gap" in i for i in issues)
+    assert any("Time dimension gap" in i for i in issues)
 
 def test_time_dim_gap_consumer_missing():
     """Verifies that if provider has time_dim but consumer explicitly wants None, it fails."""
@@ -38,7 +38,7 @@ def test_time_dim_gap_consumer_missing():
     # If c.time_dim is None, it used to skip. 
     # But I updated it to check if p.time_dim is NOT None when c.time_dim IS None.
     issues = check_shape_compatibility(k_p, k_c)
-    assert any("time_dim mismatch: consumer expects no sequence dimension" in i for i in issues)
+    assert any("Time dimension mismatch: provider has a sequence dimension (T)" in i for i in issues)
 
 def test_runtime_validation_success():
     """Verifies runtime validation of time_dim."""
