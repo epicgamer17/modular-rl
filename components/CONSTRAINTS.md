@@ -250,7 +250,7 @@ The `BlackboardEngine` enforces contract consistency before the first training s
 1.  **Dependency Resolution**: Ensures every `requires` path is produced by an earlier component or initial key.
 2.  **Semantic Compatibility**: Verifies that the provided `SemanticType` satisfies the consumer's requirement via `issubclass()` (e.g., `ValueEstimate[Categorical] ⊆ ValueEstimate`).
 3.  **Representation Consistency**: Uses `representation.get_metadata()` to ensure that providers and consumers agree on internal parameters (e.g., matching `vmin`, `vmax`, `bins`, or `num_classes`).
-4.  **Shape Integrity**: Lightweight validation of dimensionality (rank) and structural properties (e.g., `has_time=True`).
+4.  **Shape Integrity**: Lightweight validation of dimensionality (rank) and structural properties (e.g., `time_dim=1`).
 
 ### Rules for Optimal Pipelines:
 *   **Never Hardcode Contracts**: Components should discover their contracts from the agent network via `get_learner_contract()` where possible.

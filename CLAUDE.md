@@ -153,7 +153,7 @@ The engine enforces contract consistency before the first training step via `val
 1. **Dependency Resolution**: All `requires` paths must exist in the namespace.
 2. **Semantic Compatibility**: `SemanticType` subclassing check (Provider ⊆ Consumer).
 3. **Representation Consistency**: Exact match of metadata (vmin, vmax, bins, num_classes) between providers and consumers.
-4. **Shape Integrity**: Lightweight validation of dimensionality and structural properties via `ShapeContract`.
+4. **Shape Integrity**: Lightweight validation of dimensionality and structural properties via `ShapeContract` (e.g., `time_dim=1`).
 
 #### Execution Graph (`core/execution_graph.py`)
 The `ExecutionGraph` is an immutable DAG computed once at engine construction time:
@@ -235,8 +235,7 @@ Key(
 
 ShapeContract(
     ndim: Optional[int] = None,              # Expected tensor rank
-    has_time: Optional[bool] = None,         # Whether tensor has a time/sequence dimension
-    time_dim: Optional[int] = None,          # Axis index of time dimension (typically 1)
+    time_dim: Optional[int] = None,          # Axis index of time dimension (typically 1). None = no time.
     feature_shape: Optional[Tuple[int, ...]] = None,  # Non-batch, non-time shape
 )
 ```

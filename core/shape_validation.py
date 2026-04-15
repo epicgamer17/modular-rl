@@ -51,13 +51,13 @@ def validate_tensor(key: Key, value: Any) -> None:
                     f"feature_shape: expected {contract.feature_shape}, got {actual_feature}"
                 )
     
-    # Validate has_time + time_dim consistency
-    if contract.has_time is not None and contract.time_dim is not None:
-        has_time_dim = actual.ndim > contract.time_dim
-        if contract.has_time != has_time_dim:
-            errors.append(
-                f"has_time (time_dim={contract.time_dim}): "
-                f"expected {contract.has_time}, tensor has time at dim {contract.time_dim} = {has_time_dim}"
+    # Validate time_dim consistency
+    if contract.time_dim is not None:
+        # If time_dim is set, the tensor MUST have at least that many dimensions
+        if actual.ndim <= contract.time_dim:
+             errors.append(
+                f"time_dim validation: contract requires sequence dim at {contract.time_dim}, "
+                f"but tensor only has {actual.ndim} dimensions."
             )
     
     if errors:
