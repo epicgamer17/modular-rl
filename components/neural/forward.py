@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Optional, Set, Dict, Any, Union
 
 if TYPE_CHECKING:
     from modules.agent_nets.base import BaseAgentNetwork
-    from components.losses.infrastructure import ShapeValidator
 
 
 class ForwardPassComponent(PipelineComponent):
@@ -33,11 +32,9 @@ class ForwardPassComponent(PipelineComponent):
     def __init__(
         self,
         agent_network: "BaseAgentNetwork",
-        shape_validator: Optional["ShapeValidator"] = None,
         obs_key: str = "observations",
     ):
         self.agent_network = agent_network
-        self.shape_validator = shape_validator
         self._obs_key = obs_key
 
         # Deterministic contracts computed at initialization via network introspection
@@ -94,7 +91,7 @@ class ForwardPassComponent(PipelineComponent):
         apply_updates(blackboard, updates)
 
         predictions_dict = self.agent_network.learner_inference(
-            blackboard.data, shape_validator=self.shape_validator
+            blackboard.data
         )
 
         for k, v in predictions_dict.items():

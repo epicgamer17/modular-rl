@@ -13,8 +13,6 @@ from modules.heads.value import ValueHead
 from modules.heads.q import QHead, DuelingQHead
 from modules.representations import get_representation
 from core.contracts import SemanticType, Scalar, ValueEstimate, QValues
-from modules.projectors.sim_siam import Projector
-from components.losses import ShapeValidator
 
 
 class ModularAgentNetwork(BaseAgentNetwork):
@@ -141,7 +139,7 @@ class ModularAgentNetwork(BaseAgentNetwork):
             )
 
     def learner_inference(
-        self, batch: Dict[str, Any], shape_validator: Optional[ShapeValidator] = None
+        self, batch: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Universal Learner API: routes batch data appropriately based on components.
@@ -281,10 +279,6 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 output["chance_values"] = stochastic_chance_values
                 output["chance_encoder_embeddings"] = chance_encoder_embeddings
 
-            # --- VALIDATION ---
-            if shape_validator is not None:
-                shape_validator.validate_predictions(output)
-
             return output
 
         # ----------------------------------------
@@ -305,10 +299,6 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 "policies": policy_logits.unsqueeze(1),
             }
 
-            # --- VALIDATION ---
-            if shape_validator is not None:
-                shape_validator.validate_predictions(output)
-
             return output
 
         # ----------------------------------------
@@ -326,10 +316,6 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 "q_logits": Q_logits.unsqueeze(1),
             }
 
-            # --- VALIDATION ---
-            if shape_validator is not None:
-                shape_validator.validate_predictions(output)
-
             return output
 
         # ----------------------------------------
@@ -341,10 +327,6 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 x = self.components["feature_block"](initial_observation)
             logits, _, _ = self.components["policy_head"](x)
             output = {"policies": logits.unsqueeze(1)}
-
-            # --- VALIDATION ---
-            if shape_validator is not None:
-                shape_validator.validate_predictions(output)
 
             return output
 

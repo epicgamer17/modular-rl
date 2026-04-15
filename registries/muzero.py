@@ -63,7 +63,6 @@ from components.targets import (
     ScalarFormatterComponent,
     SequenceMaskComponent,
 )
-from components.losses import ShapeValidator
 from components.environments import (
     PettingZooObservationComponent,
     PettingZooStepComponent,
@@ -397,12 +396,6 @@ def make_muzero_learner(
     rew_rep = agent_network.components["world_model"].reward_head.representation
     tp_rep = agent_network.components["world_model"].to_play_head.representation
 
-    shape_validator = ShapeValidator(
-        minibatch_size=batch_size,
-        unroll_steps=unroll_steps,
-        num_actions=num_actions,
-        atom_size=1,
-    )
     priority_comp = ExpectedValueErrorPriorityComponent(value_representation=val_rep)
     buffer_update = PriorityUpdateComponent(
         priority_update_fn=replay_buffer.update_priorities
@@ -520,7 +513,7 @@ def make_muzero_learner(
 
     learner = BlackboardEngine(
         components=[
-            ForwardPassComponent(agent_network, shape_validator),
+            ForwardPassComponent(agent_network),
             SequencePadderComponent(
                 unroll_steps,
                 keys=[

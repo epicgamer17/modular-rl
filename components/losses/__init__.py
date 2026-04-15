@@ -3,8 +3,6 @@ from .infrastructure import (
     apply_infrastructure,
     LossAggregatorComponent,
     OptimizerStepComponent,
-    ShapeValidator,
-    ShapeValidatorComponent,
     MetricEarlyStopComponent,
     MPSCacheClearComponent,
     DeviceTransferComponent,

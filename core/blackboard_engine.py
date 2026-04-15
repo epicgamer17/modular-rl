@@ -5,10 +5,15 @@ import time
 from core.blackboard import Blackboard
 from core.component import PipelineComponent
 from core.contracts import Key, WriteMode
-from core.execution_graph import ExecutionGraph, build_execution_graph, _get_provides_with_modes
+from core.execution_graph import (
+    ExecutionGraph,
+    build_execution_graph,
+    _get_provides_with_modes,
+)
 from core.blackboard_diff import snapshot_blackboard, diff_snapshots, BlackboardDiff
 from core.path_resolver import resolve_blackboard_path, write_blackboard_path
 from core.shape_validation import validate_tensor
+
 
 def apply_updates(blackboard: Blackboard, updates: Dict[str, Any]) -> None:
     """
@@ -19,7 +24,6 @@ def apply_updates(blackboard: Blackboard, updates: Dict[str, Any]) -> None:
         return
     for path, value in updates.items():
         write_blackboard_path(blackboard, path, value)
-
 
 
 def _blackboard_has_path(blackboard: Blackboard, path: str) -> bool:
@@ -65,7 +69,8 @@ def _resolve_lazy_plan(
 
         # Components that mutate existing data can never be skipped
         has_mutation = any(
-            mode in (WriteMode.OVERWRITE, WriteMode.APPEND) for mode in provides_modes.values()
+            mode in (WriteMode.OVERWRITE, WriteMode.APPEND)
+            for mode in provides_modes.values()
         )
 
         if is_terminal or has_mutation:
@@ -97,10 +102,11 @@ class BlackboardEngine:
     - Optional lazy execution: skip components whose outputs are already
       present on the blackboard (enabled via ``lazy=True``)
     """
+
     def __init__(
-        self, 
-        components: List[PipelineComponent], 
-        device: torch.device, 
+        self,
+        components: List[PipelineComponent],
+        device: torch.device,
         initial_keys: Set[Key] = set(),
         target_keys: Optional[Set[Key]] = None,
         strict: bool = False,
@@ -117,85 +123,56 @@ class BlackboardEngine:
         self.target_keys = target_keys
 
         # Build the DAG execution graph (includes dependency + cycle checks)
-        self._graph: ExecutionGraph = build_execution_graph(components, initial_keys, target_keys)
+        self._graph: ExecutionGraph = build_execution_graph(
+            components, initial_keys, target_keys
+        )
 
     @property
     def execution_graph(self) -> ExecutionGraph:
         """Read-only access to the execution graph for introspection."""
         return self._graph
 
-    def step(self, batch_iterator: Iterable[Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
+    def step(
+        self,
+        batch_iterator: Iterable[Dict[str, Any]],
+        _restricted_plan: Optional[List[int]] = None,
+    ) -> Iterator[Dict[str, Any]]:
         t_last = time.perf_counter()
-
-        # Pre-resolve the static execution plan (used when lazy=False)
-        static_plan = self._graph.active_components()
 
         for batch in batch_iterator:
             # 1. Universal Time Mandate: Move Batch to Device explicitly here
             device_batch = {
-                k: v.to(self.device) if torch.is_tensor(v) else v 
+                k: v.to(self.device) if torch.is_tensor(v) else v
                 for k, v in batch.items()
             }
             blackboard = Blackboard(data=device_batch)
-            
-            # 2. Resolve execution plan (lazy or static)
-            if self.lazy:
-                lazy_order = _resolve_lazy_plan(self._graph, blackboard)
-                plan = [self._graph.components[i] for i in lazy_order]
+
+            # 2. Resolve execution plan (lazy or dynamic subgraph)
+            if _restricted_plan is not None:
+                plan_indices = _restricted_plan
+            elif self.lazy:
+                plan_indices = _resolve_lazy_plan(self._graph, blackboard)
             else:
-                plan = static_plan
+                plan_indices = self._graph.execution_order
 
-            # 3. DAG-sorted Pipeline Execution with Profiling
-            profiles = {}
-            diffs: List[BlackboardDiff] = []
-            for component in plan:
-                comp_name = type(component).__name__
-                t0 = time.perf_counter()
-                
-                # Runtime Validation (Strict Mode)
-                if self.strict:
-                    component.validate(blackboard)
-                
-                # Snapshot before (if diffing)
-                if self.diff:
-                    snap_before = snapshot_blackboard(blackboard)
+            plan = [self.components[i] for i in plan_indices]
 
-                outputs = component.execute(blackboard)
-                apply_updates(blackboard, outputs)
-                
-                # Runtime shape validation (strict mode only)
-                if self.strict:
-                    provides_modes = _get_provides_with_modes(component)
-                    for key in provides_modes:
-                        if key.path in outputs:
-                            validate_tensor(key, outputs[key.path])
-                
-                # Snapshot after and compute diff
-                if self.diff:
-                    snap_after = snapshot_blackboard(blackboard)
-                    diffs.append(diff_snapshots(comp_name, snap_before, snap_after, blackboard))
+            # 3. DAG-sorted Pipeline Execution
+            blackboard = self._execute_batch(blackboard, plan)
 
-                profiles[comp_name] = profiles.get(comp_name, 0) + (time.perf_counter() - t0)
-
-                if blackboard.meta.get("stop_execution"):
-                    break
-            
             # 4. Telemetry Output
             t_now = time.perf_counter()
             throughput = len(device_batch.get("actions", [0])) / (t_now - t_last)
             t_last = t_now
-            
+
             blackboard.meta["learner_throughput"] = throughput
-            blackboard.meta["component_profiles_ms"] = {
-                k: round(v * 1000, 3) for k, v in profiles.items()
-            }
             if self.lazy:
-                blackboard.meta["lazy_skipped"] = len(static_plan) - len(plan)
-            if self.diff:
-                blackboard.meta["blackboard_diffs"] = diffs
-            
+                blackboard.meta["lazy_skipped"] = len(
+                    self._graph.execution_order
+                ) - len(plan)
+
             self.training_step += 1
-            
+
             # Aggregate losses and metrics
             log_losses = {}
             total_losses = {}
@@ -215,7 +192,7 @@ class BlackboardEngine:
                     # Individual diagnostic losses
                     if torch.is_tensor(v):
                         log_losses[k] = v.item()
-            
+
             yield {
                 "losses": log_losses,
                 "total_losses": total_losses,
@@ -224,3 +201,70 @@ class BlackboardEngine:
 
             if blackboard.meta.get("stop_execution"):
                 break
+
+    def step_until(
+        self, batch_iterator: Iterable[Dict[str, Any]], target_keys: Set[Key]
+    ) -> Iterator[Dict[str, Any]]:
+        """
+        Similar to step(), but only executes the subgraph needed to reach target_keys.
+
+        This is useful for evaluation (stopping before losses) or introspection.
+        """
+        subgraph_indices = self._graph.subgraph(target_keys)
+        return self.step(batch_iterator, _restricted_plan=subgraph_indices)
+
+    def run_until(self, batch: Dict[str, Any], target_keys: Set[Key]) -> Dict[str, Any]:
+        """
+        Runs a single batch through the subgraph needed to reach target_keys and returns results.
+
+        Convenience for: next(engine.step_until([batch], target_keys))
+        """
+        return next(self.step_until([batch], target_keys))
+
+    def _execute_batch(
+        self, blackboard: Blackboard, plan: List[PipelineComponent]
+    ) -> Blackboard:
+        """Core execution loop for a pre-resolved plan on a single blackboard."""
+        profiles = {}
+        diffs: List[BlackboardDiff] = []
+
+        for component in plan:
+            comp_name = type(component).__name__
+            t0 = time.perf_counter()
+
+            if self.strict:
+                component.validate(blackboard)
+
+            if self.diff:
+                snap_before = snapshot_blackboard(blackboard)
+
+            outputs = component.execute(blackboard)
+            apply_updates(blackboard, outputs)
+
+            if self.strict:
+                provides_modes = _get_provides_with_modes(component)
+                for key in provides_modes:
+                    if key.path in outputs:
+                        validate_tensor(key, outputs[key.path])
+
+            if self.diff:
+                snap_after = snapshot_blackboard(blackboard)
+                diffs.append(
+                    diff_snapshots(comp_name, snap_before, snap_after, blackboard)
+                )
+
+            profiles[comp_name] = profiles.get(comp_name, 0) + (
+                time.perf_counter() - t0
+            )
+
+            if blackboard.meta.get("stop_execution"):
+                break
+
+        # Store metadata accumulated during graph run
+        blackboard.meta["component_profiles_ms"] = {
+            k: round(v * 1000, 3) for k, v in profiles.items()
+        }
+        if self.diff:
+            blackboard.meta["blackboard_diffs"] = diffs
+
+        return blackboard

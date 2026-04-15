@@ -84,6 +84,16 @@ class ExecutionGraph:
             f"{n_active} active, {n_pruned} pruned. ({total_dead} dead outputs)"
         )
 
+    def subgraph(self, target_keys: Set[Key]) -> List[int]:
+        """Return the subset of execution_order needed to reach the given target_keys.
+
+        This is used for partial graph execution (introspection/debugging).
+        """
+        # Note: we use the internal helpers already present in this module
+        target_indices = _find_target_components(list(self.components), self.provider_map, target_keys)
+        reachable = _backward_reachability(len(self.components), self.edges, target_indices)
+        return [idx for idx in self.execution_order if idx in reachable]
+
 
 # ──────────────────────────────────────────────────────────────────────
 # Helpers
@@ -132,6 +142,9 @@ def build_execution_graph(
     Raises:
         RuntimeError: On missing dependencies or dependency cycles.
     """
+    # If target_keys is None, it means the user wants NO pruning.
+    # We identify this by checking if it's None before we convert it to a set.
+    do_pruning = target_keys is not None
     if target_keys is None:
         target_keys = set()
 
@@ -217,8 +230,12 @@ def build_execution_graph(
     target_component_indices = _find_target_components(
         components, provider_map, target_keys
     )
-    reachable = _backward_reachability(n, frozen_edges, target_component_indices)
-    pruned = frozenset(set(range(n)) - reachable)
+    if do_pruning:
+        reachable = _backward_reachability(n, frozen_edges, target_component_indices)
+        pruned = frozenset(set(range(n)) - reachable)
+    else:
+        reachable = set(range(n))
+        pruned = frozenset()
 
     execution_order = tuple(i for i in topo_order if i not in pruned)
 
