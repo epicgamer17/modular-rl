@@ -44,11 +44,11 @@ class ExecutionGraph:
         pruned_indices:   Indices of components removed during pruning.
         provider_map:     ``{path: comp_idx}`` — who provides each path.
                           ``_INITIAL (-1)`` for paths in ``initial_keys``.
-        consumer_map:     ``{comp_idx: frozenset_of_downstream_consumer_indices}``.
-                          For each active component, which later active components
-                          read at least one of its provided paths.
         terminal_indices: Indices of components that are execution targets
                           (produce target_keys or have no provides).
+        used_outputs:     ``{comp_idx: frozenset_of_used_keys}``.
+                          For each component, the subset of its ``provides``
+                          that is consumed by at least one downstream component.
     """
 
     components: Tuple[PipelineComponent, ...]
@@ -56,8 +56,9 @@ class ExecutionGraph:
     execution_order: Tuple[int, ...]
     pruned_indices: FrozenSet[int]
     provider_map: Dict[Key, int]
-    consumer_map: Dict[int, FrozenSet[int]]
+    consumer_map: Dict[int, Dict[Key, FrozenSet[int]]]
     terminal_indices: FrozenSet[int]
+    used_outputs: Dict[int, FrozenSet[Key]] = field(default_factory=dict)
 
     # ── convenience ──────────────────────────────────────────────────
 
@@ -70,9 +71,17 @@ class ExecutionGraph:
         n_total = len(self.components)
         n_active = len(self.execution_order)
         n_pruned = len(self.pruned_indices)
+
+        # Calculate dead outputs across active components
+        total_dead = 0
+        for idx in self.execution_order:
+            provides = _get_provides_keys(self.components[idx])
+            used = self.used_outputs.get(idx, frozenset())
+            total_dead += len(provides - used)
+
         return (
             f"ExecutionGraph: {n_total} components → "
-            f"{n_active} active, {n_pruned} pruned"
+            f"{n_active} active, {n_pruned} pruned. ({total_dead} dead outputs)"
         )
 
 
@@ -213,8 +222,11 @@ def build_execution_graph(
 
     execution_order = tuple(i for i in topo_order if i not in pruned)
 
-    # ── 5. Build consumer map (for lazy execution) ───────────────────
-    consumer_map = _build_consumer_map(components, execution_order, provider_map)
+    # ── 5. Build granular consumer map ───────────────────────────────
+    # provider_idx -> {Key: {consumer_indices}}
+    consumer_map, used_outputs_raw = _build_granular_consumer_map(
+        components, execution_order, provider_map, target_keys
+    )
 
     graph = ExecutionGraph(
         components=comp_tuple,
@@ -224,6 +236,7 @@ def build_execution_graph(
         provider_map=provider_map,
         consumer_map=consumer_map,
         terminal_indices=frozenset(target_component_indices),
+        used_outputs={idx: frozenset(keys) for idx, keys in used_outputs_raw.items()},
     )
 
     # ── 6. Contract Validation Layer ─────────────────────────────────
@@ -329,26 +342,41 @@ def _backward_reachability(
     return reachable
 
 
-def _build_consumer_map(
+def _build_granular_consumer_map(
     components: List[PipelineComponent],
     execution_order: Tuple[int, ...],
     provider_map: Dict[Key, int],
-) -> Dict[int, FrozenSet[int]]:
-    """Build a map of provider_idx → {consumer indices that read its outputs}.
+    target_keys: Set[Key],
+) -> Tuple[Dict[int, Dict[Key, FrozenSet[int]]], Dict[int, Set[Key]]]:
+    """Build a granular map of provider_idx -> Key -> {consumer indices}.
 
-    Only considers active (non-pruned) components in *execution_order*.
+    Also identifies 'used_outputs' per component.
     """
     active_set = set(execution_order)
-    consumers: Dict[int, Set[int]] = defaultdict(set)
+    consumers: Dict[int, Dict[Key, Set[int]]] = defaultdict(lambda: defaultdict(set))
+    used_outputs: Dict[int, Set[Key]] = defaultdict(set)
 
+    # Walk all active components and their requirements
     for idx in execution_order:
         comp = components[idx]
         for req in comp.requires:
             provider_idx = provider_map.get(req, _INITIAL)
             if provider_idx != _INITIAL and provider_idx in active_set:
-                consumers[provider_idx].add(idx)
+                consumers[provider_idx][req].add(idx)
+                used_outputs[provider_idx].add(req)
 
-    return {idx: frozenset(s) for idx, s in consumers.items()}
+    # Also count target_keys as 'used'
+    for k in target_keys:
+        provider_idx = provider_map.get(k, _INITIAL)
+        if provider_idx != _INITIAL and provider_idx in active_set:
+            used_outputs[provider_idx].add(k)
+
+    # Frozen conversion for the final map
+    frozen_consumers = {
+        p_idx: {k: frozenset(c_set) for k, c_set in k_map.items()}
+        for p_idx, k_map in consumers.items()
+    }
+    return frozen_consumers, used_outputs
 
 
 def _validate_contracts(graph: ExecutionGraph, initial_keys: Set[Key]) -> None:
