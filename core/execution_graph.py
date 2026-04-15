@@ -16,6 +16,7 @@ construction time.  The ``BlackboardEngine`` iterates over its
 from __future__ import annotations
 
 import heapq
+import difflib
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, FrozenSet, List, Optional, Set, Tuple
@@ -182,10 +183,18 @@ def build_execution_graph(
 
     if missing_deps:
         lines = ["Missing dependencies in pipeline DAG:"]
+        available_paths = [k.path for k in provider_map.keys()]
         for idx, keys in missing_deps.items():
             name = type(components[idx]).__name__
-            lines.append(f"  [{idx}] {name}: needs {keys}")
-        lines.append(f"  Available keys: {sorted(provider_map.keys(), key=lambda k: k.path)}")
+            key_strings = []
+            for k in keys:
+                suggestions = difflib.get_close_matches(k.path, available_paths, n=3, cutoff=0.6)
+                s = f"'{k.path}'"
+                if suggestions:
+                    s += f" (did you mean: {suggestions}?)"
+                key_strings.append(s)
+            lines.append(f"  [{idx}] {name}: needs {', '.join(key_strings)}")
+        lines.append(f"  Available keys: {sorted(available_paths)}")
         raise RuntimeError("\n".join(lines))
 
     # ── 3. Topological sort (Kahn's, stable) ─────────────────────────
@@ -353,6 +362,8 @@ def _validate_contracts(graph: ExecutionGraph, initial_keys: Set[Key]) -> None:
     """
     # Track the full Key object for every available path
     available_contracts: Dict[str, Key] = {k.path: k for k in initial_keys}
+    # Track which component index provided each path
+    path_to_provider: Dict[str, int] = {k.path: _INITIAL for k in initial_keys}
 
     for idx in graph.execution_order:
         component = graph.components[idx]
@@ -362,17 +373,24 @@ def _validate_contracts(graph: ExecutionGraph, initial_keys: Set[Key]) -> None:
         for req in component.requires:
             # Stage 1: Dependency Resolution
             if req.path not in available_contracts:
-                missing.append(req.path)
+                suggestions = difflib.get_close_matches(req.path, list(available_contracts.keys()), n=3, cutoff=0.6)
+                msg = f"MISSING: '{req.path}'"
+                if suggestions:
+                    msg += f" (did you mean: {suggestions}?)"
+                missing.append(msg)
                 continue
 
             found_key = available_contracts[req.path]
+            provider_idx = path_to_provider[req.path]
+            provider_name = "INITIAL_KEYS" if provider_idx == _INITIAL else f"[{provider_idx}] {type(graph.components[provider_idx]).__name__}"
 
             # Stage 2: Semantic Compatibility
             # Generic semantic types must match or found_key must be a subclass
             if not issubclass(found_key.semantic_type, req.semantic_type):
                 incompatibilities.append(
-                    f"SEMANTIC MISMATCH for '{req.path}': expected {req.semantic_type}, "
-                    f"but found {found_key.semantic_type}"
+                    f"SEMANTIC MISMATCH for '{req.path}': \n"
+                    f"      - Consumer [{idx}] '{type(component).__name__}' expects {req.semantic_type}\n"
+                    f"      - Provider {provider_name} provided {found_key.semantic_type}"
                 )
 
             # Stage 3: Representation Consistency (Metadata)
@@ -383,16 +401,19 @@ def _validate_contracts(graph: ExecutionGraph, initial_keys: Set[Key]) -> None:
                         f"REPRESENTATION GAP for '{req.path}': consumer expects '{m_name}={m_value}', "
                         f"but provider metadata is missing this parameter."
                     )
-                elif found_key.metadata[m_name] != m_value:
                     incompatibilities.append(
-                        f"REPRESENTATION MISMATCH for '{req.path}.{m_name}': "
-                        f"expected {m_value}, provider has {found_key.metadata[m_name]}"
+                        f"REPRESENTATION MISMATCH for '{req.path}.{m_name}': \n"
+                        f"      - Consumer [{idx}] '{type(component).__name__}' expects {m_value}\n"
+                        f"      - Provider {provider_name} has {found_key.metadata[m_name]}"
                     )
 
             # Stage 4: Shape Integrity (Shape, Dtype, Symbolic)
             shape_issues = check_shape_compatibility(provider=found_key, consumer=req)
             for issue in shape_issues:
-                incompatibilities.append(f"SHAPE ERROR for '{req.path}': {issue}")
+                incompatibilities.append(
+                    f"SHAPE ERROR for '{req.path}': {issue}\n"
+                    f"      - Consumer [{idx}] '{type(component).__name__}' vs Provider {provider_name}"
+                )
 
         if missing or incompatibilities:
             error_header = f"DAG Topology Error at Component [{idx}] '{type(component).__name__}':"
@@ -413,7 +434,8 @@ def _validate_contracts(graph: ExecutionGraph, initial_keys: Set[Key]) -> None:
         provides_modes = _get_provides_with_modes(component)
         for prov, mode in provides_modes.items():
             # OVERWRITE requires the key to already exist (checked in build_execution_graph step 1)
-            # Register the key for downstream components
+            # Register the key and provider for downstream components
             available_contracts[prov.path] = prov
+            path_to_provider[prov.path] = idx
 
     print(f"DAG Contract Validation Passed: {len(graph.execution_order)} components verified.")
