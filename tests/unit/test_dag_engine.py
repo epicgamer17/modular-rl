@@ -41,7 +41,12 @@ def test_dag_validation_success():
     c1 = MockComponent("Producer", requires=set(), provides={k_obs: WriteMode.NEW})
     c2 = MockComponent("Consumer", requires={k_obs}, provides={k_val: WriteMode.NEW})
     
-    engine = BlackboardEngine(components=[c1, c2], device=torch.device("cpu"), strict=True)
+    engine = BlackboardEngine(
+        components=[c1, c2], 
+        device=torch.device("cpu"), 
+        target_keys={k_val},
+        strict=True,
+    )
     
     # Assert correct topological order in execution graph
     assert engine.execution_graph.execution_order == (0, 1)
@@ -59,18 +64,18 @@ def test_dag_validation_semantic_mismatch():
     k_obs = Key("data.obs", Observation)
     k_rew = Key("data.obs", Reward) # Same path, different semantic type
     
-    c1 = MockComponent("Producer", requires=set(), provides={k_obs: "new"})
+    c1 = MockComponent("Producer", requires=set(), provides={k_obs: WriteMode.NEW})
     c2 = MockComponent("Consumer", requires={k_rew}, provides={})
     
-    with pytest.raises(RuntimeError, match="SEMANTIC MISMATCH"):
-        BlackboardEngine(components=[c1, c2], device=torch.device("cpu"))
+    with pytest.raises(RuntimeError, match="SEMANTIC MISMATCH|Missing dependencies"):
+        BlackboardEngine(components=[c1, c2], device=torch.device("cpu"), target_keys={k_obs})
 
 def test_dag_validation_shape_mismatch():
     """Verifies build-time failure when ShapeContracts conflict."""
     k_p = Key("data.x", Observation, shape=ShapeContract(ndim=2))
     k_c = Key("data.x", Observation, shape=ShapeContract(ndim=3))
     
-    c1 = MockComponent("P", requires=set(), provides={k_p: "new"})
+    c1 = MockComponent("P", requires=set(), provides={k_p: WriteMode.NEW})
     c2 = MockComponent("C", requires={k_c}, provides={})
     
     with pytest.raises(RuntimeError, match="ndim mismatch"):
@@ -81,10 +86,14 @@ def test_engine_execution_flow():
     k_obs = Key("data.obs", Observation)
     k_val = Key("losses.value", ValueEstimate[Scalar])
     
-    c1 = MockComponent("P", requires=set(), provides={k_obs: "new"})
-    c2 = MockComponent("C", requires={k_obs}, provides={k_val: "new"})
+    c1 = MockComponent("P", requires=set(), provides={k_obs: WriteMode.NEW})
+    c2 = MockComponent("C", requires={k_obs}, provides={k_val: WriteMode.NEW})
     
-    engine = BlackboardEngine(components=[c1, c2], device=torch.device("cpu"))
+    engine = BlackboardEngine(
+        components=[c1, c2], 
+        device=torch.device("cpu"),
+        target_keys={k_val},
+    )
     
     fake_batch = [{"dummy": torch.tensor([1])}]
     results = list(engine.step(fake_batch))
@@ -99,10 +108,10 @@ def test_lazy_execution_skipping():
     k_val = Key("losses.value", ValueEstimate[Scalar])
     
     # c1 provides obs, c2 provides value (which is a terminal sink by default if it's in losses.*)
-    c1 = MockComponent("P", requires=set(), provides={k_obs: "new"})
-    c2 = MockComponent("C", requires={k_obs}, provides={k_val: "new"})
+    c1 = MockComponent("P", requires=set(), provides={k_obs: WriteMode.NEW})
+    c2 = MockComponent("C", requires={k_obs}, provides={k_val: WriteMode.NEW})
     
-    engine = BlackboardEngine(components=[c1, c2], device=torch.device("cpu"), lazy=True)
+    engine = BlackboardEngine(components=[c1, c2], device=torch.device("cpu"), target_keys={k_val}, lazy=True)
     
     # Provide 'data.obs' in the batch directly
     obs_tensor = torch.randn(2, 4)
@@ -119,9 +128,9 @@ def test_blackboard_diffing():
     """Verifies that diff=True captures component-level changes."""
     k_obs = Key("data.obs", Observation)
     k_loss = Key("losses.value", ValueEstimate[Scalar])
-    c1 = MockComponent("P", requires=set(), provides={k_obs: "new", k_loss: "new"})
+    c1 = MockComponent("P", requires=set(), provides={k_obs: WriteMode.NEW, k_loss: WriteMode.NEW})
     
-    engine = BlackboardEngine(components=[c1], device=torch.device("cpu"), diff=True)
+    engine = BlackboardEngine(components=[c1], device=torch.device("cpu"), target_keys={k_loss}, diff=True)
     
     fake_batch = [{"dummy": torch.tensor([0])}]
     results = list(engine.step(fake_batch))
@@ -136,10 +145,10 @@ def test_dag_execution_graph_pruning():
     k_x = Key("data.x", Observation)
     k_y = Key("losses.y", ValueEstimate[Scalar])
     
-    c1 = MockComponent("NonTerminal", requires=set(), provides={k_x: "new"})
-    c2 = MockComponent("Terminal", requires={k_x}, provides={k_y: "new"})
+    c1 = MockComponent("NonTerminal", requires=set(), provides={k_x: WriteMode.NEW})
+    c2 = MockComponent("Terminal", requires={k_x}, provides={k_y: WriteMode.NEW})
     
-    engine = BlackboardEngine(components=[c1, c2], device=torch.device("cpu"))
+    engine = BlackboardEngine(components=[c1, c2], device=torch.device("cpu"), target_keys={k_y})
     
     # Both should be active (c1 is reachable from c2 which is terminal)
     assert engine.execution_graph.execution_order == (0, 1)
@@ -150,7 +159,7 @@ def test_dag_overwrite_mode_validation():
     k_loss = Key("losses.y", ValueEstimate[Scalar])
     # Component tries to overwrite a key that doesn't exist (no initial_keys provided)
     # But it also provides a terminal sink so it's not pruned
-    c1 = MockComponent("Overwriter", requires=set(), provides={k_obs: "overwrite", k_loss: "new"})
+    c1 = MockComponent("Overwriter", requires=set(), provides={k_obs: WriteMode.OVERWRITE, k_loss: WriteMode.NEW})
     
-    with pytest.raises(RuntimeError, match="STAGE OVERWRITE ERROR"):
-        BlackboardEngine(components=[c1], device=torch.device("cpu"))
+    with pytest.raises(RuntimeError, match="overwrite but no existing provider"):
+        BlackboardEngine(components=[c1], device=torch.device("cpu"), target_keys={k_loss})

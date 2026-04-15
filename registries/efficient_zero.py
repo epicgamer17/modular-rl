@@ -230,6 +230,7 @@ def make_efficient_zero_learner(
         Done,
         Scalar,
         Probs,
+        LossScalar,
     )
 
     initial_keys = {
@@ -335,6 +336,8 @@ def make_efficient_zero_learner(
                 optimizers={"default": optimizer},
             ),
         ],
+        initial_keys=initial_keys,
+        target_keys={Key("losses.total_loss", LossScalar)},
         device=device,
     )
 

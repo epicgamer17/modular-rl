@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional, Set, Dict as TypedDict
 import torch
 import torch.nn as nn
 from core import PipelineComponent, Blackboard
-from core.contracts import Key, LossScalar, SemanticType, Epsilon, Metric, Observation
+from core.contracts import Key, LossScalar, WriteMode, SemanticType, Epsilon, Metric, Observation
 from core.validation import assert_in_blackboard
 from modules.utils import scale_gradient
 
@@ -24,14 +24,14 @@ class EpsilonDecayComponent(PipelineComponent):
         self.decay_steps = decay_steps
         self.current_step = 0
         self._requires = set()
-        self._provides = {Key("meta.epsilon", Epsilon): "new"}
+        self._provides = {Key("meta.epsilon", Epsilon): WriteMode.NEW}
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Dict[Key, str]:
+    def provides(self) -> Dict[Key, WriteMode]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -119,7 +119,7 @@ class LossAggregatorComponent(PipelineComponent):
         # Deterministic contracts computed at initialization
         self._requires = {Key(f"losses.{name}", LossScalar) for name in self.loss_weights.keys()}
         self._provides = {
-            Key("losses.total_loss", LossScalar): "new",
+            Key("losses.total_loss", LossScalar): WriteMode.NEW,
         }
 
     @property
@@ -127,7 +127,7 @@ class LossAggregatorComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Dict[Key, str]:
+    def provides(self) -> Dict[Key, WriteMode]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -184,7 +184,7 @@ class OptimizerStepComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Dict[Key, str]:
+    def provides(self) -> Dict[Key, WriteMode]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -266,7 +266,7 @@ class ShapeValidatorComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Dict[Key, str]:
+    def provides(self) -> Dict[Key, WriteMode]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -292,7 +292,7 @@ class MetricEarlyStopComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Dict[Key, str]:
+    def provides(self) -> Dict[Key, WriteMode]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -333,7 +333,7 @@ class MPSCacheClearComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Dict[Key, str]:
+    def provides(self) -> Dict[Key, WriteMode]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -361,7 +361,7 @@ class DeviceTransferComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Dict[Key, str]:
+    def provides(self) -> Dict[Key, WriteMode]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:

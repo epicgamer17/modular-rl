@@ -38,6 +38,7 @@ from core.contracts import (
     Mask,
     Scalar,
     Probs,
+    LossScalar,
 )
 from components.neural import ForwardPassComponent
 from components.losses import OptimizerStepComponent
@@ -564,6 +565,7 @@ def make_muzero_learner(
             ),
         ],
         initial_keys=learner_initial_keys,
+        target_keys={Key("losses.total_loss", LossScalar)},
         device=device,
     )
 

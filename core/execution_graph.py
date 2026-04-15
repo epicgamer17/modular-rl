@@ -46,8 +46,8 @@ class ExecutionGraph:
         consumer_map:     ``{comp_idx: frozenset_of_downstream_consumer_indices}``.
                           For each active component, which later active components
                           read at least one of its provided paths.
-        terminal_indices: Indices of components that are terminal sinks
-                          (losses.*, meta.*, or side-effect components).
+        terminal_indices: Indices of components that are execution targets
+                          (produce target_keys or have no provides).
     """
 
     components: Tuple[PipelineComponent, ...]
@@ -98,23 +98,21 @@ def _get_provides_with_modes(component: PipelineComponent) -> Dict[Key, WriteMod
 # Builder
 # ──────────────────────────────────────────────────────────────────────
 
-# Prefixes that mark a component as a terminal sink (never pruned).
-_DEFAULT_TERMINAL_PREFIXES: Tuple[str, ...] = ("losses.", "meta.")
-
 
 def build_execution_graph(
     components: List[PipelineComponent],
     initial_keys: Set[Key],
-    terminal_prefixes: Optional[Tuple[str, ...]] = None,
+    target_keys: Optional[Set[Key]] = None,
 ) -> ExecutionGraph:
     """Build, sort, and prune the execution graph.
 
     Args:
-        components:        Pipeline components in the user's preferred order.
-        initial_keys:      Keys available before any component runs
-                           (e.g. from the replay-buffer batch).
-        terminal_prefixes: Path prefixes that mark a component as a
-                           terminal sink.  Defaults to ``("losses.", "meta.")``.
+        components:   Pipeline components in the user's preferred order.
+        initial_keys: Keys available before any component runs
+                        (e.g. from the replay-buffer batch).
+        target_keys: Keys that are execution targets (e.g. loss keys).
+                    Components that produce these keys (or have no provides)
+                    are guaranteed to execute. If None, no pruning occurs.
 
     Returns:
         An immutable ``ExecutionGraph``.
@@ -122,8 +120,8 @@ def build_execution_graph(
     Raises:
         RuntimeError: On missing dependencies or dependency cycles.
     """
-    if terminal_prefixes is None:
-        terminal_prefixes = _DEFAULT_TERMINAL_PREFIXES
+    if target_keys is None:
+        target_keys = set()
 
     n = len(components)
     comp_tuple = tuple(components)
@@ -195,10 +193,11 @@ def build_execution_graph(
     topo_order = _topological_sort(n, edges)
 
     # ── 4. Prune unreachable components ──────────────────────────────
-    terminal_indices = _find_terminal_sinks(
-        components, frozen_edges, terminal_prefixes
+    # Find components that produce target keys OR have no provides (side-effects)
+    target_component_indices = _find_target_components(
+        components, provider_map, target_keys
     )
-    reachable = _backward_reachability(n, frozen_edges, terminal_indices)
+    reachable = _backward_reachability(n, frozen_edges, target_component_indices)
     pruned = frozenset(set(range(n)) - reachable)
 
     execution_order = tuple(i for i in topo_order if i not in pruned)
@@ -213,7 +212,7 @@ def build_execution_graph(
         pruned_indices=pruned,
         provider_map=provider_map,
         consumer_map=consumer_map,
-        terminal_indices=frozenset(terminal_indices),
+        terminal_indices=frozenset(target_component_indices),
     )
 
     print(graph.summary())
@@ -263,33 +262,31 @@ def _topological_sort(n: int, edges: Dict[int, Set[int]]) -> Tuple[int, ...]:
     return tuple(order)
 
 
-def _find_terminal_sinks(
+def _find_target_components(
     components: List[PipelineComponent],
-    edges: Dict[int, FrozenSet[int]],
-    terminal_prefixes: Tuple[str, ...],
+    provider_map: Dict[Key, int],
+    target_keys: Set[Key],
 ) -> Set[int]:
-    """Identify components that are terminal sinks (always kept).
+    """Identify components that are execution targets (never pruned).
 
-    A component is terminal if:
-    - It writes to a terminal-prefixed path (losses.*, meta.*), OR
+    A component is a target if:
+    - It produces one of the explicit target_keys, OR
     - It has no provides (side-effect component like a buffer writer).
     """
-    terminals: Set[int] = set()
+    targets: Set[int] = set()
+    
+    # Find components that produce target keys
+    for key in target_keys:
+        comp_idx = provider_map.get(key)
+        if comp_idx is not None and comp_idx != _INITIAL:
+            targets.add(comp_idx)
+    
+    # Side-effect components (no provides) are always targets
     for idx, comp in enumerate(components):
-        provides_keys = _get_provides_keys(comp)
+        if not _get_provides_keys(comp):
+            targets.add(idx)
 
-        # No provides → side-effect component, always keep
-        if not provides_keys:
-            terminals.add(idx)
-            continue
-
-        # Writes to a terminal prefix → always keep
-        for key in provides_keys:
-            if any(key.path.startswith(prefix) for prefix in terminal_prefixes):
-                terminals.add(idx)
-                break
-
-    return terminals
+    return targets
 
 
 def _backward_reachability(

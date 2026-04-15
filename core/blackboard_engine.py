@@ -182,6 +182,7 @@ class BlackboardEngine:
         components: List[PipelineComponent], 
         device: torch.device, 
         initial_keys: Set[Key] = set(),
+        target_keys: Optional[Set[Key]] = None,
         strict: bool = False,
         lazy: bool = False,
         diff: bool = False,
@@ -193,9 +194,10 @@ class BlackboardEngine:
         self.strict = strict
         self.lazy = lazy
         self.diff = diff
+        self.target_keys = target_keys
 
         # Build the DAG execution graph (includes dependency + cycle checks)
-        self._graph: ExecutionGraph = build_execution_graph(components, initial_keys)
+        self._graph: ExecutionGraph = build_execution_graph(components, initial_keys, target_keys)
 
         # Validate semantic contracts on the active (topologically sorted) components
         validate_recipe(self._graph.active_components(), initial_keys)

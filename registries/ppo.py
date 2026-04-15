@@ -37,6 +37,7 @@ from core.contracts import (
     Mask,
     Scalar,
     LogProbs,
+    LossScalar,
 )
 from components.telemetry import TelemetryComponent
 from components.neural import ForwardPassComponent
@@ -191,8 +192,9 @@ def make_ppo_learner(
         Key("data.returns", ValueTarget[Scalar]),
         Key("data.legal_moves_masks", Mask),
     }
+    target_keys = {Key("losses.total_loss", LossScalar)}
 
-    return BlackboardEngine(components=components, initial_keys=initial_keys, device=device)
+    return BlackboardEngine(components=components, initial_keys=initial_keys, target_keys=target_keys, device=device)
 
 
 def make_ppo_actor_engine(
