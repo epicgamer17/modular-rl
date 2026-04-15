@@ -1,5 +1,15 @@
+from enum import Enum
 from typing import Type, Dict, Any, Optional, Tuple, List, Union
 from dataclasses import dataclass, field
+
+
+class WriteMode(Enum):
+    """Write mode for pipeline component provides."""
+
+    NEW = "new"
+    OVERWRITE = "overwrite"
+    APPEND = "append"
+    OPTIONAL = "optional"
 
 
 @dataclass(frozen=True)

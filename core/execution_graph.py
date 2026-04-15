@@ -142,26 +142,23 @@ def build_execution_graph(
         for key, mode in provides_modes.items():
             existing_provider = key in provider_map
 
-            # "new": must NOT already exist
-            if mode == "new":
+            # NEW: must NOT already exist
+            if mode == WriteMode.NEW:
                 if existing_provider:
-                    duplicate_errors.append((idx, key, f'"new" key already provided'))
-            # "overwrite": MUST already exist (by initial_keys or previous component)
-            elif mode == "overwrite":
+                    duplicate_errors.append((idx, key, f"{WriteMode.NEW.value} key already provided"))
+            # OVERWRITE: MUST already exist (by initial_keys or previous component)
+            elif mode == WriteMode.OVERWRITE:
                 if not existing_provider:
-                    duplicate_errors.append((idx, key, '"overwrite" but no existing provider'))
+                    duplicate_errors.append((idx, key, f"{WriteMode.OVERWRITE.value} but no existing provider"))
                 provider_map[key] = idx
-            # "append": can add to existing
-            elif mode == "append":
+            # APPEND: can add to existing
+            elif mode == WriteMode.APPEND:
                 provider_map[key] = idx
-            # "optional": may or may not exist, allow both
-            elif mode == "optional":
+            # OPTIONAL: may or may not exist, allow both
+            elif mode == WriteMode.OPTIONAL:
                 provider_map[key] = idx
-            # Unknown mode: default to "new" behavior (error on existing)
             else:
-                if existing_provider:
-                    duplicate_errors.append((idx, key, f'unknown mode "{mode}" but key already provided'))
-                provider_map[key] = idx
+                raise ValueError(f"Unknown WriteMode: {mode}")
 
     if duplicate_errors:
         lines = ["Duplicate provider detected in pipeline DAG:"]

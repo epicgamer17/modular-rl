@@ -4,7 +4,7 @@ import time
 
 from core.blackboard import Blackboard
 from core.component import PipelineComponent
-from core.contracts import Key, check_shape_compatibility
+from core.contracts import Key, check_shape_compatibility, WriteMode
 from core.execution_graph import ExecutionGraph, build_execution_graph, _get_provides_keys, _get_provides_with_modes
 from core.blackboard_diff import snapshot_blackboard, diff_snapshots, BlackboardDiff
 from core.path_resolver import resolve_blackboard_path, write_blackboard_path
@@ -85,11 +85,11 @@ def validate_recipe(components: List[PipelineComponent], initial_keys: Set[Key])
 
         # Update available keys with component provisions
         provides = component.provides
-        provides_items = provides.items() if isinstance(provides, dict) else [(k, "new") for k in provides]
+        provides_modes = _get_provides_with_modes(component)
         
-        for prov, mode in provides_items:
-            # Mode 'overwrite' requires the path to already exist
-            if mode == "overwrite" and prov.path not in available_contracts:
+        for prov, mode in provides_modes.items():
+            # OVERWRITE requires the key to already exist
+            if mode == WriteMode.OVERWRITE and prov.path not in available_contracts:
                 raise RuntimeError(
                     f"STAGE OVERWRITE ERROR: Component '{type(component).__name__}' "
                     f"attempts to overwrite non-existent key '{prov.path}'"
@@ -144,7 +144,7 @@ def _resolve_lazy_plan(
 
         # Components that mutate existing data can never be skipped
         has_mutation = any(
-            mode in ("overwrite", "append") for mode in provides_modes.values()
+            mode in (WriteMode.OVERWRITE, WriteMode.APPEND) for mode in provides_modes.values()
         )
 
         if is_terminal or has_mutation:
