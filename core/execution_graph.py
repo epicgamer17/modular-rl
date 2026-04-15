@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Dict, FrozenSet, List, Optional, Set, Tuple
 
 from core.component import PipelineComponent
-from core.contracts import Key
+from core.contracts import Key, WriteMode
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -86,12 +86,12 @@ def _get_provides_keys(component: PipelineComponent) -> Set[Key]:
         return set(provides.keys())
     return provides
 
-def _get_provides_with_modes(component: PipelineComponent) -> Dict[Key, str]:
-    """Extract {Key: write_mode} from a component's provides."""
+def _get_provides_with_modes(component: PipelineComponent) -> Dict[Key, WriteMode]:
+    """Extract {Key: WriteMode} from a component's provides."""
     provides = component.provides
     if isinstance(provides, dict):
         return provides
-    return {k: "new" for k in provides}
+    return {k: WriteMode.NEW for k in provides}
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -130,15 +130,45 @@ def build_execution_graph(
 
     # ── 1. Build provider map ────────────────────────────────────────
     provider_map: Dict[Key, int] = {}
+    duplicate_errors: List[Tuple[int, Key, str]] = []
 
     # Seed with initial keys
     for key in initial_keys:
         provider_map[key] = _INITIAL
 
-    # Register each component's provides
+    # Register each component's provides (with duplicate detection)
     for idx, comp in enumerate(components):
-        for key in _get_provides_keys(comp):
-            provider_map[key] = idx
+        provides_modes = _get_provides_with_modes(comp)
+        for key, mode in provides_modes.items():
+            existing_provider = key in provider_map
+
+            # "new": must NOT already exist
+            if mode == "new":
+                if existing_provider:
+                    duplicate_errors.append((idx, key, f'"new" key already provided'))
+            # "overwrite": MUST already exist (by initial_keys or previous component)
+            elif mode == "overwrite":
+                if not existing_provider:
+                    duplicate_errors.append((idx, key, '"overwrite" but no existing provider'))
+                provider_map[key] = idx
+            # "append": can add to existing
+            elif mode == "append":
+                provider_map[key] = idx
+            # "optional": may or may not exist, allow both
+            elif mode == "optional":
+                provider_map[key] = idx
+            # Unknown mode: default to "new" behavior (error on existing)
+            else:
+                if existing_provider:
+                    duplicate_errors.append((idx, key, f'unknown mode "{mode}" but key already provided'))
+                provider_map[key] = idx
+
+    if duplicate_errors:
+        lines = ["Duplicate provider detected in pipeline DAG:"]
+        for idx, key, reason in duplicate_errors:
+            name = type(components[idx]).__name__
+            lines.append(f"  [{idx}] {name}: {key.path} — {reason}")
+        raise RuntimeError("\n".join(lines))
 
     # ── 2. Build dependency edges ────────────────────────────────────
     edges: Dict[int, Set[int]] = {i: set() for i in range(n)}
