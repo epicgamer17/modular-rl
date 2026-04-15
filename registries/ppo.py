@@ -37,6 +37,7 @@ from core.contracts import (
     Mask,
     Scalar,
     LogProbs,
+    LossScalar,
 )
 from components.telemetry import TelemetryComponent
 from components.neural import ForwardPassComponent
@@ -46,7 +47,6 @@ from components.losses import (
     LossAggregatorComponent,
     ClippedSurrogateLoss,
     ClippedValueLoss,
-    ShapeValidator,
 )
 from components.targets import (
     ScalarFormatterComponent,
@@ -145,11 +145,6 @@ def make_ppo_learner(
     pol_rep = agent_network.components["policy_head"].representation
     val_rep = agent_network.components["value_head"].representation
 
-    shape_validator = ShapeValidator(
-        minibatch_size=minibatch_size,
-        num_actions=num_actions,
-        unroll_steps=0,
-    )
 
     policy_loss = ClippedSurrogateLoss(
         clip_param=clip_param,
@@ -167,7 +162,7 @@ def make_ppo_learner(
     )
 
     components = [
-        ForwardPassComponent(agent_network, shape_validator),
+        ForwardPassComponent(agent_network),
         ScalarFormatterComponent(source_key="data.values", dest_key="values", representation=val_rep, semantic_type=ValueEstimate),
         ScalarFormatterComponent(source_key="data.returns", dest_key="returns", representation=val_rep, semantic_type=ValueTarget),
         policy_loss,
@@ -191,8 +186,9 @@ def make_ppo_learner(
         Key("data.returns", ValueTarget[Scalar]),
         Key("data.legal_moves_masks", Mask),
     }
+    target_keys = {Key("losses.total_loss", LossScalar)}
 
-    return BlackboardEngine(components=components, initial_keys=initial_keys, device=device)
+    return BlackboardEngine(components=components, initial_keys=initial_keys, target_keys=target_keys, device=device)
 
 
 def make_ppo_actor_engine(

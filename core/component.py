@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Set, Optional, Any, Dict
-from core.contracts import Key
+from core.contracts import Key, WriteMode
 
 if TYPE_CHECKING:
     from core.blackboard import Blackboard
@@ -23,17 +23,17 @@ class PipelineComponent(ABC):
 
     @property
     @abstractmethod
-    def provides(self) -> dict[Key, str]:
+    def provides(self) -> Dict[Key, WriteMode]:
         """
         Keys produced by this component and their write modes. 
         MUST be deterministic after initialization. 
         Recommended: Compute once in __init__ and return a private attribute.
         
         Write Modes:
-        - "new": Key must not already exist (default).
-        - "overwrite": Key must exist.
-        - "append": Data is added to an existing collection.
-        - "optional": Key may or may not be produced.
+        - NEW: Key must not already exist (default).
+        - OVERWRITE: Key must exist.
+        - APPEND: Data is added to an existing collection.
+        - OPTIONAL: Key may or may not be produced.
         """
         pass
 
@@ -53,8 +53,12 @@ class PipelineComponent(ABC):
     def execute(self, blackboard: "Blackboard") -> Dict[str, Any]:
         """
         Execute this component's logic and return a dictionary of changes
-        to be written by the framework. Returning an empty dict {} is valid
-        if the component only performs in-place mutations (not recommended).
+        to be written by the framework. 
+        
+        STRICT RULES:
+        1. In-place mutation of the 'blackboard' argument is FORBIDDEN.
+           The framework passes a frozen view; attempting to mutate will raise a TypeError.
+        2. All outputs MUST be returned as a dictionary of path-based updates.
         
         Example Return: {"losses.value_loss": tensor}
         """

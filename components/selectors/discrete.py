@@ -409,30 +409,42 @@ class NFSPSelectorComponent(PipelineComponent):
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         import random
+        from core.blackboard import Blackboard
 
         eta = blackboard.meta.get("eta", self.eta)
         updates = {}
 
         if random.random() < eta:
             updates["meta.policy_used"] = "best_response"
-            # Swap prefixed keys to standard keys for the child selector
-            original_preds = blackboard.predictions.copy()
+            temp_predictions = dict(blackboard.predictions)
             for key in ["logits", "probs", "q_values", "value", "extra_metadata"]:
                 prefixed_key = self.br_prefix + key
-                if prefixed_key in original_preds:
-                    blackboard.predictions[key] = original_preds[prefixed_key]
+                if prefixed_key in blackboard.predictions:
+                    temp_predictions[key] = blackboard.predictions[prefixed_key]
 
-            updates.update(self.br_selector.execute(blackboard))
-            blackboard.predictions = original_preds
+            temp_bb = Blackboard(
+                data=blackboard.data,
+                predictions=temp_predictions,
+                targets=blackboard.targets,
+                losses=blackboard.losses,
+                meta=blackboard.meta,
+            )
+            updates.update(self.br_selector.execute(temp_bb))
         else:
             updates["meta.policy_used"] = "average_strategy"
-            original_preds = blackboard.predictions.copy()
+            temp_predictions = dict(blackboard.predictions)
             for key in ["logits", "probs", "q_values", "value", "extra_metadata"]:
                 prefixed_key = self.avg_prefix + key
-                if prefixed_key in original_preds:
-                    blackboard.predictions[key] = original_preds[prefixed_key]
+                if prefixed_key in blackboard.predictions:
+                    temp_predictions[key] = blackboard.predictions[prefixed_key]
 
-            updates.update(self.avg_selector.execute(blackboard))
-            blackboard.predictions = original_preds
+            temp_bb = Blackboard(
+                data=blackboard.data,
+                predictions=temp_predictions,
+                targets=blackboard.targets,
+                losses=blackboard.losses,
+                meta=blackboard.meta,
+            )
+            updates.update(self.avg_selector.execute(temp_bb))
 
         return updates

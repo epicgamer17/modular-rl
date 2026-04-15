@@ -1,5 +1,16 @@
+from enum import Enum
 from typing import Type, Dict, Any, Optional, Tuple, List, Union
+import torch
 from dataclasses import dataclass, field
+
+
+class WriteMode(Enum):
+    """Write mode for pipeline component provides."""
+
+    NEW = "new"
+    OVERWRITE = "overwrite"
+    APPEND = "append"
+    OPTIONAL = "optional"
 
 
 @dataclass(frozen=True)
@@ -43,6 +54,7 @@ class Categorical(Structure):
 
 @dataclass(frozen=True)
 class Quantile(Structure):
+    # TODO: what is this actually used for?
     n: int
 
     def __repr__(self) -> str:
@@ -95,17 +107,81 @@ class ShapeContract:
 
     Fields:
         ndim:          Expected tensor rank (e.g. 2 for [B, A], 3 for [B, T, A]).
-        has_time:      Whether the tensor carries a time/sequence dimension.
-                       None = unspecified, True = has time, False = no time.
         time_dim:      Axis index of the time dimension (typically 1 for [B, T, *]).
-        feature_shape: Shape of the non-batch, non-time dimensions
+                       None = no time/sequence dimension.
+        event_shape:   Shape of the non-batch, non-time dimensions
                        (e.g. (9,) for a 9-action policy vector).
+                       Excludes batch and time dimensions.
+        symbolic:      Symbolic dimension names for documentation/validation.
+                       e.g., ("B", "T", "C") means [Batch, Time, Channels].
+        dtype:         Expected torch dtype (e.g., torch.float32, torch.int64).
     """
 
     ndim: Optional[int] = None
-    has_time: Optional[bool] = None
     time_dim: Optional[int] = None
-    feature_shape: Optional[Tuple[int, ...]] = None
+    event_shape: Optional[Tuple[int, ...]] = None
+    symbolic: Optional[Tuple[str, ...]] = None
+    dtype: Optional[torch.dtype] = None
+
+    def __post_init__(self) -> None:
+        """Enforce internal consistency of the shape contract."""
+        if self.ndim is not None:
+            assert self.ndim > 0, f"ndim must be positive, got {self.ndim}"
+
+        if self.time_dim is not None:
+            if self.ndim is not None:
+                assert self.time_dim < self.ndim, (
+                    f"time_dim {self.time_dim} out of bounds for ndim {self.ndim}"
+                )
+            assert self.time_dim != 0, "time_dim cannot be 0 (reserved for batch dimension)"
+
+        if self.event_shape is not None:
+            if self.ndim is not None:
+                expected_ndim = len(self.event_shape) + 1
+                if self.time_dim is not None:
+                    expected_ndim += 1
+                assert self.ndim == expected_ndim, (
+                    f"ShapeContract inconsistency: ndim={self.ndim} does not match "
+                    f"event_shape={self.event_shape} (len={len(self.event_shape)}) + "
+                    f"batch(1) + time({1 if self.time_dim is not None else 0}). "
+                    f"Expected ndim {expected_ndim}."
+                )
+
+        if self.symbolic is not None:
+            if self.ndim is not None:
+                assert len(self.symbolic) == self.ndim, (
+                    f"Symbolic dims {self.symbolic} (len={len(self.symbolic)}) "
+                    f"must match ndim {self.ndim}"
+                )
+            if self.event_shape is not None:
+                expected_len = len(self.event_shape) + 1
+                if self.time_dim is not None:
+                    expected_len += 1
+                assert len(self.symbolic) == expected_len, (
+                    f"Symbolic dims {self.symbolic} (len={len(self.symbolic)}) "
+                    f"must match event_shape {self.event_shape} + batch/time (expected {expected_len})"
+                )
+
+    def format_shape(self) -> str:
+        """Return a human-readable shape string using symbolic names if available."""
+        if self.symbolic:
+            return f"({', '.join(self.symbolic)})"
+
+        # Fallback to building from ndim/event_shape/time_dim
+        parts = ["B"]
+        if self.time_dim is not None:
+            parts.append("T")
+
+        if self.event_shape is not None:
+            for s in self.event_shape:
+                parts.append(str(s))
+        elif self.ndim is not None:
+            # Add placeholders for unknown dims
+            needed = self.ndim - len(parts)
+            for _ in range(needed):
+                parts.append("?")
+
+        return f"({', '.join(parts)})"
 
 
 def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
@@ -113,48 +189,101 @@ def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
     Check whether a provider Key's shape contract satisfies a consumer's requirements.
 
     Returns a list of human-readable incompatibility strings (empty = compatible).
-    Checks are opt-in: if either side leaves a field as None, that field is skipped.
+    Checks are opt-in: if the consumer field is None, that field is skipped.
+    If the consumer HAS a requirement but the provider is None, it is reported as a gap.
     """
-    p = provider.shape
     c = consumer.shape
-
-    # No constraints declared on either side — nothing to check.
-    if c is None or p is None:
+    if c is None:
         return []
+
+    p = provider.shape
+    if p is None:
+        return [
+            f"contract gap: consumer requires {c}, but provider is opaque (no shape contract)"
+        ]
 
     issues: List[str] = []
 
-    # ndim
-    if c.ndim is not None and p.ndim is not None and c.ndim != p.ndim:
-        issues.append(
-            f"ndim mismatch: consumer expects {c.ndim}, provider declares {p.ndim}"
-        )
-
-    # Time dimension presence
-    if c.has_time is True and p.has_time is False:
-        issues.append(
-            "time dimension mismatch: consumer expects a time dimension, "
-            "provider explicitly declares none"
-        )
-    if c.has_time is False and p.has_time is True:
-        issues.append(
-            "time dimension mismatch: consumer expects no time dimension, "
-            "provider declares one"
-        )
-
-    # Time dimension position
-    if c.time_dim is not None and p.time_dim is not None and c.time_dim != p.time_dim:
-        issues.append(
-            f"time_dim position mismatch: consumer expects dim {c.time_dim}, "
-            f"provider declares dim {p.time_dim}"
-        )
-
-    # Feature shape
-    if c.feature_shape is not None and p.feature_shape is not None:
-        if c.feature_shape != p.feature_shape:
+    # Stage 4.1: Rank and required dimensions existence
+    if c.ndim is not None:
+        if p.ndim is None:
             issues.append(
-                f"feature_shape mismatch: consumer expects {c.feature_shape}, "
-                f"provider declares {p.feature_shape}"
+                f"ndim gap: consumer requires rank {c.ndim}, but provider does not declare one"
+            )
+        elif c.ndim != p.ndim:
+            issues.append(
+                f"Rank mismatch: consumer requires {c.ndim} dimensions, but provider gives {p.ndim}"
+            )
+
+    # Stage 4.2: Time dimension presence and position
+    if c.time_dim is not None:
+        if p.time_dim is None:
+            issues.append(
+                f"Time dimension gap: consumer requires sequence dim at {c.time_dim}, but provider declares no sequence dimension"
+            )
+        elif c.time_dim != p.time_dim:
+            issues.append(
+                f"Time dimension position mismatch: consumer expects sequence dim at {c.time_dim}, "
+                f"provider declares sequence dim at {p.time_dim}"
+            )
+    elif p.time_dim is not None:
+        # Consumer explicitly expects NO time dimension (time_dim=None), but provider HAS one
+        issues.append(
+            f"Time dimension mismatch: provider has a sequence dimension (T), but consumer does not expect one"
+        )
+
+    # Stage 4.3: Event shape and Safe Broadcasting
+    if c.event_shape is not None and p.event_shape is not None:
+        if c.event_shape != p.event_shape:
+            # Check for broadcasting compatibility:
+            # Rule: Dimensions must match or one of them must be 1.
+            # We assume tensors are right-aligned (standard PyTorch broadcasting).
+            p_feat = p.event_shape
+            c_feat = c.event_shape
+
+            is_compatible = True
+            if len(p_feat) > len(c_feat):
+                is_compatible = False
+            else:
+                # Pad p_feat with 1s on the left to match length
+                p_padded = (1,) * (len(c_feat) - len(p_feat)) + p_feat
+                for p_dim, c_dim in zip(p_padded, c_feat):
+                    if p_dim != c_dim and p_dim != 1 and c_dim != 1:
+                        is_compatible = False
+                        break
+
+            if not is_compatible:
+                issues.append(
+                    f"shape mismatch (unsafe broadcasting): consumer expects {c.event_shape}, "
+                    f"but provider provides {p.event_shape} which is not broadcast-compatible."
+                )
+
+    # Stage 4.4: Symbolic Dimensions Consistency
+    if c.symbolic is not None:
+        if p.symbolic is None:
+            issues.append(
+                f"symbolic gap: consumer requires {c.symbolic}, but provider does not declare symbolic names"
+            )
+        elif len(c.symbolic) != len(p.symbolic):
+            issues.append(
+                f"symbolic rank mismatch: consumer has {len(c.symbolic)} dims {c.symbolic}, "
+                f"provider has {len(p.symbolic)} dims {p.symbolic}"
+            )
+        elif c.symbolic != p.symbolic:
+            issues.append(
+                f"symbolic mismatch: consumer expects {c.symbolic}, "
+                f"provider declares {p.symbolic}"
+            )
+
+    # Stage 4.5: Dtype check
+    if c.dtype is not None:
+        if p.dtype is None:
+            issues.append(
+                f"dtype gap: consumer requires {c.dtype}, but provider does not declare one"
+            )
+        elif c.dtype != p.dtype:
+            issues.append(
+                f"dtype mismatch: consumer expects {c.dtype}, provider declares {p.dtype}"
             )
 
     return issues
@@ -185,7 +314,18 @@ class Key:
         if self.metadata:
             parts.append(f"metadata={self.metadata}")
         if self.shape is not None:
-            parts.append(f"shape={self.shape}")
+            shape_parts = []
+            if self.shape.symbolic:
+                shape_parts.append(f"symbolic={self.shape.symbolic}")
+            if self.shape.dtype:
+                shape_parts.append(f"dtype={self.shape.dtype}")
+            if self.shape.ndim is not None:
+                shape_parts.append(f"ndim={self.shape.ndim}")
+            if self.shape.time_dim is not None:
+                shape_parts.append(f"time_dim={self.shape.time_dim}")
+            if self.shape.event_shape is not None:
+                shape_parts.append(f"event={self.shape.event_shape}")
+            parts.append(f"shape({', '.join(shape_parts)})")
         return f"Key({', '.join(parts)})"
 
 

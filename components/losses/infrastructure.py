@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional, Set, Dict as TypedDict
 import torch
 import torch.nn as nn
 from core import PipelineComponent, Blackboard
-from core.contracts import Key, LossScalar, SemanticType, Epsilon, Metric, Observation
+from core.contracts import Key, LossScalar, WriteMode, SemanticType, Epsilon, Metric, Observation
 from core.validation import assert_in_blackboard
 from modules.utils import scale_gradient
 
@@ -24,14 +24,14 @@ class EpsilonDecayComponent(PipelineComponent):
         self.decay_steps = decay_steps
         self.current_step = 0
         self._requires = set()
-        self._provides = {Key("meta.epsilon", Epsilon): "new"}
+        self._provides = {Key("meta.epsilon", Epsilon): WriteMode.NEW}
 
     @property
     def requires(self) -> Set[Key]:
         return self._requires
 
     @property
-    def provides(self) -> Dict[Key, str]:
+    def provides(self) -> Dict[Key, WriteMode]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -119,7 +119,7 @@ class LossAggregatorComponent(PipelineComponent):
         # Deterministic contracts computed at initialization
         self._requires = {Key(f"losses.{name}", LossScalar) for name in self.loss_weights.keys()}
         self._provides = {
-            Key("losses.total_loss", LossScalar): "new",
+            Key("losses.total_loss", LossScalar): WriteMode.NEW,
         }
 
     @property
@@ -127,7 +127,7 @@ class LossAggregatorComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Dict[Key, str]:
+    def provides(self) -> Dict[Key, WriteMode]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -184,7 +184,7 @@ class OptimizerStepComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Dict[Key, str]:
+    def provides(self) -> Dict[Key, WriteMode]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -209,73 +209,7 @@ class OptimizerStepComponent(PipelineComponent):
         return {"meta.optimizer_steps": 1}
 
 
-class ShapeValidator:
-    """Validates tensor shapes."""
 
-    def __init__(
-        self,
-        minibatch_size: int,
-        unroll_steps: int = 0,
-        num_actions: int = 0,
-        atom_size: int = 1,
-        support_range: Optional[int] = None,
-    ):
-        self.B = minibatch_size
-        self.K = unroll_steps
-        self.num_actions = num_actions
-        self.atom_size = atom_size
-        if self.atom_size == 1 and support_range is not None:
-            self.atom_size = (support_range * 2) + 1
-        self.T = self.K + 1
-
-    def validate(
-        self, predictions: Dict[str, torch.Tensor], targets: Dict[str, torch.Tensor]
-    ) -> None:
-        self.validate_predictions(predictions)
-        for key, tensor in targets.items():
-            if torch.is_tensor(tensor):
-                self._check_shape_strict(key, tensor, is_prediction=False)
-
-    def validate_predictions(self, predictions: Dict[str, torch.Tensor]) -> None:
-        for key, tensor in predictions.items():
-            if torch.is_tensor(tensor):
-                self._check_shape_strict(key, tensor, is_prediction=True)
-
-    def _check_shape_strict(
-        self, key: str, tensor: torch.Tensor, is_prediction: bool
-    ) -> None:
-        if key in ["weights", "gradient_scales", "metrics"]:
-            return
-        shape = list(tensor.shape)
-        prefix = f"[{'Prediction' if is_prediction else 'Target'}] '{key}'"
-        assert shape[0] == self.B, f"{prefix} B mismatch: {self.B} vs {shape[0]}"
-        assert len(shape) >= 2, f"{prefix} dim < 2: {shape}"
-        assert shape[1] == self.T, f"{prefix} T mismatch: {self.T} vs {shape[1]}"
-
-
-class ShapeValidatorComponent(PipelineComponent):
-    """Pipeline Component wrapper for ShapeValidator."""
-
-    def __init__(self, validator: ShapeValidator):
-        self.validator = validator
-        self._requires = {Key("predictions", SemanticType), Key("targets", SemanticType)}
-        self._provides = {}
-
-    @property
-    def requires(self) -> Set[Key]:
-        return self._requires
-
-    @property
-    def provides(self) -> Dict[Key, str]:
-        return self._provides
-
-    def validate(self, blackboard: Blackboard) -> None:
-        """Delegates shape validation to the ShapeValidator."""
-        self.validator.validate(blackboard.predictions, blackboard.targets)
-
-    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        """Shape validation is handled entirely in validate()."""
-        return {}
 
 
 class MetricEarlyStopComponent(PipelineComponent):
@@ -292,7 +226,7 @@ class MetricEarlyStopComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Dict[Key, str]:
+    def provides(self) -> Dict[Key, WriteMode]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -333,7 +267,7 @@ class MPSCacheClearComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Dict[Key, str]:
+    def provides(self) -> Dict[Key, WriteMode]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -361,7 +295,7 @@ class DeviceTransferComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Dict[Key, str]:
+    def provides(self) -> Dict[Key, WriteMode]:
         return self._provides
 
     def validate(self, blackboard: Blackboard) -> None:

@@ -142,7 +142,7 @@ def make_dqn_learner(
     """
     q_loss = QBootstrappingLoss(is_categorical=False, name="q_loss")
 
-    from core.contracts import Key, Observation, Action, Reward, Done, Mask, SemanticType
+    from core.contracts import Key, Observation, Action, Reward, Done, Mask, SemanticType, LossScalar
     initial_keys = {
         Key("data.observations", Observation),
         Key("data.actions", Action),
@@ -153,6 +153,7 @@ def make_dqn_learner(
         Key("data.dones", Done),
         Key("data.next_legal_moves_masks", Mask),
     }
+    target_keys = {Key("losses.total_loss", LossScalar)}
 
     return BlackboardEngine(
         components=[
@@ -170,5 +171,6 @@ def make_dqn_learner(
             ),
         ],
         initial_keys=initial_keys,
+        target_keys=target_keys,
         device=device,
     )

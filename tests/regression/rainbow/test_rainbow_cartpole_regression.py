@@ -192,7 +192,7 @@ def test_rainbow_cartpole_full_training():
         TelemetryComponent(name="rainbow_regression"),
         BufferStoreComponent(replay_buffer, field_map=rainbow_field_map),
     ]
-    collector = BlackboardEngine(collection_components, device=DEVICE)
+    collector = BlackboardEngine(collection_components, device=DEVICE, strict=True)
 
     # Evaluation Pipeline
     eval_obs_comp = GymObservationComponent(env)
@@ -203,7 +203,7 @@ def test_rainbow_cartpole_full_training():
         GymStepComponent(env, eval_obs_comp),
         TelemetryComponent(name="rainbow_eval"),
     ]
-    evaluator = BlackboardEngine(eval_components, device=DEVICE)
+    evaluator = BlackboardEngine(eval_components, device=DEVICE, strict=True)
 
     # --- Training Loop ---
     training_scores = []

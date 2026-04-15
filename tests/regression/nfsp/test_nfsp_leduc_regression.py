@@ -223,6 +223,7 @@ def test_nfsp_leduc_regression():
         ],
         initial_keys=rl_initial_keys,
         device=DEVICE,
+        strict=True,
     )
 
     # 2. SL Learner
@@ -250,6 +251,7 @@ def test_nfsp_leduc_regression():
         ],
         initial_keys=sl_initial_keys,
         device=DEVICE,
+        strict=True,
     )
 
     # --- Setup Buffers ---
