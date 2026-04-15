@@ -3,14 +3,14 @@ import pytest
 from typing import Dict, Any, Set
 from core.blackboard import Blackboard
 from core.component import PipelineComponent
-from core.contracts import Key, SemanticType, Observation, Reward, ValueEstimate, Scalar, ShapeContract
+from core.contracts import Key, SemanticType, Observation, Reward, ValueEstimate, Scalar, ShapeContract, WriteMode
 from core.blackboard_engine import BlackboardEngine
 
 # Tier 1 Unit Test Marker
 pytestmark = pytest.mark.unit
 
 class MockComponent(PipelineComponent):
-    def __init__(self, name: str, requires: Set[Key], provides: Dict[Key, str]):
+    def __init__(self, name: str, requires: Set[Key], provides: Dict[Key, WriteMode]):
         self._name = name
         self._requires = requires
         self._provides = provides
@@ -21,7 +21,7 @@ class MockComponent(PipelineComponent):
         return self._requires
 
     @property
-    def provides(self) -> Dict[Key, str]:
+    def provides(self) -> Dict[Key, WriteMode]:
         return self._provides
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
@@ -38,10 +38,10 @@ def test_dag_validation_success():
     k_obs = Key("data.obs", Observation)
     k_val = Key("losses.value", ValueEstimate[Scalar])
     
-    c1 = MockComponent("Producer", requires=set(), provides={k_obs: "new"})
-    c2 = MockComponent("Consumer", requires={k_obs}, provides={k_val: "new"})
+    c1 = MockComponent("Producer", requires=set(), provides={k_obs: WriteMode.NEW})
+    c2 = MockComponent("Consumer", requires={k_obs}, provides={k_val: WriteMode.NEW})
     
-    engine = BlackboardEngine(components=[c1, c2], device=torch.device("cpu"))
+    engine = BlackboardEngine(components=[c1, c2], device=torch.device("cpu"), strict=True)
     
     # Assert correct topological order in execution graph
     assert engine.execution_graph.execution_order == (0, 1)

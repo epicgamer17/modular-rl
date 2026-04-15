@@ -142,10 +142,11 @@ def build_execution_graph(
         for key, mode in provides_modes.items():
             existing_provider = key in provider_map
 
-            # NEW: must NOT already exist
+            # NEW: must NOT already exist, then register
             if mode == WriteMode.NEW:
                 if existing_provider:
                     duplicate_errors.append((idx, key, f"{WriteMode.NEW.value} key already provided"))
+                provider_map[key] = idx
             # OVERWRITE: MUST already exist (by initial_keys or previous component)
             elif mode == WriteMode.OVERWRITE:
                 if not existing_provider:

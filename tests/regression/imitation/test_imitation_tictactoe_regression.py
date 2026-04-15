@@ -163,6 +163,7 @@ def test_imitation_tictactoe_regression():
         ],
         initial_keys=initial_keys,
         device=DEVICE,
+        strict=True,
     )
 
     # --- Training Loop ---

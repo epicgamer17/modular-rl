@@ -158,7 +158,7 @@ def test_ppo_cartpole_full_training():
         TelemetryComponent(name="ppo_regression"),
         BufferStoreComponent(replay_buffer, field_map=ppo_field_map),
     ]
-    collector = BlackboardEngine(collection_components, device=DEVICE)
+    collector = BlackboardEngine(collection_components, device=DEVICE, strict=True)
 
     # --- Training Loop ---
     steps_collected = 0

@@ -8,6 +8,7 @@ from core.contracts import Key, check_shape_compatibility, WriteMode
 from core.execution_graph import ExecutionGraph, build_execution_graph, _get_provides_keys, _get_provides_with_modes
 from core.blackboard_diff import snapshot_blackboard, diff_snapshots, BlackboardDiff
 from core.path_resolver import resolve_blackboard_path, write_blackboard_path
+from core.shape_validation import validate_tensor
 
 def apply_updates(blackboard: Blackboard, updates: Dict[str, Any]) -> None:
     """
@@ -242,6 +243,13 @@ class BlackboardEngine:
 
                 outputs = component.execute(blackboard)
                 apply_updates(blackboard, outputs)
+                
+                # Runtime shape validation (strict mode only)
+                if self.strict:
+                    provides_modes = _get_provides_with_modes(component)
+                    for key in provides_modes:
+                        if key.path in outputs:
+                            validate_tensor(key, outputs[key.path])
                 
                 # Snapshot after and compute diff
                 if self.diff:
