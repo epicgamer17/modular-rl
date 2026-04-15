@@ -129,53 +129,85 @@ def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
     Check whether a provider Key's shape contract satisfies a consumer's requirements.
 
     Returns a list of human-readable incompatibility strings (empty = compatible).
-    Checks are opt-in: if either side leaves a field as None, that field is skipped.
+    Checks are opt-in: if the consumer field is None, that field is skipped.
+    If the consumer HAS a requirement but the provider is None, it is reported as a gap.
     """
-    p = provider.shape
     c = consumer.shape
-
-    # No constraints declared on either side — nothing to check.
-    if c is None or p is None:
+    if c is None:
         return []
+
+    p = provider.shape
+    if p is None:
+        return [f"contract gap: consumer requires {c}, but provider is opaque (no shape contract)"]
 
     issues: List[str] = []
 
-    # ndim
-    if c.ndim is not None and p.ndim is not None and c.ndim != p.ndim:
-        issues.append(
-            f"ndim mismatch: consumer expects {c.ndim}, provider declares {p.ndim}"
-        )
-
-    # Time dimension presence
-    if c.has_time is True and p.has_time is False:
-        issues.append(
-            "time dimension mismatch: consumer expects a time dimension, "
-            "provider explicitly declares none"
-        )
-    if c.has_time is False and p.has_time is True:
-        issues.append(
-            "time dimension mismatch: consumer expects no time dimension, "
-            "provider declares one"
-        )
-
-    # Time dimension position
-    if c.time_dim is not None and p.time_dim is not None and c.time_dim != p.time_dim:
-        issues.append(
-            f"time_dim position mismatch: consumer expects dim {c.time_dim}, "
-            f"provider declares dim {p.time_dim}"
-        )
-
-    # Feature shape
-    if c.feature_shape is not None and p.feature_shape is not None:
-        if c.feature_shape != p.feature_shape:
+    # Stage 4.1: Rank and required dimensions existence
+    if c.ndim is not None:
+        if p.ndim is None:
             issues.append(
-                f"feature_shape mismatch: consumer expects {c.feature_shape}, "
-                f"provider declares {p.feature_shape}"
+                f"ndim gap: consumer requires rank {c.ndim}, but provider does not declare one"
+            )
+        elif c.ndim != p.ndim:
+            issues.append(
+                f"ndim mismatch: consumer requires rank {c.ndim}, provider declares {p.ndim}"
             )
 
-    # Symbolic shape: check rank matches
-    if c.symbolic is not None and p.symbolic is not None:
-        if len(c.symbolic) != len(p.symbolic):
+    # Stage 4.2: Time dimension presence and position
+    if c.has_time is not None:
+        if p.has_time is None:
+            issues.append(
+                f"time dimension gap: consumer requires has_time={c.has_time}, but provider does not declare it"
+            )
+        elif c.has_time != p.has_time:
+            issues.append(
+                f"time dimension mismatch: consumer requires has_time={c.has_time}, provider declares {p.has_time}"
+            )
+
+    if c.time_dim is not None:
+        if p.time_dim is None:
+             issues.append(
+                f"time_dim gap: consumer requires dim {c.time_dim}, but provider does not declare it"
+            )
+        elif c.time_dim != p.time_dim:
+            issues.append(
+                f"time_dim position mismatch: consumer expects dim {c.time_dim}, "
+                f"provider declares dim {p.time_dim}"
+            )
+
+    # Stage 4.3: Feature shape and Safe Broadcasting
+    if c.feature_shape is not None and p.feature_shape is not None:
+        if c.feature_shape != p.feature_shape:
+            # Check for broadcasting compatibility:
+            # Rule: Dimensions must match or one of them must be 1.
+            # We assume tensors are right-aligned (standard PyTorch broadcasting).
+            p_feat = p.feature_shape
+            c_feat = c.feature_shape
+            
+            is_compatible = True
+            if len(p_feat) > len(c_feat):
+                is_compatible = False
+            else:
+                # Pad p_feat with 1s on the left to match length
+                p_padded = (1,) * (len(c_feat) - len(p_feat)) + p_feat
+                for p_dim, c_dim in zip(p_padded, c_feat):
+                    if p_dim != c_dim and p_dim != 1 and c_dim != 1:
+                        is_compatible = False
+                        break
+            
+            if not is_compatible:
+                issues.append(
+                    f"shape mismatch (unsafe broadcasting): consumer expects {c.feature_shape}, "
+                    f"but provider provides {p.feature_shape} which is not broadcast-compatible."
+                )
+
+    # Stage 4.4: Symbolic Dimensions Consistency
+    if c.symbolic is not None:
+        if p.symbolic is None:
+             issues.append(
+                f"symbolic gap: consumer requires {c.symbolic}, but provider does not declare symbolic names"
+            )
+        elif len(c.symbolic) != len(p.symbolic):
             issues.append(
                 f"symbolic rank mismatch: consumer has {len(c.symbolic)} dims {c.symbolic}, "
                 f"provider has {len(p.symbolic)} dims {p.symbolic}"
@@ -186,25 +218,16 @@ def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
                 f"provider declares {p.symbolic}"
             )
 
-    # Check ndim consistency with symbolic length
-    if c.symbolic is not None and c.ndim is not None:
-        if len(c.symbolic) != c.ndim:
-            issues.append(
-                f"symbolic/ndim conflict: consumer specifies ndim={c.ndim} but "
-                f"symbolic has {len(c.symbolic)} dims {c.symbolic}"
+    # Stage 4.5: Dtype check
+    if c.dtype is not None:
+        if p.dtype is None:
+             issues.append(
+                f"dtype gap: consumer requires {c.dtype}, but provider does not declare one"
             )
-    if p.symbolic is not None and p.ndim is not None:
-        if len(p.symbolic) != p.ndim:
+        elif c.dtype != p.dtype:
             issues.append(
-                f"symbolic/ndim conflict: provider specifies ndim={p.ndim} but "
-                f"symbolic has {len(p.symbolic)} dims {p.symbolic}"
+                f"dtype mismatch: consumer expects {c.dtype}, provider declares {p.dtype}"
             )
-
-    # Dtype check
-    if c.dtype is not None and p.dtype is not None and c.dtype != p.dtype:
-        issues.append(
-            f"dtype mismatch: consumer expects {c.dtype}, provider declares {p.dtype}"
-        )
 
     return issues
 

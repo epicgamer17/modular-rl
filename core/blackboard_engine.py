@@ -4,8 +4,8 @@ import time
 
 from core.blackboard import Blackboard
 from core.component import PipelineComponent
-from core.contracts import Key, check_shape_compatibility, WriteMode
-from core.execution_graph import ExecutionGraph, build_execution_graph, _get_provides_keys, _get_provides_with_modes
+from core.contracts import Key, WriteMode
+from core.execution_graph import ExecutionGraph, build_execution_graph, _get_provides_with_modes
 from core.blackboard_diff import snapshot_blackboard, diff_snapshots, BlackboardDiff
 from core.path_resolver import resolve_blackboard_path, write_blackboard_path
 from core.shape_validation import validate_tensor
@@ -20,86 +20,6 @@ def apply_updates(blackboard: Blackboard, updates: Dict[str, Any]) -> None:
     for path, value in updates.items():
         write_blackboard_path(blackboard, path, value)
 
-def validate_recipe(components: List[PipelineComponent], initial_keys: Set[Key]) -> None:
-    """
-    Validates the pipeline DAG at build-time.
-    Stages:
-    1. Dependency Resolution (Path check)
-    2. Semantic Compatibility (Type check)
-    3. Representation Consistency (Metadata/Parameters check)
-    4. Shape Integrity (Lightweight tensor shape check)
-    """
-    # Track the full Key object for every available path
-    available_contracts: Dict[str, Key] = {k.path: k for k in initial_keys}
-
-    for i, component in enumerate(components):
-        missing = []
-        incompatibilities = []
-        
-        for req in component.requires:
-            # Stage 1: Dependency Resolution
-            if req.path not in available_contracts:
-                missing.append(req.path)
-                continue
-            
-            found_key = available_contracts[req.path]
-            
-            # Stage 2: Semantic Compatibility
-            # Generic semantic types (e.g., Reward) must match or found_key must be a subclass
-            if not issubclass(found_key.semantic_type, req.semantic_type):
-                incompatibilities.append(
-                    f"SEMANTIC MISMATCH for '{req.path}': expected {req.semantic_type}, "
-                    f"but found {found_key.semantic_type}"
-                )
-            
-            # Stage 3: Representation Consistency (Metadata)
-            # This ensures bins, vmin, vmax etc. match exactly between provider and consumer.
-            for m_name, m_value in req.metadata.items():
-                if m_name not in found_key.metadata:
-                    incompatibilities.append(
-                        f"REPRESENTATION GAP for '{req.path}': consumer expects '{m_name}={m_value}', "
-                        f"but provider metadata is missing this parameter."
-                    )
-                elif found_key.metadata[m_name] != m_value:
-                    incompatibilities.append(
-                        f"REPRESENTATION MISMATCH for '{req.path}.{m_name}': "
-                        f"expected {m_value}, provider has {found_key.metadata[m_name]}"
-                    )
-
-            # Stage 4: Shape Integrity
-            shape_issues = check_shape_compatibility(provider=found_key, consumer=req)
-            for issue in shape_issues:
-                incompatibilities.append(f"SHAPE ERROR for '{req.path}': {issue}")
-
-        if missing or incompatibilities:
-            error_header = f"DAG Topology Error at Component [{i}] '{type(component).__name__}':"
-            error_msg = [error_header]
-            if missing:
-                error_msg.append(f"  Missing Dependencies: {missing}")
-            if incompatibilities:
-                error_msg.append("  Contract Violations:")
-                for inc in incompatibilities:
-                    error_msg.append(f"    - {inc}")
-            
-            error_msg.append(f"  Available keys in namespace: {sorted(list(available_contracts.keys()))}")
-            raise RuntimeError("\n".join(error_msg))
-
-        # Update available keys with component provisions
-        provides = component.provides
-        provides_modes = _get_provides_with_modes(component)
-        
-        for prov, mode in provides_modes.items():
-            # OVERWRITE requires the key to already exist
-            if mode == WriteMode.OVERWRITE and prov.path not in available_contracts:
-                raise RuntimeError(
-                    f"STAGE OVERWRITE ERROR: Component '{type(component).__name__}' "
-                    f"attempts to overwrite non-existent key '{prov.path}'"
-                )
-            
-            # Register the key for downstream components
-            available_contracts[prov.path] = prov
-
-    print(f"DAG Validation Passed: {len(components)} components verified.")
 
 
 def _blackboard_has_path(blackboard: Blackboard, path: str) -> bool:
@@ -198,9 +118,6 @@ class BlackboardEngine:
 
         # Build the DAG execution graph (includes dependency + cycle checks)
         self._graph: ExecutionGraph = build_execution_graph(components, initial_keys, target_keys)
-
-        # Validate semantic contracts on the active (topologically sorted) components
-        validate_recipe(self._graph.active_components(), initial_keys)
 
     @property
     def execution_graph(self) -> ExecutionGraph:
