@@ -17,7 +17,6 @@ from core.contracts import (
     Categorical,
     Quantile,
 )
-from core.blackboard_engine import apply_updates
 from typing import TYPE_CHECKING, Optional, Set, Dict, Any, Union
 
 if TYPE_CHECKING:
@@ -78,21 +77,18 @@ class ForwardPassComponent(PipelineComponent):
         Optimizes memory layout for throughput before the pass.
         """
         updates = {}
+        inference_data = dict(blackboard.data)
+
         # OPTIMIZATION: Convert convolutional observations to channels_last for Tensor Cores
         # Only if the device is CUDA and it's a 4D tensor.
         for k, v in blackboard.data.items():
             if torch.is_tensor(v) and v.ndim == 4 and v.device.type == "cuda":
                 # Returns optimized tensor for central application
-                updates[f"data.{k}"] = v.to(memory_format=torch.channels_last)
+                optimized_v = v.to(memory_format=torch.channels_last)
+                updates[f"data.{k}"] = optimized_v
+                inference_data[k] = optimized_v
 
-        # We must manually apply these updates for the NEXT line's learner_inference
-        # because it reads from blackboard.data. This preserves execution logic
-        # while keeping mutations transparent.
-        apply_updates(blackboard, updates)
-
-        predictions_dict = self.agent_network.learner_inference(
-            blackboard.data
-        )
+        predictions_dict = self.agent_network.learner_inference(inference_data)
 
         for k, v in predictions_dict.items():
             updates[f"predictions.{k}"] = v

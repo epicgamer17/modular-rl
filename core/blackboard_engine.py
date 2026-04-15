@@ -238,7 +238,12 @@ class BlackboardEngine:
             if self.diff:
                 snap_before = snapshot_blackboard(blackboard)
 
-            outputs = component.execute(blackboard)
+            # --- PURE TRANSFORM ENFORCEMENT ---
+            # We pass a read-only (frozen) view of the blackboard to the component.
+            # Any attempt to do blackboard.data['x'] = y inside execute() will now raise a TypeError.
+            outputs = component.execute(blackboard.frozen())
+            
+            # Apply explicitly returned updates to the live (mutable) blackboard
             apply_updates(blackboard, outputs)
 
             if self.strict:

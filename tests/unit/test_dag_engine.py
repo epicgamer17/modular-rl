@@ -163,3 +163,28 @@ def test_dag_overwrite_mode_validation():
     
     with pytest.raises(RuntimeError, match="overwrite but no existing provider"):
         BlackboardEngine(components=[c1], device=torch.device("cpu"), target_keys={k_loss})
+
+
+def test_disallow_inplace_mutation():
+    """Verifies that attempt to mutate the blackboard in-place raises TypeError."""
+
+    class MutatingComponent(PipelineComponent):
+        @property
+        def requires(self):
+            return set()
+
+        @property
+        def provides(self):
+            return {}
+
+        def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
+            # This should fail because 'blackboard' is a frozen view
+            blackboard.data["illegal"] = 1
+            return {}
+
+    c1 = MutatingComponent()
+    engine = BlackboardEngine(components=[c1], device=torch.device("cpu"))
+
+    with pytest.raises(TypeError, match="does not support item assignment"):
+        fake_batch = [{"dummy": torch.tensor([1])}]
+        list(engine.step(fake_batch))

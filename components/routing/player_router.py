@@ -150,13 +150,13 @@ class PlayerRoutingComponent(PipelineComponent):
 
         combined_updates = {}
         for component in components:
-            # Execute sub-component and capture its returned mutations
-            result = component.execute(blackboard)
+            # --- PURE TRANSFORM ENFORCEMENT ---
+            # Create a frozen view for the sub-component
+            result = component.execute(blackboard.frozen())
             if result:
                 # Meta-components must manually apply or return updates if they impact downstream routed nodes
-                # However, for now, we assume routed nodes need results from previous routed nodes in-place to function.
-                # To maintain side-effect safety, we'll manually apply them here for the NEXT component in the router's loop.
-                # This mirrors BlackboardEngine logic.
+                # To maintain side-effect safety and allow downstream components to see these changes,
+                # we apply them to the live blackboard here.
                 apply_updates(blackboard, result)
                 combined_updates.update(result)
         

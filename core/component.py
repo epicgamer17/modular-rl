@@ -53,8 +53,12 @@ class PipelineComponent(ABC):
     def execute(self, blackboard: "Blackboard") -> Dict[str, Any]:
         """
         Execute this component's logic and return a dictionary of changes
-        to be written by the framework. Returning an empty dict {} is valid
-        if the component only performs in-place mutations (not recommended).
+        to be written by the framework. 
+        
+        STRICT RULES:
+        1. In-place mutation of the 'blackboard' argument is FORBIDDEN.
+           The framework passes a frozen view; attempting to mutate will raise a TypeError.
+        2. All outputs MUST be returned as a dictionary of path-based updates.
         
         Example Return: {"losses.value_loss": tensor}
         """
