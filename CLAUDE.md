@@ -236,7 +236,7 @@ Key(
 ShapeContract(
     ndim: Optional[int] = None,              # Expected tensor rank
     time_dim: Optional[int] = None,          # Axis index of time dimension (typically 1). None = no time.
-    feature_shape: Optional[Tuple[int, ...]] = None,  # Non-batch, non-time shape
+    event_shape: Optional[Tuple[int, ...]] = None,  # Non-batch, non-time shape (excludes B/T)
 )
 ```
 

@@ -36,18 +36,33 @@ def validate_tensor(key: Key, value: Any) -> None:
                 f"dtype: expected {contract.dtype}, got {actual.dtype}"
             )
     
-    # Validate feature_shape (non-batch, non-time dimensions)
-    if contract.feature_shape is not None:
-        if actual.ndim < len(contract.feature_shape):
+    # Validate event_shape (non-batch, non-time dimensions)
+    if contract.event_shape is not None:
+        if actual.ndim < len(contract.event_shape):
             errors.append(
-                f"ndim {actual.ndim} too small for feature_shape {contract.feature_shape}"
+                f"ndim {actual.ndim} too small for event_shape {contract.event_shape}"
             )
         else:
             # Check from the end, accounting for batch/time dims
-            actual_feature = tuple(actual.shape[-len(contract.feature_shape):])
-            if actual_feature != contract.feature_shape:
+            if len(contract.event_shape) == 0:
+                # For scalar events, if it's just [Batch] or [Batch, Time], 
+                # we don't expect any more trailing dimensions.
+                # However, PyTorch tensors often have shape [B] for a batch of scalars.
+                # If we're at this point, actual.ndim >= len(event_shape) is 0, always true.
+                # We need to decide if we allow [B] or strictly nothing extra.
+                # Existing behavior: actual_event was actual.shape[-0:] which is the whole shape.
+                # New behavior: if event_shape is (), we check that no extra dims exist 
+                # beyond batch (and time if present).
+                expected_ndim = 1 + (1 if contract.time_dim is not None else 0)
+                if actual.ndim > expected_ndim:
+                     actual_event = tuple(actual.shape[expected_ndim:])
+                else:
+                     actual_event = ()
+            else:
+                actual_event = tuple(actual.shape[-len(contract.event_shape):])
+            if actual_event != contract.event_shape:
                 errors.append(
-                    f"feature_shape: expected {contract.feature_shape}, got {actual_feature}"
+                    f"event_shape: expected {contract.event_shape}, got {actual_event}"
                 )
     
     # Validate time_dim consistency

@@ -109,8 +109,9 @@ class ShapeContract:
         ndim:          Expected tensor rank (e.g. 2 for [B, A], 3 for [B, T, A]).
         time_dim:      Axis index of the time dimension (typically 1 for [B, T, *]).
                        None = no time/sequence dimension.
-        feature_shape: Shape of the non-batch, non-time dimensions
+        event_shape:   Shape of the non-batch, non-time dimensions
                        (e.g. (9,) for a 9-action policy vector).
+                       Excludes batch and time dimensions.
         symbolic:      Symbolic dimension names for documentation/validation.
                        e.g., ("B", "T", "C") means [Batch, Time, Channels].
         dtype:         Expected torch dtype (e.g., torch.float32, torch.int64).
@@ -118,9 +119,48 @@ class ShapeContract:
 
     ndim: Optional[int] = None
     time_dim: Optional[int] = None
-    feature_shape: Optional[Tuple[int, ...]] = None
+    event_shape: Optional[Tuple[int, ...]] = None
     symbolic: Optional[Tuple[str, ...]] = None
     dtype: Optional[torch.dtype] = None
+
+    def __post_init__(self) -> None:
+        """Enforce internal consistency of the shape contract."""
+        if self.ndim is not None:
+            assert self.ndim > 0, f"ndim must be positive, got {self.ndim}"
+
+        if self.time_dim is not None:
+            if self.ndim is not None:
+                assert self.time_dim < self.ndim, (
+                    f"time_dim {self.time_dim} out of bounds for ndim {self.ndim}"
+                )
+            assert self.time_dim != 0, "time_dim cannot be 0 (reserved for batch dimension)"
+
+        if self.event_shape is not None:
+            if self.ndim is not None:
+                expected_ndim = len(self.event_shape) + 1
+                if self.time_dim is not None:
+                    expected_ndim += 1
+                assert self.ndim == expected_ndim, (
+                    f"ShapeContract inconsistency: ndim={self.ndim} does not match "
+                    f"event_shape={self.event_shape} (len={len(self.event_shape)}) + "
+                    f"batch(1) + time({1 if self.time_dim is not None else 0}). "
+                    f"Expected ndim {expected_ndim}."
+                )
+
+        if self.symbolic is not None:
+            if self.ndim is not None:
+                assert len(self.symbolic) == self.ndim, (
+                    f"Symbolic dims {self.symbolic} (len={len(self.symbolic)}) "
+                    f"must match ndim {self.ndim}"
+                )
+            if self.event_shape is not None:
+                expected_len = len(self.event_shape) + 1
+                if self.time_dim is not None:
+                    expected_len += 1
+                assert len(self.symbolic) == expected_len, (
+                    f"Symbolic dims {self.symbolic} (len={len(self.symbolic)}) "
+                    f"must match event_shape {self.event_shape} + batch/time (expected {expected_len})"
+                )
 
 
 def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
@@ -171,14 +211,14 @@ def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
             f"time_dim mismatch: consumer expects no sequence dimension, but provider declares one at dim {p.time_dim}"
         )
 
-    # Stage 4.3: Feature shape and Safe Broadcasting
-    if c.feature_shape is not None and p.feature_shape is not None:
-        if c.feature_shape != p.feature_shape:
+    # Stage 4.3: Event shape and Safe Broadcasting
+    if c.event_shape is not None and p.event_shape is not None:
+        if c.event_shape != p.event_shape:
             # Check for broadcasting compatibility:
             # Rule: Dimensions must match or one of them must be 1.
             # We assume tensors are right-aligned (standard PyTorch broadcasting).
-            p_feat = p.feature_shape
-            c_feat = c.feature_shape
+            p_feat = p.event_shape
+            c_feat = c.event_shape
 
             is_compatible = True
             if len(p_feat) > len(c_feat):
@@ -193,8 +233,8 @@ def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
 
             if not is_compatible:
                 issues.append(
-                    f"shape mismatch (unsafe broadcasting): consumer expects {c.feature_shape}, "
-                    f"but provider provides {p.feature_shape} which is not broadcast-compatible."
+                    f"shape mismatch (unsafe broadcasting): consumer expects {c.event_shape}, "
+                    f"but provider provides {p.event_shape} which is not broadcast-compatible."
                 )
 
     # Stage 4.4: Symbolic Dimensions Consistency
@@ -262,8 +302,8 @@ class Key:
                 shape_parts.append(f"ndim={self.shape.ndim}")
             if self.shape.time_dim is not None:
                 shape_parts.append(f"time_dim={self.shape.time_dim}")
-            if self.shape.feature_shape is not None:
-                shape_parts.append(f"features={self.shape.feature_shape}")
+            if self.shape.event_shape is not None:
+                shape_parts.append(f"event={self.shape.event_shape}")
             parts.append(f"shape({', '.join(shape_parts)})")
         return f"Key({', '.join(parts)})"
 
