@@ -146,7 +146,7 @@ def test_imitation_tictactoe_regression():
             "data.policies",
             Policy[Probs],
             shape=ShapeContract(
-                time_dim=1, symbolic=("B", "T"), dtype="float32", ndim=2
+                time_dim=1, symbolic=("B", "T"), dtype=torch.float32, ndim=2
             ),
         ),
     }

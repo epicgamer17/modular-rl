@@ -29,12 +29,11 @@ def validate_tensor(key: Key, value: Any) -> None:
                 f"ndim: expected {contract.ndim}, got {actual.ndim}"
             )
     
-    # Validate dtype (as string)
+    # Validate dtype
     if contract.dtype is not None:
-        actual_dtype = str(actual.dtype).split(".")[-1]  # e.g. "float32" from "torch.float32"
-        if actual_dtype != contract.dtype:
+        if actual.dtype != contract.dtype:
             errors.append(
-                f"dtype: expected {contract.dtype}, got {actual_dtype}"
+                f"dtype: expected {contract.dtype}, got {actual.dtype}"
             )
     
     # Validate feature_shape (non-batch, non-time dimensions)

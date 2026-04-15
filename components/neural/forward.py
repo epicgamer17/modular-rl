@@ -47,7 +47,7 @@ class ForwardPassComponent(PipelineComponent):
                     f"predictions.{key}",
                     sem_type,
                     shape=ShapeContract(
-                        time_dim=1, symbolic=("B", "T"), dtype="float32", ndim=2
+                        time_dim=1, symbolic=("B", "T"), dtype=torch.float32, ndim=2
                     ),
                 )
             ] = "new"

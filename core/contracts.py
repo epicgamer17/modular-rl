@@ -1,5 +1,6 @@
 from enum import Enum
 from typing import Type, Dict, Any, Optional, Tuple, List, Union
+import torch
 from dataclasses import dataclass, field
 
 
@@ -112,15 +113,14 @@ class ShapeContract:
                        (e.g. (9,) for a 9-action policy vector).
         symbolic:      Symbolic dimension names for documentation/validation.
                        e.g., ("B", "T", "C") means [Batch, Time, Channels].
-        dtype:         Expected torch dtype as string (e.g., "float32", "int64").
-                       Note: stored as string since torch.dtype is not hashable.
+        dtype:         Expected torch dtype (e.g., torch.float32, torch.int64).
     """
 
     ndim: Optional[int] = None
     time_dim: Optional[int] = None
     feature_shape: Optional[Tuple[int, ...]] = None
     symbolic: Optional[Tuple[str, ...]] = None
-    dtype: Optional[str] = None
+    dtype: Optional[torch.dtype] = None
 
 
 def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
