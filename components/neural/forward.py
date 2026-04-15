@@ -47,7 +47,13 @@ class ForwardPassComponent(PipelineComponent):
         contract = self.agent_network.get_learner_contract()
         for key, sem_type in contract.items():
             self._provides[
-                Key(f"predictions.{key}", sem_type, shape=ShapeContract(has_time=True))
+                Key(
+                    f"predictions.{key}",
+                    sem_type,
+                    shape=ShapeContract(
+                        has_time=True, symbolic=("B", "T"), dtype="float32", ndim=2
+                    ),
+                )
             ] = "new"
 
     @property

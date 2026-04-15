@@ -100,12 +100,18 @@ class ShapeContract:
         time_dim:      Axis index of the time dimension (typically 1 for [B, T, *]).
         feature_shape: Shape of the non-batch, non-time dimensions
                        (e.g. (9,) for a 9-action policy vector).
+        symbolic:      Symbolic dimension names for documentation/validation.
+                       e.g., ("B", "T", "C") means [Batch, Time, Channels].
+        dtype:         Expected torch dtype as string (e.g., "float32", "int64").
+                       Note: stored as string since torch.dtype is not hashable.
     """
 
     ndim: Optional[int] = None
     has_time: Optional[bool] = None
     time_dim: Optional[int] = None
     feature_shape: Optional[Tuple[int, ...]] = None
+    symbolic: Optional[Tuple[str, ...]] = None
+    dtype: Optional[str] = None
 
 
 def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
@@ -157,6 +163,39 @@ def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
                 f"provider declares {p.feature_shape}"
             )
 
+    # Symbolic shape: check rank matches
+    if c.symbolic is not None and p.symbolic is not None:
+        if len(c.symbolic) != len(p.symbolic):
+            issues.append(
+                f"symbolic rank mismatch: consumer has {len(c.symbolic)} dims {c.symbolic}, "
+                f"provider has {len(p.symbolic)} dims {p.symbolic}"
+            )
+        elif c.symbolic != p.symbolic:
+            issues.append(
+                f"symbolic mismatch: consumer expects {c.symbolic}, "
+                f"provider declares {p.symbolic}"
+            )
+
+    # Check ndim consistency with symbolic length
+    if c.symbolic is not None and c.ndim is not None:
+        if len(c.symbolic) != c.ndim:
+            issues.append(
+                f"symbolic/ndim conflict: consumer specifies ndim={c.ndim} but "
+                f"symbolic has {len(c.symbolic)} dims {c.symbolic}"
+            )
+    if p.symbolic is not None and p.ndim is not None:
+        if len(p.symbolic) != p.ndim:
+            issues.append(
+                f"symbolic/ndim conflict: provider specifies ndim={p.ndim} but "
+                f"symbolic has {len(p.symbolic)} dims {p.symbolic}"
+            )
+
+    # Dtype check
+    if c.dtype is not None and p.dtype is not None and c.dtype != p.dtype:
+        issues.append(
+            f"dtype mismatch: consumer expects {c.dtype}, provider declares {p.dtype}"
+        )
+
     return issues
 
 
@@ -185,7 +224,18 @@ class Key:
         if self.metadata:
             parts.append(f"metadata={self.metadata}")
         if self.shape is not None:
-            parts.append(f"shape={self.shape}")
+            shape_parts = []
+            if self.shape.symbolic:
+                shape_parts.append(f"symbolic={self.shape.symbolic}")
+            if self.shape.dtype:
+                shape_parts.append(f"dtype={self.shape.dtype}")
+            if self.shape.ndim is not None:
+                shape_parts.append(f"ndim={self.shape.ndim}")
+            if self.shape.has_time is not None:
+                shape_parts.append(f"has_time={self.shape.has_time}")
+            if self.shape.feature_shape is not None:
+                shape_parts.append(f"features={self.shape.feature_shape}")
+            parts.append(f"shape({', '.join(shape_parts)})")
         return f"Key({', '.join(parts)})"
 
 

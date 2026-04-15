@@ -142,7 +142,13 @@ def test_imitation_tictactoe_regression():
         Key("data.observations", Observation),
         Key("data.actions", Action),
         Key("data.legal_moves_masks", Mask),
-        Key("data.policies", Policy[Probs], shape=ShapeContract(has_time=True)),
+        Key(
+            "data.policies",
+            Policy[Probs],
+            shape=ShapeContract(
+                has_time=True, symbolic=("B", "T"), dtype="float32", ndim=2
+            ),
+        ),
     }
 
     learner = BlackboardEngine(
