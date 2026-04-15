@@ -5,7 +5,7 @@ import time
 from core.blackboard import Blackboard
 from core.component import PipelineComponent
 from core.contracts import Key, check_shape_compatibility
-from core.execution_graph import ExecutionGraph, build_execution_graph, _get_provides_paths, _get_provides_with_modes
+from core.execution_graph import ExecutionGraph, build_execution_graph, _get_provides_keys, _get_provides_with_modes
 from core.blackboard_diff import snapshot_blackboard, diff_snapshots, BlackboardDiff
 from core.path_resolver import resolve_blackboard_path, write_blackboard_path
 
@@ -134,12 +134,12 @@ def _resolve_lazy_plan(
     Returns the filtered execution order (indices into graph.components).
     """
     must_execute: Set[int] = set()
-    demanded_paths: Set[str] = set()
+    demanded_keys: Set[Key] = set()
 
     for idx in reversed(graph.execution_order):
         comp = graph.components[idx]
         provides_modes = _get_provides_with_modes(comp)
-        provides_paths = set(provides_modes.keys())
+        provides_keys = set(provides_modes.keys())
         is_terminal = idx in graph.terminal_indices
 
         # Components that mutate existing data can never be skipped
@@ -149,17 +149,17 @@ def _resolve_lazy_plan(
 
         if is_terminal or has_mutation:
             must_execute.add(idx)
-            demanded_paths.update(req.path for req in comp.requires)
-        elif provides_paths & demanded_paths:
+            demanded_keys.update(comp.requires)
+        elif provides_keys & demanded_keys:
             # This component provides something demanded downstream.
             # Only skip if ALL demanded outputs are already on the blackboard.
-            needed = provides_paths & demanded_paths
+            needed = provides_keys & demanded_keys
             already_satisfied = all(
-                _blackboard_has_path(blackboard, p) for p in needed
+                _blackboard_has_path(blackboard, k.path) for k in needed
             )
             if not already_satisfied:
                 must_execute.add(idx)
-                demanded_paths.update(req.path for req in comp.requires)
+                demanded_keys.update(comp.requires)
 
     return [idx for idx in graph.execution_order if idx in must_execute]
 

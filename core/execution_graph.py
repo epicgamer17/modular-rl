@@ -54,7 +54,7 @@ class ExecutionGraph:
     edges: Dict[int, FrozenSet[int]]
     execution_order: Tuple[int, ...]
     pruned_indices: FrozenSet[int]
-    provider_map: Dict[str, int]
+    provider_map: Dict[Key, int]
     consumer_map: Dict[int, FrozenSet[int]]
     terminal_indices: FrozenSet[int]
 
@@ -79,21 +79,19 @@ class ExecutionGraph:
 # Helpers
 # ──────────────────────────────────────────────────────────────────────
 
-def _get_provides_paths(component: PipelineComponent) -> Set[str]:
-    """Extract the set of provided path strings from a component."""
+def _get_provides_keys(component: PipelineComponent) -> Set[Key]:
+    """Extract the set of provided Keys from a component."""
     provides = component.provides
-    provides_items = (
-        provides.items() if isinstance(provides, dict) else [(k, "new") for k in provides]
-    )
-    return {k.path for k, _ in provides_items}
+    if isinstance(provides, dict):
+        return set(provides.keys())
+    return provides
 
-def _get_provides_with_modes(component: PipelineComponent) -> Dict[str, str]:
-    """Extract {path: write_mode} from a component's provides."""
+def _get_provides_with_modes(component: PipelineComponent) -> Dict[Key, str]:
+    """Extract {Key: write_mode} from a component's provides."""
     provides = component.provides
-    provides_items = (
-        provides.items() if isinstance(provides, dict) else [(k, "new") for k in provides]
-    )
-    return {k.path: mode for k, mode in provides_items}
+    if isinstance(provides, dict):
+        return provides
+    return {k: "new" for k in provides}
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -131,35 +129,35 @@ def build_execution_graph(
     comp_tuple = tuple(components)
 
     # ── 1. Build provider map ────────────────────────────────────────
-    provider_map: Dict[str, int] = {}
+    provider_map: Dict[Key, int] = {}
 
     # Seed with initial keys
     for key in initial_keys:
-        provider_map[key.path] = _INITIAL
+        provider_map[key] = _INITIAL
 
     # Register each component's provides
     for idx, comp in enumerate(components):
-        for path in _get_provides_paths(comp):
-            provider_map[path] = idx
+        for key in _get_provides_keys(comp):
+            provider_map[key] = idx
 
     # ── 2. Build dependency edges ────────────────────────────────────
     edges: Dict[int, Set[int]] = {i: set() for i in range(n)}
-    missing_deps: Dict[int, List[str]] = {}
+    missing_deps: Dict[int, List[Key]] = {}
 
     for idx, comp in enumerate(components):
         for req in comp.requires:
-            provider_idx = provider_map.get(req.path)
+            provider_idx = provider_map.get(req)
             if provider_idx is None:
-                missing_deps.setdefault(idx, []).append(req.path)
+                missing_deps.setdefault(idx, []).append(req)
             elif provider_idx != _INITIAL:
                 edges[idx].add(provider_idx)
 
     if missing_deps:
         lines = ["Missing dependencies in pipeline DAG:"]
-        for idx, paths in missing_deps.items():
+        for idx, keys in missing_deps.items():
             name = type(components[idx]).__name__
-            lines.append(f"  [{idx}] {name}: needs {paths}")
-        lines.append(f"  Available paths: {sorted(provider_map.keys())}")
+            lines.append(f"  [{idx}] {name}: needs {keys}")
+        lines.append(f"  Available keys: {sorted(provider_map.keys(), key=lambda k: k.path)}")
         raise RuntimeError("\n".join(lines))
 
     # ── 3. Topological sort (Kahn's, stable) ─────────────────────────
@@ -250,16 +248,16 @@ def _find_terminal_sinks(
     """
     terminals: Set[int] = set()
     for idx, comp in enumerate(components):
-        provides_paths = _get_provides_paths(comp)
+        provides_keys = _get_provides_keys(comp)
 
         # No provides → side-effect component, always keep
-        if not provides_paths:
+        if not provides_keys:
             terminals.add(idx)
             continue
 
         # Writes to a terminal prefix → always keep
-        for path in provides_paths:
-            if any(path.startswith(prefix) for prefix in terminal_prefixes):
+        for key in provides_keys:
+            if any(key.path.startswith(prefix) for prefix in terminal_prefixes):
                 terminals.add(idx)
                 break
 
@@ -294,7 +292,7 @@ def _backward_reachability(
 def _build_consumer_map(
     components: List[PipelineComponent],
     execution_order: Tuple[int, ...],
-    provider_map: Dict[str, int],
+    provider_map: Dict[Key, int],
 ) -> Dict[int, FrozenSet[int]]:
     """Build a map of provider_idx → {consumer indices that read its outputs}.
 
@@ -306,7 +304,7 @@ def _build_consumer_map(
     for idx in execution_order:
         comp = components[idx]
         for req in comp.requires:
-            provider_idx = provider_map.get(req.path, _INITIAL)
+            provider_idx = provider_map.get(req, _INITIAL)
             if provider_idx != _INITIAL and provider_idx in active_set:
                 consumers[provider_idx].add(idx)
 
