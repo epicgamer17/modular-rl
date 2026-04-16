@@ -45,7 +45,7 @@ from components.losses import OptimizerStepComponent
 from components.losses import LossAggregatorComponent
 from components.memory import PriorityUpdateComponent
 from components.losses import ExpectedValueErrorPriorityComponent
-from components.losses import ValueLoss
+from components.losses import ScalarValueLoss, CategoricalValueLoss
 from components.losses import PolicyLoss
 from components.losses import RewardLoss
 from components.losses import ToPlayLoss
@@ -437,10 +437,10 @@ def make_muzero_learner(
     }
 
     if isinstance(val_rep, DiscreteSupportRepresentation):
-        v_loss = ValueLoss(
+        v_loss = CategoricalValueLoss(
+            num_atoms=val_rep.bins,
             target_key="targets.values_projected",
             mask_key="targets.policy_mask",
-            loss_fn=nn.functional.cross_entropy,
             loss_factor=1.0,
         )
         v_formatter = TwoHotProjectionComponent(
@@ -450,7 +450,7 @@ def make_muzero_learner(
             semantic_type=ValueTarget,
         )
     else:
-        v_loss = ValueLoss(
+        v_loss = ScalarValueLoss(
             target_key="targets.values",
             mask_key="targets.policy_mask",
             loss_fn=nn.functional.mse_loss,

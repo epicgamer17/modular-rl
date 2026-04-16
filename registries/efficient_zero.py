@@ -27,7 +27,7 @@ from components.losses import OptimizerStepComponent
 from components.losses import LossAggregatorComponent
 from components.memory import PriorityUpdateComponent
 from components.losses import ExpectedValueErrorPriorityComponent
-from components.losses import ValueLoss, PolicyLoss, RewardLoss, ToPlayLoss
+from components.losses import ScalarValueLoss, PolicyLoss, RewardLoss, ToPlayLoss
 from components.losses import ConsistencyLoss, LatentConsistencyComponent
 
 from modules.representations import (
@@ -242,7 +242,7 @@ def make_efficient_zero_learner(
         Key("data.policy_mask", Mask),
     }
 
-    v_loss = ValueLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
+    v_loss = ScalarValueLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
     p_loss = PolicyLoss(loss_fn=nn.functional.cross_entropy, loss_factor=1.0)
     r_loss = RewardLoss(loss_fn=nn.functional.mse_loss, loss_factor=1.0)
     tp_loss = ToPlayLoss(loss_fn=nn.functional.cross_entropy, loss_factor=1.0)

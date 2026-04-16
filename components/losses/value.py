@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from typing import Any, Set, Dict
+from typing import Any, Set, Dict, Optional, Tuple
 from core import PipelineComponent
 from core import Blackboard
 from core.path_resolver import resolve_blackboard_path
@@ -12,20 +12,24 @@ from core.contracts import (
     LossScalar,
     Metric,
     Scalar,
+    Logits,
+    Probs,
 )
 from .infrastructure import apply_infrastructure
-from core.validation import assert_same_batch, assert_compatible_value
 
 
-class ValueLoss(PipelineComponent):
+class ScalarValueLoss(PipelineComponent):
     """
-    Standard Value prediction loss component.
-    Reads 'values' from predictions and targets.
+    Scalar value prediction loss (MSE or Huber).
+
+    Predictions: [B, T, 1] scalar value estimates.
+    Targets: [B, T, 1] scalar value targets.
+    Loss: F.mse_loss or F.huber_loss applied element-wise.
     """
 
     def __init__(
         self,
-        target_key: str = "values",
+        target_key: str = "targets.values",
         mask_key: str = "value_mask",
         loss_fn: Any = F.mse_loss,
         loss_factor: float = 1.0,
@@ -37,13 +41,13 @@ class ValueLoss(PipelineComponent):
         self.loss_factor = loss_factor
         self.name = name
 
-        # Deterministic contracts computed at initialization
-        # TODO: shape contracts? how do we handle time dimension from unrolls or from LSTM memory vs single step DQN, A2C, PPO, etc?
         self._requires = {
             Key(
-                "predictions.values", ValueEstimate
-            ),  # Accept any structure (scalar or categorical)
-            Key(self.target_key, ValueTarget),  # Accept any structure
+                "predictions.values",
+                ValueEstimate[Scalar],
+                shape=ShapeContract(ndim=3, time_dim=1, event_shape=(1,)),
+            ),
+            Key(self.target_key, ValueTarget[Scalar]),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",
@@ -67,12 +71,11 @@ class ValueLoss(PipelineComponent):
         ]
 
     def validate(self, blackboard: Blackboard) -> None:
-        """Ensures both prediction and target exist, are tensors, and aligned."""
+        """Ensures both prediction and target exist, are tensors, and shape-aligned."""
         from core.validation import (
             assert_in_blackboard,
             assert_is_tensor,
             assert_same_batch,
-            assert_compatible_value,
             assert_shape_sanity,
         )
 
@@ -84,56 +87,154 @@ class ValueLoss(PipelineComponent):
 
         assert_is_tensor(preds, msg=f"in {self.name} (predictions)")
         assert_is_tensor(targets, msg=f"in {self.name} (targets)")
-
         assert_same_batch(preds, targets, msg=f"in {self.name}")
-
-        # Rigorous shape checks
         assert_shape_sanity(
             preds, min_ndim=3, msg=f"Prediction {self.name} must have [B, T, 1]"
         )
 
-        # Hypothetical alignment for validation purposes
-        check_targets = targets
-        if check_targets.ndim == preds.ndim - 1:
-            check_targets = check_targets.unsqueeze(1)  # Add T=1
-
-        if check_targets.ndim == preds.ndim - 1:
-            check_targets = check_targets.unsqueeze(-1)  # Add feature dim
-
-        assert check_targets.shape == preds.shape, (
-            f"ValueLoss Contract Violation: targets {targets.shape} (locally aligned to {check_targets.shape}) "
-            f"must match predictions {preds.shape}. Expected [B, T, 1]."
-        )
-
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        """Compute value loss and write to losses."""
+        """Compute scalar value loss via MSE/Huber."""
         preds = blackboard.predictions["values"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
-        # TODO: enforce always time dimension some how.
-        # 1. Robust Time Alignment: Handle [B, 1] -> [B, 1, 1] or [B] -> [B, 1, 1]
+
+        # Align target dims to [B, T, 1]
         if targets.ndim == preds.ndim - 1:
             targets = targets.unsqueeze(1)
-
         if targets.ndim == preds.ndim - 1:
             targets = targets.unsqueeze(-1)
 
-        # 2. Flatten leads dimensions [B, T] into [N] for standard PyTorch loss functions
         B, T = preds.shape[:2]
-        p_flat = preds.flatten(0, 1)
-        t_flat = targets.flatten(0, 1)
+        p_flat = preds.flatten(0, 1)  # [B*T, 1]
+        t_flat = targets.flatten(0, 1)  # [B*T, 1]
 
         raw_loss = self.loss_fn(p_flat, t_flat, reduction="none")
 
-        # Reshape to [B, T]
+        # Reduce event dim -> [B*T]
         if raw_loss.ndim > 1:
             raw_loss = raw_loss.sum(dim=-1)
 
         elementwise_loss = raw_loss.reshape(B, T) * self.loss_factor
-
-        # Pass through infrastructure
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
-        # Write out
+        return {
+            f"losses.{self.name}": scalar_loss,
+            f"meta.{self.name}": scalar_loss.item(),
+            f"meta.elementwise_losses.{self.name}": elementwise_loss,
+        }
+
+
+class CategoricalValueLoss(PipelineComponent):
+    """
+    Categorical (distributional) value loss for C51 / MuZero style networks.
+
+    Predictions: [B, T, num_atoms] raw logits over support atoms.
+    Targets: [B, T, num_atoms] target probability distribution.
+    Loss: cross-entropy  -(target_probs * log_softmax(logits)).sum(dim=-1)
+    """
+
+    def __init__(
+        self,
+        num_atoms: int,
+        target_key: str = "targets.values_projected",
+        mask_key: str = "value_mask",
+        loss_factor: float = 1.0,
+        name: str = "value_loss",
+    ):
+        self.num_atoms = num_atoms
+        self.target_key = target_key
+        self.mask_key = mask_key
+        self.loss_factor = loss_factor
+        self.name = name
+
+        self._requires = {
+            Key(
+                "predictions.values",
+                ValueEstimate[Logits],
+                shape=ShapeContract(ndim=3, time_dim=1, event_shape=(num_atoms,)),
+            ),
+            Key(
+                self.target_key,
+                ValueTarget[Probs],
+                shape=ShapeContract(ndim=3, time_dim=1, event_shape=(num_atoms,)),
+            ),
+        }
+        self._provides = {
+            Key(f"losses.{self.name}", LossScalar): "new",
+            Key(f"meta.{self.name}", Metric): "new",
+            Key(f"meta.elementwise_losses.{self.name}", Metric): "new",
+        }
+
+    @property
+    def requires(self) -> Set[Key]:
+        return self._requires
+
+    @property
+    def provides(self) -> Dict[Key, str]:
+        return self._provides
+
+    @property
+    def constraints(self) -> list[str]:
+        return [
+            f"same_batch(predictions.values, {self.target_key})",
+            "time_aligned(predictions.values, targets)",
+            f"event_shape_match(predictions.values, {self.target_key}, num_atoms={self.num_atoms})",
+        ]
+
+    def validate(self, blackboard: Blackboard) -> None:
+        """Ensures logits and target probs exist, are tensors, and have matching atom counts."""
+        from core.validation import (
+            assert_in_blackboard,
+            assert_is_tensor,
+            assert_same_batch,
+            assert_shape_sanity,
+        )
+
+        assert_in_blackboard(blackboard, "predictions.values")
+        assert_in_blackboard(blackboard, self.target_key)
+
+        logits = blackboard.predictions["values"]
+        target_probs = resolve_blackboard_path(blackboard, self.target_key)
+
+        assert_is_tensor(logits, msg=f"in {self.name} (prediction logits)")
+        assert_is_tensor(target_probs, msg=f"in {self.name} (target probs)")
+        assert_same_batch(logits, target_probs, msg=f"in {self.name}")
+        assert_shape_sanity(
+            logits,
+            min_ndim=3,
+            msg=f"Prediction {self.name} must have [B, T, num_atoms]",
+        )
+
+        assert logits.shape[-1] == self.num_atoms, (
+            f"{self.name}: prediction logits last dim {logits.shape[-1]} "
+            f"!= expected num_atoms {self.num_atoms}"
+        )
+        assert target_probs.shape[-1] == self.num_atoms, (
+            f"{self.name}: target probs last dim {target_probs.shape[-1]} "
+            f"!= expected num_atoms {self.num_atoms}"
+        )
+
+    def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
+        """Compute categorical cross-entropy value loss."""
+        logits = blackboard.predictions["values"]
+        target_probs = resolve_blackboard_path(blackboard, self.target_key)
+
+        # Align target dims to [B, T, num_atoms]
+        if target_probs.ndim == logits.ndim - 1:
+            target_probs = target_probs.unsqueeze(1)
+
+        B, T = logits.shape[:2]
+
+        # Flatten [B, T] -> [N] for loss computation
+        logits_flat = logits.flatten(0, 1)  # [B*T, num_atoms]
+        probs_flat = target_probs.flatten(0, 1)  # [B*T, num_atoms]
+
+        # Cross-entropy: -(target_probs * log_softmax(logits)).sum(dim=-1)
+        log_probs = F.log_softmax(logits_flat, dim=-1)
+        raw_loss = -(probs_flat * log_probs).sum(dim=-1)  # [B*T]
+
+        elementwise_loss = raw_loss.reshape(B, T) * self.loss_factor
+        scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
+
         return {
             f"losses.{self.name}": scalar_loss,
             f"meta.{self.name}": scalar_loss.item(),
@@ -163,7 +264,6 @@ class ClippedValueLoss(PipelineComponent):
         self.loss_factor = loss_factor
         self.name = name
 
-        # Deterministic contracts computed at initialization
         self._requires = {
             Key(
                 "predictions.values",
@@ -266,4 +366,3 @@ class ClippedValueLoss(PipelineComponent):
             f"meta.{self.name}": scalar_loss.item(),
             f"meta.elementwise_losses.{self.name}": elementwise_loss,
         }
-
