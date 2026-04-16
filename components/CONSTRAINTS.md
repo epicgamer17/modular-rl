@@ -147,8 +147,9 @@ Each component MUST define a `validate()` method that enforces its data assumpti
 ### Validation Helpers
 *   `assert_in_blackboard(bb, key)`: Verifies key or path existence.
 *   `assert_is_tensor(obj)`: Ensures object is a PyTorch tensor.
-*   `assert_shape_sanity(t, min_ndim, max_ndim)`: Verifies tensor rank (B, T, D alignment).
+*   `assert_shape_sanity(t, min_rank, max_rank)`: Verifies tensor rank (B, T, D alignment).
 *   `assert_same_batch(t1, t2)`: Ensures dim 0 matches across tensors.
+*   `assert_time_val(t, expected_t)`: Verifies sequence length (dim 1).
 *   `assert_compatible_value(pred, target)`: Verifies distributional vs scalar compatibility.
 *   `assert_representation_supports(rep, tensor)`: Delegates detailed math validation to a representation strategy.
 

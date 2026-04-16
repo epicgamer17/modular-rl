@@ -43,6 +43,10 @@ class BaseRepresentation(ABC):
         """Returns the semantic structure of this representation (e.g., Scalar, Categorical)."""
         pass
 
+    def get_target_structure(self) -> Structure:
+        """Returns the semantic structure of this representation when used as a target (usually Probs)."""
+        return self.get_structure()
+
     def get_metadata(self) -> Dict[str, Any]:
         """Returns metadata about the representation parameters (vmin, vmax, etc.)."""
         return {}
@@ -210,6 +214,9 @@ class DiscreteSupportRepresentation(BaseRepresentation):
     def get_structure(self) -> Structure:
         return Logits()
 
+    def get_target_structure(self) -> Structure:
+        return Probs()
+
     def get_metadata(self) -> Dict[str, Any]:
         return {"vmin": self.vmin, "vmax": self.vmax, "bins": self.bins}
 
@@ -320,6 +327,9 @@ class ClassificationRepresentation(BaseRepresentation):
 
     def get_structure(self) -> Structure:
         return Logits()
+
+    def get_target_structure(self) -> Structure:
+        return Probs()
 
     def get_metadata(self) -> Dict[str, Any]:
         return {"num_classes": self._num_classes}

@@ -96,7 +96,7 @@ class TwoHotProjectionComponent(PipelineComponent):
         self._semantic_type = semantic_type
 
         # Deterministic contracts
-        struct = self._representation.get_structure()
+        struct = self._representation.get_target_structure()
         metadata = self._representation.get_metadata()
         self._requires = {Key(self._source_key, self._semantic_type[Scalar])}
         self._provides = {
@@ -104,6 +104,10 @@ class TwoHotProjectionComponent(PipelineComponent):
                 f"targets.{self._dest_key}",
                 self._semantic_type[struct],
                 metadata=metadata,
+                shape=ShapeContract(
+                    semantic_shape=("B", "T", "A"),
+                    event_shape=(self._representation.num_features,),
+                ),
             ): "new"
         }
 
@@ -129,7 +133,7 @@ class TwoHotProjectionComponent(PipelineComponent):
         assert_is_tensor(raw, msg=f"for {self.__class__.__name__} ({self._source_key})")
         # Two-hot usually expects [B] or [B, T]
         assert_shape_sanity(
-            raw, min_ndim=1, max_ndim=2, msg=f"for {self.__class__.__name__}"
+            raw, min_rank=1, max_rank=2, msg=f"for {self.__class__.__name__}"
         )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
@@ -177,7 +181,7 @@ class ClassificationFormatterComponent(PipelineComponent):
         struct = Scalar()
         metadata = {}
         if self._representation is not None:
-            struct = self._representation.get_structure()
+            struct = self._representation.get_target_structure()
             metadata = self._representation.get_metadata()
 
         self._requires = {Key(self._source_key, self._semantic_type)}
@@ -186,6 +190,10 @@ class ClassificationFormatterComponent(PipelineComponent):
                 f"targets.{self._dest_key}",
                 self._semantic_type[struct],
                 metadata=metadata,
+                shape=ShapeContract(
+                    semantic_shape=("B", "T", "A"),
+                    event_shape=(self._representation.num_features,) if self._representation else (1,),
+                ),
             ): "new"
         }
 
@@ -267,6 +275,10 @@ class ScalarFormatterComponent(PipelineComponent):
                 f"targets.{self._dest_key}",
                 self._semantic_type[struct],
                 metadata=metadata,
+                shape=ShapeContract(
+                    semantic_shape=("B", "T", "A"),
+                    event_shape=(1,),
+                ),
             ): "new"
         }
 
@@ -436,7 +448,7 @@ class OneHotPolicyTargetComponent(PipelineComponent):
         assert_is_tensor(indices, msg=f"for {self.__class__.__name__}")
         # Indices are usually [B], [B, T], or [B, T, 1]
         assert_shape_sanity(
-            indices, min_ndim=1, max_ndim=3, msg=f"for {self.__class__.__name__}"
+            indices, min_rank=1, max_rank=3, msg=f"for {self.__class__.__name__}"
         )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:

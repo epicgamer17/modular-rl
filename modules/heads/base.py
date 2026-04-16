@@ -96,10 +96,8 @@ class BaseHead(nn.Module):
             semantic_type=self.semantic_type,
             metadata=self.representation.get_metadata(),
             shape=ShapeContract(
-                ndim=3,
-                time_dim=1,
+                semantic_shape=("B", "T", "A"),
                 event_shape=event_shape,
-                symbolic=symbolic,
                 dtype=torch.float32,
             ),
         )

@@ -302,7 +302,6 @@ class GAEProcessor(InputProcessor):
         for t, adv, ret in zip(transitions, adv_list, ret_list):
             t["advantages"] = adv
             t["returns"] = ret
-            t["old_log_probs"] = t["policies"]
 
         return {"transitions": transitions}
 

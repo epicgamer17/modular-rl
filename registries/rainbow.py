@@ -194,12 +194,24 @@ def make_rainbow_learner(
     q_loss = QBootstrappingLoss(
         is_categorical=True,
         atom_size=agent_network.components["q_head"].representation.bins,
-        name="q_loss"
+        name="q_loss",
     )
     priority_comp = LossPriorityComponent(loss_key="q_loss", reduction="max")
-    buffer_update = PriorityUpdateComponent(priority_update_fn=replay_buffer.update_priorities)
+    buffer_update = PriorityUpdateComponent(
+        priority_update_fn=replay_buffer.update_priorities
+    )
 
-    from core.contracts import Key, Observation, Action, Reward, Done, Mask, SemanticType, LossScalar
+    from core.contracts import (
+        Key,
+        Observation,
+        Action,
+        Reward,
+        Done,
+        Mask,
+        SemanticType,
+        LossScalar,
+    )
+
     initial_keys = {
         Key("data.observations", Observation),
         Key("data.actions", Action),
@@ -216,7 +228,7 @@ def make_rainbow_learner(
 
     return BlackboardEngine(
         components=[
-            ForwardPassComponent(agent_network, None),
+            ForwardPassComponent(agent_network),
             DistributionalTargetComponent(
                 target_network=target_network,
                 online_network=agent_network,

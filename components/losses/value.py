@@ -45,9 +45,13 @@ class ScalarValueLoss(PipelineComponent):
             Key(
                 "predictions.values",
                 ValueEstimate[Scalar],
-                shape=ShapeContract(ndim=3, time_dim=1, event_shape=(1,)),
+                shape=ShapeContract(semantic_shape=("B", "T", "A"), event_shape=(1,)),
             ),
-            Key(self.target_key, ValueTarget[Scalar]),
+            Key(
+                self.target_key,
+                ValueTarget[Scalar],
+                shape=ShapeContract(semantic_shape=("B", "T", "A"), event_shape=(1,)),
+            ),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",
@@ -89,7 +93,7 @@ class ScalarValueLoss(PipelineComponent):
         assert_is_tensor(targets, msg=f"in {self.name} (targets)")
         assert_same_batch(preds, targets, msg=f"in {self.name}")
         assert_shape_sanity(
-            preds, min_ndim=3, msg=f"Prediction {self.name} must have [B, T, 1]"
+            preds, min_rank=3, msg=f"Prediction {self.name} must have [B, T, 1]"
         )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
@@ -97,17 +101,22 @@ class ScalarValueLoss(PipelineComponent):
         preds = blackboard.predictions["values"]
         targets = resolve_blackboard_path(blackboard, self.target_key)
 
-        # Align target dims to [B, T, 1]
-        if targets.ndim == preds.ndim - 1:
-            targets = targets.unsqueeze(1)
-        if targets.ndim == preds.ndim - 1:
-            targets = targets.unsqueeze(-1)
-
         B, T = preds.shape[:2]
+
+        # Align target dims to [B, T, 1]
+        if targets.shape != (B, T, 1):
+            targets = targets.reshape(B, T, 1)
         p_flat = preds.flatten(0, 1)  # [B*T, 1]
         t_flat = targets.flatten(0, 1)  # [B*T, 1]
 
         raw_loss = self.loss_fn(p_flat, t_flat, reduction="none")
+
+        # Sanity check: ensure loss is elementwise-compatible
+        expected_shape = p_flat.shape
+        assert raw_loss.shape == expected_shape, (
+            f"{self.name}: shape mismatch between predictions {p_flat.shape} and targets {t_flat.shape}. "
+            f"Broadcasting produced output {raw_loss.shape}."
+        )
 
         # Reduce event dim -> [B*T]
         if raw_loss.ndim > 1:
@@ -150,12 +159,12 @@ class CategoricalValueLoss(PipelineComponent):
             Key(
                 "predictions.values",
                 ValueEstimate[Logits],
-                shape=ShapeContract(ndim=3, time_dim=1, event_shape=(num_atoms,)),
+                shape=ShapeContract(semantic_shape=("B", "T", "A"), event_shape=(num_atoms,)),
             ),
             Key(
                 self.target_key,
                 ValueTarget[Probs],
-                shape=ShapeContract(ndim=3, time_dim=1, event_shape=(num_atoms,)),
+                shape=ShapeContract(semantic_shape=("B", "T", "A"), event_shape=(num_atoms,)),
             ),
         }
         self._provides = {
@@ -200,7 +209,7 @@ class CategoricalValueLoss(PipelineComponent):
         assert_same_batch(logits, target_probs, msg=f"in {self.name}")
         assert_shape_sanity(
             logits,
-            min_ndim=3,
+            min_rank=3,
             msg=f"Prediction {self.name} must have [B, T, num_atoms]",
         )
 
@@ -218,11 +227,11 @@ class CategoricalValueLoss(PipelineComponent):
         logits = blackboard.predictions["values"]
         target_probs = resolve_blackboard_path(blackboard, self.target_key)
 
-        # Align target dims to [B, T, num_atoms]
-        if target_probs.ndim == logits.ndim - 1:
-            target_probs = target_probs.unsqueeze(1)
-
         B, T = logits.shape[:2]
+
+        # Align target dims to [B, T, num_atoms]
+        if target_probs.shape != (B, T, self.num_atoms):
+            target_probs = target_probs.reshape(B, T, self.num_atoms)
 
         # Flatten [B, T] -> [N] for loss computation
         logits_flat = logits.flatten(0, 1)  # [B*T, num_atoms]
@@ -231,6 +240,11 @@ class CategoricalValueLoss(PipelineComponent):
         # Cross-entropy: -(target_probs * log_softmax(logits)).sum(dim=-1)
         log_probs = F.log_softmax(logits_flat, dim=-1)
         raw_loss = -(probs_flat * log_probs).sum(dim=-1)  # [B*T]
+
+        # Sanity check: ensure loss output rank is correct [B*T]
+        assert (
+            raw_loss.ndim == 1
+        ), f"{self.name}: categorical loss reduction failed. Expected [B*T], got {raw_loss.shape}."
 
         elementwise_loss = raw_loss.reshape(B, T) * self.loss_factor
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
@@ -269,11 +283,26 @@ class ClippedValueLoss(PipelineComponent):
                 "predictions.values",
                 ValueEstimate[Scalar],
                 shape=ShapeContract(
-                    ndim=3, time_dim=1, event_shape=(1,), symbolic=("B", "T", "1")
+                    semantic_shape=("B", "T", "A"),
+                    event_shape=(1,),
                 ),
             ),
-            Key(self.target_key, ValueTarget[Scalar]),
-            Key(self.old_values_key, ValueEstimate[Scalar]),
+            Key(
+                self.target_key,
+                ValueTarget[Scalar],
+                shape=ShapeContract(
+                    semantic_shape=("B", "T", "A"),
+                    event_shape=(1,),
+                ),
+            ),
+            Key(
+                self.old_values_key,
+                ValueEstimate[Scalar],
+                shape=ShapeContract(
+                    semantic_shape=("B", "T", "A"),
+                    event_shape=(1,),
+                ),
+            ),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",
@@ -323,7 +352,8 @@ class ClippedValueLoss(PipelineComponent):
         assert_same_batch(values, old_values, msg=f"in {self.name}")
 
         # PPO requires [B, T] or identical shapes
-        assert_shape_sanity(values, min_ndim=1, max_ndim=3, msg=f"for {self.name}")
+        # We allow ndim difference of 1 or 2 as long as they can be aligned to [B, T, 1]
+        assert_shape_sanity(values, min_rank=1, max_rank=3, msg=f"for {self.name}")
         assert (
             values.shape == returns.shape == old_values.shape
         ), f"Shape mismatch in {self.name}: {values.shape} vs {returns.shape} vs {old_values.shape}"
@@ -341,12 +371,25 @@ class ClippedValueLoss(PipelineComponent):
         # Buffer usually provides [B] or [B, T]
         B, T = values.shape[:2]
 
-        if returns.ndim == values.ndim - 2:
+        if values.shape != (B, T, 1):
+            values = values.reshape(B, T, 1)
+        if returns.shape != (B, T, 1):
             returns = returns.reshape(B, T, 1)
-        if old_values.ndim == values.ndim - 2:
+        if old_values.shape != (B, T, 1):
             old_values = old_values.reshape(B, T, 1)
 
         # 3. Compute losses
+        # Sanity check: ensure all inputs are elementwise-compatible [B, T, 1]
+        expected_shape = values.shape
+        assert returns.shape == expected_shape, (
+            f"{self.name}: shape mismatch between values {values.shape} and returns {returns.shape}. "
+            "Broadcasting is prohibited for loss targets."
+        )
+        assert old_values.shape == expected_shape, (
+            f"{self.name}: shape mismatch between values {values.shape} and old_values {old_values.shape}. "
+            "Broadcasting is prohibited for loss targets."
+        )
+
         v_loss_unclipped = (values - returns) ** 2
         v_clipped = old_values + torch.clamp(
             values - old_values, -self.clip_param, self.clip_param
@@ -355,6 +398,12 @@ class ClippedValueLoss(PipelineComponent):
 
         # PPO clipped value loss is the maximum of the two
         elementwise_loss = torch.max(v_loss_unclipped, v_loss_clipped)
+
+        # 4. Final sanity Check: Loss must be elementwise-compatible with predictions
+        assert elementwise_loss.shape == expected_shape, (
+            f"{self.name}: internal shape error. Elementwise loss {elementwise_loss.shape} "
+            f"does not match expected {expected_shape}."
+        )
         elementwise_loss = elementwise_loss * self.loss_factor
 
         # Pass through infrastructure (masking, mean, etc.)

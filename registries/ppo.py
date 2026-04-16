@@ -176,15 +176,51 @@ def make_ppo_learner(
     ]
 
     initial_keys = {
-        Key("data.observations", Observation),
-        Key("data.actions", Action),
-        Key("data.rewards", Reward),
-        Key("data.dones", Done),
-        Key("data.values", ValueEstimate[Scalar]),
-        Key("data.old_log_probs", LogProb[LogProbs]),
-        Key("data.advantages", Advantage[Scalar]),
-        Key("data.returns", ValueTarget[Scalar]),
-        Key("data.legal_moves_masks", Mask),
+        Key(
+            "data.observations",
+            Observation,
+            shape=ShapeContract(semantic_shape=("B", "T", "A"), event_shape=agent_network.components["policy_head"].input_shape),
+        ),
+        Key(
+            "data.actions",
+            Action,
+            shape=ShapeContract(semantic_shape=("B", "T")),
+        ),
+        Key(
+            "data.rewards",
+            Reward,
+            shape=ShapeContract(semantic_shape=("B", "T")),
+        ),
+        Key(
+            "data.dones",
+            Done,
+            shape=ShapeContract(semantic_shape=("B", "T")),
+        ),
+        Key(
+            "data.values",
+            ValueEstimate[Scalar],
+            shape=ShapeContract(semantic_shape=("B", "T")),
+        ),
+        Key(
+            "data.old_log_probs",
+            LogProb[LogProbs],
+            shape=ShapeContract(semantic_shape=("B", "T")),
+        ),
+        Key(
+            "data.advantages",
+            Advantage[Scalar],
+            shape=ShapeContract(semantic_shape=("B", "T")),
+        ),
+        Key(
+            "data.returns",
+            ValueTarget[Scalar],
+            shape=ShapeContract(semantic_shape=("B", "T")),
+        ),
+        Key(
+            "data.legal_moves_masks",
+            Mask,
+            shape=ShapeContract(semantic_shape=("B", "T", "A"), event_shape=(num_actions,)),
+        ),
     }
     target_keys = {Key("losses.total_loss", LossScalar)}
 

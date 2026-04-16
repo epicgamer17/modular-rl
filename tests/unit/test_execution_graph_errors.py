@@ -19,21 +19,17 @@ class MockComponent(PipelineComponent):
     def execute(self, blackboard): return {}
 
 def test_better_error_message_time_dim_mismatch():
-    """Verifies the new structured error message for time_dim mismatch."""
+    """Verifies the new structured error message for semantic shape mismatch."""
     # Component A provides (B, T, 128)
     k_p = Key("data.x", Observation, shape=ShapeContract(
-        symbolic=("B", "T", "C"),
-        time_dim=1,
+        semantic_shape=("B", "T", "A"),
         event_shape=(128,),
-        ndim=3
     ))
     
     # Component B requires (B, 128)
     k_c = Key("data.x", Observation, shape=ShapeContract(
-        symbolic=("B", "C"),
-        time_dim=None,
+        semantic_shape=("B", "A"),
         event_shape=(128,),
-        ndim=2
     ))
     
     c1 = MockComponent("Producer", provides={k_p: WriteMode.NEW})
@@ -46,20 +42,19 @@ def test_better_error_message_time_dim_mismatch():
     
     # Check for structured parts
     assert "Component A (Key: data.x, Provider: [0] MockComponent)" in error_msg
-    assert "provides: shape (B, T, C)" in error_msg
+    assert "provides: shape (B, T, 128)" in error_msg
     assert "Component B (Key: data.x, Consumer: [1] MockComponent)" in error_msg
-    assert "requires: shape (B, C)" in error_msg
+    assert "requires: shape (B, 128)" in error_msg
     assert "Error:" in error_msg
-    assert "Time dimension mismatch" in error_msg
-    assert "sequence dimension (T)" in error_msg
+    assert "Rank mismatch" in error_msg
 
-def test_better_error_message_ndim_mismatch():
-    """Verifies the new structured error message for ndim mismatch."""
-    # Component A provides (B, 128)
-    k_p = Key("data.x", Observation, shape=ShapeContract(ndim=2))
+def test_better_error_message_rank_mismatch():
+    """Verifies the new structured error message for rank mismatch."""
+    # Component A provides (B, A)
+    k_p = Key("data.x", Observation, shape=ShapeContract(semantic_shape=("B", "A")))
     
-    # Component B requires (B, T, 128)
-    k_c = Key("data.x", Observation, shape=ShapeContract(ndim=3))
+    # Component B requires (B, T, A)
+    k_c = Key("data.x", Observation, shape=ShapeContract(semantic_shape=("B", "T", "A")))
     
     c1 = MockComponent("P", provides={k_p: WriteMode.NEW})
     c2 = MockComponent("C", requires={k_c})
@@ -68,6 +63,7 @@ def test_better_error_message_ndim_mismatch():
         BlackboardEngine(components=[c1, c2], device=torch.device("cpu"))
         
     error_msg = str(excinfo.value)
-    assert "provides: shape (B, ?)" in error_msg
-    assert "requires: shape (B, ?, ?)" in error_msg
+    assert "provides: shape (B, A)" in error_msg
+    assert "requires: shape (B, T, A)" in error_msg
     assert "Rank mismatch" in error_msg
+

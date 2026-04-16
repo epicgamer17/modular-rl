@@ -56,7 +56,7 @@ def test_dag_validation_missing_dependency():
     k_obs = Key("data.obs", Observation)
     c1 = MockComponent("Consumer", requires={k_obs}, provides={})
     
-    with pytest.raises(RuntimeError, match="Missing dependencies in pipeline DAG"):
+    with pytest.raises(RuntimeError, match="Missing or mismatched dependencies in pipeline DAG"):
         BlackboardEngine(components=[c1], device=torch.device("cpu"))
 
 def test_dag_validation_semantic_mismatch():
@@ -67,13 +67,13 @@ def test_dag_validation_semantic_mismatch():
     c1 = MockComponent("Producer", requires=set(), provides={k_obs: WriteMode.NEW})
     c2 = MockComponent("Consumer", requires={k_rew}, provides={})
     
-    with pytest.raises(RuntimeError, match="SEMANTIC MISMATCH|Missing dependencies"):
+    with pytest.raises(RuntimeError, match="SEMANTIC MISMATCH|Missing or mismatched dependencies"):
         BlackboardEngine(components=[c1, c2], device=torch.device("cpu"), target_keys={k_obs})
 
 def test_dag_validation_shape_mismatch():
     """Verifies build-time failure when ShapeContracts conflict."""
-    k_p = Key("data.x", Observation, shape=ShapeContract(ndim=2))
-    k_c = Key("data.x", Observation, shape=ShapeContract(ndim=3))
+    k_p = Key("data.x", Observation, shape=ShapeContract(semantic_shape=("B", "A")))
+    k_c = Key("data.x", Observation, shape=ShapeContract(semantic_shape=("B", "T", "A")))
     
     c1 = MockComponent("P", requires=set(), provides={k_p: WriteMode.NEW})
     c2 = MockComponent("C", requires={k_c}, provides={})
@@ -163,6 +163,20 @@ def test_dag_overwrite_mode_validation():
     
     with pytest.raises(RuntimeError, match="overwrite but no existing provider"):
         BlackboardEngine(components=[c1], device=torch.device("cpu"), target_keys={k_loss})
+
+
+def test_dag_strict_axis_mismatch_failure():
+    """Verifies that strict axis alignment catches event shape mismatches (non-scalar)."""
+    # Producer provides [B, T, 2]
+    k_p = Key("data.x", Observation, shape=ShapeContract(semantic_shape=("B", "T", "A"), event_shape=(2,)))
+    # Consumer requires [B, T, 128] and prohibits broadcasting by default (strict alignment)
+    k_c = Key("data.x", Observation, shape=ShapeContract(semantic_shape=("B", "T", "A"), event_shape=(128,)))
+
+    c1 = MockComponent("P", requires=set(), provides={k_p: WriteMode.NEW})
+    c2 = MockComponent("C", requires={k_c}, provides={})
+
+    with pytest.raises(RuntimeError, match="Event shape mismatch"):
+        BlackboardEngine(components=[c1, c2], device=torch.device("cpu"))
 
 
 def test_disallow_inplace_mutation():

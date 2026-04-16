@@ -101,7 +101,6 @@ class ExpectedValueErrorPriorityComponent(PipelineComponent):
         from core.validation import (
             assert_in_blackboard,
             assert_is_tensor,
-            assert_shape_sanity,
         )
 
         try:

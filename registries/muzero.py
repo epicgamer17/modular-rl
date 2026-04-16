@@ -444,7 +444,7 @@ def make_muzero_learner(
             loss_factor=1.0,
         )
         v_formatter = TwoHotProjectionComponent(
-            source_key="targets.values",
+            source_key="data.values",
             dest_key="values_projected",
             representation=val_rep,
             semantic_type=ValueTarget,
@@ -457,7 +457,7 @@ def make_muzero_learner(
             loss_factor=1.0,
         )
         v_formatter = ScalarFormatterComponent(
-            source_key="targets.values",
+            source_key="data.values",
             dest_key="values",
             representation=val_rep,
             semantic_type=ValueTarget,
@@ -478,7 +478,7 @@ def make_muzero_learner(
             loss_factor=1.0,
         )
         r_formatter = TwoHotProjectionComponent(
-            source_key="targets.rewards",
+            source_key="data.rewards",
             dest_key="rewards_projected",
             representation=rew_rep,
             semantic_type=Reward,
@@ -491,7 +491,7 @@ def make_muzero_learner(
             loss_factor=1.0,
         )
         r_formatter = ScalarFormatterComponent(
-            source_key="targets.rewards",
+            source_key="data.rewards",
             dest_key="rewards",
             representation=rew_rep,
             semantic_type=Reward,
@@ -519,12 +519,7 @@ def make_muzero_learner(
                 keys=[
                     Key("data.values", ValueTarget[Scalar]),
                     Key("data.rewards", Reward[Scalar]),
-                    Key("data.policies", Policy[Probs]),
                     Key("data.actions", Action),
-                    Key("data.to_plays", ToPlay),
-                    Key("data.reward_mask", Mask),
-                    Key("data.to_play_mask", Mask),
-                    Key("data.policy_mask", Mask),
                     Key("data.dones", SemanticType),
                 ],
             ),
@@ -581,8 +576,6 @@ def make_muzero_actor_engine(
     Creates a standard MuZero actor engine (BlackboardEngine).
     """
     actor_initial_keys = {
-        Key("data.obs", Observation),
-        Key("data.info", SemanticType),
         Key("data.player_id", ToPlay),
     }
 
