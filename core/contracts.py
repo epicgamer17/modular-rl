@@ -44,23 +44,6 @@ class LogProbs(Structure):
         return "LogProbs"
 
 
-@dataclass(frozen=True)
-class Categorical(Structure):
-    bins: int
-
-    def __repr__(self) -> str:
-        return f"Categorical(bins={self.bins})"
-
-
-@dataclass(frozen=True)
-class Quantile(Structure):
-    # TODO: what is this actually used for?
-    n: int
-
-    def __repr__(self) -> str:
-        return f"Quantile(n={self.n})"
-
-
 _STRUCTURED_TYPE_CACHE: Dict[
     Tuple[Type["SemanticType"], Structure], Type["SemanticType"]
 ] = {}
@@ -74,18 +57,36 @@ class SemanticType:
     """
 
     structure: Optional[Structure] = None
+    
+    @classmethod
+    def is_compatible(cls, other: Type["SemanticType"]) -> bool:
+        """
+        Check if this semantic type (the requirement) is compatible with another (the provider).
+        Logic:
+        1. Both types must share a common base type (inheritance check).
+        2. If the requirement (cls) is abstract (structure is None), it accepts any representation.
+        3. If the requirement (cls) is concrete, the provider must match that structure exactly.
+        """
+        # Same base semantic type (one must be a subclass of the other)
+        if not issubclass(other, cls) and not issubclass(cls, other):
+            return False
+
+        s_req = getattr(cls, "structure", None)
+        s_prov = getattr(other, "structure", None)
+
+        # If requirement is abstract -> allow any representation of this semantic type
+        if s_req is None:
+            return True
+
+        # If requirement is concrete -> provider must match exactly
+        return s_req == s_prov
 
     def __class_getitem__(
         cls, structure: Union[Type[Structure], Structure]
     ) -> Type["SemanticType"]:
         if isinstance(structure, type):
-            if issubclass(structure, (Scalar, Logits, Probs, LogProbs)):
-                structure = structure()
-            else:
-                # For Categorical/Quantile, we expect an instance or we can't know bins/n
-                raise TypeError(
-                    f"Structure type {structure} must be instantiated (e.g. {structure.__name__}(...))"
-                )
+            # All current structures (Scalar, Logits, Probs, LogProbs) are stateless
+            structure = structure()
 
         cache_key = (cls, structure)
         if cache_key not in _STRUCTURED_TYPE_CACHE:
@@ -295,19 +296,19 @@ class Key:
     A semantic contract that binds a blackboard path to a semantic type,
     optional metadata, and an optional shape contract.
 
-    Identity (hash/equality) is determined solely by ``path`` and ``semantic_type``.
-    The ``metadata`` and ``shape`` fields are contract annotations used by
-    the DAG validator but do not affect key identity.
+    Identity (hash/equality) is determined solely by ``path``.
+    The ``semantic_type``, ``metadata`` and ``shape`` fields are contract annotations 
+    used by the DAG validator but do not affect key identity.
     """
 
     path: str
-    semantic_type: Type[SemanticType]
+    semantic_type: Type[SemanticType] = field(compare=False)
     metadata: Dict[str, Any] = field(default_factory=dict, compare=False)
     shape: Optional[ShapeContract] = field(default=None, compare=False)
 
     def __hash__(self) -> int:
-        """Hash the key based on its stable identity fields (path and semantic_type)."""
-        return hash((self.path, self.semantic_type))
+        """Hash the key based on its stable identity field (path)."""
+        return hash(self.path)
 
     def __str__(self) -> str:
         parts = [self.path, self.semantic_type.__name__]

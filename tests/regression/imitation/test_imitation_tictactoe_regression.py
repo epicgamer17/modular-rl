@@ -153,7 +153,7 @@ def test_imitation_tictactoe_regression():
 
     learner = BlackboardEngine(
         components=[
-            ForwardPassComponent(agent_network, None),
+            ForwardPassComponent(agent_network),
             imitation_loss,
             LossAggregatorComponent(loss_weights={"policy_loss": 1.0}),
             OptimizerStepComponent(

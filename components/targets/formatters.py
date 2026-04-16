@@ -26,7 +26,6 @@ from core.contracts import (
     Logits,
     Probs,
     LogProbs,
-    Categorical,
     SemanticType,
 )
 from modules.representations import (

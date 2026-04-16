@@ -111,9 +111,10 @@ class BaseAgentNetwork(nn.Module, ABC):
         pass
 
     @abstractmethod
-    def get_learner_contract(self) -> Dict[str, Type[SemanticType]]:
-        """Returns the semantic contract of the learner output (key -> semantic type)."""
+    def get_learner_contract(self) -> Dict[str, "Key"]:
+        """Returns the semantic contract of the learner output (key -> Key object)."""
         pass
+
 
     def compile(self, mode: str = "default", fullgraph: bool = False) -> None:
         """Compiles the inference methods for performance gains on supported platforms."""

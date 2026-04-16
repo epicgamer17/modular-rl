@@ -165,7 +165,13 @@ class ClippedValueLoss(PipelineComponent):
 
         # Deterministic contracts computed at initialization
         self._requires = {
-            Key("predictions.values", ValueEstimate[Scalar]),
+            Key(
+                "predictions.values",
+                ValueEstimate[Scalar],
+                shape=ShapeContract(
+                    ndim=3, time_dim=1, event_shape=(1,), symbolic=("B", "T", "1")
+                ),
+            ),
             Key(self.target_key, ValueTarget[Scalar]),
             Key(self.old_values_key, ValueEstimate[Scalar]),
         }
@@ -230,13 +236,15 @@ class ClippedValueLoss(PipelineComponent):
         returns = resolve_blackboard_path(blackboard, self.target_key)
         old_values = resolve_blackboard_path(blackboard, self.old_values_key)
 
-        # Ensure shapes match [B, T]
-        if values.ndim == 3 and values.shape[-1] == 1:
-            values = values.squeeze(-1)
-        if returns.ndim == 3 and returns.shape[-1] == 1:
-            returns = returns.squeeze(-1)
-        if old_values.ndim == 3 and old_values.shape[-1] == 1:
-            old_values = old_values.squeeze(-1)
+        # 2. Robust Shape Alignment: Ensure buffer data matches [B, T, 1] structure of predictions
+        # ModularAgentNetwork.learner_inference returns [B, 1, 1] or [B, T, 1]
+        # Buffer usually provides [B] or [B, T]
+        B, T = values.shape[:2]
+
+        if returns.ndim == values.ndim - 2:
+            returns = returns.reshape(B, T, 1)
+        if old_values.ndim == values.ndim - 2:
+            old_values = old_values.reshape(B, T, 1)
 
         # 3. Compute losses
         v_loss_unclipped = (values - returns) ** 2
@@ -249,7 +257,7 @@ class ClippedValueLoss(PipelineComponent):
         elementwise_loss = torch.max(v_loss_unclipped, v_loss_clipped)
         elementwise_loss = elementwise_loss * self.loss_factor
 
-        # Pass through infrastructure
+        # Pass through infrastructure (masking, mean, etc.)
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
         # Write out
@@ -258,3 +266,4 @@ class ClippedValueLoss(PipelineComponent):
             f"meta.{self.name}": scalar_loss.item(),
             f"meta.elementwise_losses.{self.name}": elementwise_loss,
         }
+

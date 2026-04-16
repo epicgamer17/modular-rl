@@ -295,19 +295,36 @@ def build_execution_graph(
                 edges[idx].add(provider_idx)
 
     if missing_deps:
-        lines = ["Missing dependencies in pipeline DAG:"]
-        available_paths = [k.path for k in provider_map.keys()]
+        lines = ["Missing or mismatched dependencies in pipeline DAG:"]
+        available_keys = list(provider_map.keys())
+        available_paths = sorted([k.path for k in available_keys])
+        
         for idx, keys in missing_deps.items():
             name = type(components[idx]).__name__
-            key_strings = []
-            for k in keys:
-                suggestions = difflib.get_close_matches(k.path, available_paths, n=3, cutoff=0.6)
-                s = f"'{k.path}'"
-                if suggestions:
-                    s += f" (did you mean: {suggestions}?)"
-                key_strings.append(s)
-            lines.append(f"  [{idx}] {name}: needs {', '.join(key_strings)}")
-        lines.append(f"  Available keys: {sorted(available_paths)}")
+            detail_lines = []
+            for req in keys:
+                # Check for "identity mismatch" (path exists but Key object doesn't match)
+                # This happens if Key equality includes semantic_type and they differ.
+                matches = [k for k in available_keys if k.path == req.path]
+                if matches:
+                    found_key = matches[0]
+                    detail_lines.append(
+                        f"'{req.path}' (FOUND path, but IDENTITY MISMATCH: \n"
+                        f"      needs {req.semantic_type.__name__}, \n"
+                        f"      found {found_key.semantic_type.__name__})"
+                    )
+                else:
+                    suggestions = difflib.get_close_matches(req.path, available_paths, n=3, cutoff=0.6)
+                    s = f"'{req.path}' (MISSING)"
+                    if suggestions:
+                        s += f" (did you mean: {suggestions}?)"
+                    detail_lines.append(s)
+            
+            lines.append(f"  [{idx}] {name}:")
+            for det in detail_lines:
+                lines.append(f"    - {det}")
+                
+        lines.append(f"  Available keys in namespace: {', '.join(available_paths)}")
         raise RuntimeError("\n".join(lines))
 
     # ── 3. Topological sort (Kahn's, stable) ─────────────────────────
@@ -521,13 +538,17 @@ def _validate_contracts(graph: ExecutionGraph, initial_keys: Set[Key]) -> None:
             provider_name = "INITIAL_KEYS" if provider_idx == _INITIAL else f"[{provider_idx}] {type(graph.components[provider_idx]).__name__}"
 
             # Stage 2: Semantic Compatibility
-            # Generic semantic types must match or found_key must be a subclass
-            if not issubclass(found_key.semantic_type, req.semantic_type):
-                incompatibilities.append(
-                    f"SEMANTIC MISMATCH for '{req.path}': \n"
-                    f"      - Consumer [{idx}] '{type(component).__name__}' expects {req.semantic_type}\n"
-                    f"      - Provider {provider_name} provided {found_key.semantic_type}"
+            # Generic semantic types must be compatible (one inherits from the other,
+            # and structures match if both are specified).
+            if not req.semantic_type.is_compatible(found_key.semantic_type):
+                # Help the user: is the provider too generic?
+                # Note: with is_compatible, we still might want to give context if it's a structural mismatch
+                mismatch_msg = (
+                    f"SEMANTIC MISMATCH for '{req.path}':\n"
+                    f"      - Consumer requires: {req.semantic_type}\n"
+                    f"      - Provider gives:   {found_key.semantic_type}"
                 )
+                incompatibilities.append(mismatch_msg)
 
             # Stage 3: Representation Consistency (Metadata)
             # This ensures bins, vmin, vmax etc. match exactly between provider and consumer.
@@ -565,7 +586,9 @@ def _validate_contracts(graph: ExecutionGraph, initial_keys: Set[Key]) -> None:
             error_header = f"DAG Topology Error at Component [{idx}] '{type(component).__name__}':"
             error_msg = [error_header]
             if missing:
-                error_msg.append(f"  Missing Dependencies: {missing}")
+                error_msg.append("  Missing Dependencies:")
+                for m in missing:
+                    error_msg.append(f"    - {m}")
             if incompatibilities:
                 error_msg.append("  Contract Violations:")
                 for inc in incompatibilities:
@@ -574,7 +597,7 @@ def _validate_contracts(graph: ExecutionGraph, initial_keys: Set[Key]) -> None:
                     error_msg.append(indented_inc)
 
             error_msg.append(
-                f"  Available keys in namespace: {sorted(list(available_contracts.keys()))}"
+                f"  Available keys in namespace: {', '.join(sorted(list(available_contracts.keys())))}"
             )
             raise RuntimeError("\n".join(error_msg))
 

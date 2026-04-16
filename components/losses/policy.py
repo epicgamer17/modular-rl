@@ -49,8 +49,8 @@ class PolicyLoss(PipelineComponent):
         # Deterministic contracts computed at initialization
         # TODO: shape contracts? how do we handle time dimension from unrolls or from LSTM memory vs single step DQN, A2C, PPO, etc?
         self._requires = {
-            Key("predictions.policies", Policy),  # Accept any structure
-            Key(self.target_key, Policy),  # Accept any structure
+            Key("predictions.policies", Policy[Logits]),  # Accept any structure
+            Key(self.target_key, Policy[Probs]),  # Accept any structure
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",
@@ -176,7 +176,11 @@ class ClippedSurrogateLoss(PipelineComponent):
 
         # Deterministic contracts computed at initialization
         self._requires = {
-            Key("predictions.policies", Policy),  # Accept any structure
+            Key(
+                "predictions.policies",
+                Policy,
+                shape=ShapeContract(ndim=3, time_dim=1, symbolic=("B", "T", "F")),
+            ),
             Key(self.actions_key, Action),
             Key(self.old_log_probs_key, LogProb[LogProbs]),
             Key(self.advantages_key, Advantage[Scalar]),
@@ -229,23 +233,42 @@ class ClippedSurrogateLoss(PipelineComponent):
         assert_same_batch(old_log_probs, advantages, msg=f"in {self.name}")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
+        """Compute PPO surrogate loss."""
+        # 1. Extract inputs
         policy_logits = blackboard.predictions["policies"]
         actions = resolve_blackboard_path(blackboard, self.actions_key)
         old_log_probs = resolve_blackboard_path(blackboard, self.old_log_probs_key)
         advantages = resolve_blackboard_path(blackboard, self.advantages_key)
 
+        # 2. Robust Shape Alignment: Ensure buffer data matches [B, T] structure of predictions
+        # ModularAgentNetwork.learner_inference returns [B, 1, K] or [B, T, K]
+        # Buffer usually provides [B] or [B, T]
+        B, T = policy_logits.shape[:2]
+
+        if actions.ndim == policy_logits.ndim - 2:
+            actions = actions.reshape(B, T)
+        if old_log_probs.ndim == policy_logits.ndim - 2:
+            old_log_probs = old_log_probs.reshape(B, T)
+        if advantages.ndim == policy_logits.ndim - 2:
+            advantages = advantages.reshape(B, T)
+
+        # 3. Compute log probabilities
         dist = torch.distributions.Categorical(logits=policy_logits)
         log_probs = dist.log_prob(actions)
-        ratio = torch.exp(log_probs - old_log_probs)
 
+        # 4. Compute surrogate objective
+        ratio = torch.exp(log_probs - old_log_probs)
         surr1 = ratio * advantages
         surr2 = (
             torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param)
             * advantages
         )
 
+        policy_loss = -torch.min(surr1, surr2)
+
+        # 5. Add Entropy Regularization
         entropy = dist.entropy()
-        elementwise_loss = -torch.min(surr1, surr2) - self.entropy_coefficient * entropy
+        elementwise_loss = policy_loss - self.entropy_coefficient * entropy
 
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 

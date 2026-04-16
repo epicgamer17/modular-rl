@@ -13,7 +13,8 @@ from core.contracts import (
     Policy,
     Metric,
     Scalar,
-    Categorical,
+    Logits,
+    Probs,
 )
 
 
@@ -156,9 +157,8 @@ class DistributionalTargetComponent(PipelineComponent):
             Key("data.dones", Done),
             Key("data.next_observations", Observation),
         }
-        struct = Categorical(bins=atom_size)
         self._provides = {
-            Key("targets.q_logits", QTargets[struct]): "new",
+            Key("targets.q_probs", QTargets[Probs]): "new",
             Key("targets.next_actions", Action): "new",
         }
 
@@ -245,6 +245,6 @@ class DistributionalTargetComponent(PipelineComponent):
         )
 
         return {
-            "targets.q_logits": target_distribution.unsqueeze(1),
+            "targets.q_probs": target_distribution.unsqueeze(1),
             "targets.next_actions": next_actions.unsqueeze(1),
         }
