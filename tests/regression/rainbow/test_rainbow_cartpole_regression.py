@@ -13,9 +13,9 @@ from registries import (
     make_rainbow_network,
     make_rainbow_replay_buffer,
     make_rainbow_learner,
+    make_rainbow_actor_engine,
 )
-from actors.action_selectors.selectors import ActionSelector
-from core import RepeatSampleIterator
+from core import RepeatSampleIterator, infinite_ticks
 from utils.schedule import LinearSchedule
 from utils.plotting import plot_regression_results
 
@@ -33,28 +33,27 @@ def setup_seeds(seed=42):
         torch.cuda.manual_seed_all(seed)
 
 
-def evaluate_agent(env, agent_network, device, num_episodes=3):
-    """Evaluate the agent on the environment using greedy actions."""
+def evaluate_agent(env_id, agent_network, obs_dim, num_actions, device, num_episodes=3):
+    """Evaluate the agent on the environment using greedy actions via a BlackboardEngine."""
+    eval_env = gym.make(env_id)
+    eval_engine = make_rainbow_actor_engine(
+        env=eval_env,
+        agent_network=agent_network,
+        replay_buffer=None,
+        obs_dim=obs_dim,
+        device=device,
+    )
+
     scores = []
     agent_network.eval()
-    action_selector = ActionSelector(input_key="q_values", temperature=0.0)
-    with torch.inference_mode():
-        for _ in range(num_episodes):
-            state, info = env.reset()
-            episode_score = 0.0
-            done = False
-            while not done:
-                obs_tensor = torch.tensor(
-                    state, dtype=torch.float32, device=device
-                ).unsqueeze(0)
-                # Rainbow inference via obs_inference returns InferenceOutput with q_values
-                result = agent_network.obs_inference(obs_tensor)
-                action, _ = action_selector.select_action(predictions=result, info=info)
-                state, reward, terminated, truncated, info = env.step(action.item())
-                done = terminated or truncated
-                episode_score += reward
-            scores.append(episode_score)
+    for result in eval_engine.step(infinite_ticks()):
+        meta = result["meta"]
+        if "episode_score" in meta:
+            scores.append(meta["episode_score"])
+            if len(scores) >= num_episodes:
+                break
     agent_network.train()
+    eval_env.close()
     return scores
 
 
@@ -251,7 +250,7 @@ def test_rainbow_cartpole_full_training():
 
     # --- Final Evaluation ---
     print("Final Evaluation...")
-    test_scores = evaluate_agent(env, agent_network, DEVICE, num_episodes=10)
+    test_scores = evaluate_agent(ENV_ID, agent_network, obs_dim, num_actions, DEVICE, num_episodes=10)
     avg_test_score = np.mean(test_scores)
     print(f"Final Test Scores: Average {avg_test_score:.2f}")
 
