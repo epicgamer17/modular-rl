@@ -68,10 +68,8 @@ def apply_infrastructure(
     B, T = elementwise_loss.shape[:2]
     device = elementwise_loss.device
 
-    # 1. Weights from data (yielded by Sampler) or meta (Truth Source)
+    # 1. Weights from data (yielded by Sampler or explicitly provided)
     weights = blackboard.data.get("weights")
-    if weights is None:
-        weights = blackboard.meta.get("weights")
 
     # 2. Gradient scales from meta
     gradient_scales = blackboard.meta.get("gradient_scales")

@@ -36,6 +36,7 @@ from core.contracts import (
     SemanticType,
     Done,
     Mask,
+    Weight,
     Scalar,
     Probs,
     LossScalar,
@@ -58,7 +59,7 @@ from modules.representations import (
 )
 from components.search import MCTSSearchComponent
 from components.targets import (
-    SequenceInfrastructureComponent,
+    UnrollGradientScaler,
     TwoHotProjectionComponent,
     ClassificationFormatterComponent,
     ScalarFormatterComponent,
@@ -332,6 +333,9 @@ def make_muzero_replay_buffer(
     discount_factor: float = 0.99,
     num_players: int = 2,
     player_map: Optional[Dict[str, int]] = None,
+    prioritized: bool = False,
+    per_alpha: float = 0.6,
+    per_beta: float = 0.4,
 ) -> ModularReplayBuffer:
     """
     Creates a standard MuZero replay buffer.
@@ -367,6 +371,12 @@ def make_muzero_replay_buffer(
         unroll_steps, td_steps, discount_factor, num_actions, num_players, buffer_size
     )
 
+    if prioritized:
+        from data.samplers.prioritized import PrioritizedSampler
+        sampler = PrioritizedSampler(max_size=buffer_size, alpha=per_alpha, beta=per_beta)
+    else:
+        sampler = UniformSampler()
+
     return ModularReplayBuffer(
         max_size=buffer_size,
         batch_size=batch_size,
@@ -374,7 +384,7 @@ def make_muzero_replay_buffer(
         input_processor=input_processor,
         output_processor=output_processor,
         writer=SharedCircularWriter(max_size=buffer_size),
-        sampler=UniformSampler(),
+        sampler=sampler,
         backend=TorchMPBackend(),
     )
 
@@ -435,6 +445,7 @@ def make_muzero_learner(
         Key("data.is_same_game", Mask),
         Key("data.ids", SemanticType),
         Key("data.indices", SemanticType),
+        Key("data.weights", Weight),
         Key("data.training_steps", SemanticType),
     }
 
@@ -516,7 +527,7 @@ def make_muzero_learner(
     learner = BlackboardEngine(
         components=[
             ForwardPassComponent(agent_network),
-            SequenceInfrastructureComponent(unroll_steps),
+            UnrollGradientScaler(unroll_steps),
             v_formatter,
             ClassificationFormatterComponent(
                 source_key="data.policies",  # Read from data (buffer), not targets

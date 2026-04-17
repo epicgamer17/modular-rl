@@ -17,8 +17,8 @@ from core.contracts import (
 from typing import Any, Dict, List, Optional, Set
 
 
-class SequenceInfrastructureComponent(PipelineComponent):
-    """Modifier: Generates weight and gradient scale tensors."""
+class UnrollGradientScaler(PipelineComponent):
+    """Modifier: Generates gradient scale tensors for MuZero-style unrolls."""
 
     required = True
 
@@ -26,7 +26,6 @@ class SequenceInfrastructureComponent(PipelineComponent):
         self.unroll_steps = unroll_steps
         self._requires = {Key("data.actions", Action)}
         self._provides = {
-            Key("meta.weights", Weight): "new",
             Key("meta.gradient_scales", GradientScale): "new",
         }
 
@@ -42,26 +41,12 @@ class SequenceInfrastructureComponent(PipelineComponent):
         """Ensures actions exist in data."""
         assert (
             "actions" in blackboard.data
-        ), "SequenceInfrastructureComponent: 'actions' missing from blackboard.data"
+        ), "UnrollGradientScaler: 'actions' missing from blackboard.data"
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        data = blackboard.data
-        device = torch.device("cpu")
-        for section in [blackboard.targets, blackboard.data, blackboard.predictions]:
-            if section:
-                any_tensor = next(
-                    (v for v in section.values() if torch.is_tensor(v)), None
-                )
-                if any_tensor is not None:
-                    device = any_tensor.device
-                    break
-
-        B = data["actions"].shape[0]
+        device = blackboard.data["actions"].device
+        
         updates = {}
-
-        if "weights" not in blackboard.meta:
-            updates["meta.weights"] = data.get("weights", torch.ones(B, device=device))
-
         if "gradient_scales" not in blackboard.meta:
             scales = (
                 [1.0] + [1.0 / self.unroll_steps] * self.unroll_steps
