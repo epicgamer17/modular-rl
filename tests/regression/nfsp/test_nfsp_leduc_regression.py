@@ -200,6 +200,8 @@ def test_nfsp_leduc_regression():
         Key("data.actions", Action),
         Key("data.rewards", Reward),
         Key("data.dones", Done),
+        Key("data.episode_ids", SemanticType),
+        Key("data.step_ids", SemanticType),
         Key("data.next_observations", Observation),
         Key("data.next_legal_moves_masks", Mask),
     }
@@ -262,7 +264,9 @@ def test_nfsp_leduc_regression():
             BufferConfig("observations", shape=obs_shape, dtype=torch.float32),
             BufferConfig("actions", shape=(), dtype=torch.int64),
             BufferConfig("rewards", shape=(), dtype=torch.float32),
-            BufferConfig("done", shape=(), dtype=torch.bool),
+            BufferConfig("dones", shape=(), dtype=torch.bool),
+            BufferConfig("episode_ids", shape=(), dtype=torch.int64),
+            BufferConfig("step_ids", shape=(), dtype=torch.int32),
             BufferConfig("next_observations", shape=obs_shape, dtype=torch.float32),
             BufferConfig(
                 "next_legal_moves_masks",
@@ -301,6 +305,8 @@ def test_nfsp_leduc_regression():
                     actions=last_action[agent],
                     rewards=reward,
                     dones=termination or truncation,
+                    episode_ids=episode,
+                    step_ids=total_steps,
                     next_observations=obs_dict["observation"],
                     next_legal_moves_masks=obs_dict["action_mask"],
                 )

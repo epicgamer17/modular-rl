@@ -135,7 +135,7 @@ def test_ppo_cartpole_full_training():
         "observations": "data.obs",
         "actions": "meta.action",
         "rewards": "data.reward",
-        "done": "data.done",
+        "dones": "data.done",
         "values": "predictions.value",
         "old_log_probs": "predictions.log_prob",
     }
@@ -178,7 +178,7 @@ def test_ppo_cartpole_full_training():
                     )
 
             # PPO Trajectory Finishing Logic (at episode end or epoch end)
-            if meta["done"] or epoch_steps == STEPS_PER_EPOCH:
+            if meta["dones"] or epoch_steps == STEPS_PER_EPOCH:
                 if meta["terminated"]:
                     last_value = 0.0
                 else:

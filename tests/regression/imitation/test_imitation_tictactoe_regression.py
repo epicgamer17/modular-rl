@@ -73,6 +73,10 @@ def test_imitation_tictactoe_regression():
     buffer_configs = [
         BufferConfig("observations", shape=obs_shape, dtype=torch.float32),
         BufferConfig("actions", shape=(), dtype=torch.int64),
+        BufferConfig("rewards", shape=(), dtype=torch.float32),
+        BufferConfig("dones", shape=(), dtype=torch.bool),
+        BufferConfig("episode_ids", shape=(), dtype=torch.int64),
+        BufferConfig("step_ids", shape=(), dtype=torch.int32),
         BufferConfig("legal_moves_masks", shape=(num_actions,), dtype=torch.bool),
         BufferConfig("policies", shape=(num_actions,), dtype=torch.float32),
     ]
@@ -110,6 +114,10 @@ def test_imitation_tictactoe_regression():
                 replay_buffer.store(
                     observations=obs,
                     actions=action,
+                    rewards=0.0,
+                    dones=False,
+                    episode_ids=0,
+                    step_ids=0,
                     legal_moves_masks=mask_bool,
                     policies=target_policy,
                 )

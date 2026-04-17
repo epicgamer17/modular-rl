@@ -23,7 +23,7 @@ class NStepInputProcessor(InputProcessor):
         gamma: float,
         num_players: int = 1,
         reward_key="rewards",
-        done_key="done",
+        done_key="dones",
         terminated_key="terminated",
         truncated_key="truncated",
     ):
@@ -200,12 +200,12 @@ class NStepUnrollProcessor(OutputProcessor):
         raw_actions = buffers["actions"][all_indices]
         raw_to_plays = buffers["to_plays"][all_indices]
         raw_chances = buffers["chances"][all_indices]
-        raw_episode_ids = buffers["episode_id"][all_indices]
+        raw_episode_ids = buffers["episode_ids"][all_indices]
         raw_legal_masks = buffers["legal_masks"][all_indices]
         raw_terminated = (
             buffers["terminated"][all_indices]
             if "terminated" in buffers
-            else buffers["done"][all_indices]
+            else buffers["dones"][all_indices]
         )
         raw_truncated = (
             buffers["truncated"][all_indices]
@@ -375,7 +375,7 @@ class NStepUnrollProcessor(OutputProcessor):
             actions=target_actions,
             to_plays=target_to_plays,
             chance_codes=target_chances,
-            done=target_dones,
+            dones=target_dones,
             is_same_episode=same_game[:, : self.unroll_steps + 1],
             ids=buffers["ids"][indices_tensor].clone(),
             legal_moves_masks=buffers["legal_masks"][indices_tensor],

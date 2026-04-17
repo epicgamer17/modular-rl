@@ -20,7 +20,7 @@ class GymObservationComponent(PipelineComponent):
             self.state, self.info = result, {}
         self.terminated = False
         self.truncated = False
-        self.done = False
+        self.dones = False
 
     @property
     def requires(self) -> Set[Key]:
@@ -33,20 +33,20 @@ class GymObservationComponent(PipelineComponent):
             Key("data.info", SemanticType): "new",
             Key("data.terminated", Done): "new",
             Key("data.truncated", Done): "new",
-            Key("data.done", Done): "new",
+            Key("data.dones", Done): "new",
         }
 
     def validate(self, blackboard: Blackboard) -> None:
         assert self.env is not None, "GymObservationComponent: env is None"
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        if self.state is None or self.done:
+        if self.state is None or self.dones:
             result = self.env.reset()
             if isinstance(result, tuple) and len(result) == 2:
                 self.state, self.info = result
             else:
                 self.state, self.info = result, {}
-            self.done = False
+            self.dones = False
             self.terminated = False
             self.truncated = False
 
@@ -62,7 +62,7 @@ class GymObservationComponent(PipelineComponent):
             "data.info": self.info,
             "data.terminated": self.terminated,
             "data.truncated": self.truncated,
-            "data.done": self.terminated or self.truncated,
+            "data.dones": self.terminated or self.truncated,
         }
 
 
@@ -84,12 +84,12 @@ class GymStepComponent(PipelineComponent):
     def provides(self) -> Dict[Key, str]:
         return {
             Key("data.reward", Reward): "new",
-            Key("data.done", Done): "overwrite",
+            Key("data.dones", Done): "overwrite",
             Key("data.next_obs", Observation): "new",
             Key("data.terminated", Done): "overwrite",
             Key("data.truncated", Done): "overwrite",
             Key("meta.reward", Metric): "new",
-            Key("meta.done", Metric): "new",
+            Key("meta.dones", Metric): "new",
             Key("meta.terminated", Metric): "new",
             Key("meta.truncated", Metric): "new",
             Key("meta.info", SemanticType): "new",
@@ -113,24 +113,24 @@ class GymStepComponent(PipelineComponent):
             )
 
         next_obs, reward, terminated, truncated, info = self.env.step(action)
-        done = terminated or truncated
+        dones = terminated or truncated
 
         # Update observation component for next tick
         self.obs_component.state = next_obs
         self.obs_component.info = info
-        self.obs_component.done = done
+        self.obs_component.dones = dones
         self.obs_component.terminated = terminated
         self.obs_component.truncated = truncated
 
         # Write transition data to blackboard via return
         return {
             "data.reward": float(reward),
-            "data.done": done,
+            "data.dones": dones,
             "data.terminated": terminated,
             "data.truncated": truncated,
             "data.next_obs": next_obs,
             "meta.reward": float(reward),
-            "meta.done": done,
+            "meta.dones": dones,
             "meta.terminated": terminated,
             "meta.truncated": truncated,
             "meta.info": info,
