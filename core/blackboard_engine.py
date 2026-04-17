@@ -117,6 +117,7 @@ class BlackboardEngine:
         self.components = components
         self.device = device
         self.training_step = 0
+        self.base_meta = {}
         self.strict = strict
         self.lazy = lazy
         self.diff = diff
@@ -132,6 +133,10 @@ class BlackboardEngine:
         """Read-only access to the execution graph for introspection."""
         return self._graph
 
+    def update_base_meta(self, updates: Dict[str, Any]) -> None:
+        """Updates the base metadata that is injected into every blackboard step."""
+        self.base_meta.update(updates)
+
     def step(
         self,
         batch_iterator: Iterable[Dict[str, Any]],
@@ -145,7 +150,7 @@ class BlackboardEngine:
                 k: v.to(self.device) if torch.is_tensor(v) else v
                 for k, v in batch.items()
             }
-            blackboard = Blackboard(data=device_batch)
+            blackboard = Blackboard(data=device_batch, meta=dict(self.base_meta))
 
             # 2. Resolve execution plan (lazy or dynamic subgraph)
             if _restricted_plan is not None:

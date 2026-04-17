@@ -396,6 +396,7 @@ def make_muzero_learner(
     batch_size: int,
     unroll_steps: int,
     num_actions: int,
+    num_players: int,
     device: torch.device,
 ) -> BlackboardEngine:
     """
@@ -549,9 +550,10 @@ def make_muzero_learner(
             LossAggregatorComponent(loss_weights=loss_weights),
             MuzeroMultiplayerTelemetry(
                 value_representation=val_rep,
-                num_players=1,
+                num_players=num_players,
                 to_play_target_key="data.to_plays",
                 value_target_key="data.values",
+                mask_key="data.to_play_mask",
             ),
             priority_comp,
             buffer_update,
@@ -577,6 +579,7 @@ def make_muzero_actor_engine(
     num_actions: int,
     num_players: int,
     temperature_schedule: Optional[StepwiseSchedule] = None,
+    temperature_schedule_source: str = "episode",
     exploration: bool = True,
     device: torch.device = torch.device("cpu"),
 ) -> BlackboardEngine:
@@ -611,7 +614,7 @@ def make_muzero_actor_engine(
             input_key="search_policy",
             temperature=1.0 if exploration else 0.0,
             schedule=temperature_schedule,
-            schedule_source="episode",
+            schedule_source=temperature_schedule_source,
         )
     )
 

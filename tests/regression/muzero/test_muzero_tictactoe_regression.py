@@ -122,6 +122,7 @@ def test_muzero_tictactoe_full_training():
         batch_size=BATCH_SIZE,
         unroll_steps=UNROLL_STEPS,
         num_actions=num_actions,
+        num_players=2,
         device=DEVICE,
     )
 
