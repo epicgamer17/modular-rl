@@ -39,7 +39,9 @@ from core.contracts import (
     Scalar,
     Probs,
     LossScalar,
+    Metric,
 )
+
 from components.neural import ForwardPassComponent
 from components.losses import OptimizerStepComponent
 from components.losses import LossAggregatorComponent
@@ -56,12 +58,10 @@ from modules.representations import (
 )
 from components.search import MCTSSearchComponent
 from components.targets import (
-    SequencePadderComponent,
     SequenceInfrastructureComponent,
     TwoHotProjectionComponent,
     ClassificationFormatterComponent,
     ScalarFormatterComponent,
-    SequenceMaskComponent,
 )
 from components.environments import (
     PettingZooObservationComponent,
@@ -396,7 +396,9 @@ def make_muzero_learner(
     rew_rep = agent_network.components["world_model"].reward_head.representation
     tp_rep = agent_network.components["world_model"].to_play_head.representation
 
-    priority_comp = ExpectedValueErrorPriorityComponent(value_representation=val_rep)
+    priority_comp = ExpectedValueErrorPriorityComponent(
+        value_representation=val_rep, target_key="data.values"
+    )
     buffer_update = PriorityUpdateComponent(
         priority_update_fn=replay_buffer.update_priorities
     )
@@ -440,7 +442,7 @@ def make_muzero_learner(
         v_loss = CategoricalValueLoss(
             num_atoms=val_rep.bins,
             target_key="targets.values_projected",
-            mask_key="targets.policy_mask",
+            mask_key="data.policy_mask",
             loss_factor=1.0,
         )
         v_formatter = TwoHotProjectionComponent(
@@ -452,7 +454,7 @@ def make_muzero_learner(
     else:
         v_loss = ScalarValueLoss(
             target_key="targets.values",
-            mask_key="targets.policy_mask",
+            mask_key="data.policy_mask",
             loss_fn=nn.functional.mse_loss,
             loss_factor=1.0,
         )
@@ -465,7 +467,7 @@ def make_muzero_learner(
 
     p_loss = PolicyLoss(
         target_key="targets.policies",
-        mask_key="targets.policy_mask",
+        mask_key="data.policy_mask",
         loss_fn=nn.functional.cross_entropy,
         loss_factor=1.0,
     )
@@ -473,7 +475,7 @@ def make_muzero_learner(
     if isinstance(rew_rep, DiscreteSupportRepresentation):
         r_loss = RewardLoss(
             target_key="targets.rewards_projected",
-            mask_key="targets.reward_mask",
+            mask_key="data.reward_mask",
             loss_fn=nn.functional.cross_entropy,
             loss_factor=1.0,
         )
@@ -486,7 +488,7 @@ def make_muzero_learner(
     else:
         r_loss = RewardLoss(
             target_key="targets.rewards",
-            mask_key="targets.reward_mask",
+            mask_key="data.reward_mask",
             loss_fn=nn.functional.mse_loss,
             loss_factor=1.0,
         )
@@ -499,7 +501,7 @@ def make_muzero_learner(
 
     tp_loss = ToPlayLoss(
         target_key="targets.to_plays",
-        mask_key="targets.to_play_mask",
+        mask_key="data.to_play_mask",
         loss_fn=nn.functional.cross_entropy,
         loss_factor=1.0,
     )
@@ -514,17 +516,7 @@ def make_muzero_learner(
     learner = BlackboardEngine(
         components=[
             ForwardPassComponent(agent_network),
-            SequencePadderComponent(
-                unroll_steps,
-                keys=[
-                    Key("data.values", ValueTarget[Scalar]),
-                    Key("data.rewards", Reward[Scalar]),
-                    Key("data.actions", Action),
-                    Key("data.dones", SemanticType),
-                ],
-            ),
             SequenceInfrastructureComponent(unroll_steps),
-            SequenceMaskComponent(),
             v_formatter,
             ClassificationFormatterComponent(
                 source_key="data.policies",  # Read from data (buffer), not targets
@@ -544,7 +536,12 @@ def make_muzero_learner(
             r_loss,
             tp_loss,
             LossAggregatorComponent(loss_weights=loss_weights),
-            MuzeroMultiplayerTelemetry(value_representation=val_rep, num_players=1),
+            MuzeroMultiplayerTelemetry(
+                value_representation=val_rep,
+                num_players=1,
+                to_play_target_key="data.to_plays",
+                value_target_key="data.values",
+            ),
             priority_comp,
             buffer_update,
             OptimizerStepComponent(
@@ -575,13 +572,13 @@ def make_muzero_actor_engine(
     """
     Creates a standard MuZero actor engine (BlackboardEngine).
     """
-    actor_initial_keys = {
-        Key("data.player_id", ToPlay),
-    }
-
     is_pz = hasattr(env, "possible_agents") or (
         hasattr(env, "unwrapped") and hasattr(env.unwrapped, "possible_agents")
     )
+
+    actor_initial_keys = set()
+    if not is_pz:
+        actor_initial_keys.add(Key("data.player_id", ToPlay))
 
     if is_pz:
         obs_component = PettingZooObservationComponent(env)

@@ -283,7 +283,7 @@ class ConsistencyLoss(PipelineComponent):
         preds_norm = F.normalize(preds, p=2.0, dim=-1)
         targets_norm = F.normalize(targets, p=2.0, dim=-1)
 
-        elementwise_loss = -(preds_norm * targets_norm).sum(dim=-1) * self.loss_factor
+        elementwise_loss = (-(preds_norm * targets_norm).sum(dim=-1) * self.loss_factor).reshape(B, T)
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
         return {
@@ -394,8 +394,16 @@ class CommitmentLoss(PipelineComponent):
         assert_is_tensor(loss, msg=f"in {self.name} (commitment_loss)")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        elementwise_loss = blackboard.predictions["commitment_loss"]
-        elementwise_loss = elementwise_loss * self.loss_factor
+        # Extract shapes from mask if available, or assume elementwise_loss is already B,T
+        masks = blackboard.targets.get(self.mask_key, blackboard.data.get(self.mask_key))
+        if masks is not None:
+             B, T = masks.shape[:2]
+        else:
+             # Fallback: if no mask, it should still be B, T somehow.
+             # In MuZero it is usually [B, T].
+             B, T = blackboard.predictions["commitment_loss"].shape[:2]
+
+        elementwise_loss = (blackboard.predictions["commitment_loss"] * self.loss_factor).reshape(B, T)
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
         return {

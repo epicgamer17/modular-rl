@@ -124,8 +124,18 @@ class QBootstrappingLoss(PipelineComponent):
             flat_targets = flat_targets.squeeze(-1)
 
         if self.pred_key == "q_logits":
+            # For categorical targets, we typically use KL divergence or Cross Entropy
+            # where the target is a distribution
             log_probs = F.log_softmax(selected_preds, dim=-1)
-            raw_loss = -(flat_targets * log_probs).sum(dim=-1)
+            
+            if self.loss_fn == F.cross_entropy:
+                # Manual cross entropy for compatibility/performance
+                raw_loss = -(flat_targets * log_probs).sum(dim=-1)
+            elif self.loss_fn == F.kl_div:
+                raw_loss = F.kl_div(log_probs, flat_targets, reduction="none").sum(dim=-1)
+            else:
+                # Fallback to provided loss_fn
+                raw_loss = self.loss_fn(log_probs, flat_targets, reduction="none")
         else:
             raw_loss = self.loss_fn(selected_preds, flat_targets, reduction="none")
 

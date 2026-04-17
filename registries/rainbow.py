@@ -183,6 +183,7 @@ def make_rainbow_learner(
     n_step: int = 3,
     clip_norm: float = 10.0,
     per_beta_schedule: Optional[Schedule] = None,
+    loss_fn: Optional[Any] = None,
     device: torch.device = torch.device("cpu"),
 ) -> BlackboardEngine:
     """
@@ -194,6 +195,7 @@ def make_rainbow_learner(
     q_loss = QBootstrappingLoss(
         is_categorical=True,
         atom_size=agent_network.components["q_head"].representation.bins,
+        loss_fn=loss_fn,
         name="q_loss",
     )
     priority_comp = LossPriorityComponent(loss_key="q_loss", reduction="max")
@@ -210,6 +212,7 @@ def make_rainbow_learner(
         Mask,
         SemanticType,
         LossScalar,
+        Metric,
     )
 
     initial_keys = {
@@ -247,6 +250,7 @@ def make_rainbow_learner(
             buffer_update,
             # BetaScheduleComponent removed - should be called from training loop, not learner
             ResetNoiseComponent(agent_network=agent_network),
+            ResetNoiseComponent(agent_network=target_network),
         ],
         initial_keys=initial_keys,
         target_keys=target_keys,

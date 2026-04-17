@@ -1,7 +1,7 @@
 from .bootstrapping import TDTargetComponent, DistributionalTargetComponent
 from .sequence import (
-    SequencePadderComponent,
-    SequenceMaskComponent,
+    # SequencePadderComponent,
+    # SequenceMaskComponent,
     SequenceInfrastructureComponent,
     ChanceTargetComponent,
 )

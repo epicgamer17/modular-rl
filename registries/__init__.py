@@ -24,10 +24,3 @@ from .dqn import (
     make_dqn_learner,
     make_dqn_actor_engine,
 )
-from .efficient_zero import (
-    make_efficient_zero_network,
-    make_efficient_zero_search_engine,
-    make_efficient_zero_replay_buffer,
-    make_efficient_zero_learner,
-    make_efficient_zero_actor_engine,
-)

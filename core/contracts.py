@@ -202,55 +202,78 @@ def check_shape_compatibility(provider: "Key", consumer: "Key") -> List[str]:
 
     issues: List[str] = []
 
-    # Stage 1: Semantic Shape Compatibility
+    # Stage 1: Semantic Shape Integrity (Gap + Rank check)
     if c.semantic_shape is not None:
         if p.semantic_shape is None:
             issues.append(
                 f"semantic_shape gap: consumer requires {c.semantic_shape}, but provider does not declare one"
             )
+            return issues
         elif len(c.semantic_shape) != len(p.semantic_shape):
             issues.append(
                 f"Rank mismatch: consumer requires rank {len(c.semantic_shape)} {c.semantic_shape}, "
                 f"but provider gives rank {len(p.semantic_shape)} {p.semantic_shape}"
             )
-        else:
-            # Check axis-by-axis compatibility
-            for i, (c_axis, p_axis) in enumerate(zip(c.semantic_shape, p.semantic_shape)):
-                # "*" matches anything
-                if c_axis == "*" or p_axis == "*":
-                    continue
-                if c_axis != p_axis:
+            return issues # Cannot perform axis-by-axis check if ranks differ
+
+    # Stage 1 & 3: Axis-by-Axis Label and Size consistency
+    if c.semantic_shape is not None and p.semantic_shape is not None:
+        c_event_idx = 0
+        p_event_idx = 0
+        
+        for i, (c_axis, p_axis) in enumerate(zip(c.semantic_shape, p.semantic_shape)):
+            # 1. Resolve labels and sizes for this axis
+            c_val = None
+            if c_axis == "T":
+                c_val = c.time_val
+            elif c_axis not in ("B", "T", "*"):
+                if c.event_shape and c_event_idx < len(c.event_shape):
+                    c_val = c.event_shape[c_event_idx]
+            
+            p_val = None
+            if p_axis == "T":
+                p_val = p.time_val
+            elif p_axis not in ("B", "T", "*"):
+                if p.event_shape and p_event_idx < len(p.event_shape):
+                    p_val = p.event_shape[p_event_idx]
+            
+            # 2. Advance event indices independently
+            if c_axis not in ("B", "T", "*"):
+                c_event_idx += 1
+            if p_axis not in ("B", "T", "*"):
+                p_event_idx += 1
+
+            # 3. Check compatibility
+            # BROADCASTING RULE:
+            # If consumer uses '*', it explicitly allows any size (it's a wildcard).
+            # If consumer uses a named axis (B, T, F, A, etc.), sizes must match EXACTLY.
+            if c_axis == "*":
+                continue 
+
+            # Gap check: if provider has no event_shape, we preserve original heuristic for 'A'
+            if c_val is not None and p.event_shape is None and p_axis == "A":
+                issues.append(
+                    f"event_shape gap at dim {i} ('{c_axis}'): consumer requires size {c_val}, but provider does not declare an event_shape."
+                )
+
+            # Check label mismatch (if provider isn't also a wildcard)
+            if p_axis != "*" and c_axis != p_axis:
+                issues.append(
+                    f"Semantic axis mismatch at dim {i}: consumer expects '{c_axis}', provider gives '{p_axis}'"
+                )
+            
+            # Check size mismatch (if both specify a size)
+            if c_val is not None and p_val is not None:
+                if c_val != p_val:
                     issues.append(
-                        f"Semantic axis mismatch at dim {i}: consumer expects '{c_axis}', provider gives '{p_axis}'"
+                        f"Dimension mismatch at dim {i} ('{c_axis}'): "
+                        f"consumer requires size {c_val}, provider gives {p_val}. "
+                        f"(Broadcasting only allowed if consumer uses '*' for this axis)"
                     )
 
-    # Stage 2: Time Value Consistency
-    if c.time_val is not None:
-        if p.time_val is not None and c.time_val != p.time_val:
-            issues.append(
-                f"Time value mismatch: consumer requires T={c.time_val}, provider gives T={p.time_val}"
-            )
-        # If provider has no time_val, we assume it's flexible or unknown at build time, 
-        # so we don't flag a gap here unless p.semantic_shape explicitly has T but no value?
-        # Actually, if c requires a specific T, and p has T but no value, it might be okay (runtime check).
-
-    # Stage 3: Event Shape Consistency
-    if c.event_shape is not None:
-        if p.event_shape is None:
-            # We treat this as a gap only if p.semantic_shape HAS "A" axes
-            if p.semantic_shape and any(a == "A" for a in p.semantic_shape):
-                issues.append(
-                    f"event_shape gap: consumer requires {c.event_shape}, but provider does not declare one"
-                )
-        elif c.event_shape != p.event_shape:
-            # Scalar expansion rule (same as before)
-            # A provider is "scalar" in this context if its event shape is (1,) or ()
-            is_scalar_provider = (p.event_shape == (1,) or p.event_shape == ())
-            
-            if not is_scalar_provider:
-                issues.append(
-                    f"Event shape mismatch: consumer requires {c.event_shape}, provider gives {p.event_shape}"
-                )
+    # Stage 2: Catch-all for time value if T wasn't matched in loop (shouldn't happen with same rank)
+    # But if ranks differ, we might still want to check.
+    # Actually, current code handles it inside the loop better.
 
     # Stage 4: Dtype check
     if c.dtype is not None:

@@ -83,17 +83,39 @@ class ExecutionGraph:
         n_active = len(self.execution_order)
         n_pruned = len(self.pruned_indices)
 
-        # Calculate dead outputs across active components
-        total_dead = 0
+        # 1. Identify pruned components
+        pruned_info = ""
+        if n_pruned > 0:
+            pruned_names = sorted([type(self.components[i]).__name__ for i in self.pruned_indices])
+            display_pruned = pruned_names[:3]
+            suffix = ", ..." if n_pruned > 3 else ""
+            pruned_info = f" [{', '.join(display_pruned)}{suffix}]"
+
+        # 2. Identify dead outputs (provided by active components but never consumed)
+        dead_keys: List[str] = []
         for idx in self.execution_order:
             provides = _get_provides_keys(self.components[idx])
             used = self.used_outputs.get(idx, frozenset())
-            total_dead += len(provides - used)
+            dead = provides - used
+            if dead:
+                comp_name = type(self.components[idx]).__name__
+                for k in sorted(list(dead), key=lambda x: x.path):
+                    # Show component name and the path of the dead output
+                    dead_keys.append(f"{comp_name}.{k.path}")
+
+        n_dead = len(dead_keys)
+        dead_info = ""
+        if n_dead > 0:
+            display_dead = dead_keys[:5]
+            suffix = ", ..." if n_dead > 5 else ""
+            dead_info = f": {', '.join(display_dead)}{suffix}"
 
         return (
             f"ExecutionGraph: {n_total} components → "
-            f"{n_active} active, {n_pruned} pruned. ({total_dead} dead outputs)"
+            f"{n_active} active, {n_pruned} pruned{pruned_info}. "
+            f"({n_dead} dead outputs{dead_info})"
         )
+
 
     def subgraph(self, target_keys: Set[Key]) -> List[int]:
         """Return the subset of execution_order needed to reach the given target_keys.
@@ -434,10 +456,11 @@ def _find_target_components(
         if comp_idx is not None and comp_idx != _INITIAL:
             targets.add(comp_idx)
     
-    # Side-effect components (no provides) are always targets
+    # Side-effect components (no provides) or components marked as 'required' are always targets
     for idx, comp in enumerate(components):
-        if not _get_provides_keys(comp):
+        if not _get_provides_keys(comp) or getattr(comp, "required", False):
             targets.add(idx)
+
 
     return targets
 

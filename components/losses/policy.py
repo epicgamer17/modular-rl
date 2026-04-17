@@ -312,8 +312,7 @@ class ClippedSurrogateLoss(PipelineComponent):
 
         # 5. Add Entropy Regularization
         entropy = dist.entropy()
-        elementwise_loss = policy_loss - self.entropy_coefficient * entropy
-
+        elementwise_loss = (policy_loss - self.entropy_coefficient * entropy).reshape(B, T)
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
         outputs = {

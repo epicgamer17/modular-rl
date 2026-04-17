@@ -179,10 +179,10 @@ class SequenceBufferComponent(PipelineComponent):
         if torch.is_tensor(reward):
             reward = reward.item()
 
-        terminated = blackboard.data.get("terminated", False)
+        terminated = blackboard.data.get("terminated")
         if torch.is_tensor(terminated):
             terminated = terminated.item()
-        truncated = blackboard.data.get("truncated", False)
+        truncated = blackboard.data.get("truncated")
         if torch.is_tensor(truncated):
             truncated = truncated.item()
 

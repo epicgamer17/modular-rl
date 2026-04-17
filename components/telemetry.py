@@ -38,9 +38,10 @@ class TelemetryComponent(PipelineComponent):
 
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures reward and done signals are accessible."""
-        assert blackboard.meta.get("reward") is not None or blackboard.data.get("reward") is not None, (
-            "TelemetryComponent: 'reward' not found in blackboard.meta or blackboard.data"
-        )
+        assert (
+            blackboard.meta.get("reward") is not None
+            or blackboard.data.get("reward") is not None
+        ), "TelemetryComponent: 'reward' not found in blackboard.meta or blackboard.data"
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         # 1. Extraction and Normalization
@@ -68,7 +69,9 @@ class TelemetryComponent(PipelineComponent):
 
         # 2. State Initialization (Lazy)
         if self.episode_reward is None or self.episode_reward.shape[0] != B:
-            self.episode_reward = torch.zeros(B, device=reward.device, dtype=torch.float32)
+            self.episode_reward = torch.zeros(
+                B, device=reward.device, dtype=torch.float32
+            )
             self.episode_length = torch.zeros(B, device=reward.device, dtype=torch.long)
 
         # 3. Update Running Stats
@@ -82,7 +85,7 @@ class TelemetryComponent(PipelineComponent):
 
         if any_done.any():
             indices = torch.where(any_done)[0]
-            
+
             # Extract final stats for exactly those environments that finished
             finished_scores = self.episode_reward[indices]
             finished_lengths = self.episode_length[indices]
@@ -91,12 +94,14 @@ class TelemetryComponent(PipelineComponent):
             mean_score = finished_scores.mean().item()
             mean_length = finished_lengths.float().mean().item()
 
-            outputs.update({
-                "meta.num_samples": mean_length,
-                "meta.score": mean_score,
-                "meta.episode_score": mean_score,
-                "meta.episode_length": mean_length
-            })
+            outputs.update(
+                {
+                    "meta.num_samples": mean_length,
+                    "meta.score": mean_score,
+                    "meta.episode_score": mean_score,
+                    "meta.episode_length": mean_length,
+                }
+            )
 
             # Throughput / FPS calculation
             t_now = time.perf_counter()
@@ -112,10 +117,12 @@ class TelemetryComponent(PipelineComponent):
             self.episode_length[indices] = 0
 
         # Update running stats for output after potential resets
-        outputs.update({
-            "meta.running_reward": self.episode_reward.mean().item(),
-            "meta.running_length": self.episode_length.float().mean().item()
-        })
+        outputs.update(
+            {
+                "meta.running_reward": self.episode_reward.mean().item(),
+                "meta.running_length": self.episode_length.float().mean().item(),
+            }
+        )
 
         # Promote search metadata if available
         sm = blackboard.meta.get("search_metadata")
@@ -129,12 +136,13 @@ class SequenceTerminatorComponent(PipelineComponent):
     """
     Signals the BlackboardEngine to stop execution for the current sequence
     when a 'done' signal is detected in the blackboard.
-    
-    This is essential for play_sequence() loops in executors to return 
+
+    This is essential for play_sequence() loops in executors to return
     the final telemetry of an episode and proceed to weight updates.
 
     Supports Universal Time Mandate: Triggers if ANY environment in a batch is done.
     """
+
     def __init__(self):
         self._requires = {Key("data.done", Done)}
         self._provides = {Key("meta.stop_execution", Metric): "optional"}
@@ -162,5 +170,5 @@ class SequenceTerminatorComponent(PipelineComponent):
                     return {"meta.stop_execution": True}
             elif done:
                 return {"meta.stop_execution": True}
-        
+
         return {}

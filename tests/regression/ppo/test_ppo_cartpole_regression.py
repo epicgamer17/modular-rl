@@ -13,6 +13,7 @@ from registries import (
 from components.telemetry import TelemetryComponent
 from actors.action_selectors.selectors import ActionSelector
 from actors.action_selectors.decorators import PPODecorator
+
 # from actors.action_selectors.policy_sources import NetworkPolicySource (Deleted)
 from core import PPOEpochIterator
 from utils.plotting import plot_regression_results
@@ -40,10 +41,7 @@ def evaluate_agent(
                 ).unsqueeze(0)
 
                 output = agent_network.obs_inference(obs_tensor)
-                result = {
-                    "logits": output.policy.logits,
-                    "value": output.value
-                }
+                result = {"logits": output.policy.logits, "value": output.value}
                 action, _ = action_selector.select_action(
                     predictions=result,
                     info=info,
@@ -169,7 +167,6 @@ def test_ppo_cartpole_full_training():
     value_losses = []
     state, info = env.reset()
 
-
     print("Starting PPO training loop...")
     while steps_collected < TOTAL_STEPS:
         epoch_steps = 0
@@ -281,10 +278,9 @@ def test_ppo_cartpole_full_training():
         losses={
             "Total Loss": total_losses,
             "Policy Loss": policy_losses,
-            "Value Loss": value_losses
-        }
+            "Value Loss": value_losses,
+        },
     )
-
 
 
 if __name__ == "__main__":

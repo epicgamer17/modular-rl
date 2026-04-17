@@ -63,6 +63,11 @@ def apply_infrastructure(
     3. Masking
     4. Reduction to Mean Scalar
     """
+    # [1] Shape Discovery (Primary source of truth is elementwise_loss)
+    assert elementwise_loss.dim() >= 2, f"elementwise_loss must be at least 2D [B, T, ...], got {elementwise_loss.shape}"
+    B, T = elementwise_loss.shape[:2]
+    device = elementwise_loss.device
+
     # 1. Weights from data (yielded by Sampler) or meta (Truth Source)
     weights = blackboard.data.get("weights")
     if weights is None:
@@ -76,10 +81,7 @@ def apply_infrastructure(
     if masks is None:
         masks = blackboard.data.get(mask_key)
 
-    B, T = elementwise_loss.shape[:2]
-    device = elementwise_loss.device
-
-    # Graceful Defaults (No longer using UniversalInfrastructureComponent)
+    # Graceful Defaults
     if weights is None:
         weights = torch.ones(B, device=device)
     if gradient_scales is None:
@@ -89,10 +91,27 @@ def apply_infrastructure(
         # Default to full tensor if no mask is found
         masks = torch.ones((B, T), device=device, dtype=torch.bool)
 
-    B = weights.shape[0]
-    T = gradient_scales.shape[1]
+    # [2] Strict Shape Enforcement
+    # Weights must be [B] or [B, 1] (we'll reshape to [B, 1] for broadcasting to T)
+    assert weights.shape[0] == B, f"Weights batch size {weights.shape[0]} does not match loss batch size {B}"
+    
+    # Masks must be EXACTLY [B, T] to prevent cross-batch/cross-time mixing
+    assert masks.shape == (B, T), (
+        f"Mask shape {masks.shape} does not match elementwise_loss shape ({(B, T)}). "
+        f"Strict matching required to prevent silent broadcasting bugs."
+    )
 
-    # Normalize elements
+    # Gradient scales must be [1, T] or [B, T]
+    assert gradient_scales.shape == (1, T) or gradient_scales.shape == (B, T), (
+        f"Gradient scales shape {gradient_scales.shape} must be either (1, {T}) or ({B}, {T})"
+    )
+
+    # Normalize elementwise_loss to [B, T]
+    # This enforces that there are exactly B * T elements (no hidden indices)
+    assert elementwise_loss.numel() == B * T, (
+        f"elementwise_loss has {elementwise_loss.numel()} elements, but expected B={B} * T={T} = {B*T}. "
+        f"Shape: {elementwise_loss.shape}. Elementwise loss must be exactly [B, T] after broadcasting."
+    )
     elementwise_loss = elementwise_loss.reshape(B, T)
 
     # 2. Scale and Weight
@@ -100,6 +119,9 @@ def apply_infrastructure(
     weighted_loss = scaled_loss * weights.reshape(B, 1)
 
     # 3. Mask and Reduce
+    # Double check shape before multiplication
+    assert weighted_loss.shape == masks.shape, f"Weighted loss {weighted_loss.shape} and masks {masks.shape} must match exactly"
+    
     masked_weighted_loss = (weighted_loss * masks.float()).sum()
     valid_transition_count = masks.float().sum().clamp(min=1.0)
 
@@ -166,6 +188,9 @@ class OptimizerStepComponent(PipelineComponent):
     """
     Sits at the end of the pipeline. Calls backward(), applies clipping, and steps.
     """
+    required = True
+
+
 
     def __init__(
         self,

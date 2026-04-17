@@ -404,8 +404,8 @@ class ClippedValueLoss(PipelineComponent):
             f"{self.name}: internal shape error. Elementwise loss {elementwise_loss.shape} "
             f"does not match expected {expected_shape}."
         )
-        elementwise_loss = elementwise_loss * self.loss_factor
-
+        elementwise_loss = (elementwise_loss * self.loss_factor).reshape(B, T)
+        
         # Pass through infrastructure (masking, mean, etc.)
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 

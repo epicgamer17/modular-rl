@@ -10,6 +10,10 @@ class PipelineComponent(ABC):
     Base interface for all state and data flow components in the Learner pipeline.
     Components read from and write to the shared 'Blackboard'.
     """
+
+    required: bool = False
+
+
     
     @property
     @abstractmethod

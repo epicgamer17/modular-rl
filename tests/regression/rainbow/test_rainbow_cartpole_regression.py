@@ -1,6 +1,7 @@
 import random
 import numpy as np
 import torch
+import torch.nn.functional as F
 import gymnasium as gym
 import pytest
 
@@ -69,12 +70,13 @@ def test_rainbow_cartpole_full_training():
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # TODO: CURT PARK PARITY
+    # TODO: check revistting rainbow paper
     LEARNING_RATE = 0.001
     ADAM_EPSILON = 1e-8
     TRAINING_STEPS = 20000
     MINIBATCH_SIZE = 32
     TRANSFER_INTERVAL = 100
-    REPLAY_INTERVAL = 1
+    REPLAY_INTERVAL = 16
     N_STEP = 3
     GAMMA = 0.99
     CLIP_NORM = 10.0
@@ -87,8 +89,8 @@ def test_rainbow_cartpole_full_training():
     PER_ALPHA = 0.2
     PER_BETA = 0.6
     PER_EPSILON = 1e-6
-    REPLAY_BUFFER_SIZE = 5000
-    MIN_REPLAY_SIZE = MINIBATCH_SIZE + N_STEP
+    REPLAY_BUFFER_SIZE = 10000
+    MIN_REPLAY_SIZE = 1000
 
     from components.environments import (
         GymObservationComponent,
@@ -112,7 +114,7 @@ def test_rainbow_cartpole_full_training():
     agent_network = make_rainbow_network(
         obs_dim=obs_dim,
         num_actions=num_actions,
-        hidden_widths=[128],
+        hidden_widths=[128, 128],
         noisy_sigma=NOISY_SIGMA,
         atom_size=ATOM_SIZE,
         v_min=V_MIN,
@@ -122,7 +124,7 @@ def test_rainbow_cartpole_full_training():
     target_network = make_rainbow_network(
         obs_dim=obs_dim,
         num_actions=num_actions,
-        hidden_widths=[128],
+        hidden_widths=[128, 128],
         noisy_sigma=NOISY_SIGMA,
         atom_size=ATOM_SIZE,
         v_min=V_MIN,
@@ -130,7 +132,6 @@ def test_rainbow_cartpole_full_training():
         device=DEVICE,
     )
     target_network.load_state_dict(agent_network.state_dict())
-    target_network.eval()
 
     # 2. Replay Buffer
     replay_buffer = make_rainbow_replay_buffer(
@@ -166,6 +167,7 @@ def test_rainbow_cartpole_full_training():
         n_step=N_STEP,
         clip_norm=CLIP_NORM,
         per_beta_schedule=per_beta_schedule,
+        loss_fn=F.kl_div,
         device=DEVICE,
     )
 
@@ -193,17 +195,6 @@ def test_rainbow_cartpole_full_training():
         BufferStoreComponent(replay_buffer, field_map=rainbow_field_map),
     ]
     collector = BlackboardEngine(collection_components, device=DEVICE, strict=True)
-
-    # Evaluation Pipeline
-    eval_obs_comp = GymObservationComponent(env)
-    eval_components = [
-        eval_obs_comp,
-        NetworkInferenceComponent(agent_network, obs_dim),
-        ActionSelectorComponent(input_key="q_values", temperature=0.0),
-        GymStepComponent(env, eval_obs_comp),
-        TelemetryComponent(name="rainbow_eval"),
-    ]
-    evaluator = BlackboardEngine(eval_components, device=DEVICE, strict=True)
 
     # --- Training Loop ---
     training_scores = []
@@ -236,6 +227,10 @@ def test_rainbow_cartpole_full_training():
         if learning_step % TRANSFER_INTERVAL == 0:
             target_network.load_state_dict(agent_network.state_dict())
 
+        # Update PER beta schedule
+        beta = per_beta_schedule.get_value(step=learning_step)
+        replay_buffer.set_beta(beta)
+
         # Perform 1 learning step
         iterator = RepeatSampleIterator(replay_buffer, num_iterations=1, device=DEVICE)
         for metrics in learner.step(iterator):
@@ -256,18 +251,9 @@ def test_rainbow_cartpole_full_training():
 
     # --- Final Evaluation ---
     print("Final Evaluation...")
-    agent_network.eval()
-    test_scores = []
-    for _ in range(100):
-        # Run until stop_on_done
-        for result in evaluator.step(infinite_ticks()):
-            if "episode_score" in result["meta"]:
-                test_scores.append(result["meta"]["episode_score"])
-                break
-
+    test_scores = evaluate_agent(env, agent_network, DEVICE, num_episodes=10)
     avg_test_score = np.mean(test_scores)
     print(f"Final Test Scores: Average {avg_test_score:.2f}")
-    agent_network.train()
 
     # --- Assertions ---
     assert len(training_scores) > 0, "No episodes completed during training"
