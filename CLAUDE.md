@@ -129,8 +129,7 @@ class WorldModelOutput(NamedTuple):
 def select_action(agent_network, obs, info=None, network_output=None, exploration=None, **kwargs) -> Tuple[Tensor, Dict]
 def mask_actions(values, legal_moves, mask_value=-inf, device=None) -> Tensor
 ```
-Concrete implementations: `CategoricalSelector`, `EpsilonGreedySelector`, `ArgmaxSelector`, `NFSPSelector`.
-
+Concrete implementations: `CategoricalSelector`, `EpsilonGreedySelector`, `ArgmaxSelector`.
 Must call `obs_inference`. Must apply action mask directly to Distribution logits before sampling. After Softmax/Gumbel, re-apply mask to set illegal probability to exactly `0.0`.
 
 ### `BlackboardEngine`

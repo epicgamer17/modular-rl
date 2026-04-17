@@ -169,15 +169,29 @@ class ActionSelector(BaseActionSelector):
         else:
             if hasattr(predictions, self.input_key):
                 values = getattr(predictions, self.input_key)
-            elif hasattr(predictions, "extras") and predictions.extras and self.input_key in predictions.extras:
+            elif (
+                hasattr(predictions, "extras")
+                and predictions.extras
+                and self.input_key in predictions.extras
+            ):
                 values = predictions.extras[self.input_key]
-            elif hasattr(predictions, "metadata") and predictions.metadata and self.input_key in predictions.metadata:
+            elif (
+                hasattr(predictions, "metadata")
+                and predictions.metadata
+                and self.input_key in predictions.metadata
+            ):
                 # Legacy support for 'metadata' field if it exists in some custom objects
                 values = predictions.metadata[self.input_key]
 
         if values is None:
-            available = list(predictions.keys()) if isinstance(predictions, dict) else dir(predictions)
-            raise KeyError(f"Key '{self.input_key}' not found in predictions. Available: {available}")
+            available = (
+                list(predictions.keys())
+                if isinstance(predictions, dict)
+                else dir(predictions)
+            )
+            raise KeyError(
+                f"Key '{self.input_key}' not found in predictions. Available: {available}"
+            )
 
         if values is None:
             raise ValueError(f"Values for key '{self.input_key}' are None")
@@ -199,6 +213,7 @@ class ActionSelector(BaseActionSelector):
         else:
             # Categorical sampling
             from torch.distributions import Categorical
+
             if is_prob:
                 temp_logits = torch.log(masked_values + self.LOG_EPSILON)
                 dist = Categorical(logits=temp_logits / temp)
@@ -221,147 +236,3 @@ class ActionSelector(BaseActionSelector):
             )
 
         return action, metadata
-
-
-class EpsilonGreedySelector(BaseActionSelector):
-    def __init__(self, epsilon: float = 0.05):
-        super().__init__()
-        self.epsilon = epsilon
-
-    def select_action(
-        self,
-        predictions: Dict[str, torch.Tensor],
-        info: Dict[str, Any],
-        exploration: Optional[bool] = None,
-        **kwargs,
-    ):
-        q_values = predictions.get("q_values")
-        assert (
-            q_values is not None
-        ), "EpsilonGreedySelector requires q_values in predictions"
-        batch_size = q_values.shape[0] if q_values.dim() == 2 else 1
-
-        # Check if legal moves are provided
-        mask = info.get("legal_moves_mask", info.get("legal_moves"))
-        if mask is not None:
-            q_values = self.mask_actions(
-                q_values, mask, mask_value=-float("inf"), device=q_values.device
-            )
-
-        # Exploration/Exploitation logic
-        # Determine if exploration should happen based on 'exploration' arg or default epsilon
-        should_explore = exploration if exploration is not None else (self.epsilon > 0)
-        effective_epsilon = (
-            kwargs.get("epsilon", self.epsilon) if should_explore else 0.0
-        )
-
-        if effective_epsilon > 0:
-            # Batched epsilon greedy
-            # Generate random actions
-            if mask is not None:
-                # Sample from legal actions using multinomial if mask is provided
-                if not torch.is_tensor(mask):
-                    # If it's a list of indices, create a binary mask
-                    new_mask = torch.zeros(
-                        (batch_size, q_values.shape[-1]), device=q_values.device
-                    )
-
-                    if q_values.dim() == 1:
-                        new_mask[mask] = 1.0
-                    else:
-                        # Batch size > 1 or Batch size 1 with possible nesting
-                        if batch_size == 1 and len(mask) > 0:
-                            is_nested = isinstance(
-                                mask[0], (list, np.ndarray, torch.Tensor)
-                            )
-                            if not is_nested:
-                                new_mask[0, mask] = 1.0
-                            else:
-                                new_mask[0, mask[0]] = 1.0
-                        else:
-                            for i, m in enumerate(mask):
-                                if m is not None:
-                                    new_mask[i, m] = 1.0
-                    mask = new_mask
-
-                probs = mask.float()
-                # Ensure there's at least one legal move to sample from
-                random_actions = torch.multinomial(probs, 1).squeeze(-1)
-            else:
-                # If no mask, sample uniformly from all actions
-                random_actions = torch.randint(
-                    0, q_values.shape[-1], (batch_size,), device=q_values.device
-                )
-
-            greedy_actions = torch.argmax(q_values, dim=-1)
-
-            # Draw epsilon flags for each item in the batch
-            r = torch.rand(batch_size, device=q_values.device)
-            explore_mask = r < effective_epsilon
-
-            actions = torch.where(explore_mask, random_actions, greedy_actions)
-        else:
-            # Pure exploitation (epsilon = 0)
-            actions = torch.argmax(q_values, dim=-1)
-
-        return actions, {}
-
-    def update_parameters(self, params: Dict[str, Any]) -> None:
-        if "epsilon" in params:
-            self.epsilon = float(params["epsilon"])
-
-
-
-
-class NFSPSelector(BaseActionSelector):
-    """
-    NFSPSelector manages the selection between Best Response (RL)
-    and Average Strategy (SL) policies based on the anticipatory parameter (eta).
-    """
-
-    def __init__(
-        self,
-        br_selector: Optional[BaseActionSelector] = None,
-        avg_selector: Optional[BaseActionSelector] = None,
-        eta: float = 0.1,
-    ):
-        self.br_selector = br_selector or ActionSelector(input_key="q_values", temperature=0.0)
-        self.avg_selector = avg_selector or ActionSelector(input_key="logits", temperature=0.0)
-        self.eta = eta
-
-    def select_action(
-        self,
-        predictions: Dict[str, torch.Tensor],
-        info: Dict[str, Any],
-        exploration: Optional[bool] = None,
-        **kwargs,
-    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-
-        # Decide which policy to use
-        # eta = P(Best Response)
-        import random
-
-        should_use_br = random.random() < self.eta
-
-        metadata = {}
-
-        if should_use_br:
-            action, inner_metadata = self.br_selector.select_action(
-                predictions, info, exploration=exploration, **kwargs
-            )
-            metadata.update(inner_metadata)
-            metadata["policy_used"] = "best_response"
-        else:
-            action, inner_metadata = self.avg_selector.select_action(
-                predictions, info, exploration=exploration, **kwargs
-            )
-            metadata.update(inner_metadata)
-            metadata["policy_used"] = "average_strategy"
-
-        return action, metadata
-
-    def update_parameters(self, params: Dict[str, Any]) -> None:
-        if "eta" in params:
-            self.eta = float(params["eta"])
-        self.br_selector.update_parameters(params)
-        self.avg_selector.update_parameters(params)

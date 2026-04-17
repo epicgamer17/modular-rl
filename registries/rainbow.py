@@ -6,7 +6,6 @@ from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.q import QHead, DuelingQHead
 from modules.representations import C51Representation
-from actors.action_selectors.selectors import ActionSelector
 
 from data.storage.circular import BufferConfig, ModularReplayBuffer, CircularWriter
 from data.samplers.prioritized import PrioritizedSampler

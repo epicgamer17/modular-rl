@@ -16,7 +16,7 @@ from registries import (
     make_muzero_actor_engine,
 )
 from core import SingleBatchIterator, infinite_ticks
-from actors.action_selectors.selectors import ActionSelector
+
 from utils.schedule import StepwiseSchedule
 from executors.torch_mp_executor import TorchMPExecutor
 from executors.workers.actor_worker import ActorWorker
