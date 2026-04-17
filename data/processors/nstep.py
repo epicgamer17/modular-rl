@@ -23,7 +23,7 @@ class NStepInputProcessor(InputProcessor):
         gamma: float,
         num_players: int = 1,
         reward_key="rewards",
-        done_key="dones",
+        done_key="done",
         terminated_key="terminated",
         truncated_key="truncated",
     ):
@@ -200,12 +200,12 @@ class NStepUnrollProcessor(OutputProcessor):
         raw_actions = buffers["actions"][all_indices]
         raw_to_plays = buffers["to_plays"][all_indices]
         raw_chances = buffers["chances"][all_indices]
-        raw_game_ids = buffers["game_ids"][all_indices]
+        raw_episode_ids = buffers["episode_id"][all_indices]
         raw_legal_masks = buffers["legal_masks"][all_indices]
         raw_terminated = (
             buffers["terminated"][all_indices]
             if "terminated" in buffers
-            else buffers["dones"][all_indices]
+            else buffers["done"][all_indices]
         )
         raw_truncated = (
             buffers["truncated"][all_indices]
@@ -215,8 +215,8 @@ class NStepUnrollProcessor(OutputProcessor):
         raw_dones = raw_terminated | raw_truncated
 
         # 3. Validity Masks
-        base_game_ids = raw_game_ids[:, 0].unsqueeze(1)
-        same_game = raw_game_ids == base_game_ids
+        base_episode_ids = raw_episode_ids[:, 0].unsqueeze(1)
+        same_game = raw_episode_ids == base_episode_ids
 
         # Calculate episode boundaries using dones (terminated/truncated)
         # We mask out any steps that occur AFTER a done signal in the sequence
@@ -375,8 +375,8 @@ class NStepUnrollProcessor(OutputProcessor):
             actions=target_actions,
             to_plays=target_to_plays,
             chance_codes=target_chances,
-            dones=target_dones,
-            is_same_game=same_game[:, : self.unroll_steps + 1],
+            done=target_dones,
+            is_same_episode=same_game[:, : self.unroll_steps + 1],
             ids=buffers["ids"][indices_tensor].clone(),
             legal_moves_masks=buffers["legal_masks"][indices_tensor],
             indices=indices,

@@ -55,11 +55,11 @@ class ModularReplayBuffer:
         self.write_lock = self.backend.create_lock()
         self.priority_lock = self.backend.create_lock()
 
-        # MuZero specific counters
+        # Canonical metadata counters
         self._next_id = self.backend.create_tensor(
             (1,), dtype=torch.int64, fill_value=0
         )
-        self._next_game_id = self.backend.create_tensor(
+        self._next_episode_id = self.backend.create_tensor(
             (1,), dtype=torch.int64, fill_value=0
         )
 
@@ -119,8 +119,21 @@ class ModularReplayBuffer:
 
         return self._store_processed(processed, **kwargs)
 
+    _METADATA_KEYS = ("episode_id", "step_id", "done")
+
     def _store_processed(self, processed, **kwargs):
         """Helper to store already-processed data (dict of buffer items)."""
+        # Enforce canonical metadata: every write must supply metadata
+        # for any metadata field the buffer was configured with.
+        if isinstance(processed, dict):
+            for meta_key in self._METADATA_KEYS:
+                if meta_key in self.buffers:
+                    assert meta_key in processed, (
+                        f"Metadata field '{meta_key}' is configured in the buffer "
+                        f"but missing from the data being stored. "
+                        f"Available keys: {sorted(processed.keys())}"
+                    )
+
         # 2. Determine Write Index
         with self.priority_lock:
             with self.write_lock:
@@ -192,13 +205,23 @@ class ModularReplayBuffer:
                         start_id + 1, start_id + n_items + 1, dtype=torch.int64
                     )
                 # print("Incremented IDs")
-                if "game_ids" in self.buffers:
-                    start_game_id = int(self._next_game_id.item()) + 1
-                    self._next_game_id[0] = start_game_id
-                    data["game_ids"] = torch.full(
-                        (n_items,), start_game_id, dtype=torch.int64
+                if "episode_id" in self.buffers:
+                    start_episode_id = int(self._next_episode_id.item()) + 1
+                    self._next_episode_id[0] = start_episode_id
+                    data["episode_id"] = torch.full(
+                        (n_items,), start_episode_id, dtype=torch.int64
                     )
-                # print("Incremented Game IDs")
+                if "step_id" in self.buffers:
+                    data["step_id"] = torch.arange(
+                        n_items, dtype=torch.int32
+                    )
+                # Enforce: done must come from the processor for sequence data
+                if "done" in self.buffers:
+                    assert "done" in data, (
+                        "Metadata field 'done' is configured in the buffer "
+                        "but missing from processed sequence data. "
+                        f"Available keys: {sorted(data.keys())}"
+                    )
                 # 4. Write Data to Buffers
                 data_offset = 0
                 for sl in slices:
@@ -363,8 +386,8 @@ class ModularReplayBuffer:
 
                 if "ids" in self.buffers:
                     self._next_id.zero_()
-                if "game_ids" in self.buffers:
-                    self._next_game_id.zero_()
+                if "episode_id" in self.buffers:
+                    self._next_episode_id.zero_()
 
     # Accessors for properties required by some utils (like beta)
     def set_beta(self, beta):
@@ -387,15 +410,15 @@ class ModularReplayBuffer:
         Retrieves all stored states for a specific sequence ID.
         Useful for debugging or visualization, but slow (O(N) scan).
         """
-        if "game_ids" not in self.buffers:
-            raise ValueError("Buffer does not have 'game_ids' key")
+        if "episode_id" not in self.buffers:
+            raise ValueError("Buffer does not have 'episode_id' key")
 
-        game_ids = list(set(self.buffers["game_ids"][: self.size].tolist()))
-        if not game_ids:
+        episode_id = list(set(self.buffers["episode_id"][: self.size].tolist()))
+        if not episode_id:
             return None
 
-        game_id = np.random.choice(game_ids, 1)[0]
-        mask = self.buffers["game_ids"][: self.size] == game_id
+        chosen_id = np.random.choice(episode_id, 1)[0]
+        mask = self.buffers["episode_id"][: self.size] == chosen_id
         indices = torch.nonzero(mask).view(-1).tolist()
 
         if not indices:

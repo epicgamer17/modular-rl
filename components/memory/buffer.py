@@ -21,7 +21,7 @@ class BufferStoreComponent(PipelineComponent):
             "observations": "data.obs",
             "actions": "meta.action",
             "rewards": "data.reward",
-            "dones": "data.done",
+            "done": "data.done",
             "next_observations": "data.next_obs",
         }
         # Deterministic contracts computed at initialization
@@ -120,7 +120,7 @@ class SequenceBufferComponent(PipelineComponent):
 
     def _ensure_sequence(self) -> None:
         if self._sequence is None:
-            from data.samplers.sequence import Sequence
+            from data.ingestion import Sequence
 
             self._sequence = Sequence(self.num_players)
 
@@ -245,7 +245,7 @@ class SequenceBufferComponent(PipelineComponent):
         if is_done:
             self.replay_buffer.store_aggregate(self._sequence)
             # Reset for next episode
-            from data.samplers.sequence import Sequence
+            from data.ingestion import Sequence
 
             self._sequence = Sequence(self.num_players)
 

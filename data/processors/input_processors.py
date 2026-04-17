@@ -53,7 +53,7 @@ class InputProcessor(ABC):
                 "next_observations": sequence.observation_history[i + 1],
                 "terminated": bool(sequence.terminated_history[i + 1]),
                 "truncated": bool(sequence.truncated_history[i + 1]),
-                "dones": bool(sequence.done_history[i + 1]),
+                "done": bool(sequence.done_history[i + 1]),
                 "player": (
                     sequence.player_id_history[i]
                     if i < len(sequence.player_id_history)
@@ -223,7 +223,7 @@ class TerminationFlagsInputProcessor(InputProcessor):
 
     def __init__(
         self,
-        done_key: str = "dones",
+        done_key: str = "done",
         terminated_key: str = "terminated",
         truncated_key: str = "truncated",
     ):
@@ -280,7 +280,7 @@ class GAEProcessor(InputProcessor):
         else:
             last_value = 0.0
 
-        dones_np = np.array([t.get("dones", False) for t in transitions], dtype=bool)
+        dones_np = np.array([t.get("done", False) for t in transitions], dtype=bool)
 
         rewards_pad = np.append(rewards_np, last_value)
         values_pad = np.append(values_np, last_value)

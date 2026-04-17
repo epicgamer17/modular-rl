@@ -44,9 +44,9 @@ def test_muzero_k_plus_1_contract_alignment():
         "policies": torch.zeros((max_size, 10)),  # Add missing policies
         "to_plays": to_play,
         "chances": torch.zeros((max_size, 1)),
-        "game_ids": game_ids,
+        "episode_id": game_ids,
         "legal_masks": torch.ones((max_size, 10)),
-        "dones": dones,  # Add missing dones
+        "done": dones,  # Add missing dones
         "terminated": dones,
         "truncated": dones,
         "ids": torch.arange(max_size),
@@ -113,7 +113,7 @@ def test_muzero_k_plus_1_contract_alignment():
     dones[:] = False 
     dones[2] = True  # s2 is terminal. Transitions from s2 are invalid.
     buffers["terminated"] = dones 
-    buffers["dones"] = dones 
+    buffers["done"] = dones 
     
     batch_term = processor.process_batch(indices, buffers)
     

@@ -41,7 +41,7 @@ class TDTargetComponent(PipelineComponent):
         # Deterministic contracts computed at initialization
         self._requires = {
             Key("data.rewards", Reward),
-            Key("data.dones", Done),
+            Key("data.done", Done),
             Key("data.next_observations", Observation),
         }
         self._provides = {Key("targets.values", QTargets[Scalar]): "new"}
@@ -58,7 +58,7 @@ class TDTargetComponent(PipelineComponent):
 
     def validate(self, blackboard: Blackboard) -> None:
         rewards = blackboard.data["rewards"]
-        dones = blackboard.data["dones"]
+        dones = blackboard.data["done"]
         next_obs = blackboard.data["next_observations"]
         assert (
             rewards.shape[0] == dones.shape[0] == next_obs.shape[0]
@@ -67,7 +67,7 @@ class TDTargetComponent(PipelineComponent):
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         data = blackboard.data
         rewards = data["rewards"].float()
-        dones = data["dones"].bool()
+        dones = data["done"].bool()
         terminated = data.get("terminated", dones).bool()
         next_obs = data.get("next_observations")
         next_masks = data.get("next_legal_moves_masks")
@@ -154,7 +154,7 @@ class DistributionalTargetComponent(PipelineComponent):
         # Deterministic contracts computed at initialization
         self._requires = {
             Key("data.rewards", Reward),
-            Key("data.dones", Done),
+            Key("data.done", Done),
             Key("data.next_observations", Observation),
         }
         self._provides = {
@@ -177,7 +177,7 @@ class DistributionalTargetComponent(PipelineComponent):
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         data = blackboard.data
         rewards = data["rewards"].float()
-        dones = data["dones"].bool()
+        dones = data["done"].bool()
         terminated = data.get("terminated", dones).bool()
         next_obs = data.get("next_observations")
         next_masks = data.get("next_legal_moves_masks")

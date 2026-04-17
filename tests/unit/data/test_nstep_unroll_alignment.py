@@ -38,8 +38,8 @@ def test_nstep_unroll_toplay_alignment():
         "observations": obs,
         "to_plays": to_plays,
         "rewards": rewards,
-        "dones": dones,
-        "game_ids": game_ids,
+        "done": dones,
+        "episode_id": game_ids,
         "values": torch.zeros(max_size),
         "policies": torch.zeros(max_size, num_actions),
         "actions": torch.zeros(max_size),
@@ -109,9 +109,9 @@ def test_nstep_unroll_terminal_masking():
         "observations": obs,
         "to_plays": to_plays,
         "rewards": torch.ones(100),
-        "dones": dones,
+        "done": dones,
         "terminated": dones,
-        "game_ids": torch.zeros(100, dtype=torch.long),
+        "episode_id": torch.zeros(100, dtype=torch.long),
         "values": torch.zeros(100),
         "policies": torch.zeros(100, 2),
         "actions": torch.zeros(100),
@@ -154,8 +154,8 @@ def test_nstep_unroll_same_game_masking():
         "observations": torch.arange(100).float().unsqueeze(-1),
         "to_plays": torch.zeros(100, dtype=torch.int16),
         "rewards": torch.ones(100),
-        "dones": torch.zeros(100, dtype=torch.bool),
-        "game_ids": game_ids,
+        "done": torch.zeros(100, dtype=torch.bool),
+        "episode_id": game_ids,
         "values": torch.zeros(100),
         "policies": torch.zeros(100, 2),
         "actions": torch.zeros(100),
@@ -168,15 +168,15 @@ def test_nstep_unroll_same_game_masking():
     batch = processor.process_batch([10], buffers)
     
     tp_mask = batch["to_play_mask"][0]
-    is_same_game = batch["is_same_game"][0]
+    is_same_episode = batch["is_same_episode"][0]
     
     # Debug info
-    print(f"DEBUG: same_game: {is_same_game}")
+    print(f"DEBUG: same_game: {is_same_episode}")
     print(f"DEBUG: tp_mask: {tp_mask}")
 
-    assert is_same_game[0] == True
-    assert is_same_game[1] == True
-    assert is_same_game[2] == False, f"Index 2 (buffer 12) is game 8, but base was 7. same_game: {is_same_game}"
+    assert is_same_episode[0] == True
+    assert is_same_episode[1] == True
+    assert is_same_episode[2] == False, f"Index 2 (buffer 12) is game 8, but base was 7. same_game: {is_same_episode}"
     
     assert tp_mask[1] == True # s1 is same game
     assert tp_mask[2] == False, f"s2 (different game) must be masked out. Mask: {tp_mask}"
