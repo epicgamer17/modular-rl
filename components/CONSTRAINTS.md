@@ -60,8 +60,8 @@ def requires(self) -> Set[Key]:
 ```python
 @property
 def provides(self) -> Dict[Key, str]:
-    # Returns ValueEstimate parameterized with Categorical structure
-    return {Key("predictions.values", ValueEstimate[Categorical(bins=51)]): "new"}
+    # Returns ValueEstimate parameterized with Logits structure
+    return {Key("predictions.values", ValueEstimate[Logits]): "new"}
 ```
 
 ❌ Bad (Generic Strings)
@@ -96,7 +96,7 @@ Components communicate their intent for writing data using write modes. The `pro
 ```python
 def provides(self) -> Dict[Key, str]:
     return {
-        Key("predictions.values", ValueEstimate[Scalar]): "new",
+        Key("predictions.values", ValueTarget[Scalar]): "new",
         Key("meta.processed", SemanticType): "overwrite"
     }
 ```
@@ -106,7 +106,7 @@ This enables:
 
 *   **DAG Validation**: Verifying data flow and representation consistency before anything runs.
 *   **Automated Discovery**: Eliminates combinatorial overhead by querying `agent_network.get_learner_contract()` instead of passing distribution strings.
-*   **Type Matching**: Using `issubclass(found_type, required_type)` to allow polymorphic data flow.
+*   **Type Matching**: Using `SemanticType.is_compatible()` to allow polymorphic data flow.
 *   **Path Resolution**: Mapping complex paths like `targets.policies` to semantic identifiers.
 
 We separate:
@@ -147,8 +147,9 @@ Each component MUST define a `validate()` method that enforces its data assumpti
 ### Validation Helpers
 *   `assert_in_blackboard(bb, key)`: Verifies key or path existence.
 *   `assert_is_tensor(obj)`: Ensures object is a PyTorch tensor.
-*   `assert_shape_sanity(t, min_ndim, max_ndim)`: Verifies tensor rank (B, T, D alignment).
+*   `assert_shape_sanity(t, min_rank, max_rank)`: Verifies tensor rank (B, T, D alignment).
 *   `assert_same_batch(t1, t2)`: Ensures dim 0 matches across tensors.
+*   `assert_time_val(t, expected_t)`: Verifies sequence length (dim 1).
 *   `assert_compatible_value(pred, target)`: Verifies distributional vs scalar compatibility.
 *   `assert_representation_supports(rep, tensor)`: Delegates detailed math validation to a representation strategy.
 
@@ -220,8 +221,9 @@ Systems often require specific data representations that still share a high-leve
 
 ```python
 class ValueTarget(SemanticType): pass
-class DiscreteValue(ValueTarget[Categorical(bins=51)]): pass
-class ScalarValue(ValueTarget[Scalar]): pass
+# Concrete representations:
+# ValueTarget[Logits]
+# ValueTarget[Scalar]
 ```
 
 If a component requires `ValueTarget`, it will accept `DiscreteValue` automatically because the DAG validator uses `issubclass()`.
@@ -231,7 +233,7 @@ If a component requires `ValueTarget`, it will accept `DiscreteValue` automatica
 A `Key` binds a **blackboard path** (string) to a **semantic type**, and optionally, **metadata**.
 
 ```python
-Key("targets.values", ValueTarget[Categorical(bins=51)])
+Key("targets.values", ValueTarget[Logits])
 ```
 
 *   **Path**: Used by `resolve_blackboard_path` to find tensors.
@@ -248,7 +250,7 @@ To ensure high-performance execution and global correctness, the system builds a
 The `BlackboardEngine` enforces contract consistency before the first training step via a **4-stage validation pipeline**:
 
 1.  **Dependency Resolution**: Ensures every `requires` path is produced by an earlier component or initial key.
-2.  **Semantic Compatibility**: Verifies that the provided `SemanticType` satisfies the consumer's requirement via `issubclass()` (e.g., `ValueEstimate[Categorical] ⊆ ValueEstimate`).
+2.  **Semantic Compatibility**: Verifies that the provided `SemanticType` satisfies the consumer's requirement via `SemanticType.is_compatible()` (e.g., `ValueTarget[Logits]` satisfies a `ValueTarget` requirement).
 3.  **Representation Consistency**: Uses `representation.get_metadata()` to ensure that providers and consumers agree on internal parameters (e.g., matching `vmin`, `vmax`, `bins`, or `num_classes`).
 4.  **Shape Integrity**: Lightweight validation of dimensionality (rank) and structural properties (e.g., `time_dim=1`).
 

@@ -36,16 +36,19 @@ from core.contracts import (
     SemanticType,
     Done,
     Mask,
+    Weight,
     Scalar,
     Probs,
     LossScalar,
+    Metric,
 )
+
 from components.neural import ForwardPassComponent
 from components.losses import OptimizerStepComponent
 from components.losses import LossAggregatorComponent
 from components.memory import PriorityUpdateComponent
 from components.losses import ExpectedValueErrorPriorityComponent
-from components.losses import ValueLoss
+from components.losses import ScalarValueLoss, CategoricalValueLoss
 from components.losses import PolicyLoss
 from components.losses import RewardLoss
 from components.losses import ToPlayLoss
@@ -56,12 +59,10 @@ from modules.representations import (
 )
 from components.search import MCTSSearchComponent
 from components.targets import (
-    SequencePadderComponent,
-    SequenceInfrastructureComponent,
+    UnrollGradientScaler,
     TwoHotProjectionComponent,
     ClassificationFormatterComponent,
     ScalarFormatterComponent,
-    SequenceMaskComponent,
 )
 from components.environments import (
     PettingZooObservationComponent,
@@ -332,6 +333,9 @@ def make_muzero_replay_buffer(
     discount_factor: float = 0.99,
     num_players: int = 2,
     player_map: Optional[Dict[str, int]] = None,
+    prioritized: bool = False,
+    per_alpha: float = 0.6,
+    per_beta: float = 0.4,
 ) -> ModularReplayBuffer:
     """
     Creates a standard MuZero replay buffer.
@@ -367,6 +371,12 @@ def make_muzero_replay_buffer(
         unroll_steps, td_steps, discount_factor, num_actions, num_players, buffer_size
     )
 
+    if prioritized:
+        from data.samplers.prioritized import PrioritizedSampler
+        sampler = PrioritizedSampler(max_size=buffer_size, alpha=per_alpha, beta=per_beta)
+    else:
+        sampler = UniformSampler()
+
     return ModularReplayBuffer(
         max_size=buffer_size,
         batch_size=batch_size,
@@ -374,7 +384,7 @@ def make_muzero_replay_buffer(
         input_processor=input_processor,
         output_processor=output_processor,
         writer=SharedCircularWriter(max_size=buffer_size),
-        sampler=UniformSampler(),
+        sampler=sampler,
         backend=TorchMPBackend(),
     )
 
@@ -396,7 +406,9 @@ def make_muzero_learner(
     rew_rep = agent_network.components["world_model"].reward_head.representation
     tp_rep = agent_network.components["world_model"].to_play_head.representation
 
-    priority_comp = ExpectedValueErrorPriorityComponent(value_representation=val_rep)
+    priority_comp = ExpectedValueErrorPriorityComponent(
+        value_representation=val_rep, target_key="data.values"
+    )
     buffer_update = PriorityUpdateComponent(
         priority_update_fn=replay_buffer.update_priorities
     )
@@ -433,31 +445,32 @@ def make_muzero_learner(
         Key("data.is_same_game", Mask),
         Key("data.ids", SemanticType),
         Key("data.indices", SemanticType),
+        Key("data.weights", Weight),
         Key("data.training_steps", SemanticType),
     }
 
     if isinstance(val_rep, DiscreteSupportRepresentation):
-        v_loss = ValueLoss(
+        v_loss = CategoricalValueLoss(
+            num_atoms=val_rep.bins,
             target_key="targets.values_projected",
-            mask_key="targets.policy_mask",
-            loss_fn=nn.functional.cross_entropy,
+            mask_key="data.policy_mask",
             loss_factor=1.0,
         )
         v_formatter = TwoHotProjectionComponent(
-            source_key="targets.values",
+            source_key="data.values",
             dest_key="values_projected",
             representation=val_rep,
             semantic_type=ValueTarget,
         )
     else:
-        v_loss = ValueLoss(
+        v_loss = ScalarValueLoss(
             target_key="targets.values",
-            mask_key="targets.policy_mask",
+            mask_key="data.policy_mask",
             loss_fn=nn.functional.mse_loss,
             loss_factor=1.0,
         )
         v_formatter = ScalarFormatterComponent(
-            source_key="targets.values",
+            source_key="data.values",
             dest_key="values",
             representation=val_rep,
             semantic_type=ValueTarget,
@@ -465,7 +478,7 @@ def make_muzero_learner(
 
     p_loss = PolicyLoss(
         target_key="targets.policies",
-        mask_key="targets.policy_mask",
+        mask_key="data.policy_mask",
         loss_fn=nn.functional.cross_entropy,
         loss_factor=1.0,
     )
@@ -473,12 +486,12 @@ def make_muzero_learner(
     if isinstance(rew_rep, DiscreteSupportRepresentation):
         r_loss = RewardLoss(
             target_key="targets.rewards_projected",
-            mask_key="targets.reward_mask",
+            mask_key="data.reward_mask",
             loss_fn=nn.functional.cross_entropy,
             loss_factor=1.0,
         )
         r_formatter = TwoHotProjectionComponent(
-            source_key="targets.rewards",
+            source_key="data.rewards",
             dest_key="rewards_projected",
             representation=rew_rep,
             semantic_type=Reward,
@@ -486,12 +499,12 @@ def make_muzero_learner(
     else:
         r_loss = RewardLoss(
             target_key="targets.rewards",
-            mask_key="targets.reward_mask",
+            mask_key="data.reward_mask",
             loss_fn=nn.functional.mse_loss,
             loss_factor=1.0,
         )
         r_formatter = ScalarFormatterComponent(
-            source_key="targets.rewards",
+            source_key="data.rewards",
             dest_key="rewards",
             representation=rew_rep,
             semantic_type=Reward,
@@ -499,7 +512,7 @@ def make_muzero_learner(
 
     tp_loss = ToPlayLoss(
         target_key="targets.to_plays",
-        mask_key="targets.to_play_mask",
+        mask_key="data.to_play_mask",
         loss_fn=nn.functional.cross_entropy,
         loss_factor=1.0,
     )
@@ -514,22 +527,7 @@ def make_muzero_learner(
     learner = BlackboardEngine(
         components=[
             ForwardPassComponent(agent_network),
-            SequencePadderComponent(
-                unroll_steps,
-                keys=[
-                    Key("data.values", ValueTarget[Scalar]),
-                    Key("data.rewards", Reward[Scalar]),
-                    Key("data.policies", Policy[Probs]),
-                    Key("data.actions", Action),
-                    Key("data.to_plays", ToPlay),
-                    Key("data.reward_mask", Mask),
-                    Key("data.to_play_mask", Mask),
-                    Key("data.policy_mask", Mask),
-                    Key("data.dones", SemanticType),
-                ],
-            ),
-            SequenceInfrastructureComponent(unroll_steps),
-            SequenceMaskComponent(),
+            UnrollGradientScaler(unroll_steps),
             v_formatter,
             ClassificationFormatterComponent(
                 source_key="data.policies",  # Read from data (buffer), not targets
@@ -549,7 +547,12 @@ def make_muzero_learner(
             r_loss,
             tp_loss,
             LossAggregatorComponent(loss_weights=loss_weights),
-            MuzeroMultiplayerTelemetry(value_representation=val_rep, num_players=1),
+            MuzeroMultiplayerTelemetry(
+                value_representation=val_rep,
+                num_players=1,
+                to_play_target_key="data.to_plays",
+                value_target_key="data.values",
+            ),
             priority_comp,
             buffer_update,
             OptimizerStepComponent(
@@ -580,15 +583,13 @@ def make_muzero_actor_engine(
     """
     Creates a standard MuZero actor engine (BlackboardEngine).
     """
-    actor_initial_keys = {
-        Key("data.obs", Observation),
-        Key("data.info", SemanticType),
-        Key("data.player_id", ToPlay),
-    }
-
     is_pz = hasattr(env, "possible_agents") or (
         hasattr(env, "unwrapped") and hasattr(env.unwrapped, "possible_agents")
     )
+
+    actor_initial_keys = set()
+    if not is_pz:
+        actor_initial_keys.add(Key("data.player_id", ToPlay))
 
     if is_pz:
         obs_component = PettingZooObservationComponent(env)

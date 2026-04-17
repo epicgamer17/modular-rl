@@ -1,8 +1,6 @@
 from .bootstrapping import TDTargetComponent, DistributionalTargetComponent
 from .sequence import (
-    SequencePadderComponent,
-    SequenceMaskComponent,
-    SequenceInfrastructureComponent,
+    UnrollGradientScaler,
     ChanceTargetComponent,
 )
 from .formatters import (

@@ -37,9 +37,7 @@ class GymObservationComponent(PipelineComponent):
         }
 
     def validate(self, blackboard: Blackboard) -> None:
-        assert self.env is not None, (
-            "GymObservationComponent: env is None"
-        )
+        assert self.env is not None, "GymObservationComponent: env is None"
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         if self.state is None or self.done:
@@ -64,7 +62,7 @@ class GymObservationComponent(PipelineComponent):
             "data.info": self.info,
             "data.terminated": self.terminated,
             "data.truncated": self.truncated,
-            "data.done": self.terminated or self.truncated
+            "data.done": self.terminated or self.truncated,
         }
 
 
@@ -135,5 +133,5 @@ class GymStepComponent(PipelineComponent):
             "meta.done": done,
             "meta.terminated": terminated,
             "meta.truncated": truncated,
-            "meta.info": info
+            "meta.info": info,
         }

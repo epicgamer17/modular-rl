@@ -76,6 +76,34 @@ class BaseHead(nn.Module):
         """Returns the semantic structure of this head's output."""
         return self.representation.get_structure()
 
+    def get_contracts(self, prefix: str) -> Dict[str, "Key"]:
+        """
+        Returns a dictionary of semantic Keys provided by this head.
+        Used by the AgentNetwork to build the automated learner contract.
+        """
+        from core.contracts import Key, ShapeContract
+
+        # Default event shape from representation (e.g. [bins] or [2 * action_dim])
+        event_shape = (self.representation.num_features,)
+
+        # Determine symbolic names (Heads typically produce [B, T, Feature])
+        symbolic = ("B", "T", "F")
+        if self.representation.num_features == 1:
+            symbolic = ("B", "T", "1")
+
+        main_key = Key(
+            path=prefix,
+            semantic_type=self.semantic_type,
+            metadata=self.representation.get_metadata(),
+            shape=ShapeContract(
+                semantic_shape=("B", "T", "A"),
+                event_shape=event_shape,
+                dtype=torch.float32,
+            ),
+        )
+
+        return {prefix: main_key}
+
     @property
     def semantic_type(self) -> Any:
         """The base semantic class for this head's primary output."""

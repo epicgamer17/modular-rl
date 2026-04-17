@@ -14,8 +14,6 @@ from core.contracts import (
     Logits,
     Probs,
     LogProbs,
-    Categorical,
-    Quantile,
 )
 from typing import TYPE_CHECKING, Optional, Set, Dict, Any, Union
 
@@ -41,16 +39,17 @@ class ForwardPassComponent(PipelineComponent):
         self._provides = {}
 
         contract = self.agent_network.get_learner_contract()
-        for key, sem_type in contract.items():
+        for key_name, network_key in contract.items():
+            # Inherit the semantic structure and shape, only update the path prefix
             self._provides[
                 Key(
-                    f"predictions.{key}",
-                    sem_type,
-                    shape=ShapeContract(
-                        time_dim=1, symbolic=("B", "T"), dtype=torch.float32, ndim=2
-                    ),
+                    path=f"predictions.{key_name}",
+                    semantic_type=network_key.semantic_type,
+                    metadata=network_key.metadata,
+                    shape=network_key.shape,
                 )
             ] = "new"
+
 
     @property
     def requires(self) -> Set[Key]:

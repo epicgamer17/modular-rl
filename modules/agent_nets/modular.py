@@ -12,7 +12,7 @@ from modules.heads.policy import PolicyHead
 from modules.heads.value import ValueHead
 from modules.heads.q import QHead, DuelingQHead
 from modules.representations import get_representation
-from core.contracts import SemanticType, Scalar, ValueEstimate, QValues
+from core.contracts import SemanticType, Scalar, ValueEstimate, QValues, Key
 
 
 class ModularAgentNetwork(BaseAgentNetwork):
@@ -335,49 +335,33 @@ class ModularAgentNetwork(BaseAgentNetwork):
                 "Network components don't match any known learner inference pipeline."
             )
 
-    def get_learner_contract(self) -> Dict[str, Type[SemanticType]]:
+    def get_learner_contract(self) -> Dict[str, Key]:
         """
         Dynamically builds the learner output contract based on instantiated components.
+        Now returns full Key objects with accurate shape contracts.
         """
         contract = {}
 
-        # Core prediction heads
+        # 1. Core prediction heads
         if "value_head" in self.components:
-            contract["values"] = self.components["value_head"].semantic_type
+            contract.update(self.components["value_head"].get_contracts("values"))
         if "policy_head" in self.components:
-            contract["policies"] = self.components["policy_head"].semantic_type
+            contract.update(self.components["policy_head"].get_contracts("policies"))
         if "q_head" in self.components:
-            q_head = self.components["q_head"]
-            contract["q_logits"] = q_head.semantic_type
-            # q_values semantic type depends on whether the representation is distributional
-            # For C51/Rainbow (distributional): use QValues with same structure as q_logits
-            # For standard DQN (scalar): use QValues[Scalar]
-            if (
-                hasattr(q_head, "representation")
-                and hasattr(q_head.representation, "bins")
-                and q_head.representation.bins > 1
-            ):
-                # Distributional (C51, Rainbow, etc.)
-                contract["q_values"] = q_head.semantic_type
-            else:
-                # Standard scalar Q-values (DQN, NFSP, etc.)
-                contract["q_values"] = QValues[Scalar()]
+            contract.update(self.components["q_head"].get_contracts("q_logits"))
+            # Note: q_values are often derived from q_logits, heads might provide both.
+            # If not provided by head, we skip or add manually if needed.
 
-        # World model components (Rewards, ToPlay)
+        # 2. World model components (Rewards, ToPlay)
         if "world_model" in self.components:
             wm = self.components["world_model"]
-            if hasattr(wm, "reward_head") and hasattr(wm.reward_head, "semantic_type"):
-                contract["rewards"] = wm.reward_head.semantic_type
-            if hasattr(wm, "to_play_head") and hasattr(
-                wm.to_play_head, "semantic_type"
-            ):
-                contract["to_plays"] = wm.to_play_head.semantic_type
-
-        # Supervised only policy
-        if "policy_head" in self.components and len(contract) == 0:
-            contract["policies"] = self.components["policy_head"].semantic_type
+            if hasattr(wm, "reward_head") and hasattr(wm.reward_head, "get_contracts"):
+                contract.update(wm.reward_head.get_contracts("rewards"))
+            if hasattr(wm, "to_play_head") and hasattr(wm.to_play_head, "get_contracts"):
+                contract.update(wm.to_play_head.get_contracts("to_plays"))
 
         return contract
+
 
     # ==========================================
     # SEARCH API (Only relevant for MuZero routing)

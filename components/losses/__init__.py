@@ -7,7 +7,7 @@ from .infrastructure import (
     MPSCacheClearComponent,
     DeviceTransferComponent,
 )
-from .value import ValueLoss, ClippedValueLoss
+from .value import ScalarValueLoss, CategoricalValueLoss, ClippedValueLoss
 from .policy import PolicyLoss, ClippedSurrogateLoss
 from .q_learning import QBootstrappingLoss
 from .auxiliary import (

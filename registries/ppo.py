@@ -38,6 +38,7 @@ from core.contracts import (
     Scalar,
     LogProbs,
     LossScalar,
+    Metric,
 )
 from components.telemetry import TelemetryComponent
 from components.neural import ForwardPassComponent
@@ -145,7 +146,6 @@ def make_ppo_learner(
     pol_rep = agent_network.components["policy_head"].representation
     val_rep = agent_network.components["value_head"].representation
 
-
     policy_loss = ClippedSurrogateLoss(
         clip_param=clip_param,
         entropy_coefficient=entropy_coef,
@@ -163,8 +163,18 @@ def make_ppo_learner(
 
     components = [
         ForwardPassComponent(agent_network),
-        ScalarFormatterComponent(source_key="data.values", dest_key="values", representation=val_rep, semantic_type=ValueEstimate),
-        ScalarFormatterComponent(source_key="data.returns", dest_key="returns", representation=val_rep, semantic_type=ValueTarget),
+        ScalarFormatterComponent(
+            source_key="data.values",
+            dest_key="values",
+            representation=val_rep,
+            semantic_type=ValueEstimate,
+        ),
+        ScalarFormatterComponent(
+            source_key="data.returns",
+            dest_key="returns",
+            representation=val_rep,
+            semantic_type=ValueTarget,
+        ),
         policy_loss,
         value_loss,
         LossAggregatorComponent(loss_weights={"policy_loss": 1.0, "value_loss": 1.0}),
@@ -176,19 +186,66 @@ def make_ppo_learner(
     ]
 
     initial_keys = {
-        Key("data.observations", Observation),
-        Key("data.actions", Action),
-        Key("data.rewards", Reward),
-        Key("data.dones", Done),
-        Key("data.values", ValueEstimate[Scalar]),
-        Key("data.old_log_probs", LogProb[LogProbs]),
-        Key("data.advantages", Advantage[Scalar]),
-        Key("data.returns", ValueTarget[Scalar]),
-        Key("data.legal_moves_masks", Mask),
+        Key(
+            "data.observations",
+            Observation,
+            shape=ShapeContract(
+                semantic_shape=("B", "T", "A"),
+                event_shape=agent_network.components["policy_head"].input_shape,
+            ),
+        ),
+        Key(
+            "data.actions",
+            Action,
+            shape=ShapeContract(semantic_shape=("B", "T")),
+        ),
+        Key(
+            "data.rewards",
+            Reward,
+            shape=ShapeContract(semantic_shape=("B", "T")),
+        ),
+        Key(
+            "data.dones",
+            Done,
+            shape=ShapeContract(semantic_shape=("B", "T")),
+        ),
+        Key(
+            "data.values",
+            ValueEstimate[Scalar],
+            shape=ShapeContract(semantic_shape=("B", "T")),
+        ),
+        Key(
+            "data.old_log_probs",
+            LogProb[LogProbs],
+            shape=ShapeContract(semantic_shape=("B", "T")),
+        ),
+        Key(
+            "data.advantages",
+            Advantage[Scalar],
+            shape=ShapeContract(semantic_shape=("B", "T")),
+        ),
+        Key(
+            "data.returns",
+            ValueTarget[Scalar],
+            shape=ShapeContract(semantic_shape=("B", "T")),
+        ),
+        Key(
+            "data.legal_moves_masks",
+            Mask,
+            shape=ShapeContract(
+                semantic_shape=("B", "T", "A"), event_shape=(num_actions,)
+            ),
+        ),
     }
-    target_keys = {Key("losses.total_loss", LossScalar)}
 
-    return BlackboardEngine(components=components, initial_keys=initial_keys, target_keys=target_keys, device=device)
+
+    return BlackboardEngine(
+        components=components,
+        initial_keys=initial_keys,
+        target_keys={Key("losses.total_loss", LossScalar)},
+        device=device,
+    )
+
 
 
 def make_ppo_actor_engine(

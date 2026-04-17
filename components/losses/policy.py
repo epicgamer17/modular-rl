@@ -19,7 +19,7 @@ from core.contracts import (
     Scalar,
 )
 from .infrastructure import apply_infrastructure
-from core.validation import assert_same_batch, assert_time_dim
+from core.validation import assert_same_batch, assert_time_val
 
 
 class PolicyLoss(PipelineComponent):
@@ -49,8 +49,20 @@ class PolicyLoss(PipelineComponent):
         # Deterministic contracts computed at initialization
         # TODO: shape contracts? how do we handle time dimension from unrolls or from LSTM memory vs single step DQN, A2C, PPO, etc?
         self._requires = {
-            Key("predictions.policies", Policy),  # Accept any structure
-            Key(self.target_key, Policy),  # Accept any structure
+            Key(
+                "predictions.policies",
+                Policy[Logits],
+                shape=ShapeContract(
+                    semantic_shape=("B", "T", "A")
+                ),
+            ),
+            Key(
+                self.target_key,
+                Policy[Probs],
+                shape=ShapeContract(
+                    semantic_shape=("B", "T", "A")
+                ),
+            ),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",
@@ -96,7 +108,7 @@ class PolicyLoss(PipelineComponent):
 
         # Rigorous shape checks
         assert_shape_sanity(
-            preds, min_ndim=3, msg=f"Prediction {self.name} must have [B, T, K]"
+            preds, min_rank=3, msg=f"Prediction {self.name} must have [B, T, K]"
         )
 
         # Hypothetical alignment for validation purposes
@@ -127,6 +139,14 @@ class PolicyLoss(PipelineComponent):
         flat_targets = targets.flatten(0, 1)
 
         raw_loss = self.loss_fn(flat_preds, flat_targets, reduction="none")
+
+        # Sanity check: ensure loss is elementwise-compatible [B*T]
+        expected_shape = flat_preds.shape if raw_loss.ndim == flat_preds.ndim else (B * T,)
+        if raw_loss.ndim > 1 and raw_loss.shape == flat_preds.shape:
+             # Cross entropy with soft targets returns [B*T, K]
+             pass
+        elif raw_loss.shape != (B * T,):
+             raise AssertionError(f"{self.name}: loss shape {raw_loss.shape} != expected {(B*T,)}")
 
         # If loss_fn returned per-class loss (for distribution targets), sum it up
         if raw_loss.ndim > 1:
@@ -176,10 +196,28 @@ class ClippedSurrogateLoss(PipelineComponent):
 
         # Deterministic contracts computed at initialization
         self._requires = {
-            Key("predictions.policies", Policy),  # Accept any structure
-            Key(self.actions_key, Action),
-            Key(self.old_log_probs_key, LogProb[LogProbs]),
-            Key(self.advantages_key, Advantage[Scalar]),
+            Key(
+                "predictions.policies",
+                Policy,
+                shape=ShapeContract(
+                    semantic_shape=("B", "T", "A")
+                ),
+            ),
+            Key(
+                self.actions_key,
+                Action,
+                shape=ShapeContract(semantic_shape=("B", "T")),
+            ),
+            Key(
+                self.old_log_probs_key,
+                LogProb[LogProbs],
+                shape=ShapeContract(semantic_shape=("B", "T")),
+            ),
+            Key(
+                self.advantages_key,
+                Advantage[Scalar],
+                shape=ShapeContract(semantic_shape=("B", "T")),
+            ),
         }
         self._provides = {
             Key(f"losses.{self.name}", LossScalar): "new",
@@ -201,7 +239,7 @@ class ClippedSurrogateLoss(PipelineComponent):
             assert_in_blackboard,
             assert_is_tensor,
             assert_same_batch,
-            assert_time_dim,
+            assert_time_val,
         )
 
         # Existence checks
@@ -224,29 +262,57 @@ class ClippedSurrogateLoss(PipelineComponent):
 
         B, T = logits.shape[:2]
         assert_same_batch(logits, actions, msg=f"in {self.name}")
-        assert_time_dim(actions, T, msg=f"in {self.name}")
-        assert_time_dim(advantages, T, msg=f"in {self.name}")
+        assert_time_val(actions, T, msg=f"in {self.name}")
+        assert_time_val(advantages, T, msg=f"in {self.name}")
         assert_same_batch(old_log_probs, advantages, msg=f"in {self.name}")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
+        """Compute PPO surrogate loss."""
+        # 1. Extract inputs
         policy_logits = blackboard.predictions["policies"]
         actions = resolve_blackboard_path(blackboard, self.actions_key)
         old_log_probs = resolve_blackboard_path(blackboard, self.old_log_probs_key)
         advantages = resolve_blackboard_path(blackboard, self.advantages_key)
 
+        # 2. Robust Shape Alignment: Ensure buffer data matches [B, T] structure of predictions
+        # ModularAgentNetwork.learner_inference returns [B, 1, K] or [B, T, K]
+        # Buffer usually provides [B] or [B, T]
+        B, T = policy_logits.shape[:2]
+
+        if actions.shape != (B, T):
+            actions = actions.reshape(B, T)
+        if old_log_probs.shape != (B, T):
+            old_log_probs = old_log_probs.reshape(B, T)
+        if advantages.shape != (B, T):
+            advantages = advantages.reshape(B, T)
+
+        # Sanity check: [B, T] alignment for surrogate computation
+        expected_bt = (B, T)
+        assert actions.shape == expected_bt, f"{self.name}: actions shape {actions.shape} != {expected_bt}"
+        assert (
+            old_log_probs.shape == expected_bt
+        ), f"{self.name}: old_log_probs shape {old_log_probs.shape} != {expected_bt}"
+        assert (
+            advantages.shape == expected_bt
+        ), f"{self.name}: advantages shape {advantages.shape} != {expected_bt}"
+
+        # 3. Compute log probabilities
         dist = torch.distributions.Categorical(logits=policy_logits)
         log_probs = dist.log_prob(actions)
-        ratio = torch.exp(log_probs - old_log_probs)
 
+        # 4. Compute surrogate objective
+        ratio = torch.exp(log_probs - old_log_probs)
         surr1 = ratio * advantages
         surr2 = (
             torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param)
             * advantages
         )
 
-        entropy = dist.entropy()
-        elementwise_loss = -torch.min(surr1, surr2) - self.entropy_coefficient * entropy
+        policy_loss = -torch.min(surr1, surr2)
 
+        # 5. Add Entropy Regularization
+        entropy = dist.entropy()
+        elementwise_loss = (policy_loss - self.entropy_coefficient * entropy).reshape(B, T)
         scalar_loss = apply_infrastructure(elementwise_loss, blackboard, self.mask_key)
 
         outputs = {

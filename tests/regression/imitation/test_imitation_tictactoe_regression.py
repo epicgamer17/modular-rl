@@ -146,14 +146,14 @@ def test_imitation_tictactoe_regression():
             "data.policies",
             Policy[Probs],
             shape=ShapeContract(
-                time_dim=1, symbolic=("B", "T"), dtype=torch.float32, ndim=2
+                semantic_shape=("B", "T", "A"), event_shape=(9,), dtype=torch.float32
             ),
         ),
     }
 
     learner = BlackboardEngine(
         components=[
-            ForwardPassComponent(agent_network, None),
+            ForwardPassComponent(agent_network),
             imitation_loss,
             LossAggregatorComponent(loss_weights={"policy_loss": 1.0}),
             OptimizerStepComponent(

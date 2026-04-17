@@ -9,6 +9,9 @@ class MuzeroMultiplayerTelemetry(PipelineComponent):
     """
     Learner telemetry component to track performance metrics split by player (0 vs 1).
     """
+    required = True
+
+
     def __init__(
         self,
         value_representation: Any = None,
@@ -30,9 +33,9 @@ class MuzeroMultiplayerTelemetry(PipelineComponent):
         # Deterministic contracts computed at initialization
         self._requires = {
             Key(f"predictions.{self.to_play_pred_key}", ToPlay),
-            Key(f"targets.{self.to_play_target_key}", ToPlay),
+            Key(self.to_play_target_key, ToPlay),
             Key(f"predictions.{self.value_pred_key}", ValueEstimate),
-            Key(f"targets.{self.value_target_key}", ValueTarget),
+            Key(self.value_target_key, ValueTarget),
         }
         self._provides = {}
         for p in range(self.num_players):
@@ -63,10 +66,10 @@ class MuzeroMultiplayerTelemetry(PipelineComponent):
 
         # 1. Extract standard tensors
         tp_preds = blackboard.predictions[self.to_play_pred_key]
-        tp_targets = resolve_blackboard_path(blackboard, f"targets.{self.to_play_target_key}")
+        tp_targets = resolve_blackboard_path(blackboard, self.to_play_target_key)
         
         val_preds = blackboard.predictions[self.value_pred_key]
-        val_targets = resolve_blackboard_path(blackboard, f"targets.{self.value_target_key}")
+        val_targets = resolve_blackboard_path(blackboard, self.value_target_key)
         
         # Get mask (B, T)
         mask = blackboard.meta.get(self.mask_key)

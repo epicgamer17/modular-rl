@@ -8,7 +8,7 @@ from core.contracts import Key, ShapeContract
 
 def validate_tensor(key: Key, value: Any) -> None:
     """
-    Validate a tensor against its Key's shape contract.
+    Validate a tensor against its Key's shape contract using semantic axis names.
     
     Raises AssertionError on mismatch.
     """
@@ -22,56 +22,44 @@ def validate_tensor(key: Key, value: Any) -> None:
     actual = value
     errors: List[str] = []
     
-    # Validate ndim
-    if contract.ndim is not None:
-        if actual.ndim != contract.ndim:
+    # Check rank and semantic dimensions
+    if contract.semantic_shape is not None:
+        if actual.ndim != len(contract.semantic_shape):
             errors.append(
-                f"ndim: expected {contract.ndim}, got {actual.ndim}"
+                f"rank mismatch: contract requires {len(contract.semantic_shape)} dims {contract.semantic_shape}, "
+                f"but tensor has {actual.ndim} ({list(actual.shape)})"
             )
+        else:
+            # Axis-by-axis verification
+            event_axes_seen = 0
+            for i, axis_type in enumerate(contract.semantic_shape):
+                # "*" is a wildcard at runtime too
+                if axis_type == "*":
+                    continue
+                
+                # Check explicit time value
+                if axis_type == "T" and contract.time_val is not None:
+                    if actual.shape[i] != contract.time_val:
+                        errors.append(
+                            f"time_val: expected T={contract.time_val} at dim {i}, got {actual.shape[i]}"
+                        )
+                
+                # Check explicit event value (any axis that isn't B, T, or *)
+                if axis_type not in ("B", "T", "*") and contract.event_shape is not None:
+                    if event_axes_seen < len(contract.event_shape):
+                        expected_val = contract.event_shape[event_axes_seen]
+                        if actual.shape[i] != expected_val:
+                            errors.append(
+                                f"event_shape mismatch: axis '{axis_type}' at dim {i} expects {expected_val}, "
+                                f"but tensor has {actual.shape[i]}"
+                            )
+                        event_axes_seen += 1
     
-    # Validate dtype
+    # Check dtype
     if contract.dtype is not None:
         if actual.dtype != contract.dtype:
             errors.append(
                 f"dtype: expected {contract.dtype}, got {actual.dtype}"
-            )
-    
-    # Validate event_shape (non-batch, non-time dimensions)
-    if contract.event_shape is not None:
-        if actual.ndim < len(contract.event_shape):
-            errors.append(
-                f"ndim {actual.ndim} too small for event_shape {contract.event_shape}"
-            )
-        else:
-            # Check from the end, accounting for batch/time dims
-            if len(contract.event_shape) == 0:
-                # For scalar events, if it's just [Batch] or [Batch, Time], 
-                # we don't expect any more trailing dimensions.
-                # However, PyTorch tensors often have shape [B] for a batch of scalars.
-                # If we're at this point, actual.ndim >= len(event_shape) is 0, always true.
-                # We need to decide if we allow [B] or strictly nothing extra.
-                # Existing behavior: actual_event was actual.shape[-0:] which is the whole shape.
-                # New behavior: if event_shape is (), we check that no extra dims exist 
-                # beyond batch (and time if present).
-                expected_ndim = 1 + (1 if contract.time_dim is not None else 0)
-                if actual.ndim > expected_ndim:
-                     actual_event = tuple(actual.shape[expected_ndim:])
-                else:
-                     actual_event = ()
-            else:
-                actual_event = tuple(actual.shape[-len(contract.event_shape):])
-            if actual_event != contract.event_shape:
-                errors.append(
-                    f"event_shape: expected {contract.event_shape}, got {actual_event}"
-                )
-    
-    # Validate time_dim consistency
-    if contract.time_dim is not None:
-        # If time_dim is set, the tensor MUST have at least that many dimensions
-        if actual.ndim <= contract.time_dim:
-             errors.append(
-                f"time_dim validation: contract requires sequence dim at {contract.time_dim}, "
-                f"but tensor only has {actual.ndim} dimensions."
             )
     
     if errors:
@@ -79,6 +67,7 @@ def validate_tensor(key: Key, value: Any) -> None:
             f"Shape validation failed for {key.path}: {'; '.join(errors)} "
             f"(actual shape: {list(actual.shape)}, dtype: {actual.dtype})"
         )
+
 
 
 def validate_batch_outputs(

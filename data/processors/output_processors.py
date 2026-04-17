@@ -90,6 +90,8 @@ class AdvantageNormalizer(OutputProcessor):
         return dict(
             observations=buffers["observations"][sl],
             actions=buffers["actions"][sl],
+            rewards=buffers["rewards"][sl],
+            dones=buffers["dones"][sl],
             advantages=normalized_advantages,
             returns=buffers["returns"][sl],
             values=buffers["values"][sl],

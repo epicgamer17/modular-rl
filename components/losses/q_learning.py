@@ -11,8 +11,8 @@ from core.contracts import (
     LossScalar,
     Metric,
     Scalar,
-    Categorical,
     Logits,
+    Probs,
 )
 from .infrastructure import apply_infrastructure
 
@@ -38,8 +38,8 @@ class QBootstrappingLoss(PipelineComponent):
             self.target_key = target_key
         else:
             # TODO: should this be hardcoded? what if it is in data?
-            # TODO: we use targets.values, should we use targets.q_values?
-            self.target_key = "targets.q_logits" if is_categorical else "targets.values"
+            # Distributional targets are Probs, Scalar targets are Scalar
+            self.target_key = "targets.q_probs" if is_categorical else "targets.values"
 
         if loss_fn is None:
             self.loss_fn = F.cross_entropy if is_categorical else F.mse_loss
@@ -52,9 +52,8 @@ class QBootstrappingLoss(PipelineComponent):
 
         # Deterministic contracts computed at initialization
         if self.is_categorical:
-            struct = Categorical(bins=self.atom_size) if self.atom_size else Logits()
-            req_type = QValues[struct]
-            target_type = QTargets[struct]
+            req_type = QValues[Logits]
+            target_type = QTargets[Probs]
         else:
             req_type = QValues[Scalar]
             target_type = QTargets[Scalar]
@@ -125,8 +124,18 @@ class QBootstrappingLoss(PipelineComponent):
             flat_targets = flat_targets.squeeze(-1)
 
         if self.pred_key == "q_logits":
+            # For categorical targets, we typically use KL divergence or Cross Entropy
+            # where the target is a distribution
             log_probs = F.log_softmax(selected_preds, dim=-1)
-            raw_loss = -(flat_targets * log_probs).sum(dim=-1)
+            
+            if self.loss_fn == F.cross_entropy:
+                # Manual cross entropy for compatibility/performance
+                raw_loss = -(flat_targets * log_probs).sum(dim=-1)
+            elif self.loss_fn == F.kl_div:
+                raw_loss = F.kl_div(log_probs, flat_targets, reduction="none").sum(dim=-1)
+            else:
+                # Fallback to provided loss_fn
+                raw_loss = self.loss_fn(log_probs, flat_targets, reduction="none")
         else:
             raw_loss = self.loss_fn(selected_preds, flat_targets, reduction="none")
 

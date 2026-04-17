@@ -3,7 +3,7 @@ from typing import Optional, Dict, Any, Union
 import torch
 from torch import Tensor
 import torch.nn.functional as F
-from core.contracts import Structure, Scalar, Categorical, Probs, Logits
+from core.contracts import Structure, Scalar, Probs, Logits
 
 
 # TODO: clean up representation stuff (its close to distributions too, and its kind of clunky with action selectors, they are all closely coupled and annoying to initialize and use.)
@@ -43,6 +43,10 @@ class BaseRepresentation(ABC):
         """Returns the semantic structure of this representation (e.g., Scalar, Categorical)."""
         pass
 
+    def get_target_structure(self) -> Structure:
+        """Returns the semantic structure of this representation when used as a target (usually Probs)."""
+        return self.get_structure()
+
     def get_metadata(self) -> Dict[str, Any]:
         """Returns metadata about the representation parameters (vmin, vmax, etc.)."""
         return {}
@@ -60,8 +64,12 @@ class BaseRepresentation(ABC):
         Validates that the given logits are compatible with this representation.
         Checks for: tensor type, rank, and feature dimension alignment.
         """
-        assert torch.is_tensor(logits), f"Representation Error: Expected Tensor, got {type(logits)}"
-        assert logits.ndim >= 2, f"Representation Error: Logits must be at least [B, Features], got {logits.shape}"
+        assert torch.is_tensor(
+            logits
+        ), f"Representation Error: Expected Tensor, got {type(logits)}"
+        assert (
+            logits.ndim >= 2
+        ), f"Representation Error: Logits must be at least [B, Features], got {logits.shape}"
         assert logits.shape[-1] == self.num_features, (
             f"Representation Error: Head mismatch. Strategy expects {self.num_features} features, "
             f"but logits have {logits.shape[-1]}."
@@ -71,24 +79,30 @@ class BaseRepresentation(ABC):
         """
         Validates the raw target ingredients before conversion.
         """
-        assert torch.is_tensor(targets), f"Representation Error: Targets must be Tensor, got {type(targets)}"
+        assert torch.is_tensor(
+            targets
+        ), f"Representation Error: Targets must be Tensor, got {type(targets)}"
 
     def validate_representation(self, representation: Tensor) -> None:
         """
         Validates the output of to_representation or a direct target distribution.
         Ensures consistency with the feature dimension and mathematical properties (e.g. sum-to-one).
         """
-        assert torch.is_tensor(representation), "Representation Error: Target conversion failed to return a Tensor"
-        assert representation.shape[-1] == self.num_features, (
-            f"Representation Error: target feature dimension mismatch. Expected {self.num_features}, got {representation.shape[-1]}"
-        )
+        assert torch.is_tensor(
+            representation
+        ), "Representation Error: Target conversion failed to return a Tensor"
+        assert (
+            representation.shape[-1] == self.num_features
+        ), f"Representation Error: target feature dimension mismatch. Expected {self.num_features}, got {representation.shape[-1]}"
 
     def validate_expected_value(self, expected_value: Tensor) -> None:
         """
         Validates the result of to_expected_value.
         """
-        assert torch.is_tensor(expected_value), "Representation Error: Expected value conversion failed to return a Tensor"
-    
+        assert torch.is_tensor(
+            expected_value
+        ), "Representation Error: Expected value conversion failed to return a Tensor"
+
     def format_target(
         self, targets: Dict[str, Tensor], target_key: str = "values"
     ) -> Tensor:
@@ -198,7 +212,10 @@ class DiscreteSupportRepresentation(BaseRepresentation):
         return projected.view(*orig_shape, self.bins)
 
     def get_structure(self) -> Structure:
-        return Categorical(bins=self.bins)
+        return Logits()
+
+    def get_target_structure(self) -> Structure:
+        return Probs()
 
     def get_metadata(self) -> Dict[str, Any]:
         return {"vmin": self.vmin, "vmax": self.vmax, "bins": self.bins}
@@ -208,9 +225,9 @@ class DiscreteSupportRepresentation(BaseRepresentation):
         super().validate_representation(representation)
         if representation.ndim > 1:
             sum_val = representation.sum(dim=-1)
-            assert torch.allclose(sum_val, torch.ones_like(sum_val), atol=1e-3), (
-                f"DiscreteSupport Error: Representation sum mismatch. Expected 1.0, got {sum_val.mean().item()}"
-            )
+            assert torch.allclose(
+                sum_val, torch.ones_like(sum_val), atol=1e-3
+            ), f"DiscreteSupport Error: Representation sum mismatch. Expected 1.0, got {sum_val.mean().item()}"
 
     def format_target(
         self, targets: Dict[str, Tensor], target_key: str = "values"
@@ -285,43 +302,6 @@ class C51Representation(DiscreteSupportRepresentation):
         return super().to_representation(scalar_targets)
 
 
-class ExponentialBucketsRepresentation(BaseRepresentation):
-    def __init__(self, vmin: float, vmax: float, bins: int):
-        self.vmin = vmin
-        self.vmax = vmax
-        self.bins = bins
-        self.log_vmin = self._log_transform(torch.tensor(vmin)).item()
-        self.log_vmax = self._log_transform(torch.tensor(vmax)).item()
-        self._inner = DiscreteSupportRepresentation(self.log_vmin, self.log_vmax, bins)
-
-    def _log_transform(self, x: Tensor) -> Tensor:
-        return torch.sign(x) * torch.log1p(torch.abs(x))
-
-    def _exp_inverse(self, y: Tensor) -> Tensor:
-        return torch.sign(y) * (torch.exp(torch.abs(y)) - 1.0)
-
-    @property
-    def num_features(self) -> int:
-        return self.bins
-
-    def to_inference(self, logits: Tensor) -> torch.distributions.Categorical:
-        return self._inner.to_inference(logits)
-
-    def to_expected_value(self, logits: Tensor) -> Tensor:
-        log_scalar = self._inner.to_expected_value(logits)
-        return self._exp_inverse(log_scalar)
-
-    def to_representation(self, scalar_targets: Tensor) -> Tensor:
-        log_targets = self._log_transform(scalar_targets)
-        return self._inner.to_representation(log_targets)
-
-    def get_structure(self) -> Structure:
-        return Categorical(bins=self.bins)
-
-    def get_metadata(self) -> Dict[str, Any]:
-        return {"vmin": self.vmin, "vmax": self.vmax, "bins": self.bins, "mode": "exponential"}
-
-
 class ClassificationRepresentation(BaseRepresentation):
     def __init__(self, num_classes: int):
         self._num_classes = num_classes
@@ -346,7 +326,10 @@ class ClassificationRepresentation(BaseRepresentation):
         return flat_one_hot.reshape(*orig_shape, self._num_classes)
 
     def get_structure(self) -> Structure:
-        return Categorical(bins=self._num_classes)
+        return Logits()
+
+    def get_target_structure(self) -> Structure:
+        return Probs()
 
     def get_metadata(self) -> Dict[str, Any]:
         return {"num_classes": self._num_classes}
@@ -356,9 +339,9 @@ class ClassificationRepresentation(BaseRepresentation):
         super().validate_representation(representation)
         if representation.ndim > 1:
             sum_val = representation.sum(dim=-1)
-            assert torch.allclose(sum_val, torch.ones_like(sum_val), atol=1e-3), (
-                f"Classification Error: Representation sum mismatch. Expected 1.0, got {sum_val.mean().item()}"
-            )
+            assert torch.allclose(
+                sum_val, torch.ones_like(sum_val), atol=1e-3
+            ), f"Classification Error: Representation sum mismatch. Expected 1.0, got {sum_val.mean().item()}"
 
     def format_target(
         self, targets: Dict[str, Tensor], target_key: str = "values"
@@ -392,60 +375,12 @@ class IdentityRepresentation(BaseRepresentation):
         return scalar_targets
 
     def get_structure(self) -> Structure:
-        return Scalar() if self._num_features == 1 else Categorical(bins=self._num_features)
+        return Scalar() if self._num_features == 1 else Logits()
 
     def format_target(
         self, targets: Dict[str, Tensor], target_key: str = "values"
     ) -> Tensor:
         return targets.get(target_key, targets.get("values"))
-
-
-class GaussianRepresentation(BaseRepresentation):
-    """
-    Representation for continuous values using a Gaussian distribution.
-    Expects logits to be [..., 2 * action_dim] where first half is mean, second is log_std.
-    """
-
-    def __init__(
-        self,
-        action_dim: int,
-        min_log_std: float = -20.0,
-        max_log_std: float = 2.0,
-    ):
-        self.action_dim = action_dim
-        self.min_log_std = min_log_std
-        self.max_log_std = max_log_std
-
-    @property
-    def num_features(self) -> int:
-        return 2 * self.action_dim
-
-    def to_inference(self, logits: Tensor) -> torch.distributions.Normal:
-        """Returns a Normal distribution from [mean, log_std] logits."""
-        mean, log_std = torch.chunk(logits, 2, dim=-1)
-        log_std = torch.clamp(log_std, self.min_log_std, self.max_log_std)
-        std = torch.exp(log_std)
-        return torch.distributions.Normal(mean, std)
-
-    def to_expected_value(self, logits: Tensor) -> Tensor:
-        """Returns the mean of the Gaussian."""
-        mean, _ = torch.chunk(logits, 2, dim=-1)
-        return mean
-
-    def to_representation(self, scalar_targets: Tensor) -> Tensor:
-        """For continuous targets, the representation is often just the scalar target."""
-        return scalar_targets
-
-    def get_structure(self) -> Structure:
-        # Gaussian is typically treated as Logits/Raw for the head output
-        return Logits()
-
-    def get_metadata(self) -> Dict[str, Any]:
-        return {
-            "action_dim": self.action_dim,
-            "min_log_std": self.min_log_std,
-            "max_log_std": self.max_log_std,
-        }
 
 
 def get_representation(
@@ -503,12 +438,5 @@ def get_representation(
     # Classification logic
     if num_classes > 1 or mode == "classification" or mode == "categorical":
         return ClassificationRepresentation(num_classes)
-
-    # Gaussian / Continuous logic
-    if mode == "gaussian" or mode == "continuous":
-        action_dim = config.get("action_dim", 1)
-        min_log_std = config.get("min_log_std", -20.0)
-        max_log_std = config.get("max_log_std", 2.0)
-        return GaussianRepresentation(action_dim, min_log_std, max_log_std)
 
     return ScalarRepresentation()
