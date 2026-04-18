@@ -229,7 +229,7 @@ def test_transition_player_id_correctness():
     bb1.data["next_player_id"] = 1 # Player 1 will see the next state
     bb1.meta["action"] = 4
     bb1.data["reward"] = 0.0
-    bb1.data["done"] = False
+    bb1.data["dones"] = False
     comp.execute(bb1)
     
     seq = comp._sequence

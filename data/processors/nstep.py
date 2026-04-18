@@ -212,23 +212,23 @@ class NStepUnrollProcessor(OutputProcessor):
             if "truncated" in buffers
             else torch.zeros_like(raw_terminated)
         )
-        raw_dones = raw_terminated | raw_truncated
+        raw_done = raw_terminated | raw_truncated
 
         # 3. Validity Masks
         base_episode_ids = raw_episode_ids[:, 0].unsqueeze(1)
         same_game = raw_episode_ids == base_episode_ids
 
-        # Calculate episode boundaries using dones (terminated/truncated)
+        # Calculate episode boundaries using done (terminated/truncated)
         # We mask out any steps that occur AFTER a done signal in the sequence
-        cumulative_dones = torch.cumsum(raw_dones.float(), dim=1)
+        cumulative_done = torch.cumsum(raw_done.float(), dim=1)
 
         # post_done_mask[t] is True if state s_t occurs STRICTLY AFTER a done transition.
-        # Transition t-1 -> t is done if raw_dones[t-1] is True.
+        # Transition t-1 -> t is done if raw_done[t-1] is True.
         # obs_mask should include the terminal state s_terminal, but mask everything after it...
-        # So we shift cumulative_dones by 1.
+        # So we shift cumulative_done by 1.
         post_done_mask = (
             torch.cat(
-                [torch.zeros((batch_size, 1), device=device), cumulative_dones[:, :-1]],
+                [torch.zeros((batch_size, 1), device=device), cumulative_done[:, :-1]],
                 dim=1,
             )
             > 0
@@ -236,8 +236,8 @@ class NStepUnrollProcessor(OutputProcessor):
 
         # dynamics_pre_done_mask[t] is True if we are NOT at or after a done state.
         # We can act from s_t if s_t is not a terminal state.
-        # State s_t is terminal if raw_dones[t] is True.
-        dynamics_pre_done_mask = cumulative_dones == 0
+        # State s_t is terminal if raw_done[t] is True.
+        dynamics_pre_done_mask = cumulative_done == 0
 
         # Obs/Value Mask: Valid states (including terminal states), consistent with game ID and episode boundary
         obs_mask = same_game & (~post_done_mask)
@@ -295,7 +295,7 @@ class NStepUnrollProcessor(OutputProcessor):
             target_policies[is_consistent, u] = raw_policies[is_consistent, u]
             target_policies[~is_consistent, u] = 1.0 / self.num_actions
 
-            target_dones[is_consistent, u] = raw_dones[is_consistent, u]
+            target_dones[is_consistent, u] = raw_done[is_consistent, u]
             target_dones[~is_consistent, u] = True
 
             target_chances[is_consistent, u, 0] = (
@@ -359,6 +359,13 @@ class NStepUnrollProcessor(OutputProcessor):
         # This aligns with gradient_scales=[1.0, 1/K, 1/K, ...] where u=0 is root only.
         assert not reward_mask[:, 0].any(), "reward_mask[0] must be False (Root transition is dummy)"
         assert not to_play_mask[:, 0].any(), "to_play_mask[0] must be False (MuZero root TP is ungrounded)"
+        target_dones = torch.ones(
+            (batch_size, self.unroll_steps + 1), dtype=torch.bool, device=device
+        )
+        for u in range(self.unroll_steps + 1):
+            is_consistent = dynamics_mask[:, u]
+            target_dones[is_consistent, u] = raw_done[is_consistent, u]
+            target_dones[~is_consistent, u] = True
 
         return dict(
             observations=buffers["observations"][indices_tensor],
@@ -415,7 +422,7 @@ class NStepUnrollProcessor(OutputProcessor):
         # The length required for this is: num_windows + n_step - 1.
 
         required_len = num_windows + n_step - 1
-        raw_dones = raw_terminated | raw_truncated
+        raw_done = raw_terminated | raw_truncated
 
         # Helper to pad if needed
         def safe_slice_unfold(tensor, length, size, step):
@@ -444,8 +451,8 @@ class NStepUnrollProcessor(OutputProcessor):
         to_plays_windows = safe_slice_unfold(raw_to_plays, required_len, n_step, 1)
         # DONE ALIGNMENT:
         # reward r_{u+k+1} is valid if s_{u+k} was not terminal.
-        # So we use unshifted raw_dones.
-        dones_windows = safe_slice_unfold(raw_dones, required_len, n_step, 1)
+        # So we use unshifted raw_done.
+        done_windows = safe_slice_unfold(raw_done, required_len, n_step, 1)
         
         # VALIDITY ALIGNMENT:
         # Reward r_{u+1} is valid if we could act from s_u.
@@ -463,7 +470,7 @@ class NStepUnrollProcessor(OutputProcessor):
 
         # 3. Compute Transition Validity Mask
         # was_done_before[u, k] is True if any state s_u...s_{u+k} was terminal.
-        was_done_before = torch.cumsum(dones_windows.float(), dim=2)
+        was_done_before = torch.cumsum(done_windows.float(), dim=2)
         valid_steps_mask = valid_windows & (was_done_before == 0)
 
         # 4. Compute Weighted Rewards
@@ -496,7 +503,7 @@ class NStepUnrollProcessor(OutputProcessor):
         # Check if any done occurred in the valid part of the window
         # If valid_steps_mask has valid done, it's fine for reward, but kills bootstrap.
         # If any 'done' & 'valid' occurred in window -> no bootstrap.
-        # We can sum up (dones_windows & valid_steps_mask).
+        # We can sum up (done_windows & valid_steps_mask).
         # If > 0, then we hit a done.
         terminated_windows = safe_slice_unfold(raw_terminated, required_len, n_step, 1)
         hit_terminated_in_window = (

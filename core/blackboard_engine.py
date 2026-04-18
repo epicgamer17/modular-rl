@@ -1,10 +1,11 @@
-from typing import Dict, Any, Iterable, Iterator, List, Set, Type, Optional
+from typing import Dict, Any, Iterable, Iterator, List, Set, Type, Optional, Union
 import torch
+import numpy as np
 import time
 
+from core.contracts import Key, WriteMode, BufferSchema
 from core.blackboard import Blackboard
 from core.component import PipelineComponent
-from core.contracts import Key, WriteMode
 from core.execution_graph import (
     ExecutionGraph,
     build_execution_graph,
@@ -12,7 +13,7 @@ from core.execution_graph import (
 )
 from core.blackboard_diff import snapshot_blackboard, diff_snapshots, BlackboardDiff
 from core.path_resolver import resolve_blackboard_path, write_blackboard_path
-from core.shape_validation import validate_tensor
+from core.shape_validation import validate_tensor, validate_buffer_write
 
 
 def apply_updates(blackboard: Blackboard, updates: Dict[str, Any]) -> None:

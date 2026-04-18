@@ -97,7 +97,7 @@ def test_search_selector_buffer_alignment():
     # Mock some data for step
     blackboard.data["reward"] = torch.tensor([1.0])
     blackboard.data["action"] = torch.tensor([1])
-    blackboard.data["done"] = True
+    blackboard.data["dones"] = True
     blackboard.meta["next_info"] = {}
     blackboard.data["next_obs"] = torch.randn(1, 10)
     

@@ -13,7 +13,7 @@ def test_telemetry_scalar_consistency():
     
     # Step 1
     blackboard.meta["reward"] = 1.0
-    blackboard.meta["done"] = False
+    blackboard.meta["dones"] = False
     outputs = telemetry.execute(blackboard)
     apply_updates(blackboard, outputs)
     
@@ -23,7 +23,7 @@ def test_telemetry_scalar_consistency():
     
     # Step 2 (Finish)
     blackboard.meta["reward"] = 2.0
-    blackboard.meta["done"] = True
+    blackboard.meta["dones"] = True
     outputs = telemetry.execute(blackboard)
     apply_updates(blackboard, outputs)
     
@@ -40,7 +40,7 @@ def test_telemetry_vectorized_reward():
     
     # Step 1: Both continue
     blackboard.meta["reward"] = torch.tensor([1.0, 10.0])
-    blackboard.meta["done"] = torch.tensor([False, False])
+    blackboard.meta["dones"] = torch.tensor([False, False])
     outputs = telemetry.execute(blackboard)
     apply_updates(blackboard, outputs)
     
@@ -48,7 +48,7 @@ def test_telemetry_vectorized_reward():
     
     # Step 2: Env 0 finishes, Env 1 continues
     blackboard.meta["reward"] = torch.tensor([1.0, 10.0])
-    blackboard.meta["done"] = torch.tensor([True, False])
+    blackboard.meta["dones"] = torch.tensor([True, False])
     outputs = telemetry.execute(blackboard)
     apply_updates(blackboard, outputs)
     
@@ -59,7 +59,7 @@ def test_telemetry_vectorized_reward():
     
     # Step 3: Env 1 finishes
     blackboard.meta["reward"] = torch.tensor([1.0, 10.0])
-    blackboard.meta["done"] = torch.tensor([False, True])
+    blackboard.meta["dones"] = torch.tensor([False, True])
     outputs = telemetry.execute(blackboard)
     apply_updates(blackboard, outputs)
     
@@ -77,9 +77,9 @@ def test_telemetry_universal_time_mandate():
     # reward [2, 3]
     blackboard.meta["reward"] = torch.ones((B, T))
     # done [2, 3] - Env 0 finishes at T=1, Env 1 never finishes
-    done = torch.zeros((B, T), dtype=torch.bool)
-    done[0, 1] = True
-    blackboard.meta["done"] = done
+    dones = torch.zeros((B, T), dtype=torch.bool)
+    dones[0, 1] = True
+    blackboard.meta["dones"] = dones
     
     outputs = telemetry.execute(blackboard)
     apply_updates(blackboard, outputs)
@@ -98,19 +98,19 @@ def test_sequence_terminator_vectorized():
     blackboard = Blackboard()
     
     # Scalar False
-    blackboard.meta["done"] = False
+    blackboard.meta["dones"] = False
     outputs = terminator.execute(blackboard)
     apply_updates(blackboard, outputs)
     assert not blackboard.meta.get("stop_execution")
     
     # Vector False
-    blackboard.meta["done"] = torch.tensor([False, False])
+    blackboard.meta["dones"] = torch.tensor([False, False])
     outputs = terminator.execute(blackboard)
     apply_updates(blackboard, outputs)
     assert not blackboard.meta.get("stop_execution")
     
     # Vector True
-    blackboard.meta["done"] = torch.tensor([False, True])
+    blackboard.meta["dones"] = torch.tensor([False, True])
     outputs = terminator.execute(blackboard)
     apply_updates(blackboard, outputs)
     assert blackboard.meta["stop_execution"] is True

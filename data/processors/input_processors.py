@@ -8,7 +8,6 @@ from utils.utils import legal_moves_mask
 from logging import warning
 
 
-
 class InputProcessor(ABC):
     """
     Processes data BEFORE it is written to the Writer/Storage.
@@ -99,6 +98,7 @@ class InputProcessor(ABC):
     def clear(self):
         pass
 
+
 class StackedInputProcessor(InputProcessor):
     """
     Chains multiple InputProcessors sequentially.
@@ -155,11 +155,13 @@ class StackedInputProcessor(InputProcessor):
         for p in self.processors:
             p.clear()
 
+
 class IdentityInputProcessor(InputProcessor):
     """Pass-through processor."""
 
     def process_single(self, **kwargs):
         return kwargs
+
 
 class LegalMovesMaskProcessor(InputProcessor):
     """
@@ -184,6 +186,7 @@ class LegalMovesMaskProcessor(InputProcessor):
         kwargs[self.output_key] = mask
         return kwargs
 
+
 class ToPlayInputProcessor(InputProcessor):
     """
     Extracts 'player_id' from kwargs.
@@ -204,6 +207,7 @@ class ToPlayInputProcessor(InputProcessor):
         kwargs[self.output_key] = val
         return kwargs
 
+
 class FilterKeysInputProcessor(InputProcessor):
     """
     Filters the input dictionary to only include specific keys (whitelist).
@@ -214,6 +218,7 @@ class FilterKeysInputProcessor(InputProcessor):
 
     def process_single(self, **kwargs):
         return {k: v for k, v in kwargs.items() if k in self.whitelisted_keys}
+
 
 class TerminationFlagsInputProcessor(InputProcessor):
     """
@@ -236,6 +241,7 @@ class TerminationFlagsInputProcessor(InputProcessor):
         kwargs[self.terminated_key] = bool(kwargs.get(self.terminated_key, done))
         kwargs[self.truncated_key] = bool(kwargs.get(self.truncated_key, False))
         return kwargs
+
 
 class GAEProcessor(InputProcessor):
     """

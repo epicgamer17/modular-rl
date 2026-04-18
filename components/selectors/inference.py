@@ -56,12 +56,12 @@ class NetworkInferenceComponent(PipelineComponent):
         from core.validation import assert_is_tensor
 
         obs = blackboard.data.get("obs")
-        if obs is not None and not blackboard.data.get("done", False):
+        if obs is not None and not blackboard.data.get("dones", False):
             assert_is_tensor(obs, msg="for NetworkInferenceComponent")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         obs = blackboard.data["obs"]
-        done = blackboard.data.get("done", False)
+        done = blackboard.data.get("dones", False)
         if obs is None or done:
             return {}
 

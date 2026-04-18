@@ -133,6 +133,9 @@ def test_muzero_k_plus_1_contract_alignment():
     # v1_target = 0.2
     assert torch.allclose(batch_term["values"][:, 1], torch.tensor(0.2))
     
+    # Final check of the key names in return dict
+    assert "dones" in batch_term
+    
     print("MuZero Alignment Contract Test Passed!")
 
 if __name__ == "__main__":

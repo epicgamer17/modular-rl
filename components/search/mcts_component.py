@@ -77,9 +77,9 @@ class MCTSSearchComponent(PipelineComponent):
 
         # Check for tournament end / terminal state
         if (
-            blackboard.data.get("done")
+            blackboard.data.get("dones")
             or blackboard.data.get("terminated")
-            or blackboard.meta.get("done")
+            or blackboard.meta.get("dones")
         ):
             return {"meta.stop_execution": True}
 

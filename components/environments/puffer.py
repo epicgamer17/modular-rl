@@ -45,6 +45,9 @@ class PufferObservationComponent(PipelineComponent):
         # them updated after each environment step.
         self._obs: Optional[np.ndarray] = None
         self._infos: Optional[List[Dict[str, Any]]] = None
+        self._episode_ids: np.ndarray = np.zeros(num_envs, dtype=np.int64)
+        self._step_ids: np.ndarray = np.zeros(num_envs, dtype=np.int32)
+        self._dones: np.ndarray = np.zeros(num_envs, dtype=bool)
 
     @property
     def requires(self) -> Set[Key]:
@@ -55,6 +58,9 @@ class PufferObservationComponent(PipelineComponent):
         return {
             Key("data.obs", Observation): "new",
             Key("data.infos", SemanticType): "new",
+            Key("data.episode_ids", SemanticType): "new",
+            Key("data.step_ids", SemanticType): "new",
+            Key("data.dones", Done): "new",
         }
 
     def validate(self, blackboard: Blackboard) -> None:
@@ -133,7 +139,10 @@ class PufferObservationComponent(PipelineComponent):
 
         return {
             "data.obs": obs_tensor,          # [B, *obs_shape]
-            "data.infos": self._infos        # List[Dict]
+            "data.infos": self._infos,       # List[Dict]
+            "data.episode_ids": torch.as_tensor(self._episode_ids, device=self.device),
+            "data.step_ids": torch.as_tensor(self._step_ids, device=self.device),
+            "data.dones": torch.as_tensor(self._dones, device=self.device),
         }
 
 
@@ -232,8 +241,17 @@ class PufferStepComponent(PipelineComponent):
             self.vec_env.recv()
         )
 
-        # Advance the observation-component's cache so the next tick sees the
-        # post-reset observations (PufferLib auto-resets completed envs).
+        # Update per-env metadata
+        self.obs_component._step_ids += 1
+        dones = terminals | truncations
+        
+        # Puffer auto-resets: if done, reset step_id and increment episode_id
+        for i, d in enumerate(dones):
+            if d:
+                self.obs_component._episode_ids[i] += 1
+                self.obs_component._step_ids[i] = 0
+        
+        self.obs_component._dones = dones
         self.obs_component.set_obs(next_obs, next_infos)
 
         return {
@@ -241,6 +259,6 @@ class PufferStepComponent(PipelineComponent):
             "data.rewards": rewards,             # np.ndarray [B]
             "data.terminals": terminals,         # np.ndarray [B]  bool
             "data.truncations": truncations,     # np.ndarray [B]  bool
-            "data.dones": terminals | truncations,
+            "data.dones": dones,
             "data.next_infos": next_infos        # List[Dict]
         }

@@ -131,6 +131,8 @@ class SequenceTensorProcessor(InputProcessor):
         terminated_t = torch.tensor(sequence.terminated_history, dtype=torch.bool)
         truncated_t = torch.tensor(sequence.truncated_history, dtype=torch.bool)
         dones_t = torch.tensor(sequence.done_history, dtype=torch.bool)
+        episode_ids_t = torch.full((n_states,), sequence.episode_id, dtype=torch.int64)
+        step_ids_t = torch.arange(n_states, dtype=torch.int32)
 
         return {
             "observations": obs_tensor,
@@ -143,6 +145,8 @@ class SequenceTensorProcessor(InputProcessor):
             "terminated": terminated_t,
             "truncated": truncated_t,
             "dones": dones_t,
+            "episode_ids": episode_ids_t,
+            "step_ids": step_ids_t,
             "legal_masks": legal_masks_t,
             "n_states": n_states,
         }

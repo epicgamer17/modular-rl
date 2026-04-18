@@ -414,5 +414,33 @@ class Epsilon(SemanticType):
     pass
 
 
+
 class Metric(SemanticType):
     pass
+
+
+@dataclass(frozen=True)
+class BufferSchema:
+    """
+    Mandatory contract for all data stored in the ModularReplayBuffer.
+    Enforced at the writer boundary via Blackboard.validate_write.
+
+    Invariants:
+    1. Every stored field must be a torch.Tensor.
+    2. Every field MUST have a time dimension 'T' as its first dimension: [T, ...].
+       (For raw storage, T corresponds to the capacity/buffer_size).
+    3. No ragged lists or Python objects allowed.
+    4. No numpy 'object' dtypes allowed.
+    """
+
+    episode_ids: torch.dtype = torch.int32
+    step_ids: torch.dtype = torch.int32
+    dones: torch.dtype = torch.bool
+
+    @classmethod
+    def get_mandatory_fields(cls) -> Dict[str, torch.dtype]:
+        return {
+            "episode_ids": torch.int32,
+            "step_ids": torch.int32,
+            "dones": torch.bool,
+        }

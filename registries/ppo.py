@@ -240,14 +240,12 @@ def make_ppo_learner(
         ),
     }
 
-
     return BlackboardEngine(
         components=components,
         initial_keys=initial_keys,
         target_keys={Key("losses.total_loss", LossScalar)},
         device=device,
     )
-
 
 
 def make_ppo_actor_engine(
