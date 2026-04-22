@@ -41,7 +41,7 @@ def _play_one_episode(obs_comp, step_comp):
         apply_updates(bb, updates)
 
         # MCTSSearchComponent would check done here and set stop_execution
-        if bb.data.get("dones") or bb.data.get("terminated"):
+        if bb.data.get("done") or bb.data.get("terminated"):
             break
 
         info = bb.data.get("info", {})
@@ -103,7 +103,7 @@ def test_done_flag_lifecycle():
     updates = obs_comp.execute(bb)
     apply_updates(bb, updates)
     assert obs_comp.done is False, "done flag should be False after env reset"
-    assert bb.data["dones"] is False, "new episode should not start as done"
+    assert bb.data["done"] is False, "new episode should not start as done"
 
 
 def test_consecutive_episodes_produce_valid_observations():

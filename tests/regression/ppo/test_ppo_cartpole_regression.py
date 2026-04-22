@@ -135,9 +135,7 @@ def test_ppo_cartpole_full_training():
         "observations": "data.obs",
         "actions": "meta.action",
         "rewards": "data.reward",
-        "dones": "data.dones",
-        "episode_ids": "data.episode_ids",
-        "step_ids": "data.step_ids",
+        "dones": "data.done",
         "values": "predictions.value",
         "old_log_probs": "predictions.log_prob",
     }

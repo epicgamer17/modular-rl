@@ -3,8 +3,7 @@
 import torch
 from typing import Any, Dict, List
 
-import numpy as np
-from core.contracts import Key, ShapeContract, BufferSchema
+from core.contracts import Key, ShapeContract
 
 
 def validate_tensor(key: Key, value: Any) -> None:
@@ -83,75 +82,3 @@ def validate_batch_outputs(
     for key, value in provides_keys.items():
         if key.path in outputs:
             validate_tensor(key, outputs[key.path])
-
-
-def validate_buffer_write(batch: Dict[str, Any]) -> None:
-    """
-    Mandatory invariant gate for any data entering the replay buffer.
-    Enforces BufferSchema and strict structural constraints.
-
-    Invariants:
-    1. Mandatory fields (episode_id, step_id, done) MUST exist.
-    2. NO Python objects: lists, dicts, custom dataclasses are REJECTED.
-    3. NO numpy 'object' dtype (ragged arrays) are REJECTED.
-    4. Every field MUST be a torch.Tensor (once in storage).
-    5. Every field MUST have at least one dimension [T, ...].
-    """
-    mandatory = BufferSchema.get_mandatory_fields()
-
-    for path, value in batch.items():
-        # 1. Reject forbidden containers
-        if isinstance(value, (list, dict)):
-            raise TypeError(
-                f"Forbidden container type in buffer write for key '{path}': {type(value)}. "
-                f"Only Tensors are allowed in the replay buffer."
-            )
-
-        # 2. Reject custom dataclasses
-        if hasattr(value, "__dataclass_fields__"):
-            raise TypeError(
-                f"Forbidden dataclass in buffer write for key '{path}'. "
-                f"Only Tensors are allowed in the replay buffer."
-            )
-
-        # 3. Reject numpy object dtypes
-        if isinstance(value, np.ndarray):
-            if value.dtype == object:
-                raise TypeError(
-                    f"Forbidden numpy 'object' dtype for key '{path}'. "
-                    f"Ragged/Variable-length lists are not allowed in the buffer."
-                )
-
-        # 4. Final safety check: must be a Tensor
-        if not (torch.is_tensor(value) or isinstance(value, np.ndarray)):
-            raise TypeError(
-                f"Field '{path}' must be a torch.Tensor or np.ndarray, got {type(value)}"
-            )
-
-    # 4. Final pass: ensure all mandatory fields exist
-    for m_field in mandatory:
-        if m_field not in batch:
-            raise KeyError(
-                f"Buffer write is missing mandatory BufferSchema field: '{m_field}'. "
-                f"Available: {list(batch.keys())}"
-            )
-
-    # 5. Length check (Self-consistency of T)
-    first_dim = None
-    for path, value in batch.items():
-        batch_dim = value.shape[0]
-        if first_dim is None:
-            first_dim = batch_dim
-        elif first_dim != batch_dim:
-            raise ValueError(
-                f"Buffer write contains ragged data. All fields must have the same first dimension [T, ...]. "
-                f"Found '{path}' with length {batch_dim}, but previous field had length {first_dim}."
-            )
-
-    # 6. Shape check [T, ...]
-    for path, value in batch.items():
-        if value.ndim < 1:
-            raise ValueError(
-                f"Buffer field '{path}' must have at least one dimension [T, ...], "
-                f"got scalar shape {value.shape}"
-            )

@@ -21,7 +21,6 @@ class TimeStep(NamedTuple):
 @dataclass
 class Sequence:
     num_players: int
-    episode_id: int = 0
     observation_history: list = field(default_factory=list)
     rewards: list = field(default_factory=list)
     policy_history: list = field(default_factory=list)

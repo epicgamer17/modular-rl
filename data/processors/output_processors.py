@@ -8,6 +8,7 @@ from utils.utils import legal_moves_mask
 from logging import warning
 
 
+
 class OutputProcessor(ABC):
     """
     Processes indices indices retrieved from the Sampler into a final batch.
@@ -29,7 +30,6 @@ class OutputProcessor(ABC):
 
     def clear(self):
         pass
-
 
 class StackedOutputProcessor(OutputProcessor):
     """
@@ -63,7 +63,6 @@ class StackedOutputProcessor(OutputProcessor):
         for p in self.processors:
             p.clear()
 
-
 class StandardOutputProcessor(OutputProcessor):
     """Returns data indices directly."""
 
@@ -71,7 +70,6 @@ class StandardOutputProcessor(OutputProcessor):
         self, indices: List[int], buffers: Dict[str, torch.Tensor], **kwargs
     ):
         return {key: buf[indices] for key, buf in buffers.items()}
-
 
 class AdvantageNormalizer(OutputProcessor):
     """

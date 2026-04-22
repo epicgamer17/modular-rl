@@ -141,7 +141,7 @@ class ActionSelectorComponent(PipelineComponent):
 
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures prediction input key exists and is valid."""
-        if blackboard.data.get("dones", False):
+        if blackboard.data.get("done", False):
             return  # No validation needed when done
 
         values = blackboard.predictions.get(self.input_key)
@@ -163,7 +163,7 @@ class ActionSelectorComponent(PipelineComponent):
             ), f"[{self.input_key}] Probabilities must sum to 1.0, got {sum_val}"
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        if blackboard.data.get("dones", False):
+        if blackboard.data.get("done", False):
             outputs = get_action_selection_outputs(
                 torch.tensor([0]), {"action_is_none": True}
             )
@@ -293,14 +293,14 @@ class EpsilonGreedySelectorComponent(PipelineComponent):
 
     def validate(self, blackboard: Blackboard) -> None:
         """Ensures q_values exist in predictions."""
-        if blackboard.data.get("dones", False):
+        if blackboard.data.get("done", False):
             return
         from core.validation import assert_in_blackboard
 
         assert_in_blackboard(blackboard, "predictions.q_values")
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        if blackboard.data.get("dones", False):
+        if blackboard.data.get("done", False):
             outputs = get_action_selection_outputs(
                 torch.tensor([0]), {"action_is_none": True}
             )

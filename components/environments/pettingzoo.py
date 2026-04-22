@@ -14,8 +14,6 @@ class PettingZooObservationComponent(PipelineComponent):
     def __init__(self, env):
         self.env = env
         self._initialized = False
-        self.episode_ids = 0
-        self.step_ids = 0
         self.dones = False
 
     @property
@@ -29,8 +27,6 @@ class PettingZooObservationComponent(PipelineComponent):
             Key("data.info", SemanticType): "new",
             Key("data.reward", Reward): "new",
             Key("data.dones", Done): "new",
-            Key("data.episode_ids", SemanticType): "new",
-            Key("data.step_ids", SemanticType): "new",
             Key("data.player_id", ToPlay): "new",
             Key("data.terminated", Done): "new",
             Key("data.truncated", Done): "new",
@@ -47,8 +43,6 @@ class PettingZooObservationComponent(PipelineComponent):
             self.env.reset()
             self._initialized = True
             self.dones = False
-            self.episode_ids += 1
-            self.step_ids = 0
 
         try:
             agent = self.env.agent_selection
@@ -92,8 +86,6 @@ class PettingZooObservationComponent(PipelineComponent):
             "data.terminated": termination,
             "data.truncated": truncation,
             "data.dones": termination or truncation,
-            "data.episode_ids": torch.tensor(self.episode_ids, dtype=torch.int32),
-            "data.step_ids": torch.tensor(self.step_ids, dtype=torch.int32),
             "data.reward": reward,
             "data.player_id": player_idx,
             "data.agent": agent
@@ -151,7 +143,6 @@ class PettingZooStepComponent(PipelineComponent):
         except (KeyError, AttributeError, ValueError):
             obs, term, trunc, info = None, True, False, {}
 
-        self.obs_component.step_ids += 1
         self.obs_component.dones = term or trunc
 
         # Determine who would act next (needed for terminal to_play targets)

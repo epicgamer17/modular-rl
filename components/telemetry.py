@@ -20,7 +20,7 @@ class TelemetryComponent(PipelineComponent):
         self.episode_length: Optional[torch.Tensor] = None
 
         # Deterministic contracts computed at initialization
-        self._requires = {Key("data.reward", Reward), Key("data.dones", Done)}
+        self._requires = {Key("data.reward", Reward), Key("data.done", Done)}
         self._provides = {
             Key("meta.score", Metric): "optional",
             Key("meta.episode_length", Metric): "optional",
@@ -46,14 +46,12 @@ class TelemetryComponent(PipelineComponent):
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         # 1. Extraction and Normalization
         reward = blackboard.meta.get("reward", 0.0)
-        dones = blackboard.meta.get("dones", False)
-        if dones is False:
-             dones = blackboard.data.get("dones", False)
+        done = blackboard.meta.get("done", False)
 
         if not torch.is_tensor(reward):
             reward = torch.as_tensor(reward, dtype=torch.float32)
-        if not torch.is_tensor(dones):
-            dones = torch.as_tensor(dones, dtype=torch.bool)
+        if not torch.is_tensor(done):
+            done = torch.as_tensor(done, dtype=torch.bool)
 
         # Force [B, T] shape for calculations
         # [] -> [1, 1], [B] -> [B, 1]
@@ -62,10 +60,10 @@ class TelemetryComponent(PipelineComponent):
         elif reward.ndim == 1:
             reward = reward.view(-1, 1)
 
-        if dones.ndim == 0:
-            dones = dones.view(1, 1)
-        elif dones.ndim == 1:
-            dones = dones.view(-1, 1)
+        if done.ndim == 0:
+            done = done.view(1, 1)
+        elif done.ndim == 1:
+            done = done.view(-1, 1)
 
         B, T = reward.shape
 
@@ -82,7 +80,7 @@ class TelemetryComponent(PipelineComponent):
         self.episode_length += T
 
         # Env-level finishes: shape [B]
-        any_done = dones.any(dim=1)
+        any_done = done.any(dim=1)
         outputs = {}
 
         if any_done.any():
@@ -146,7 +144,7 @@ class SequenceTerminatorComponent(PipelineComponent):
     """
 
     def __init__(self):
-        self._requires = {Key("data.dones", Done)}
+        self._requires = {Key("data.done", Done)}
         self._provides = {Key("meta.stop_execution", Metric): "optional"}
 
     @property
@@ -162,15 +160,15 @@ class SequenceTerminatorComponent(PipelineComponent):
         pass
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        dones = blackboard.meta.get("dones")
-        if dones is None:
-            dones = blackboard.data.get("dones")
+        done = blackboard.meta.get("done")
+        if done is None:
+            done = blackboard.data.get("done")
 
-        if dones is not None:
-            if torch.is_tensor(dones):
-                if dones.any():
+        if done is not None:
+            if torch.is_tensor(done):
+                if done.any():
                     return {"meta.stop_execution": True}
-            elif dones:
+            elif done:
                 return {"meta.stop_execution": True}
 
         return {}

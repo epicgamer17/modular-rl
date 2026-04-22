@@ -107,8 +107,8 @@ def test_to_play_mask_includes_terminal(filled_buffer):
     """To-play mask should include terminal states (whose turn it was is valid)."""
     batch = filled_buffer.sample()
 
+    dones = batch["done"]
     to_play_mask = batch["to_play_mask"]
-    dones = batch["dones"]
 
     # Find positions where done=True and it's within the same game
     terminal_positions = dones & batch["is_same_episode"]

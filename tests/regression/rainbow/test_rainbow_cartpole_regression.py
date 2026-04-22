@@ -181,9 +181,7 @@ def test_rainbow_cartpole_full_training():
         "next_observations": "data.next_obs",
         "terminated": "data.terminated",
         "truncated": "data.truncated",
-        "dones": "data.dones",
-        "episode_ids": "data.episode_ids",
-        "step_ids": "data.step_ids",
+        "dones": "data.done",
     }
 
     # Collection Pipeline

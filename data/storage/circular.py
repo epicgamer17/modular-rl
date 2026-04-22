@@ -8,10 +8,8 @@ from typing import List, Optional, Any
 from data.processors import IdentityInputProcessor, StandardOutputProcessor
 from data.writers import CircularWriter
 from data.samplers.prioritized import UniformSampler
-from data.samplers.prioritized import UniformSampler
 from data.concurrency import ConcurrencyBackend, LocalBackend
 from utils.utils import numpy_dtype_to_torch_dtype
-from core.shape_validation import validate_buffer_write
 
 
 @dataclass
@@ -151,9 +149,6 @@ class ModularReplayBuffer:
                         f"Available keys: {sorted(processed.keys())}"
                     )
 
-        # 1.5 Validate Buffer Schema Invariants
-        validate_buffer_write(processed)
-
         # 2. Determine Write Index
         with self.priority_lock:
             with self.write_lock:
@@ -231,18 +226,17 @@ class ModularReplayBuffer:
                     data["episode_ids"] = torch.full(
                         (n_items,), start_episode_id, dtype=torch.int64
                     )
-                if "step_id" in self.buffers:
-                    data["step_id"] = torch.arange(n_items, dtype=torch.int32)
-                # Enforce: done must come from the processor for sequence data
+                if "step_ids" in self.buffers:
+                    data["step_ids"] = torch.arange(
+                        n_items, dtype=torch.int32
+                    )
+                # Enforce: dones must come from the processor for sequence data
                 if "dones" in self.buffers:
                     assert "dones" in data, (
                         "Metadata field 'dones' is configured in the buffer "
                         "but missing from processed sequence data. "
                         f"Available keys: {sorted(data.keys())}"
                     )
-
-                # 3.5 Validate Buffer Schema Invariants
-                validate_buffer_write(data)
                 # 4. Write Data to Buffers
                 data_offset = 0
                 for sl in slices:
@@ -434,12 +428,12 @@ class ModularReplayBuffer:
         if "episode_ids" not in self.buffers:
             raise ValueError("Buffer does not have 'episode_ids' key")
 
-        episode_id = list(set(self.buffers["episode_id"][: self.size].tolist()))
+        episode_id = list(set(self.buffers["episode_ids"][: self.size].tolist()))
         if not episode_id:
             return None
 
         chosen_id = np.random.choice(episode_id, 1)[0]
-        mask = self.buffers["episode_id"][: self.size] == chosen_id
+        mask = self.buffers["episode_ids"][: self.size] == chosen_id
         indices = torch.nonzero(mask).view(-1).tolist()
 
         if not indices:

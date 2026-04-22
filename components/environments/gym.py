@@ -18,8 +18,8 @@ class GymObservationComponent(PipelineComponent):
             self.state, self.info = result
         else:
             self.state, self.info = result, {}
-        self.episode_ids = 0
-        self.step_ids = 0
+        self.terminated = False
+        self.truncated = False
         self.dones = False
 
     @property
@@ -31,8 +31,8 @@ class GymObservationComponent(PipelineComponent):
         return {
             Key("data.obs", Observation): "new",
             Key("data.info", SemanticType): "new",
-            Key("data.episode_ids", SemanticType): "new",
-            Key("data.step_ids", SemanticType): "new",
+            Key("data.terminated", Done): "new",
+            Key("data.truncated", Done): "new",
             Key("data.dones", Done): "new",
         }
 
@@ -47,8 +47,8 @@ class GymObservationComponent(PipelineComponent):
             else:
                 self.state, self.info = result, {}
             self.dones = False
-            self.episode_ids += 1
-            self.step_ids = 0
+            self.terminated = False
+            self.truncated = False
 
         # Convert to tensor and ensure batch dimension [1, ...]
         obs_tensor = torch.as_tensor(self.state, dtype=torch.float32)
@@ -60,9 +60,9 @@ class GymObservationComponent(PipelineComponent):
         return {
             "data.obs": obs_tensor,
             "data.info": self.info,
-            "data.episode_ids": torch.tensor(self.episode_ids, dtype=torch.int32),
-            "data.step_ids": torch.tensor(self.step_ids, dtype=torch.int32),
-            "data.dones": torch.tensor(self.dones, dtype=torch.bool),
+            "data.terminated": self.terminated,
+            "data.truncated": self.truncated,
+            "data.dones": self.terminated or self.truncated,
         }
 
 
@@ -86,8 +86,12 @@ class GymStepComponent(PipelineComponent):
             Key("data.reward", Reward): "new",
             Key("data.dones", Done): "overwrite",
             Key("data.next_obs", Observation): "new",
+            Key("data.terminated", Done): "overwrite",
+            Key("data.truncated", Done): "overwrite",
             Key("meta.reward", Metric): "new",
             Key("meta.dones", Metric): "new",
+            Key("meta.terminated", Metric): "new",
+            Key("meta.truncated", Metric): "new",
             Key("meta.info", SemanticType): "new",
         }
 
@@ -109,20 +113,24 @@ class GymStepComponent(PipelineComponent):
             )
 
         next_obs, reward, terminated, truncated, info = self.env.step(action)
-        self.obs_component.step_ids += 1
-        self.obs_component.dones = terminated or truncated
+        dones = terminated or truncated
 
         # Update observation component for next tick
         self.obs_component.state = next_obs
         self.obs_component.info = info
+        self.obs_component.dones = dones
+        self.obs_component.terminated = terminated
+        self.obs_component.truncated = truncated
 
         # Write transition data to blackboard via return
         return {
             "data.reward": float(reward),
-            "data.dones": self.obs_component.dones,
+            "data.dones": dones,
+            "data.terminated": terminated,
+            "data.truncated": truncated,
             "data.next_obs": next_obs,
             "meta.reward": float(reward),
-            "meta.dones": self.obs_component.dones,
+            "meta.dones": dones,
             "meta.terminated": terminated,
             "meta.truncated": truncated,
             "meta.info": info,

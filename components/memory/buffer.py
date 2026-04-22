@@ -21,7 +21,7 @@ class BufferStoreComponent(PipelineComponent):
             "observations": "data.obs",
             "actions": "meta.action",
             "rewards": "data.reward",
-            "dones": "data.dones",
+            "done": "data.done",
             "next_observations": "data.next_obs",
         }
         # Deterministic contracts computed at initialization
@@ -106,7 +106,7 @@ class SequenceBufferComponent(PipelineComponent):
 
         self._requires = {
             Key("data.obs", Observation),
-            Key("data.dones", Done),
+            Key("data.done", Done),
             Key("data.reward", Reward),
             Key("meta.action", Action),
         }
@@ -138,14 +138,14 @@ class SequenceBufferComponent(PipelineComponent):
             blackboard.data.get("obs") is not None
         ), "SequenceBufferComponent: 'obs' missing from blackboard.data"
         assert (
-            blackboard.data.get("dones") is not None
-        ), "SequenceBufferComponent: 'dones' missing from blackboard.data"
+            blackboard.data.get("done") is not None
+        ), "SequenceBufferComponent: 'done' missing from blackboard.data"
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
         self._ensure_sequence()
 
         obs = blackboard.data.get("obs")
-        done = blackboard.data.get("dones")
+        done = blackboard.data.get("done")
         metadata = blackboard.meta.get("action_metadata", {})
         next_info = blackboard.meta.get("next_info", {})
 
