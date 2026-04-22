@@ -3,7 +3,7 @@ import torch.nn as nn
 from typing import Tuple, Dict, Any, List, Optional
 
 from modules.agent_nets.modular import ModularAgentNetwork
-from modules.embeddings.action_embedding import ActionEncoder
+from modules.embeddings.action_encoders import ActionEncoder
 from modules.backbones.resnet import ResNetBackbone
 from modules.backbones.conv import ConvBackbone
 from modules.backbones.mlp import MLPBackbone

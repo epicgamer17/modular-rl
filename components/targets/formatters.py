@@ -306,11 +306,7 @@ class ScalarFormatterComponent(PipelineComponent):
                 {self._dest_key: val}, target_key=self._dest_key
             )
         else:
-            # Canonical [B, T] -> [B, T, 1] if it's not already
-            if torch.is_tensor(val) and val.ndim == 2:
-                formatted = val.unsqueeze(-1)
-            else:
-                formatted = val
+            formatted = val
 
         return {f"targets.{self._dest_key}": formatted}
 

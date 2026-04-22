@@ -3,7 +3,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from modules.embeddings.action_embedding import ActionEncoder
+from modules.embeddings.action_encoders import ActionEncoder
 from modules.utils import _normalize_hidden_state
 
 
@@ -16,9 +16,11 @@ class BaseDynamics(nn.Module):
         action_encoder: nn.Module,
         input_shape: Tuple[int, ...],
         action_embedding_dim: int,
+        normalize_hidden: bool = True,
     ):
         super().__init__()
         self.action_embedding_dim = action_embedding_dim
+        self.normalize_hidden = normalize_hidden
 
         # 1. Action Encoder (Pass in prepared encoder)
         self.action_encoder = action_encoder
@@ -63,8 +65,11 @@ class BaseDynamics(nn.Module):
         # Process through the main network block
         S = self.net(S)
 
-        # Apply normalization to the final output of the dynamics network
-        next_hidden_state = _normalize_hidden_state(S)
+        # Apply normalization to the final output of the dynamics network if enabled
+        if self.normalize_hidden:
+            next_hidden_state = _normalize_hidden_state(S)
+        else:
+            next_hidden_state = S
 
         return next_hidden_state
 
@@ -76,8 +81,11 @@ class Dynamics(BaseDynamics):
         action_encoder: nn.Module,
         input_shape: Tuple[int, ...],
         action_embedding_dim: int,
+        normalize_hidden: bool = True,
     ):
-        super().__init__(backbone, action_encoder, input_shape, action_embedding_dim)
+        super().__init__(
+            backbone, action_encoder, input_shape, action_embedding_dim, normalize_hidden
+        )
 
     def forward(
         self,
@@ -98,8 +106,11 @@ class AfterstateDynamics(BaseDynamics):
         action_encoder: nn.Module,
         input_shape: Tuple[int, ...],
         action_embedding_dim: int,
+        normalize_hidden: bool = True,
     ):
-        super().__init__(backbone, action_encoder, input_shape, action_embedding_dim)
+        super().__init__(
+            backbone, action_encoder, input_shape, action_embedding_dim, normalize_hidden
+        )
 
     def forward(self, hidden_state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         # The base class handles fusion and processing, returning the normalized hidden state (afterstate)

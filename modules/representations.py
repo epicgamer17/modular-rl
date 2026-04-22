@@ -135,7 +135,7 @@ class ScalarRepresentation(BaseRepresentation):
         return logits.reshape(logits.shape[:-1])
 
     def to_representation(self, scalar_targets: Tensor) -> Tensor:
-        return scalar_targets.reshape(*scalar_targets.shape, 1)
+        return scalar_targets
 
     def get_structure(self) -> Structure:
         return Scalar()
