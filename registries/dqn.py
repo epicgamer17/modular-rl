@@ -6,7 +6,6 @@ from modules.agent_nets.modular import ModularAgentNetwork
 from modules.backbones.mlp import MLPBackbone
 from modules.heads.q import QHead
 from modules.representations import ScalarRepresentation
-from actors.action_selectors.selectors import ActionSelector
 
 from data.storage.circular import BufferConfig, ModularReplayBuffer, CircularWriter
 from data.concurrency import LocalBackend
@@ -19,7 +18,10 @@ from data.writers import SharedCircularWriter
 from components.environments import GymObservationComponent, GymStepComponent
 from components.telemetry import TelemetryComponent
 from components.memory import BufferStoreComponent
-from components.selectors import NetworkInferenceComponent, EpsilonGreedySelectorComponent
+from components.selectors import (
+    NetworkInferenceComponent,
+    EpsilonGreedySelectorComponent,
+)
 
 from core import BlackboardEngine
 from components.neural import ForwardPassComponent
@@ -89,6 +91,7 @@ def make_dqn_replay_buffer(
     writer_cls = SharedCircularWriter if shared else CircularWriter
 
     from data.samplers.prioritized import UniformSampler
+
     return ModularReplayBuffer(
         max_size=max_size,
         batch_size=batch_size,
@@ -142,7 +145,18 @@ def make_dqn_learner(
     """
     q_loss = QBootstrappingLoss(is_categorical=False, name="q_loss")
 
-    from core.contracts import Key, Observation, Action, Reward, Done, Mask, SemanticType, LossScalar, Metric
+    from core.contracts import (
+        Key,
+        Observation,
+        Action,
+        Reward,
+        Done,
+        Mask,
+        SemanticType,
+        LossScalar,
+        Metric,
+    )
+
     initial_keys = {
         Key("data.observations", Observation),
         Key("data.actions", Action),
@@ -154,8 +168,6 @@ def make_dqn_learner(
         Key("data.next_legal_moves_masks", Mask),
     }
     target_keys = {Key("losses.total_loss", LossScalar)}
-
-
 
     return BlackboardEngine(
         components=[

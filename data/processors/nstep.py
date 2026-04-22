@@ -322,38 +322,32 @@ class NStepUnrollProcessor(OutputProcessor):
                     is_absorbing, step - 1
                 ]
 
-        # 8. Define Masks (Length K)
-        # We use obs_valid_mask (which includes terminal states) for both 
-        # reward_mask and to_play_mask to ensure they are identical and 
-        # do not mask out terminal rewards.
-        reward_mask_raw = obs_valid_mask[:, : self.unroll_steps].clone()
-        to_play_mask_raw = obs_valid_mask[:, : self.unroll_steps].clone()
-        
+        # 8. Define Masks (Corrected Alignment)
+        # reward_mask[u] is True if transition s_{u-1} -> s_u existed.
+        # This requires s_{u-1} to be a valid, non-terminal state.
+        reward_mask = torch.zeros((batch_size, self.unroll_steps + 1), device=device, dtype=torch.bool)
+        reward_mask[:, 1:] = dynamics_mask[:, :self.unroll_steps]
+
+        # to_play_mask[u] is True if state s_u exists.
+        # We mask index 0 (root) by default in MuZero as it's provided in obs.
+        to_play_mask = obs_valid_mask[:, :self.unroll_steps + 1].clone()
+        to_play_mask[:, 0] = False
+
         # State-aligned masks (Length K+1)
-        value_mask = obs_valid_mask
+        value_mask = obs_valid_mask[:, : self.unroll_steps + 1]
         policy_mask = dynamics_mask[:, : self.unroll_steps + 1]
 
-        # 9. Slice transition-aligned targets to unroll_steps (K)
+        # 9. Slice and Shift Transition Targets (r_u, a_u)
         # target_rewards and target_actions correspond to transitions s_k -> s_{k+1}.
-        target_rewards = target_rewards[:, :self.unroll_steps]
-        target_actions = target_actions[:, :self.unroll_steps]
+        # We shift them right by 1 to align with s_1 ... s_K.
+        target_rewards_raw = target_rewards[:, :self.unroll_steps]
+        target_actions_raw = target_actions[:, :self.unroll_steps]
 
-        # 10. Prepend dummy 0 at index 0 to align with K+1 state targets
-        # This shift ensures that r1 is at index 1, which receives 1/K gradient scaling.
-        # Index 0 receives 1.0 scaling but is masked out (zero loss).
-        
-        # Reward padding
-        reward_padding = torch.zeros((batch_size, 1), device=target_rewards.device, dtype=target_rewards.dtype)
-        target_rewards = torch.cat([reward_padding, target_rewards], dim=1)
-        
-        # Action padding
-        action_padding = torch.zeros((batch_size, 1), device=target_actions.device, dtype=target_actions.dtype)
-        target_actions = torch.cat([action_padding, target_actions], dim=1)
-        
-        # Mask padding
-        mask_padding = torch.zeros((batch_size, 1), device=reward_mask_raw.device, dtype=torch.bool)
-        reward_mask = torch.cat([mask_padding, reward_mask_raw], dim=1)
-        to_play_mask = torch.cat([mask_padding, to_play_mask_raw], dim=1)
+        reward_padding = torch.zeros((batch_size, 1), device=device, dtype=target_rewards.dtype)
+        target_rewards = torch.cat([reward_padding, target_rewards_raw], dim=1)
+
+        action_padding = torch.zeros((batch_size, 1), device=device, dtype=target_actions.dtype)
+        target_actions = torch.cat([action_padding, target_actions_raw], dim=1)
 
         # Final Shape & Contract Assertions
         T_expected = self.unroll_steps + 1
