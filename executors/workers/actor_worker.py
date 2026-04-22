@@ -28,12 +28,10 @@ class ActorWorker:
 
     def update_parameters(self, params: Dict[str, Any]) -> None:
         """
-        Updates parameters for the components.
-        Note: Neural network weights are typically shared via memory references.
+        Updates parameters for the engine and its components.
         """
-        # If any component needs explicit parameter updates (not via reference),
-        # we can iterate through self.engine.components here.
-        pass
+        if hasattr(self.engine, "update_base_meta"):
+            self.engine.update_base_meta(params)
 
     def play_sequence(self) -> Dict[str, Any]:
         """

@@ -16,10 +16,11 @@ from registries import (
     make_muzero_actor_engine,
 )
 from core import SingleBatchIterator, infinite_ticks
-from actors.action_selectors.selectors import ActionSelector
+
 from utils.schedule import StepwiseSchedule
 from executors.torch_mp_executor import TorchMPExecutor
 from executors.workers.actor_worker import ActorWorker
+
 # from utils.plotting import plot_regression_results
 
 
@@ -55,6 +56,7 @@ def test_muzero_cartpole_full_training():
     Replicates hyperparameters and logic from PPO CartPole where applicable.
     """
     from utils.plotting import plot_regression_results
+
     try:
         mp.set_start_method("spawn", force=True)
     except RuntimeError:
@@ -86,7 +88,7 @@ def test_muzero_cartpole_full_training():
     BUFFER_SIZE = 10000
     TRANSFER_INTERVAL = 100
     TEST_INTERVAL = 1000
-    NUM_WORKERS = 4
+    NUM_WORKERS = 2
     SUPPORT_RANGE = 500
 
     # --- 1. Agent Network Architecture ---
@@ -115,7 +117,9 @@ def test_muzero_cartpole_full_training():
         device=DEVICE,
     )
 
-    temperature_schedule = StepwiseSchedule(steps=[15, 30], values=[1.0, 0.5, 0.0])
+    temperature_schedule = StepwiseSchedule(
+        steps=[2500, 5000, 7500], values=[1.0, 0.5, 0.25, 0.0]
+    )
 
     print("Creating Replay Buffer...")
     # Cartpole is 1-player
@@ -141,6 +145,7 @@ def test_muzero_cartpole_full_training():
         batch_size=BATCH_SIZE,
         unroll_steps=UNROLL_STEPS,
         num_actions=num_actions,
+        num_players=1,
         device=DEVICE,
     )
 
@@ -160,6 +165,7 @@ def test_muzero_cartpole_full_training():
         num_actions=num_actions,
         num_players=1,
         temperature_schedule=temperature_schedule,
+        temperature_schedule_source="training",
         exploration=True,
         device=torch.device("cpu"),
     )
@@ -196,8 +202,11 @@ def test_muzero_cartpole_full_training():
 
     while train_steps < TOTAL_TRAINING_STEPS:
         if train_steps == 0:
-             print(f"Waiting for buffer to fill... Current size: {replay_buffer.size}/{BATCH_SIZE}", end="\r")
-        
+            print(
+                f"Waiting for buffer to fill... Current size: {replay_buffer.size}/{BATCH_SIZE}",
+                end="\r",
+            )
+
         # 1. Data Collection
         results, _ = executor.collect_data(min_samples=None, worker_type=ActorWorker)
         for res in results:

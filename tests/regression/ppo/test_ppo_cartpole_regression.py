@@ -9,13 +9,11 @@ from registries import (
     make_ppo_network,
     make_ppo_replay_buffer,
     make_ppo_learner,
+    make_ppo_actor_engine,
 )
 from components.telemetry import TelemetryComponent
-from actors.action_selectors.selectors import ActionSelector
-from actors.action_selectors.decorators import PPODecorator
 
-# from actors.action_selectors.policy_sources import NetworkPolicySource (Deleted)
-from core import PPOEpochIterator
+from core import PPOEpochIterator, infinite_ticks
 from utils.plotting import plot_regression_results
 
 
@@ -24,35 +22,29 @@ from utils.plotting import plot_regression_results
 pytestmark = pytest.mark.regression
 
 
-def evaluate_agent(
-    env, agent_network, policy_source, action_selector, device, num_episodes=3
-):
-    """Evaluate the agent on the environment without exploration."""
+def evaluate_agent(env_id, agent_network, obs_dim, num_actions, device, num_episodes=3):
+    """Evaluate the agent on the environment without exploration using a BlackboardEngine."""
+    eval_env = gym.make(env_id)
+    eval_engine = make_ppo_actor_engine(
+        env=eval_env,
+        agent_network=agent_network,
+        replay_buffer=None,
+        obs_dim=obs_dim,
+        num_actions=num_actions,
+        exploration=False,
+        device=device,
+    )
+
     scores = []
     agent_network.eval()
-    with torch.inference_mode():
-        for _ in range(num_episodes):
-            state, info = env.reset()
-            episode_score = 0.0
-            done = False
-            while not done:
-                obs_tensor = torch.tensor(
-                    state, dtype=torch.float32, device=device
-                ).unsqueeze(0)
-
-                output = agent_network.obs_inference(obs_tensor)
-                result = {"logits": output.policy.logits, "value": output.value}
-                action, _ = action_selector.select_action(
-                    predictions=result,
-                    info=info,
-                    exploration=False,
-                )
-
-                state, reward, terminated, truncated, info = env.step(action.item())
-                done = terminated or truncated
-                episode_score += reward
-            scores.append(episode_score)
+    for result in eval_engine.step(infinite_ticks()):
+        meta = result["meta"]
+        if "episode_score" in meta:
+            scores.append(meta["episode_score"])
+            if len(scores) >= num_episodes:
+                break
     agent_network.train()
+    eval_env.close()
     return scores
 
 
@@ -260,9 +252,8 @@ def test_ppo_cartpole_full_training():
     assert avg_training_score >= 450.0
 
     # Evaluation
-    action_selector = ActionSelector(input_key="logits", temperature=1.0)
     test_scores = evaluate_agent(
-        env, agent_network, None, action_selector, DEVICE, num_episodes=3
+        ENV_ID, agent_network, obs_dim, num_actions, DEVICE, num_episodes=3
     )
     print(f"Evaluation scores: {test_scores}")
     for i, score in enumerate(test_scores):
