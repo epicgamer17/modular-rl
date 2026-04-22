@@ -91,7 +91,7 @@ class AdvantageNormalizer(OutputProcessor):
             observations=buffers["observations"][sl],
             actions=buffers["actions"][sl],
             rewards=buffers["rewards"][sl],
-            dones=buffers["dones"][sl],
+            dones=buffers["done"][sl],
             advantages=normalized_advantages,
             returns=buffers["returns"][sl],
             values=buffers["values"][sl],

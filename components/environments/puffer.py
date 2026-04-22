@@ -186,7 +186,6 @@ class PufferStepComponent(PipelineComponent):
             Key("data.rewards", Reward): "new",
             Key("data.terminals", Done): "new",
             Key("data.truncations", Done): "new",
-            Key("data.dones", Done): "new",
             Key("data.next_infos", SemanticType): "new",
         }
 
@@ -241,6 +240,5 @@ class PufferStepComponent(PipelineComponent):
             "data.rewards": rewards,             # np.ndarray [B]
             "data.terminals": terminals,         # np.ndarray [B]  bool
             "data.truncations": truncations,     # np.ndarray [B]  bool
-            "data.dones": terminals | truncations,
             "data.next_infos": next_infos        # List[Dict]
         }

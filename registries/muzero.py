@@ -356,13 +356,13 @@ def make_muzero_replay_buffer(
         ),
         BufferConfig("to_plays", shape=(), dtype=torch.int16, is_shared=True),
         BufferConfig("chances", shape=(1,), dtype=torch.int16, is_shared=True),
-        BufferConfig("episode_ids", shape=(), dtype=torch.int64, is_shared=True),
-        BufferConfig("step_ids", shape=(), dtype=torch.int32, is_shared=True),
+        BufferConfig("episode_id", shape=(), dtype=torch.int64, is_shared=True),
+        BufferConfig("step_id", shape=(), dtype=torch.int32, is_shared=True),
         BufferConfig("ids", shape=(), dtype=torch.int64, is_shared=True),
         BufferConfig("training_steps", shape=(), dtype=torch.int64, is_shared=True),
         BufferConfig("terminated", shape=(), dtype=torch.bool, is_shared=True),
         BufferConfig("truncated", shape=(), dtype=torch.bool, is_shared=True),
-        BufferConfig("dones", shape=(), dtype=torch.bool, is_shared=True),
+        BufferConfig("done", shape=(), dtype=torch.bool, is_shared=True),
         BufferConfig(
             "legal_masks", shape=(num_actions,), dtype=torch.bool, is_shared=True
         ),
@@ -443,7 +443,7 @@ def make_muzero_learner(
         ),  # Fixed: need Scalar structure for formatter
         Key("data.terminated", SemanticType),
         Key("data.truncated", SemanticType),
-        Key("data.dones", Done),
+        Key("data.done", Done),
         Key("data.legal_masks", Mask),
         Key("data.reward_mask", Mask),
         Key("data.to_play_mask", Mask),

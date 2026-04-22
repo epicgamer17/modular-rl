@@ -142,7 +142,7 @@ class SequenceTensorProcessor(InputProcessor):
             "chances": chance_t,
             "terminated": terminated_t,
             "truncated": truncated_t,
-            "dones": dones_t,
+            "done": dones_t,
             "legal_masks": legal_masks_t,
             "n_states": n_states,
         }

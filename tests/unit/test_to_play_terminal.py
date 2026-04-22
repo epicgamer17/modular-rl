@@ -99,7 +99,7 @@ def test_terminal_to_play_not_always_player0(buffer_with_terminal_to_play):
     """Terminal states must have both player 0 and player 1 as to_play targets."""
     batch = buffer_with_terminal_to_play.sample()
     tp = batch["to_plays"]          # [B, U+1, num_players]
-    dones = batch["dones"]          # [B, U+1]
+    dones = batch["done"]          # [B, U+1]
     same_game = batch["is_same_episode"]
 
     terminal = dones & same_game

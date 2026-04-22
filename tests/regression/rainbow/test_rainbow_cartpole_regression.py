@@ -181,7 +181,7 @@ def test_rainbow_cartpole_full_training():
         "next_observations": "data.next_obs",
         "terminated": "data.terminated",
         "truncated": "data.truncated",
-        "dones": "data.done",
+        "done": "data.done",
     }
 
     # Collection Pipeline
@@ -250,9 +250,7 @@ def test_rainbow_cartpole_full_training():
 
     # --- Final Evaluation ---
     print("Final Evaluation...")
-    test_scores = evaluate_agent(
-        ENV_ID, agent_network, obs_dim, num_actions, DEVICE, num_episodes=10
-    )
+    test_scores = evaluate_agent(ENV_ID, agent_network, obs_dim, num_actions, DEVICE, num_episodes=10)
     avg_test_score = np.mean(test_scores)
     print(f"Final Test Scores: Average {avg_test_score:.2f}")
 

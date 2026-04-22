@@ -72,21 +72,6 @@ class ModularReplayBuffer:
             output_processor if output_processor else StandardOutputProcessor()
         )
         self.clear()
-
-        # 4. Validate Required Fields
-        required_fields = {
-            "observations",
-            "actions",
-            "rewards",
-            "dones",
-            "episode_ids",
-            "step_ids",
-        }
-        for bf in required_fields:
-            assert (
-                bf in self.buffers
-            ), f"Replay buffer is missing required field: '{bf}'"
-
         assert self.size == 0, "Replay buffer should be empty at initialization"
         assert self.max_size > 0, "Replay buffer should have a maximum size"
         assert self.batch_size > 0, "Replay buffer batch size should be greater than 0"
@@ -134,7 +119,7 @@ class ModularReplayBuffer:
 
         return self._store_processed(processed, **kwargs)
 
-    _METADATA_KEYS = ("episode_ids", "step_ids", "dones")
+    _METADATA_KEYS = ("episode_id", "step_id", "done")
 
     def _store_processed(self, processed, **kwargs):
         """Helper to store already-processed data (dict of buffer items)."""
@@ -220,20 +205,20 @@ class ModularReplayBuffer:
                         start_id + 1, start_id + n_items + 1, dtype=torch.int64
                     )
                 # print("Incremented IDs")
-                if "episode_ids" in self.buffers:
+                if "episode_id" in self.buffers:
                     start_episode_id = int(self._next_episode_id.item()) + 1
                     self._next_episode_id[0] = start_episode_id
-                    data["episode_ids"] = torch.full(
+                    data["episode_id"] = torch.full(
                         (n_items,), start_episode_id, dtype=torch.int64
                     )
-                if "step_ids" in self.buffers:
-                    data["step_ids"] = torch.arange(
+                if "step_id" in self.buffers:
+                    data["step_id"] = torch.arange(
                         n_items, dtype=torch.int32
                     )
-                # Enforce: dones must come from the processor for sequence data
-                if "dones" in self.buffers:
-                    assert "dones" in data, (
-                        "Metadata field 'dones' is configured in the buffer "
+                # Enforce: done must come from the processor for sequence data
+                if "done" in self.buffers:
+                    assert "done" in data, (
+                        "Metadata field 'done' is configured in the buffer "
                         "but missing from processed sequence data. "
                         f"Available keys: {sorted(data.keys())}"
                     )
@@ -401,7 +386,7 @@ class ModularReplayBuffer:
 
                 if "ids" in self.buffers:
                     self._next_id.zero_()
-                if "episode_ids" in self.buffers:
+                if "episode_id" in self.buffers:
                     self._next_episode_id.zero_()
 
     # Accessors for properties required by some utils (like beta)
@@ -425,15 +410,15 @@ class ModularReplayBuffer:
         Retrieves all stored states for a specific sequence ID.
         Useful for debugging or visualization, but slow (O(N) scan).
         """
-        if "episode_ids" not in self.buffers:
-            raise ValueError("Buffer does not have 'episode_ids' key")
+        if "episode_id" not in self.buffers:
+            raise ValueError("Buffer does not have 'episode_id' key")
 
-        episode_id = list(set(self.buffers["episode_ids"][: self.size].tolist()))
+        episode_id = list(set(self.buffers["episode_id"][: self.size].tolist()))
         if not episode_id:
             return None
 
         chosen_id = np.random.choice(episode_id, 1)[0]
-        mask = self.buffers["episode_ids"][: self.size] == chosen_id
+        mask = self.buffers["episode_id"][: self.size] == chosen_id
         indices = torch.nonzero(mask).view(-1).tolist()
 
         if not indices:

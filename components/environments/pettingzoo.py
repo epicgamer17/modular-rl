@@ -14,7 +14,7 @@ class PettingZooObservationComponent(PipelineComponent):
     def __init__(self, env):
         self.env = env
         self._initialized = False
-        self.dones = False
+        self.done = False
 
     @property
     def requires(self) -> Set[Key]:
@@ -26,7 +26,7 @@ class PettingZooObservationComponent(PipelineComponent):
             Key("data.obs", Observation): "new",
             Key("data.info", SemanticType): "new",
             Key("data.reward", Reward): "new",
-            Key("data.dones", Done): "new",
+            Key("data.done", Done): "new",
             Key("data.player_id", ToPlay): "new",
             Key("data.terminated", Done): "new",
             Key("data.truncated", Done): "new",
@@ -39,10 +39,10 @@ class PettingZooObservationComponent(PipelineComponent):
         )
 
     def execute(self, blackboard: Blackboard) -> Dict[str, Any]:
-        if not self._initialized or self.dones or not self.env.agents:
+        if not self._initialized or self.done or not self.env.agents:
             self.env.reset()
             self._initialized = True
-            self.dones = False
+            self.done = False
 
         try:
             agent = self.env.agent_selection
@@ -85,7 +85,7 @@ class PettingZooObservationComponent(PipelineComponent):
             "data.info": info,
             "data.terminated": termination,
             "data.truncated": truncation,
-            "data.dones": termination or truncation,
+            "data.done": termination or truncation,
             "data.reward": reward,
             "data.player_id": player_idx,
             "data.agent": agent
@@ -111,7 +111,7 @@ class PettingZooStepComponent(PipelineComponent):
         return {
             Key("data.next_obs", Observation): "new",
             Key("data.reward", Reward): "overwrite",
-            Key("data.dones", Done): "overwrite",
+            Key("data.done", Done): "overwrite",
             Key("data.terminated", Done): "overwrite",
             Key("data.truncated", Done): "overwrite",
             Key("data.next_player_id", ToPlay): "new",
@@ -143,7 +143,7 @@ class PettingZooStepComponent(PipelineComponent):
         except (KeyError, AttributeError, ValueError):
             obs, term, trunc, info = None, True, False, {}
 
-        self.obs_component.dones = term or trunc
+        self.obs_component.done = term or trunc
 
         # Determine who would act next (needed for terminal to_play targets)
         try:
@@ -155,7 +155,7 @@ class PettingZooStepComponent(PipelineComponent):
         return {
             "data.next_player_id": next_player_id,
             "data.reward": float(reward),
-            "data.dones": self.obs_component.dones,
+            "data.done": self.obs_component.done,
             "data.terminated": term,
             "data.truncated": trunc,
             "data.next_obs": obs,
