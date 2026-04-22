@@ -262,7 +262,7 @@ def test_nfsp_leduc_regression():
             BufferConfig("observations", shape=obs_shape, dtype=torch.float32),
             BufferConfig("actions", shape=(), dtype=torch.int64),
             BufferConfig("rewards", shape=(), dtype=torch.float32),
-            BufferConfig("done", shape=(), dtype=torch.bool),
+            BufferConfig("dones", shape=(), dtype=torch.bool),
             BufferConfig("next_observations", shape=obs_shape, dtype=torch.float32),
             BufferConfig(
                 "next_legal_moves_masks",

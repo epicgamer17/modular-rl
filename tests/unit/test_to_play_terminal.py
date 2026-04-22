@@ -14,7 +14,7 @@ observation has a correct to_play.
 
 from core import Blackboard
 from components.memory.buffer import SequenceBufferComponent
-from data.ingestion import Sequence
+from data.samplers.sequence import Sequence
 from registries import make_muzero_replay_buffer
 import numpy as np
 import pytest
@@ -99,8 +99,8 @@ def test_terminal_to_play_not_always_player0(buffer_with_terminal_to_play):
     """Terminal states must have both player 0 and player 1 as to_play targets."""
     batch = buffer_with_terminal_to_play.sample()
     tp = batch["to_plays"]          # [B, U+1, num_players]
-    dones = batch["done"]          # [B, U+1]
-    same_game = batch["is_same_episode"]
+    dones = batch["dones"]          # [B, U+1]
+    same_game = batch["is_same_game"]
 
     terminal = dones & same_game
     terminal[:, 0] = False  # exclude root
@@ -124,7 +124,7 @@ def test_to_play_alternates_within_game(buffer_with_terminal_to_play):
     """Within a game, consecutive to_play values should alternate (for tic-tac-toe)."""
     batch = buffer_with_terminal_to_play.sample()
     tp = batch["to_plays"]
-    same_game = batch["is_same_episode"]
+    same_game = batch["is_same_game"]
     tp_mask = batch["to_play_mask"]
 
     for b in range(tp.shape[0]):
@@ -146,7 +146,7 @@ def test_to_play_alternates_within_game(buffer_with_terminal_to_play):
 
 def test_buggy_buffer_has_wrong_terminal_to_play():
     """Demonstrates that buggy buffers now correctly fail strict alignment assertions."""
-    from data.ingestion import SequenceTensorProcessor
+    from data.processors.sequence import SequenceTensorProcessor
     
     # Create an episode that has the OLD bug (no terminal to_play)
     od = (9, 3, 3)

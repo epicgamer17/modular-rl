@@ -45,7 +45,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from core import PipelineComponent, Blackboard
 from core.contracts import Key, Observation, Action, Reward, Done, SemanticType
-from data.ingestion import Sequence
+from data.samplers.sequence import Sequence
 
 
 # ---------------------------------------------------------------------------

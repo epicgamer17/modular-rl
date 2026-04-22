@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import NamedTuple, Optional, Any, Iterator, List, Dict
 
 
-from data.ingestion.transition import Transition
+from data.transition import Transition
 
 
 class TimeStep(NamedTuple):

@@ -10,5 +10,9 @@ from .output_processors import OutputProcessor
 from .output_processors import StackedOutputProcessor
 from .output_processors import StandardOutputProcessor
 from .output_processors import AdvantageNormalizer
+from .compression import ObservationCompressionProcessor
+from .compression import LazyDecompressedBuffer
+from .compression import ObservationDecompressionProcessor
 from .nstep import NStepInputProcessor
 from .nstep import NStepUnrollProcessor
+from .sequence import SequenceTensorProcessor

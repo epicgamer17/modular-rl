@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 import torch
 
-from data.ingestion import Sequence
+from data.samplers.sequence import Sequence
 from registries import make_muzero_replay_buffer
 
 pytestmark = pytest.mark.unit
@@ -107,11 +107,11 @@ def test_to_play_mask_includes_terminal(filled_buffer):
     """To-play mask should include terminal states (whose turn it was is valid)."""
     batch = filled_buffer.sample()
 
-    dones = batch["done"]
+    dones = batch["dones"]
     to_play_mask = batch["to_play_mask"]
 
     # Find positions where done=True and it's within the same game
-    terminal_positions = dones & batch["is_same_episode"]
+    terminal_positions = dones & batch["is_same_game"]
     # Exclude root (position 0)
     terminal_positions[:, 0] = False
 

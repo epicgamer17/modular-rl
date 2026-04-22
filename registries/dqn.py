@@ -74,7 +74,7 @@ def make_dqn_replay_buffer(
         BufferConfig("next_observations", shape=obs_dim, dtype=torch.float32),
         BufferConfig("terminated", shape=(), dtype=torch.bool),
         BufferConfig("truncated", shape=(), dtype=torch.bool),
-        BufferConfig("done", shape=(), dtype=torch.bool),
+        BufferConfig("dones", shape=(), dtype=torch.bool),
         BufferConfig("next_legal_moves_masks", shape=(num_actions,), dtype=torch.bool),
     ]
 
@@ -164,7 +164,7 @@ def make_dqn_learner(
         Key("data.next_observations", Observation),
         Key("data.terminated", SemanticType),
         Key("data.truncated", SemanticType),
-        Key("data.done", Done),
+        Key("data.dones", Done),
         Key("data.next_legal_moves_masks", Mask),
     }
     target_keys = {Key("losses.total_loss", LossScalar)}

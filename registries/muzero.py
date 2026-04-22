@@ -19,8 +19,7 @@ from search.backends.py_search.modular_search import ModularSearch
 from utils.schedule import StepwiseSchedule
 
 from data.storage.circular import BufferConfig, ModularReplayBuffer
-from data.ingestion import SequenceTensorProcessor
-from data.processors import NStepUnrollProcessor
+from data.processors import SequenceTensorProcessor, NStepUnrollProcessor
 from data.writers import SharedCircularWriter
 from data.samplers.prioritized import UniformSampler
 from data.concurrency import TorchMPBackend
@@ -356,13 +355,12 @@ def make_muzero_replay_buffer(
         ),
         BufferConfig("to_plays", shape=(), dtype=torch.int16, is_shared=True),
         BufferConfig("chances", shape=(1,), dtype=torch.int16, is_shared=True),
-        BufferConfig("episode_id", shape=(), dtype=torch.int64, is_shared=True),
-        BufferConfig("step_id", shape=(), dtype=torch.int32, is_shared=True),
+        BufferConfig("game_ids", shape=(), dtype=torch.int64, is_shared=True),
         BufferConfig("ids", shape=(), dtype=torch.int64, is_shared=True),
         BufferConfig("training_steps", shape=(), dtype=torch.int64, is_shared=True),
         BufferConfig("terminated", shape=(), dtype=torch.bool, is_shared=True),
         BufferConfig("truncated", shape=(), dtype=torch.bool, is_shared=True),
-        BufferConfig("done", shape=(), dtype=torch.bool, is_shared=True),
+        BufferConfig("dones", shape=(), dtype=torch.bool, is_shared=True),
         BufferConfig(
             "legal_masks", shape=(num_actions,), dtype=torch.bool, is_shared=True
         ),
@@ -375,10 +373,7 @@ def make_muzero_replay_buffer(
 
     if prioritized:
         from data.samplers.prioritized import PrioritizedSampler
-
-        sampler = PrioritizedSampler(
-            max_size=buffer_size, alpha=per_alpha, beta=per_beta
-        )
+        sampler = PrioritizedSampler(max_size=buffer_size, alpha=per_alpha, beta=per_beta)
     else:
         sampler = UniformSampler()
 
@@ -443,12 +438,12 @@ def make_muzero_learner(
         ),  # Fixed: need Scalar structure for formatter
         Key("data.terminated", SemanticType),
         Key("data.truncated", SemanticType),
-        Key("data.done", Done),
+        Key("data.dones", Done),
         Key("data.legal_masks", Mask),
         Key("data.reward_mask", Mask),
         Key("data.to_play_mask", Mask),
         Key("data.policy_mask", Mask),
-        Key("data.is_same_episode", Mask),
+        Key("data.is_same_game", Mask),
         Key("data.ids", SemanticType),
         Key("data.indices", SemanticType),
         Key("data.weights", Weight),
