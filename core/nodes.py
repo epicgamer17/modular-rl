@@ -62,6 +62,17 @@ def create_gae_def(input_schema: Schema, output_schema: Schema) -> NodeDef:
         description="Computes generalized advantage estimates."
     )
 
+def create_replay_query_def(output_schema: Schema) -> NodeDef:
+    """Creates a definition for a ReplayQuery node."""
+    from core.graph import NODE_TYPE_REPLAY_QUERY
+    from core.schema import Schema
+    return NodeDef(
+        node_type=NODE_TYPE_REPLAY_QUERY,
+        input_schema=Schema(fields=[]), # Often takes no direct graph inputs, relies on params
+        output_schema=output_schema,
+        description="Queries the replay buffer with constraints."
+    )
+
 # --- Registry ---
 
 class NodeRegistry:

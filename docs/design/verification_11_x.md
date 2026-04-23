@@ -1,4 +1,4 @@
-# Step 11.2 Verification Report: Runtime Split (Actor vs Learner)
+# Step 11.x Verification Report: Runtime Split (Actor vs Learner)
 
 This report verifies the structural decoupling of the RL Controller into independent `ActorRuntime` and `LearnerRuntime` components, and the subsequent removal of the legacy `RolloutController`, enabling asynchronous and distributed RL patterns.
 

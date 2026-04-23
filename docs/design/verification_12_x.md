@@ -1,4 +1,4 @@
-# Step 12.2 Verification Report: Formal Actor Snapshotting
+# Step 12.x Verification Report: Formal Actor Snapshotting
 
 This report verifies the implementation of formalized, immutable `ActorSnapshot` objects, ensuring that actors bind to specific parameter versions at the start of a rollout.
 

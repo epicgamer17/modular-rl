@@ -19,6 +19,26 @@ def register_operator(node_type: str, func: Callable[[Node, Dict[NodeId, Any], E
 from runtime.operators.transfer import register_transfer_operators
 register_transfer_operators(register_operator)
 
+# Built-in operators
+from core.graph import NODE_TYPE_SOURCE, NODE_TYPE_REPLAY_QUERY
+register_operator(NODE_TYPE_SOURCE, lambda node, inputs, context=None: None)
+
+def op_replay_query(node, inputs, context=None):
+    rb = node.params["replay_buffer"]
+    batch_size = node.params.get("batch_size", 32)
+    filters = node.params.get("filters")
+    temporal_window = node.params.get("temporal_window")
+    contiguous = node.params.get("contiguous", False)
+    
+    return rb.sample_query(
+        batch_size=batch_size,
+        filters=filters,
+        temporal_window=temporal_window,
+        contiguous=contiguous
+    )
+
+register_operator(NODE_TYPE_REPLAY_QUERY, op_replay_query)
+
 def execute(
     graph: Graph, 
     initial_inputs: Dict[NodeId, Any],
