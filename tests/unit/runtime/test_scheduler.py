@@ -3,7 +3,7 @@ import torch
 import gymnasium as gym
 import time
 from runtime.scheduler import EveryN, ParallelActorPool, Loop
-from runtime.controller import RolloutController
+from runtime.runtime import ActorRuntime
 from core.graph import Graph, NODE_TYPE_SOURCE
 from runtime.executor import register_operator
 
@@ -39,8 +39,8 @@ def test_parallel_actor_pool_throughput():
     
     num_actors = 4
     steps_per_actor = 100
-    controllers = [RolloutController(graph, gym.make(env_name)) for _ in range(num_actors)]
-    pool = ParallelActorPool(controllers)
+    runtimes = [ActorRuntime(graph, gym.make(env_name)) for _ in range(num_actors)]
+    pool = ParallelActorPool(runtimes)
     
     # 2. Measure Parallel Execution
     start_time = time.time()
@@ -60,8 +60,8 @@ def test_parallel_actor_pool_throughput():
     
     # 3. Compare with Serial (Optional but good for verification)
     start_time_serial = time.time()
-    for c in controllers:
-        c.collect_trajectory(steps_per_actor)
+    for r in runtimes:
+        r.collect_trajectory(steps_per_actor)
     duration_serial = time.time() - start_time_serial
     
     print(f"Serial Duration: {duration_serial:.4f}s")

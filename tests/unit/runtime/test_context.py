@@ -3,7 +3,7 @@ import torch
 import gymnasium as gym
 import threading
 from runtime.context import ExecutionContext
-from runtime.controller import RolloutController
+from runtime.runtime import ActorRuntime
 from runtime.scheduler import ParallelActorPool
 from runtime.state import ParameterStore, ReplayBuffer
 from core.graph import Graph, NODE_TYPE_SOURCE
@@ -55,16 +55,16 @@ def test_parallel_context_isolation():
     
     # 2. Parallel Rollout with Delayed Sync Simulation
     num_actors = 32
-    controllers = [RolloutController(graph, gym.make("CartPole-v1")) for _ in range(num_actors)]
-    pool = ParallelActorPool(controllers)
+    runtimes = [ActorRuntime(graph, gym.make("CartPole-v1")) for _ in range(num_actors)]
+    pool = ParallelActorPool(runtimes)
     
     # Buffers to collect results
     collected_contexts = []
     def recording_fn(step_data):
         collected_contexts.append(step_data["metadata"]["context"])
         
-    for c in controllers:
-        c.recording_fn = recording_fn
+    for r in runtimes:
+        r.recording_fn = recording_fn
         
     # Run in batches while updating ParameterStore in background
     def updater():
@@ -81,8 +81,8 @@ def test_parallel_context_isolation():
         ctxs = [ExecutionContext(step_id=step) for _ in range(num_actors)]
         # We simulate the pool using a custom loop since ParallelActorPool currently doesn't take context list
         threads = []
-        for i, c in enumerate(controllers):
-            t = threading.Thread(target=c.rollout_step, args=(ctxs[i],))
+        for i, r in enumerate(runtimes):
+            t = threading.Thread(target=r.step, args=(ctxs[i],))
             threads.append(t)
             t.start()
         for t in threads: t.join()

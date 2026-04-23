@@ -6,7 +6,7 @@ Handles periodic tasks, main execution loops, and parallel rollout pooling.
 import threading
 from typing import List, Callable, Any, Optional, Dict
 import time
-from runtime.controller import RolloutController
+from runtime.runtime import ActorRuntime
 
 class EveryN:
     """Triggers an action every N steps."""
@@ -25,23 +25,23 @@ class EveryN:
 
 class ParallelActorPool:
     """
-    Executes multiple RolloutControllers in parallel using threading.
+    Executes multiple ActorRuntimes in parallel using threading.
     """
-    def __init__(self, controllers: List[RolloutController]):
-        self.controllers = controllers
+    def __init__(self, runtimes: List[ActorRuntime]):
+        self.runtimes = runtimes
 
     def rollout(self, steps_per_actor: int) -> List[List[Dict[str, Any]]]:
         """
         Runs all actors in parallel for a fixed number of steps.
         """
-        results = [None] * len(self.controllers)
+        results = [None] * len(self.runtimes)
         threads = []
 
-        def worker(idx, controller, steps):
-            results[idx] = controller.collect_trajectory(steps)
+        def worker(idx, runtime, steps):
+            results[idx] = runtime.collect_trajectory(steps)
 
-        for i, controller in enumerate(self.controllers):
-            t = threading.Thread(target=worker, args=(i, controller, steps_per_actor))
+        for i, runtime in enumerate(self.runtimes):
+            t = threading.Thread(target=worker, args=(i, runtime, steps_per_actor))
             threads.append(t)
             t.start()
 

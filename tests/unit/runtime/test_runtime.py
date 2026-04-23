@@ -1,15 +1,15 @@
 import pytest
 import torch
 import gymnasium as gym
-from runtime.controller import RolloutController
+from runtime.runtime import ActorRuntime, LearnerRuntime
 from core.graph import Graph, NODE_TYPE_SOURCE
 from runtime.executor import register_operator
 from runtime.state import ReplayBuffer
 
 pytestmark = pytest.mark.unit
 
-def test_rollout_controller_basic():
-    """Verify basic rollout orchestration."""
+def test_actor_runtime_basic():
+    """Verify basic actor rollout orchestration."""
     # 1. Setup mock environment and graph
     env = gym.make("CartPole-v1")
     graph = Graph()
@@ -19,15 +19,15 @@ def test_rollout_controller_basic():
     graph.add_node("actor", "ConstActor")
     graph.add_edge("obs_in", "actor")
     
-    # 2. Setup Controller
+    # 2. Setup Runtime
     recorded_steps = []
     def record_fn(data):
         recorded_steps.append(data)
         
-    controller = RolloutController(graph, env, recording_fn=record_fn)
+    runtime = ActorRuntime(graph, env, recording_fn=record_fn)
     
     # 3. Perform steps
-    step_data = controller.rollout_step()
+    step_data = runtime.step()
     
     assert "obs" in step_data
     assert "action" in step_data
@@ -38,7 +38,7 @@ def test_rollout_controller_basic():
 
 def test_dagger_triviality():
     """
-    Demonstrates how DAgger (Dataset Aggregation) is simplified by RolloutController.
+    Demonstrates how DAgger (Dataset Aggregation) is simplified by ActorRuntime.
     DAgger requires running one policy (student) but recording another policy's action (expert).
     """
     env = gym.make("CartPole-v1")
@@ -50,7 +50,7 @@ def test_dagger_triviality():
     register_operator("StudentActor", lambda n, i, context=None: 0) # Const 0
     register_operator("ExpertActor", lambda n, i, context=None: 1)  # Const 1
     
-    graph.add_node("actor", "StudentActor") # The node ID 'actor' is used by controller for env.step
+    graph.add_node("actor", "StudentActor") # The node ID 'actor' is used by runtime for env.step
     graph.add_node("expert", "ExpertActor")
     
     graph.add_edge("obs_in", "actor")
@@ -64,16 +64,30 @@ def test_dagger_triviality():
             "action": torch.tensor(expert_action)
         })
         
-    controller = RolloutController(graph, env, recording_fn=dagger_record_fn)
+    runtime = ActorRuntime(graph, env, recording_fn=dagger_record_fn)
     
     # Execute rollout
-    controller.rollout_step()
+    runtime.step()
     
     # Verify SL Buffer has expert's action (1) for student's observation
     assert len(sl_buffer) == 1
     assert sl_buffer.buffer[0]["action"].item() == 1
     print("DAgger triviality verified.")
 
-if __name__ == "__main__":
-    test_rollout_controller_basic()
-    test_dagger_triviality()
+def test_learner_runtime_basic():
+    """Verify basic learner optimization step."""
+    train_graph = Graph()
+    train_graph.add_node("traj_in", NODE_TYPE_SOURCE)
+    
+    def mock_opt(node, inputs, context=None):
+        return "updated"
+        
+    register_operator("MockOpt", mock_opt)
+    train_graph.add_node("opt", "MockOpt")
+    train_graph.add_edge("traj_in", "opt")
+    
+    learner = LearnerRuntime(train_graph)
+    results = learner.update_step(batch={"dummy": "data"})
+    
+    assert results["opt"] == "updated"
+    assert learner._update_count == 1

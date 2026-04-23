@@ -17,13 +17,20 @@ class ReplayBuffer:
         self.capacity = capacity
         self.buffer: List[Dict[str, torch.Tensor]] = []
         self.position = 0
+        self._lock = threading.Lock()
 
     def add(self, transition: Dict[str, torch.Tensor]) -> None:
         """Adds a transition to the buffer."""
-        if len(self.buffer) < self.capacity:
-            self.buffer.append({})
-        self.buffer[self.position] = {k: v.detach().clone() for k, v in transition.items()}
-        self.position = (self.position + 1) % self.capacity
+        new_entry = {
+            k: (v.detach().clone() if isinstance(v, torch.Tensor) else v) 
+            for k, v in transition.items()
+        }
+        with self._lock:
+            if len(self.buffer) < self.capacity:
+                self.buffer.append(new_entry)
+            else:
+                self.buffer[self.position] = new_entry
+            self.position = (self.position + 1) % self.capacity
 
     def sample(self, batch_size: int, seed: Optional[int] = None) -> List[Dict[str, torch.Tensor]]:
         """
@@ -32,11 +39,12 @@ class ReplayBuffer:
         if hasattr(self, "_prefetch_queue") and self._prefetch_queue:
             return self._prefetch_queue.pop(0)
 
-        if not self.buffer:
-            return []
-            
-        rng = random.Random(seed)
-        return rng.sample(self.buffer, min(len(self.buffer), batch_size))
+        with self._lock:
+            if not self.buffer:
+                return []
+                
+            rng = random.Random(seed)
+            return rng.sample(self.buffer, min(len(self.buffer), batch_size))
 
     def prefetch(self, batch_size: int, count: int = 1):
         """Asynchronously prefetch samples in a background thread."""

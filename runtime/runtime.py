@@ -1,18 +1,17 @@
 """
-RolloutController for orchestrating the interaction between actors and environments.
-Handles metadata attachment and recording to buffers.
+Split Runtimes for Actor (Online) and Learner (Offline) execution.
+Decouples data collection from model optimization.
 """
 
 from typing import Any, Dict, List, Optional, Callable
 import torch
 from core.graph import Graph
 from runtime.executor import execute
-from runtime.state import ReplayBuffer
 from runtime.context import ExecutionContext
 
-class RolloutController:
+class ActorRuntime:
     """
-    Orchestrates the Rollout loop: Actor -> Environment -> Storage.
+    Online system responsible for environment interaction and trace generation.
     """
     def __init__(
         self, 
@@ -28,43 +27,29 @@ class RolloutController:
         self._episode_count = 0
 
     def reset(self) -> torch.Tensor:
-        """Resets the environment and internal counters."""
         obs, _ = self.env.reset()
         self.current_obs = torch.tensor(obs, dtype=torch.float32)
         self._episode_count += 1
         return self.current_obs
 
-    def rollout_step(self, context: Optional[ExecutionContext] = None) -> Dict[str, Any]:
-        """
-        Performs a single rollout step:
-        1. Invoke Actor via Graph
-        2. Step Environment
-        3. Attach Metadata
-        4. Record to buffers
-        """
+    def step(self, context: Optional[ExecutionContext] = None) -> Dict[str, Any]:
+        """Performs a single environment step and returns the trace."""
         context = context or ExecutionContext()
         if self.current_obs is None:
             self.reset()
             
-        # 1. Invoke Actor
         results = execute(self.interact_graph, initial_inputs={"obs_in": self.current_obs}, context=context)
-        # We assume the graph has an 'actor' node or similar. 
-        # For generality, we can take the last node in topological order or a specific ID.
-        # Here we look for a node with 'action' in its output or just use 'actor' ID.
         action_data = results.get("actor")
         
-        # Handle cases where actor output is a dict (like PPO) or a raw value
         if isinstance(action_data, dict):
             action = action_data["action"]
         else:
             action = action_data
 
-        # 2. Step Environment
-        next_obs_raw, reward, terminated, truncated, info = self.env.step(action)
+        next_obs_raw, reward, terminated, truncated, _ = self.env.step(action)
         done = terminated or truncated
         next_obs = torch.tensor(next_obs_raw, dtype=torch.float32)
 
-        # 3. Build Trace & Attach Metadata
         step_data = {
             "obs": self.current_obs,
             "action": action,
@@ -79,24 +64,48 @@ class RolloutController:
             }
         }
 
-        # 4. Record
         if self.recording_fn:
             self.recording_fn(step_data)
 
         self.current_obs = next_obs
         self._step_count += 1
-        
-        if done:
-            self.reset()
-            
+        if done: self.reset()
         return step_data
 
-    def collect_trajectory(self, max_steps: int) -> List[Dict[str, Any]]:
+    def collect_trajectory(self, max_steps: int, context: Optional[ExecutionContext] = None) -> List[Dict[str, Any]]:
         """Collects a sequence of steps until done or max_steps is reached."""
         trajectory = []
         for _ in range(max_steps):
-            step_data = self.rollout_step()
+            step_data = self.step(context)
             trajectory.append(step_data)
             if step_data["done"].item() > 0:
                 break
         return trajectory
+
+class LearnerRuntime:
+    """
+    Offline system responsible for sampling data and updating parameters.
+    """
+    def __init__(
+        self,
+        train_graph: Graph,
+        buffer: Optional[Any] = None
+    ):
+        self.train_graph = train_graph
+        self.buffer = buffer
+        self._update_count = 0
+
+    def update_step(self, batch: Optional[Dict[str, Any]] = None, context: Optional[ExecutionContext] = None) -> Dict[str, Any]:
+        """
+        Performs a single optimization step.
+        If batch is not provided, samples from the internal buffer.
+        """
+        context = context or ExecutionContext()
+        
+        initial_inputs = {}
+        if batch is not None:
+            initial_inputs["traj_in"] = batch
+        
+        results = execute(self.train_graph, initial_inputs=initial_inputs, context=context)
+        self._update_count += 1
+        return results

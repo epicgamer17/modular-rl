@@ -12,7 +12,7 @@ import numpy as np
 from core.graph import Graph, NODE_TYPE_SOURCE
 from runtime.executor import execute, register_operator
 from runtime.state import ReplayBuffer, OptimizerState
-from runtime.controller import RolloutController
+from runtime.runtime import ActorRuntime
 
 # 1. Networks
 class StudentNetwork(nn.Module):
@@ -80,12 +80,13 @@ def run_dagger_demo(total_iterations=5, steps_per_iter=500):
             "action": torch.tensor(expert_action)
         })
         
-    controller = RolloutController(graph, env, recording_fn=dagger_record)
+    runtime = ActorRuntime(graph, env, recording_fn=dagger_record)
     
+    # 3. Training Loop
     losses = []
     for iter_idx in range(total_iterations):
         # Phase A: Data Collection (Aggregation)
-        controller.collect_trajectory(max_steps=steps_per_iter)
+        runtime.collect_trajectory(max_steps=steps_per_iter)
         print(f"Iteration {iter_idx}: Buffer Size = {len(sl_buffer)}")
         
         # Phase B: Training
