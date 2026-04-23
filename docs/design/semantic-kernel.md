@@ -1561,3 +1561,596 @@ It ensures:
 - all RL algorithms are expressible as graph compositions
 - learning dynamics are optimizable at compilation time
 - distributed learning remains version-consistent and reproducible
+
+# RL IR Objective, Credit Assignment & Stability Layer
+
+This section defines how objectives, credit assignment, and stability constraints are represented as first-class graph-native constructs in the RL IR system.
+
+It builds on:
+- Semantic Kernel (Nodes, DataRefs, Effects)
+- Execution Model (Interaction Loop + ExecutionContext)
+- Runtime Engine
+- Optimization System
+- Learning Compilation Layer
+
+---
+
+# 1. Objective Graph Model
+
+## 1.1 Objectives as Graphs
+
+An Objective is not a scalar; it is a **composable graph of evaluative transforms over DataRefs**.
+
+> ObjectiveGraph = Directed acyclic or cyclic graph producing scalar or vectorized evaluation signals.
+
+---
+
+## 1.2 Objective Composition
+
+ObjectiveGraphs are composed from four primitive signal classes:
+
+### Reward Signal Graph
+- produces environmental reward DataRefs
+- typically External Effect sourced
+
+### Constraint Signal Graph
+- produces penalty or violation signals
+- may depend on state/action distributions
+
+### Entropy Signal Graph
+- computes policy uncertainty measures
+- attached to ActorNode outputs
+
+### Auxiliary Loss Graph
+- task-specific supervision or self-supervision losses
+- used in model-based or multi-task RL
+
+---
+
+## 1.3 Multi-Objective Composition Rules
+
+Multiple objectives are combined via:
+
+- weighted sum graphs (linear composition nodes)
+- lexicographic ordering graphs (priority DAGs)
+- constrained optimization graphs (hard constraint edges)
+
+All combinations remain graph-native, not scalarized externally.
+
+---
+
+## 1.4 Objective Evaluation Point
+
+ObjectiveGraphs are evaluated at:
+
+- Interaction Loop boundaries
+- or intermediate ExecutionPlan checkpoints (for dense rewards / shaping)
+
+---
+
+# 2. Credit Assignment Model
+
+## 2.1 Credit as Graph Signal Propagation
+
+Credit assignment is defined as:
+
+> propagation of scalar/vector signals backward along DataRef dependency edges
+
+No separate algorithmic abstraction exists; it is graph traversal over ExecutionPlan lineage.
+
+---
+
+## 2.2 Temporal Credit Assignment
+
+Temporal credit is computed over:
+
+- trajectory DataRef sequences
+- versioned state-action-reward chains
+
+Propagation rule:
+- future reward signals are backpropagated through:
+  - Transition DataRefs
+  - ActorNode outputs
+  - policy/value graph dependencies
+
+---
+
+## 2.3 DataRef Lineage Attribution
+
+Each DataRef maintains a **causal ancestry graph**:
+
+- originating Node
+- upstream DataRefs
+- version chain
+- effect path (Pure / Stochastic / External / StateMutating)
+
+Credit is assigned by traversing this lineage graph.
+
+---
+
+## 2.4 Credit Decay Semantics
+
+Credit attenuation is encoded as:
+
+- TransformNodes on lineage edges
+- time-discount factors applied as graph weights
+- stochastic variance reduction terms embedded in objective graph
+
+---
+
+# 3. Stability & Constraint System
+
+## 3.1 Stability as Graph Constraints
+
+Stability is enforced via **constraint subgraphs embedded into ExecutionPlans**.
+
+---
+
+## 3.2 Trust Region Representation
+
+Trust regions are expressed as:
+
+- constraint graphs over parameter DataRefs
+- bounded divergence transforms between successive policy versions
+
+Implemented as:
+- KL divergence TransformNodes
+- parameter update clipping Nodes
+
+---
+
+## 3.3 Clipping and Constraint Enforcement
+
+All stability mechanisms are graph-native:
+
+- gradient clipping → TransformNode on gradient DataRef
+- policy clipping → constraint evaluation Node
+- value clipping → bounded output TransformNode
+
+No external enforcement exists outside graph execution.
+
+---
+
+## 3.4 ExecutionPlan Integration
+
+Stability constraints are injected into:
+
+- Learning Graph execution phase
+- Policy update subgraphs
+- Interaction Loop checkpoint boundaries
+
+Failure to satisfy constraints triggers:
+- execution rollback to last valid DataRef version
+
+---
+
+## 3.5 Stochastic Stability Handling
+
+Stochastic Nodes are constrained by:
+
+- bounded variance TransformNodes
+- RNG re-centering per ExecutionContext step
+- clipped sampling distributions
+
+---
+
+# 4. Integration with Learning Graphs
+
+## 4.1 Objective → Learning Graph Binding
+
+ObjectiveGraphs generate:
+
+- loss DataRefs
+- constraint violation signals
+- reward shaping transforms
+
+These are consumed by Learning Graphs as inputs.
+
+---
+
+## 4.2 Credit Assignment → Gradient Computation
+
+Credit signals directly modify Learning Graph structure:
+
+- backpropagation becomes graph traversal over DataRef lineage
+- gradient computation nodes consume credit-weighted trajectories
+- advantage estimation is an intermediate TransformGraph
+
+---
+
+## 4.3 Unified Update Mechanism
+
+Policy and value updates are computed as:
+
+> LearningGraph(ObjectiveGraph + CreditGraph)
+
+Result:
+- gradients are not external artifacts
+- they are derived DataRefs within combined graph execution
+
+---
+
+## 4.4 Objective-Controlled Optimization
+
+Objectives influence:
+
+- sampling weights in Replay Graph
+- learning rate scheduling (graph-encoded scalar transforms)
+- update frequency via ExecutionPlan modulation
+
+---
+
+# 5. Distributed Stability Guarantees
+
+## 5.1 Asynchronous Stability Model
+
+Each shard maintains:
+
+- local ObjectiveGraph evaluation
+- local CreditGraph propagation
+- versioned parameter DataRefs
+
+Global consistency is achieved via:
+- version reconciliation barriers
+- deterministic merge transforms
+
+---
+
+## 5.2 Divergence Detection
+
+Detected via:
+
+- DataRef version drift analysis
+- KL divergence graph evaluation across shards
+- reward signal inconsistency thresholds
+
+---
+
+## 5.3 Correction Mechanisms
+
+When divergence detected:
+
+- rollback to last stable ExecutionContext
+- re-synchronize parameter DataRefs
+- re-execute affected Learning Graph slices
+
+---
+
+## 5.4 Reproducibility Under Drift
+
+Guarantee holds if:
+- full DataRef version history preserved
+- ExecutionContext lineage intact
+- stochastic seeds are deterministic per shard
+
+---
+
+# 6. Failure Modes & Open Risks
+
+## 6.1 Credit graph explosion
+- lineage traversal may become computationally expensive in long trajectories
+
+---
+
+## 6.2 Multi-objective interference
+- conflicting objective graphs may produce unstable gradients
+
+---
+
+## 6.3 Distributed constraint inconsistency
+- asynchronous shards may temporarily violate global trust regions
+
+---
+
+## 6.4 Stochastic credit ambiguity
+- variance in stochastic nodes may blur attribution signals
+
+---
+
+## 6.5 Deep recursion in model-based RL
+- credit assignment through simulated loops may amplify noise
+
+---
+
+# 7. Integration Statement
+
+This layer completes the RL IR system by formalizing:
+
+- objectives as executable graphs
+- credit assignment as lineage traversal
+- stability as constraint subgraphs
+- learning as objective-conditioned graph execution
+
+Final pipeline:
+
+ObjectiveGraph → CreditGraph → LearningGraph → ExecutionPlan → Runtime Execution
+
+All RL algorithms (PPO, DQN, SAC, NFSP, MCTS, DAgger, model-based RL) operate consistently under this unified structure without semantic reinterpretation.
+
+# RL IR Causal, Meta-Learning & Exploration Extensions
+
+This section extends the RL IR system into a causal, self-modifying, and exploration-aware computation framework while preserving deterministic execution semantics.
+
+It builds on:
+- Semantic Kernel (Nodes, DataRefs, Effects)
+- Execution Model
+- Runtime Engine
+- Optimization System
+- Learning Compilation Layer
+- Objective / Credit / Stability system
+
+---
+
+# 1. Causal Graph Model
+
+## 1.1 Causal Graph over DataRefs
+
+A CausalGraph is a directed structure over DataRefs representing **interventional dependencies rather than observational flow**.
+
+> CausalGraph = (DataRefs, CausalEdges, InterventionOperators)
+
+### Causal Edge semantics
+A causal edge encodes:
+- potential effect under intervention
+- not just execution dependency
+
+It extends standard IR edges with:
+- intervention sensitivity annotation
+- counterfactual reachability metadata
+
+---
+
+## 1.2 Counterfactual Credit Assignment
+
+Credit is computed not only from observed trajectories but also from:
+
+- counterfactual DataRef substitutions
+- alternative ExecutionContext branches
+- simulated intervention outcomes
+
+Mechanism:
+- DataRef is replaced via intervention operator
+- ExecutionPlan is re-evaluated locally
+- difference in ObjectiveGraph outputs defines counterfactual credit
+
+---
+
+## 1.3 Intervention Semantics in ExecutionPlan
+
+Interventions are first-class ExecutionPlan modifiers:
+
+- replace DataRef values
+- modify edge weights in causal subgraph
+- inject alternative Action or State DataRefs
+
+Constraints:
+- interventions are scoped to ExecutionContext slice
+- cannot propagate outside causal boundary without explicit encoding
+
+---
+
+# 2. Meta-Learning Graph System
+
+## 2.1 Graphs that Modify Graphs
+
+Meta-learning is defined as:
+
+> LearningGraphs whose outputs are modifications to other graphs.
+
+Targets include:
+- PolicyGraph structure
+- ValueGraph structure
+- ObjectiveGraph structure
+- ExecutionPlan configuration
+
+---
+
+## 2.2 Meta-Learning Operations
+
+Meta-LearningGraphs may emit:
+
+- Node insertion/removal operations
+- Edge rewiring transformations
+- ObjectiveGraph reweighting
+- ExecutionGranularity adjustments
+
+All modifications are represented as:
+- structured DataRef transformations
+- not direct mutation
+
+---
+
+## 2.3 Stability Constraints for Meta-Learning
+
+To prevent instability:
+
+- graph modification frequency is bounded per ExecutionContext window
+- structural updates require validation pass through Stability System
+- recursive meta-learning depth is limited by ExecutionGranularity constraints
+
+---
+
+## 2.4 Anti-Recursion Constraint
+
+Meta-learning cannot modify:
+- itself within the same ExecutionContext step
+- its own update graph without a stabilization delay
+
+This enforces:
+> meta-learning is temporally separated from execution of modified graphs
+
+---
+
+# 3. Exploration Graph System
+
+## 3.1 Exploration as Independent Graph Layer
+
+Exploration is separated from ActorNode stochasticity.
+
+> ExplorationGraph = system that produces intrinsic reward signals and exploration-driven Action biases.
+
+---
+
+## 3.2 Exploration Components
+
+### Intrinsic Motivation Graph
+- computes novelty scores over DataRefs
+- uses prediction error or state visitation frequency
+
+### Entropy Bonus Graph
+- computes policy uncertainty measures
+- feeds into ObjectiveGraph
+
+### Curiosity Graph
+- models prediction error of environment model graph
+- generates exploration reward signals
+
+---
+
+## 3.3 Integration with Learning System
+
+Exploration outputs:
+- modify ObjectiveGraph weighting
+- bias ReplayGraph sampling
+- adjust LearningGraph update priorities
+
+Exploration is not execution randomness; it is:
+> structured signal generation over IR graphs
+
+---
+
+## 3.4 Separation from Stochasticity
+
+Key rule:
+- ActorNode stochasticity = execution randomness
+- ExplorationGraph = reward shaping mechanism
+
+They operate on different layers:
+- one affects action sampling
+- the other affects learning signals
+
+---
+
+# 4. Policy Evolution Model
+
+## 4.1 Dual-Level Policy Evolution
+
+Policies evolve through two orthogonal mechanisms:
+
+### Parameter Evolution
+- updates within fixed graph structure
+- handled by LearningGraphs
+- produces new DataRef versions
+
+### Structural Evolution
+- modifies PolicyGraph topology
+- handled by Meta-LearningGraphs
+- produces new ExecutionPlans
+
+---
+
+## 4.2 Policy Versioning
+
+Each policy is defined by:
+- graph structure version
+- parameter DataRef version
+- ExecutionPlan binding version
+
+Policy identity = tuple of all three
+
+---
+
+## 4.3 Structural Drift Control
+
+Structural changes are constrained by:
+- Stability System validation
+- causal consistency checks
+- rollback capability via versioned ExecutionPlans
+
+---
+
+# 5. Stability Constraints
+
+## 5.1 Causal Validity Constraints
+
+Interventions must satisfy:
+- do-calculus consistency over CausalGraph
+- no violation of downstream DataRef dependencies
+- bounded propagation radius in ExecutionPlan
+
+---
+
+## 5.2 Meta-Learning Stability Constraints
+
+Prevent:
+- runaway graph mutation loops
+- recursive self-modification cycles
+- unbounded ExecutionPlan expansion
+
+Enforced via:
+- depth-limited meta-graphs
+- delayed structural update commits
+- validation checkpoints
+
+---
+
+## 5.3 Exploration Stability Constraints
+
+Ensure:
+- exploration signals cannot overwrite primary reward signal
+- intrinsic reward scaling bounded relative to external reward
+- no feedback loops causing reward collapse
+
+---
+
+## 5.4 Reproducibility Constraints
+
+System remains reproducible if:
+- causal intervention history is stored as DataRef lineage
+- meta-learning updates are versioned ExecutionPlans
+- exploration signals are deterministic given ExecutionContext
+
+---
+
+# 6. Failure Modes & Open Problems
+
+## 6.1 Causal graph mis-specification
+- incorrect causal edges may corrupt credit assignment
+
+---
+
+## 6.2 Meta-learning instability loops
+- recursive graph modifications may lead to oscillatory architectures
+
+---
+
+## 6.3 Exploration overfitting
+- intrinsic reward dominance may distort task objective alignment
+
+---
+
+## 6.4 Counterfactual explosion
+- intervention-based recomputation may become combinatorially expensive
+
+---
+
+## 6.5 Policy identity drift
+- structural evolution may break comparability across policy versions
+
+---
+
+# 7. Integration Statement
+
+This extension completes the RL IR system by introducing:
+
+- causal reasoning over DataRefs
+- self-modifying graph computation (meta-learning)
+- structured exploration signals independent of stochasticity
+- evolution-aware policy architecture
+- intervention-safe execution semantics
+
+Final system pipeline:
+
+CausalGraph → ExplorationGraph → ObjectiveGraph → CreditGraph → LearningGraph → Meta-LearningGraph → ExecutionPlan → Runtime Engine
+
+All RL families (PPO, DQN, SAC, NFSP, MCTS, DAgger, model-based RL) remain fully compatible without structural reinterpretation.
