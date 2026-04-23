@@ -40,7 +40,7 @@ def validate_handles(
         # 1. Check Model Handles
         # TargetSync nodes explicitly reference source and target models by handle.
         if node.node_type == NODE_TYPE_TARGET_SYNC:
-            for key in ["source_handle", "target_handle"]:
+            for key in ["model_handle", "target_handle"]:
                 if key in node.params:
                     handle = node.params[key]
                     if handle not in model_handles:
@@ -62,7 +62,19 @@ def validate_handles(
                         severity=SEVERITY_ERROR,
                         code="H001",
                         node_id=str(nid),
-                        message=f"Unknown model handle: '{handle}'",
+                        message=f"Unknown model handle: '{handle}' (Available: {model_handles})",
+                    )
+                )
+
+        if "target_handle" in node.params:
+            handle = node.params["target_handle"]
+            if handle not in model_handles:
+                report.add(
+                    ValidationIssue(
+                        severity=SEVERITY_ERROR,
+                        code="H001",
+                        node_id=str(nid),
+                        message=f"Unknown target model handle: '{handle}' (Available: {model_handles})",
                     )
                 )
 

@@ -13,11 +13,16 @@ from compiler.validation import SEVERITY_ERROR
 
 pytestmark = pytest.mark.unit
 
-# Define TDLoss to expect the standard TransitionBatch
-register_spec(
-    "TDLoss",
-    OperatorSpec.create(name="TDLoss", inputs={"batch": TransitionBatch}, outputs=Tensor((), "float32")),
-)
+@pytest.fixture(autouse=True)
+def setup_specs() -> None:
+    """Register specifications for test nodes. Clears registry for isolation."""
+    from runtime.specs import clear_registry
+    clear_registry()
+    # Define TDLoss to expect the standard TransitionBatch
+    register_spec(
+        "TDLoss",
+        OperatorSpec.create(name="TDLoss", inputs={"batch": TransitionBatch}, outputs=Tensor((), "float32")),
+    )
 
 
 def test_schema_missing_done_fails() -> None:

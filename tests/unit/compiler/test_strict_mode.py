@@ -5,27 +5,33 @@ from compiler.compiler import compile_graph
 
 pytestmark = pytest.mark.unit
 
-# Register dummy specs to satisfy validate_metadata
-register_spec(NODE_TYPE_SOURCE, OperatorSpec.create(name=NODE_TYPE_SOURCE))
-register_spec(NODE_TYPE_SINK, OperatorSpec.create(name=NODE_TYPE_SINK))
-register_spec("SomeType", OperatorSpec.create(name="SomeType"))
+@pytest.fixture(autouse=True)
+def setup_specs() -> None:
+    """Register specifications for test nodes. Clears registry for isolation."""
+    from runtime.specs import clear_registry
+    clear_registry()
+    # Register dummy specs to satisfy validate_metadata
+    register_spec("StrictSource", OperatorSpec.create(name="StrictSource"))
+    register_spec("StrictSink", OperatorSpec.create(name="StrictSink"))
+    register_spec("StrictType", OperatorSpec.create(name="StrictType"))
 
 
 def test_compile_strict_mode_converts_warnings_to_errors() -> None:
     """Verifies that strict=True causes warnings to raise a RuntimeError."""
     g = Graph()
-    g.add_node("source", NODE_TYPE_SOURCE)
-    g.add_node("sink", NODE_TYPE_SINK)
+    g.add_node("source", "StrictSource")
+    g.add_node("sink", "StrictSink")
     # Ensure source reaches sink to avoid E003 (Sinkless Branch)
     g.add_edge("source", "sink")
 
     # Add an unreachable node to trigger a warning (W001)
-    g.add_node("unreachable", "SomeType")
+    g.add_node("unreachable", "StrictType")
 
     # Normal mode: passes even with warnings
     compile_graph(g, strict=False)
 
     # Strict mode: fails because of the unreachable node warning
+    # Note: Match the specific warning-to-error conversion message
     with pytest.raises(
         RuntimeError, match="Graph compilation failed in STRICT mode due to warnings"
     ):
@@ -35,10 +41,10 @@ def test_compile_strict_mode_converts_warnings_to_errors() -> None:
 def test_compile_normal_mode_allows_warnings() -> None:
     """Verifies that normal mode allows graphs with warnings to compile."""
     g = Graph()
-    g.add_node("source", NODE_TYPE_SOURCE)
-    g.add_node("sink", NODE_TYPE_SINK)
+    g.add_node("source", "StrictSource")
+    g.add_node("sink", "StrictSink")
     g.add_edge("source", "sink")
-    g.add_node("unreachable", "SomeType")
+    g.add_node("unreachable", "StrictType")
 
     # Should not raise in normal mode
     result = compile_graph(g, strict=False)
@@ -48,8 +54,8 @@ def test_compile_normal_mode_allows_warnings() -> None:
 def test_compile_hard_error_always_fails() -> None:
     """Verifies that severe errors trigger a failure regardless of the strict flag."""
     g = Graph()
-    g.add_node("source", NODE_TYPE_SOURCE)
-    g.add_node("sink", NODE_TYPE_SINK)
+    g.add_node("source", "StrictSource")
+    g.add_node("sink", "StrictSink")
 
     # Manually append an edge to a missing node to bypass Graph.add_edge assertions
     # This triggers E001 (Hard Error)

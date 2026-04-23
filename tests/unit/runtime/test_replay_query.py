@@ -1,11 +1,17 @@
 import pytest
 import torch
-from runtime.state import ReplayBuffer
+from runtime.state import ReplayBuffer, BufferRegistry
 from core.graph import Graph, NODE_TYPE_REPLAY_QUERY
 from runtime.executor import execute
 from runtime.context import ExecutionContext, ActorSnapshot
 
 pytestmark = pytest.mark.unit
+
+def setup_test_context(rb, buffer_id="main"):
+    """Helper to setup a context with a registered buffer."""
+    registry = BufferRegistry()
+    registry.register(buffer_id, rb)
+    return ExecutionContext(buffer_registry=registry)
 
 def test_replay_query_filtering():
     """Test filtering by metadata and policy version."""
@@ -32,15 +38,17 @@ def test_replay_query_filtering():
             }
         })
         
+    ctx = setup_test_context(rb)
+        
     # 2. Query On-Policy
     graph = Graph()
     graph.add_node("query", NODE_TYPE_REPLAY_QUERY, params={
-        "replay_buffer": rb,
+        "buffer_id": "main",
         "batch_size": 10,
         "filters": {"on_policy": True}
     })
     
-    res = execute(graph, initial_inputs={})
+    res = execute(graph, initial_inputs={}, context=ctx)
     samples = res["query"].data
     assert len(samples) == 5
     for s in samples:
@@ -49,12 +57,12 @@ def test_replay_query_filtering():
     # 3. Query Expert
     graph_expert = Graph()
     graph_expert.add_node("query", NODE_TYPE_REPLAY_QUERY, params={
-        "replay_buffer": rb,
+        "buffer_id": "main",
         "batch_size": 10,
         "filters": {"is_expert": True}
     })
     
-    res_expert = execute(graph_expert, initial_inputs={})
+    res_expert = execute(graph_expert, initial_inputs={}, context=ctx)
     samples_expert = res_expert["query"].data
     assert len(samples_expert) == 5
     for s in samples_expert:
@@ -66,14 +74,16 @@ def test_replay_query_temporal_window():
     for i in range(10):
         rb.add({"val": torch.tensor([float(i)])})
         
+    ctx = setup_test_context(rb)
+        
     graph = Graph()
     graph.add_node("query", NODE_TYPE_REPLAY_QUERY, params={
-        "replay_buffer": rb,
+        "buffer_id": "main",
         "batch_size": 5,
         "temporal_window": 3
     })
     
-    res = execute(graph, initial_inputs={})
+    res = execute(graph, initial_inputs={}, context=ctx)
     samples = res["query"].data
     assert len(samples) == 3
     # Should be the last 3 added (7, 8, 9)
@@ -86,14 +96,16 @@ def test_replay_query_contiguous():
     for i in range(10):
         rb.add({"val": torch.tensor([float(i)])})
         
+    ctx = setup_test_context(rb)
+        
     graph = Graph()
     graph.add_node("query", NODE_TYPE_REPLAY_QUERY, params={
-        "replay_buffer": rb,
+        "buffer_id": "main",
         "batch_size": 4,
         "contiguous": True
     })
     
-    res = execute(graph, initial_inputs={})
+    res = execute(graph, initial_inputs={}, context=ctx)
     samples = res["query"].data
     assert len(samples) == 4
     # Check if contiguous
@@ -109,14 +121,16 @@ def test_replay_query_version_constraint():
     # v2 data
     rb.add({"metadata": {"context": {"actor_snapshots": {"actor": 2}}}})
     
+    ctx = setup_test_context(rb)
+    
     graph = Graph()
     graph.add_node("query", NODE_TYPE_REPLAY_QUERY, params={
-        "replay_buffer": rb,
+        "buffer_id": "main",
         "batch_size": 10,
         "filters": {"policy_version": 2}
     })
     
-    res = execute(graph, initial_inputs={})
+    res = execute(graph, initial_inputs={}, context=ctx)
     samples = res["query"].data
     assert len(samples) == 1
     # Check version

@@ -13,16 +13,20 @@ from compiler.validation import SEVERITY_ERROR
 
 pytestmark = pytest.mark.unit
 
-# Setup specifications for test nodes
-register_spec(
-    "QValuesSingle",
-    OperatorSpec.create(name="QValuesSingle", inputs={"obs": ObsTensor}, outputs=ActionValuesTensor),
-)
-register_spec(
-    "TDLoss", OperatorSpec.create(name="TDLoss", inputs={"batch": TransitionBatch}, outputs=ScalarLoss)
-)
-register_spec("Sampler", OperatorSpec.create(name="Sampler", inputs={}, outputs=TransitionBatch))
-register_spec("ObservationSource", OperatorSpec.create(name="ObservationSource", inputs={}, outputs=ObsTensor))
+@pytest.fixture(autouse=True)
+def setup_specs() -> None:
+    """Register specifications for test nodes. Clears registry for isolation."""
+    from runtime.specs import clear_registry
+    clear_registry()
+    register_spec(
+        "QValuesSingle",
+        OperatorSpec.create(name="QValuesSingle", inputs={"obs": ObsTensor}, outputs=ActionValuesTensor),
+    )
+    register_spec(
+        "TDLoss", OperatorSpec.create(name="TDLoss", inputs={"batch": TransitionBatch}, outputs=ScalarLoss)
+    )
+    register_spec("Sampler", OperatorSpec.create(name="Sampler", inputs={}, outputs=TransitionBatch))
+    register_spec("ObservationSource", OperatorSpec.create(name="ObservationSource", inputs={}, outputs=ObsTensor))
 
 
 def test_ports_correct_obs_wiring() -> None:

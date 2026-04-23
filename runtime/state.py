@@ -52,6 +52,26 @@ class BufferRegistry:
         return self._buffers[name]
 
 
+class OptimizerRegistry:
+    """
+    A central registry for named OptimizerStates.
+    Allows graph nodes to reference optimizers by handle.
+    """
+
+    def __init__(self):
+        self._optimizers: Dict[str, "OptimizerState"] = {}
+
+    def register(self, name: str, optimizer: "OptimizerState") -> None:
+        """Registers an optimizer under a specific handle."""
+        self._optimizers[name] = optimizer
+
+    def get(self, name: str) -> "OptimizerState":
+        """Retrieves an optimizer by its handle."""
+        if name not in self._optimizers:
+            raise KeyError(f"Optimizer handle '{name}' not found in registry.")
+        return self._optimizers[name]
+
+
 class ReplayBuffer:
     """
     A simple circular replay buffer for storing transitions.

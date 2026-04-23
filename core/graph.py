@@ -55,6 +55,27 @@ class Node:
     params: Dict[str, Any] = field(default_factory=dict)
     tags: List[str] = field(default_factory=list)
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "node_id": str(self.node_id),
+            "node_type": self.node_type,
+            "schema_in": self.schema_in.to_dict(),
+            "schema_out": self.schema_out.to_dict(),
+            "params": self.params,
+            "tags": self.tags,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Node":
+        return cls(
+            node_id=NodeId(data["node_id"]),
+            node_type=data["node_type"],
+            schema_in=Schema.from_dict(data["schema_in"]),
+            schema_out=Schema.from_dict(data["schema_out"]),
+            params=data.get("params", {}),
+            tags=data.get("tags", []),
+        )
+
 
 @dataclass(frozen=True)
 class Edge:
@@ -72,6 +93,23 @@ class Edge:
     dst: NodeId
     edge_type: EdgeType = EdgeType.DATA
     dst_port: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "src": str(self.src),
+            "dst": str(self.dst),
+            "edge_type": self.edge_type.value,
+            "dst_port": self.dst_port,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Edge":
+        return cls(
+            src=NodeId(data["src"]),
+            dst=NodeId(data["dst"]),
+            edge_type=EdgeType(data["edge_type"]),
+            dst_port=data.get("dst_port"),
+        )
 
 
 class Graph:
@@ -113,6 +151,14 @@ class Graph:
         """
         nid = NodeId(node_id)
         assert nid not in self.nodes, f"Node with id {node_id} already exists"
+        # TODO: this should probably fail fast instead
+        # Defensive check: ensure schemas are Schema objects
+        from core.schema import TensorSpec, Field
+
+        if schema_in is not None and isinstance(schema_in, TensorSpec):
+            schema_in = Schema(fields=[Field("default", schema_in)])
+        if schema_out is not None and isinstance(schema_out, TensorSpec):
+            schema_out = Schema(fields=[Field("default", schema_out)])
 
         node = Node(
             node_id=nid,
@@ -168,3 +214,27 @@ class Graph:
             A dictionary mapping each NodeId to a set of its successor NodeIds.
         """
         return self._adjacency
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the graph to a dictionary."""
+        return {
+            "nodes": {str(nid): node.to_dict() for nid, node in self.nodes.items()},
+            "edges": [edge.to_dict() for edge in self.edges],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Graph":
+        """Reconstruct a graph from a dictionary."""
+        graph = cls()
+        for nid, node_data in data["nodes"].items():
+            node = Node.from_dict(node_data)
+            graph.nodes[node.node_id] = node
+            if node.node_id not in graph._adjacency:
+                graph._adjacency[node.node_id] = set()
+
+        for edge_data in data["edges"]:
+            edge = Edge.from_dict(edge_data)
+            graph.edges.append(edge)
+            graph._adjacency[edge.src].add(edge.dst)
+
+        return graph

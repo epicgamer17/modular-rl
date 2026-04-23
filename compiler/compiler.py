@@ -3,7 +3,7 @@ Main Compiler entry point for the RL IR.
 Orchestrates validation passes and optimization.
 """
 
-from typing import Set, Optional
+from typing import Set, Optional, Any
 from core.graph import Graph
 from compiler.validation import ValidationReport, SEVERITY_ERROR, SEVERITY_WARN
 from compiler.passes.validate_metadata import validate_metadata
@@ -12,6 +12,7 @@ from compiler.passes.validate_ports import validate_ports
 from compiler.passes.validate_rl import validate_rl_semantics
 from compiler.passes.validate_handles import validate_handles
 from compiler.passes.validate_purity import validate_purity
+from compiler.passes.validate_ir_purity import validate_ir_purity
 from compiler.passes.infer_shapes import infer_shapes
 from compiler.optimizer import optimize_graph
 
@@ -23,9 +24,15 @@ def compile_graph(
     buffer_handles: Optional[Set[str]] = None,
     context: str = "both",
     optimize: bool = True,
+    optimization_report: Optional[Any] = None,
 ) -> Graph:
     """
     Compiles an RL IR graph by running all validation passes.
+
+    Boundary Definition:
+    - Compile-time IR (Graph): The output of this function is a pure declarative config.
+      It must be serializable and contain NO live runtime objects.
+    - Runtime Context (ExecutionContext): Handled separately; resolved at runtime via handles.
 
     Args:
         graph: The graph to compile.
@@ -50,7 +57,7 @@ def compile_graph(
     # 2. Optimization Passes (DNE, fusion)
     # Applying these early removes dead nodes that might otherwise trigger validation errors
     if optimize:
-        graph = optimize_graph(graph)
+        graph = optimize_graph(graph, report=optimization_report)
 
     # 3. Structural Checks (Required, Cycles, unreachable nodes)
     report.merge(validate_structure(graph))
@@ -66,6 +73,9 @@ def compile_graph(
 
     # 5. Purity and Side Effect Checks
     report.merge(validate_purity(graph, context))
+    
+    # 6. IR Serialization Purity (No live objects in params)
+    report.merge(validate_ir_purity(graph))
 
     # Check for hard errors
     if report.has_errors():

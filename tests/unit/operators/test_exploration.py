@@ -22,7 +22,7 @@ def test_epsilon_greedy_determinism_same_seed():
     graph = Graph()
     graph.add_node("q_values", NODE_TYPE_SOURCE)
     graph.add_node("actor", NODE_TYPE_EXPLORATION, params={"epsilon": 0.5, "act_dim": 4})
-    graph.add_edge("q_values", "actor")
+    graph.add_edge("q_values", "actor", dst_port="q_values")
     
     q_values = torch.tensor([0.1, 0.2, 0.3, 0.4])
     
@@ -61,7 +61,7 @@ def test_epsilon_greedy_decorrelation_different_shards():
     graph.add_node("q_values", NODE_TYPE_SOURCE)
     # Use epsilon=1.0 to ensure all actions are random
     graph.add_node("actor", NODE_TYPE_EXPLORATION, params={"epsilon": 1.0, "act_dim": 1000})
-    graph.add_edge("q_values", "actor")
+    graph.add_edge("q_values", "actor", dst_port="q_values")
     
     q_values = torch.zeros(1000)
     
@@ -94,7 +94,7 @@ def test_epsilon_greedy_bypass_check():
     graph = Graph()
     graph.add_node("q_values", NODE_TYPE_SOURCE)
     graph.add_node("actor", NODE_TYPE_EXPLORATION, params={"epsilon": 1.0, "act_dim": 10})
-    graph.add_edge("q_values", "actor")
+    graph.add_edge("q_values", "actor", dst_port="q_values")
     
     q_values = torch.zeros(10)
     

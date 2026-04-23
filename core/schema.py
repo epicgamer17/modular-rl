@@ -28,6 +28,21 @@ class TensorSpec:
     dtype: str
     tags: List[str] = field(default_factory=list)
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "shape": list(self.shape),
+            "dtype": self.dtype,
+            "tags": self.tags
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'TensorSpec':
+        return cls(
+            shape=tuple(data["shape"]),
+            dtype=data["dtype"],
+            tags=data.get("tags", [])
+        )
+
 @dataclass(frozen=True)
 class Field:
     """
@@ -36,12 +51,38 @@ class Field:
     name: str
     spec: TensorSpec
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "spec": self.spec.to_dict()
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Field':
+        return cls(
+            name=data["name"],
+            spec=TensorSpec.from_dict(data["spec"])
+        )
+
 @dataclass(frozen=True)
 class Schema:
     """
     A collection of named fields defining a data structure.
     """
     fields: List[Field]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "fields": [f.to_dict() for f in self.fields]
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Schema':
+        if not data:
+            return cls(fields=[])
+        return cls(
+            fields=[Field.from_dict(f) for f in data["fields"]]
+        )
 
     def __post_init__(self):
         # Validate that field names are unique
@@ -85,3 +126,18 @@ class TrajectorySpec:
     schema: Schema
     max_length: Optional[int] = None
     tags: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schema": self.schema.to_dict(),
+            "max_length": self.max_length,
+            "tags": self.tags
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'TrajectorySpec':
+        return cls(
+            schema=Schema.from_dict(data["schema"]),
+            max_length=data.get("max_length"),
+            tags=data.get("tags", [])
+        )

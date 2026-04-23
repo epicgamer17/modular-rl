@@ -29,12 +29,17 @@ class ExecutionTrace:
         """
         from runtime.executor import OPERATOR_REGISTRY
         from runtime.values import Value, Skipped, NoOp
+        from core.graph import NODE_TYPE_SOURCE
         
         for nid, trace in self.nodes.items():
             if trace.skipped_reason:
                 continue
                 
             node = graph.nodes[nid]
+            if node.node_type == NODE_TYPE_SOURCE:
+                # Source nodes are inputs, they don't have operators to replay
+                continue
+                
             op_func = OPERATOR_REGISTRY[node.node_type]
             
             # Re-run operator

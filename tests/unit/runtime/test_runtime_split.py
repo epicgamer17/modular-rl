@@ -57,7 +57,7 @@ def test_runtime_split_async_behavior():
         
     register_operator("PPOLearner", op_ppo_learner)
     train_graph.add_node("learner", "PPOLearner", tags=[TAG_ON_POLICY])
-    train_graph.add_edge("traj_in", "learner")
+    train_graph.add_edge("traj_in", "learner", dst_port="traj_in")
     
     learner_runtime = LearnerRuntime(train_graph)
     

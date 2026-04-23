@@ -17,13 +17,13 @@ def op_target_sync(node: Node, inputs: Dict[str, Any], context: Optional[Executi
     """
     if inputs and any(v is None for v in inputs.values()):
         return Skipped("missing_inputs")
-    source_handle = node.params["source_handle"]
+    model_handle = node.params["model_handle"]
     target_handle = node.params["target_handle"]
     
     if not context:
         raise RuntimeError("TargetSync requires an ExecutionContext to resolve model handles.")
         
-    source_net = context.get_model(source_handle)
+    source_net = context.get_model(model_handle)
     target_net = context.get_model(target_handle)
     tau = node.params.get("tau", 1.0)
     sync_type = node.params.get("sync_type", "periodic_hard")

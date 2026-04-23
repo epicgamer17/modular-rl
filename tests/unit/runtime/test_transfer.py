@@ -19,11 +19,11 @@ def test_explicit_transfer_semantics():
     
     # Semantic Transfer Node
     graph.add_node("to_gpu", "TransferToDevice", params={"device_id": 0})
-    graph.add_edge("replay_out", "to_gpu")
+    graph.add_edge("replay_out", "to_gpu", dst_port="input")
     
     # Mock Learner that REQUIRES GPU data
     def op_learner(node, inputs, context=None):
-        data_ref = list(inputs.values())[0]
+        data_ref = inputs["input"]
         # ASSERT: No silent copy. Data must ALREADY be on GPU.
         assert data_ref.location == StorageLocation.GPU
         assert data_ref.data.is_cuda if torch.cuda.is_available() else True
@@ -33,7 +33,7 @@ def test_explicit_transfer_semantics():
     register_operator("Learner", op_learner)
     
     graph.add_node("update", "Learner")
-    graph.add_edge("to_gpu", "update")
+    graph.add_edge("to_gpu", "update", dst_port="input")
     
     # 2. Execution with CPU-originated data
     cpu_data = torch.randn(10)
@@ -56,8 +56,8 @@ def test_serialization_semantics():
     graph.add_node("serialize", "Serialize")
     graph.add_node("deserialize", "Deserialize")
     
-    graph.add_edge("data_in", "serialize")
-    graph.add_edge("serialize", "deserialize")
+    graph.add_edge("data_in", "serialize", dst_port="input")
+    graph.add_edge("serialize", "deserialize", dst_port="input")
     
     data = torch.tensor([1, 2, 3])
     results = execute(graph, initial_inputs={"data_in": data})

@@ -3,8 +3,9 @@ import torch
 import torch.nn as nn
 from core.graph import Graph, NODE_TYPE_SOURCE
 from runtime.executor import execute, register_operator
-from runtime.state import ParameterStore, OptimizerState
-from examples.ppo import ActorCritic, op_policy_actor, op_gae, op_ppo_objective, op_optimizer_step
+from runtime.state import ParameterStore, OptimizerState, ModelRegistry
+from runtime.context import ExecutionContext
+from examples.ppo import ActorCritic, op_gae, op_ppo_objective
 
 pytestmark = pytest.mark.integration
 
@@ -16,7 +17,6 @@ def test_ppo_stale_policy_detection():
     param_store = ParameterStore(dict(ac_net.named_parameters()))
     
     # 1. Generate data with version 0
-    obs = torch.randn(obs_dim)
     # Mock PolicyActor output
     data = {
         "obs": torch.randn(32, obs_dim),
@@ -29,22 +29,38 @@ def test_ppo_stale_policy_detection():
     }
     
     # 2. Increment parameter version
-    param_store.update_parameters({}) # version becomes 1
+    param_store.update_state({}) # version becomes 1
     assert param_store.version == 1
     
     # 3. Setup PPO graph
     graph = Graph()
     graph.add_node("traj_in", NODE_TYPE_SOURCE)
-    graph.add_node("gae", "GAE", params={"ac_net": ac_net, "gamma": 0.99, "gae_lambda": 0.95})
-    graph.add_node("ppo", "PPOObjective", params={"ac_net": ac_net, "param_store": param_store, "clip_epsilon": 0.2, "strict_on_policy": True})
+    graph.add_node("gae", "GAE", params={
+        "model_handle": "ppo_net", 
+        "gamma": 0.99, 
+        "gae_lambda": 0.95
+    })
+    graph.add_node("ppo", "PPOObjective", params={
+        "model_handle": "ppo_net", 
+        "param_store_handle": "main_store", 
+        "clip_epsilon": 0.2, 
+        "strict_on_policy": True
+    })
     
-    graph.add_edge("traj_in", "gae")
-    graph.add_edge("traj_in", "ppo")
-    graph.add_edge("gae", "ppo")
+    graph.add_edge("traj_in", "gae", dst_port="batch")
+    graph.add_edge("traj_in", "ppo", dst_port="batch")
+    graph.add_edge("gae", "ppo", dst_port="gae")
     
     # 4. Execute should fail because data is version 0 but policy is version 1
+    model_registry = ModelRegistry()
+    model_registry.register("ppo_net", ac_net)
+    ctx = ExecutionContext(model_registry=model_registry)
+    # Temporary workaround: inject param_store into context
+    # In a full system, we'd have a ParameterStoreRegistry
+    ctx.param_stores = {"main_store": param_store}
+    
     with pytest.raises(ValueError, match="STALE POLICY DETECTED"):
-        execute(graph, initial_inputs={"traj_in": data})
+        execute(graph, initial_inputs={"traj_in": data}, context=ctx)
 
 def test_ppo_on_policy_tag_enforcement():
     """Verify that the validator enforces the OnPolicy tag for PPO nodes."""

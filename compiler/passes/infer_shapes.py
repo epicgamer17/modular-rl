@@ -88,7 +88,11 @@ def infer_shapes(graph: Graph) -> Graph:
         new_schema_out = copy.deepcopy(node.schema_out)
 
         # Populate schema_out from static spec if it's currently empty
-        if not new_schema_out.fields:
+        # TODO: do we need this isinstance check? can we get rid of that?
+        is_empty_schema = (
+            isinstance(new_schema_out, Schema) and not new_schema_out.fields
+        )
+        if is_empty_schema:
             new_schema_out = Schema(
                 fields=[Field(name, ps.spec) for name, ps in spec.outputs.items()]
             )
@@ -100,7 +104,9 @@ def infer_shapes(graph: Graph) -> Graph:
                 current_map = new_schema_out.get_field_map()
                 for port, new_spec in inferred.items():
                     current_map[port] = new_spec
-                new_schema_out = Schema(fields=[Field(k, v) for k, v in current_map.items()])
+                new_schema_out = Schema(
+                    fields=[Field(k, v) for k, v in current_map.items()]
+                )
             except Exception:
                 # If inference fails, keep existing/static schema
                 pass

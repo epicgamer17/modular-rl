@@ -61,7 +61,10 @@ class ActorRuntime:
 
         results = execute(
             self.interact_graph,
-            initial_inputs={"obs_in": self.current_obs},
+            initial_inputs={
+                "obs_in": self.current_obs,
+                "clock_in": torch.tensor(context.env_step, dtype=torch.int64)
+            },
             context=context,
         )
         action_res = results.get("actor")

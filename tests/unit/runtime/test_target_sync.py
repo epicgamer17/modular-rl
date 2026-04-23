@@ -27,7 +27,7 @@ def test_target_sync_hard_update():
     
     graph = Graph()
     graph.add_node("sync", NODE_TYPE_TARGET_SYNC, params={
-        "source_handle": "online",
+        "model_handle": "online",
         "target_handle": "target",
         "tau": 1.0,
         "sync_type": "periodic_hard"
@@ -51,7 +51,7 @@ def test_target_sync_soft_update():
     
     graph = Graph()
     graph.add_node("sync", NODE_TYPE_TARGET_SYNC, params={
-        "source_handle": "online",
+        "model_handle": "online",
         "target_handle": "target",
         "tau": 0.5,
         "sync_type": "soft"
@@ -76,7 +76,7 @@ def test_schedule_executor_triggers_sync():
     # Train graph with sync node
     train_graph = Graph()
     train_graph.add_node("sync", NODE_TYPE_TARGET_SYNC, params={
-        "source_handle": "online",
+        "model_handle": "online",
         "target_handle": "target",
         "sync_frequency": 2,
         "sync_on": "learner_step"
@@ -137,7 +137,7 @@ def test_target_sync_frequency_check():
     
     graph = Graph()
     graph.add_node("sync", NODE_TYPE_TARGET_SYNC, params={
-        "source_handle": "online",
+        "model_handle": "online",
         "target_handle": "target",
         "sync_frequency": 100
     })
@@ -167,7 +167,7 @@ def test_target_sync_hard_sync_equality():
     
     graph = Graph()
     graph.add_node("sync", NODE_TYPE_TARGET_SYNC, params={
-        "source_handle": "online",
+        "model_handle": "online",
         "target_handle": "target",
         "sync_type": "periodic_hard"
     })

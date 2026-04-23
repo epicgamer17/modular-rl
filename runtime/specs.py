@@ -12,12 +12,12 @@ from core.schema import TensorSpec, Schema, Field
 Spec = Union[TensorSpec, Schema]
 
 
-
 @dataclass(frozen=True)
 class PortSpec:
     """
     Detailed specification for an individual input or output port.
     """
+
     spec: Spec
     required: bool = True
     variadic: bool = False
@@ -30,6 +30,7 @@ class OperatorSpec:
     """
     Defines the full metadata and data contract for an operator.
     """
+
     name: str
     version: str = "1.0.0"
 
@@ -46,10 +47,15 @@ class OperatorSpec:
     requires_buffers: List[str] = None
     requires_optimizer: bool = False
 
-    allowed_contexts: Set[str] = None   # {"actor", "learner"}
+    allowed_contexts: Set[str] = None  # {"actor", "learner"}
 
     tags: Set[str] = None
     shape_fn: Optional[Callable[[Dict[str, Spec]], Dict[str, Spec]]] = None
+
+    # Cost Model metrics
+    estimated_flops: int = 0
+    memory_reads: int = 0
+    kernel_launch_cost: float = 0.0
 
     def __post_init__(self) -> None:
         """Initialize optional collections."""
@@ -57,9 +63,9 @@ class OperatorSpec:
 
     @classmethod
     def create(
-        cls, 
+        cls,
         name: str,
-        inputs: Dict[str, Union[Spec, PortSpec]] = None, 
+        inputs: Dict[str, Union[Spec, PortSpec]] = None,
         outputs: Union[Spec, Dict[str, Union[Spec, PortSpec]]] = None,
         version: str = "1.0.0",
         pure: bool = False,
@@ -71,7 +77,10 @@ class OperatorSpec:
         requires_optimizer: bool = False,
         allowed_contexts: Set[str] = None,
         tags: Set[str] = None,
-        shape_fn: Optional[Callable[[Dict[str, Spec]], Dict[str, Spec]]] = None
+        shape_fn: Optional[Callable[[Dict[str, Spec]], Dict[str, Spec]]] = None,
+        estimated_flops: int = 0,
+        memory_reads: int = 0,
+        kernel_launch_cost: float = 0.0,
     ) -> "OperatorSpec":
         """Helper to create a spec with defaults and single output support."""
         # Process inputs: Wrap raw Specs in PortSpec
@@ -86,8 +95,10 @@ class OperatorSpec:
             if not isinstance(outputs, dict):
                 outputs = {"default": outputs}
             for k, v in outputs.items():
-                processed_outputs[k] = v if isinstance(v, PortSpec) else PortSpec(spec=v)
-            
+                processed_outputs[k] = (
+                    v if isinstance(v, PortSpec) else PortSpec(spec=v)
+                )
+
         return cls(
             name=name,
             version=version,
@@ -102,7 +113,10 @@ class OperatorSpec:
             requires_optimizer=requires_optimizer,
             allowed_contexts=allowed_contexts or {"actor", "learner"},
             tags=tags or set(),
-            shape_fn=shape_fn
+            shape_fn=shape_fn,
+            estimated_flops=estimated_flops,
+            memory_reads=memory_reads,
+            kernel_launch_cost=kernel_launch_cost,
         )
 
 
@@ -149,6 +163,7 @@ _SPEC_REGISTRY: Dict[str, OperatorSpec] = {}
 
 
 import warnings
+
 
 def register_spec(node_type: str, spec: OperatorSpec) -> None:
     """Registers a specification for a given node type."""

@@ -18,12 +18,11 @@ def test_minimal_linear_graph():
         
     def run_linear(node, inputs, context=None):
         # Simple linear transformation: y = x @ W
-        # Expecting one input in inputs dict
-        assert len(inputs) == 1
-        x = list(inputs.values())[0]
+        # Expecting 'input' port
+        x = inputs["input"]
         w = node.params["weight"]
         return x @ w
-        
+    
     register_operator(NODE_TYPE_SOURCE, run_source)
     register_operator("Linear", run_linear)
     
@@ -36,7 +35,7 @@ def test_minimal_linear_graph():
                       [3.0, 4.0]])
     graph.add_node("layer1", "Linear", params={"weight": W})
     
-    graph.add_edge("obs", "layer1")
+    graph.add_edge("obs", "layer1", dst_port="input")
     
     # 3. Execution
     # Input vector [1, 1]

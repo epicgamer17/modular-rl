@@ -92,7 +92,7 @@ def op_gae(node, inputs, context=None):
     next_obs = batch["next_obs"]
 
     with torch.no_grad():
-        _, values = ac_net(obs)
+        probs, values = ac_net(obs)
         _, next_values = ac_net(next_obs[-1].unsqueeze(0))
         values = torch.cat([values.view(-1), next_values.view(-1)])
 
@@ -113,6 +113,23 @@ def op_ppo_objective(node, inputs, context=None):
     gae_data = inputs.get("gae")
     if batch is None or gae_data is None:
         return MissingInput("batch/gae")
+
+    # 1. Stale Policy Detection (On-Policy requirement)
+    if node.params.get("strict_on_policy", False):
+        param_store_handle = node.params.get("param_store_handle")
+        # Workaround: find param_store in context.param_stores if available
+        param_store = (
+            getattr(context, "param_stores", {}).get(param_store_handle)
+            if param_store_handle
+            else None
+        )
+
+        data_version = batch.get("policy_version") if isinstance(batch, dict) else None
+        if param_store and data_version is not None:
+            if data_version != param_store.version:
+                raise ValueError(
+                    f"STALE POLICY DETECTED: Data version {data_version} != current version {param_store.version}"
+                )
 
     model_handle = node.params.get("model_handle", "ppo_net")
     ac_net = context.get_model(model_handle)
@@ -143,7 +160,9 @@ def op_ppo_objective(node, inputs, context=None):
 
 
 def op_optimizer_step(node, inputs, context=None):
-    opt_state = node.params["opt_state"]
+    optimizer_handle = node.params.get("optimizer_handle", "main_opt")
+    opt_state = context.get_optimizer(optimizer_handle)
+
     loss = inputs.get("loss")
     if loss is None:
         return MissingInput("loss")
@@ -169,6 +188,9 @@ def run_ppo_demo(total_steps=5000):
     model_registry.register("ppo_net", ac_net)
 
     opt = OptimizerState(optim.Adam(ac_net.parameters(), lr=1e-3))
+    optimizer_registry = OptimizerRegistry()
+    optimizer_registry.register("main_opt", opt)
+
     rb = ReplayBuffer(capacity=512)
     buffer_registry = BufferRegistry()
     buffer_registry.register("main", rb)
@@ -187,7 +209,7 @@ def run_ppo_demo(total_steps=5000):
             Field("policy_version", TensorSpec(shape=(), dtype="int64")),
         ]
     )
-    collator = ReplayCollator(ppo_schema)
+    # We don't pass the collator instance anymore; it's instantiated from schema_out at runtime
 
     # 1. Graph Definitions
     interact_graph = Graph()
@@ -206,8 +228,8 @@ def run_ppo_demo(total_steps=5000):
             "buffer_id": "main",
             "batch_size": 512,
             "min_size": 512,
-            "collator": collator,
         },
+        schema_out=ppo_schema,
     )
     train_graph.add_node(
         "gae",
@@ -218,7 +240,7 @@ def run_ppo_demo(total_steps=5000):
     train_graph.add_node(
         "ppo", "PPOObjective", params={"model_handle": "ppo_net", "clip_epsilon": 0.2}
     )
-    train_graph.add_node("opt", "Optimizer", params={"opt_state": opt})
+    train_graph.add_node("opt", "Optimizer", params={"optimizer_handle": "main_opt"})
 
     train_graph.add_node(
         "metrics",
@@ -264,7 +286,9 @@ def run_ppo_demo(total_steps=5000):
     # Run 32 steps of actor, then 1 step of learner
     plan = SchedulePlan(actor_frequency=512, learner_frequency=1)
     ctx = ExecutionContext(
-        model_registry=model_registry, buffer_registry=buffer_registry
+        model_registry=model_registry,
+        buffer_registry=buffer_registry,
+        optimizer_registry=optimizer_registry,
     )
     executor = ScheduleExecutor(plan, actor_runtime, learner_runtime)
 

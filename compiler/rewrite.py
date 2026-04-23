@@ -91,7 +91,7 @@ def find_linear_chain(graph: Graph, types: List[str]) -> List[NodeId]:
             
     return []
 
-def rewrite(graph: Graph, match: List[NodeId], rule: 'FusionRule') -> Graph:
+def rewrite(graph: Graph, match: List[NodeId], rule: 'FusionRule', report: Optional[Any] = None) -> Graph:
     """
     Transactionally replaces a subgraph with a fused node.
     Follows a non-mutating pattern.
@@ -149,10 +149,21 @@ def rewrite(graph: Graph, match: List[NodeId], rule: 'FusionRule') -> Graph:
     # 7. Validate graph
     # Import locally to avoid circular dependencies
     from compiler.passes.validate_structure import validate_structure
-    report = validate_structure(new_graph)
-    if report.has_errors():
+    val_report = validate_structure(new_graph)
+    if val_report.has_errors():
         # If the transformation produced a broken graph, reject it and return original
         return graph
+
+    if report:
+        # Avoid circular import by using Any for report type in signature
+        from compiler.optimizer import OptimizationStep
+        report.add_step(OptimizationStep(
+            rule_name=rule.name,
+            pattern=rule.pattern,
+            replacement=rule.replacement,
+            removed_nodes=list(match),
+            new_node=fused_id
+        ))
 
     return new_graph
 
@@ -162,6 +173,7 @@ class FusionRule:
     pattern: List[str] # List of node types in sequence (e.g. ["QValuesSingle", "Argmax"])
     replacement: str  # New node type
     constraints: Optional[Callable[[List[Node]], bool]] = None
+    min_profitability: float = 0.0 # Minimum savings in launch costs or other metrics
 
 class RewriteEngine:
     """
@@ -173,7 +185,7 @@ class RewriteEngine:
     def add_rule(self, rule: FusionRule):
         self.rules.append(rule)
 
-    def apply(self, graph: Graph) -> Graph:
+    def apply(self, graph: Graph, report: Optional[Any] = None) -> Graph:
         """
         Applies all registered rewrite rules to the graph.
         Currently handles simple linear sequence fusions.
@@ -181,11 +193,11 @@ class RewriteEngine:
         current_graph = copy.deepcopy(graph)
         
         for rule in self.rules:
-            current_graph = self._apply_rule(current_graph, rule)
+            current_graph = self._apply_rule(current_graph, rule, report=report)
             
         return current_graph
 
-    def _apply_rule(self, graph: Graph, rule: FusionRule) -> Graph:
+    def _apply_rule(self, graph: Graph, rule: FusionRule, report: Optional[Any] = None) -> Graph:
         """
         Applies a single rule to the graph.
         Uses find_linear_chain and rewrite for transactional updates.
@@ -203,11 +215,32 @@ class RewriteEngine:
                 if rule.constraints and not rule.constraints(nodes):
                     # Skip if constraints fail
                     pass 
+                elif not self._is_profitable(rule, nodes):
+                    # Skip if not profitable
+                    if report:
+                        report.add_skipped_fusion(rule.name, chain, "Not profitable based on cost model")
+                    pass
                 else:
                     # Transactional rewrite
-                    updated_graph = rewrite(graph, chain, rule)
+                    updated_graph = rewrite(graph, chain, rule, report=report)
                     if updated_graph is not graph:
                         graph = updated_graph
                         changed = True
                 
         return graph
+
+    def _is_profitable(self, rule: FusionRule, match_nodes: List[Node]) -> bool:
+        """
+        Heuristic to determine if fusion is profitable.
+        Profit = (Sum of original launch costs) - (Replacement launch cost)
+        """
+        from runtime.specs import get_spec
+        replacement_spec = get_spec(rule.replacement)
+        if not replacement_spec:
+            return True
+            
+        original_specs = [get_spec(n.node_type) for n in match_nodes]
+        total_original_launch = sum(s.kernel_launch_cost for s in original_specs if s)
+        
+        savings = total_original_launch - replacement_spec.kernel_launch_cost
+        return savings >= rule.min_profitability

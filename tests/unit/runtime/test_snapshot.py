@@ -39,7 +39,7 @@ def test_actor_snapshot_immutability():
     graph.add_node("obs_in", NODE_TYPE_SOURCE)
     
     def op_actor(node, inputs, context=None):
-        obs = list(inputs.values())[0]
+        obs = inputs["obs"]
         snapshot = context.get_actor_snapshot(node.node_id)
         # Use functional call with snapshot state
         out = functional_call(model, snapshot.state, (obs,))
@@ -47,7 +47,7 @@ def test_actor_snapshot_immutability():
 
     register_operator("SnapshotActor", op_actor)
     graph.add_node("actor", "SnapshotActor", params={"param_store": ps})
-    graph.add_edge("obs_in", "actor")
+    graph.add_edge("obs_in", "actor", dst_port="obs")
     
     env = MockEnv()
     runtime = ActorRuntime(graph, env)
@@ -88,11 +88,11 @@ def test_manual_snapshot_binding():
     
     def manual_op(node, inputs, context=None):
         snap = context.get_actor_snapshot(node.node_id)
-        return functional_call(model, snap.state, (list(inputs.values())[0],))
+        return functional_call(model, snap.state, (inputs["obs"],))
 
     register_operator("SnapshotActorManual", manual_op)
     graph.add_node("actor", "SnapshotActorManual", params={"param_store": ps})
-    graph.add_edge("obs_in", "actor")
+    graph.add_edge("obs_in", "actor", dst_port="obs")
     
     env = MockEnv()
     runtime = ActorRuntime(graph, env)

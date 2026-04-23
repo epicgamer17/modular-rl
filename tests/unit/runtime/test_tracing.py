@@ -92,5 +92,5 @@ def test_upstream_skip_tracing() -> None:
     
     trace = tracer.get_step(0)
     assert "b" in trace.nodes
-    assert trace.nodes["b"].skipped_reason == "upstream_skipped_in"
+    assert trace.nodes["b"].skipped_reason == "upstream_failed_a"
     assert isinstance(trace.nodes["b"].outputs, Skipped)

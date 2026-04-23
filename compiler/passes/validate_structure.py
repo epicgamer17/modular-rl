@@ -6,7 +6,7 @@ Checks for basic connectivity, cycles, and semantic structure.
 from collections import deque
 from typing import Set, Dict
 
-from core.graph import Graph, NodeId, NODE_TYPE_SOURCE, NODE_TYPE_SINK
+from core.graph import Graph, NodeId, NODE_TYPE_SOURCE, NODE_TYPE_SINK, NODE_TYPE_REPLAY_QUERY
 from runtime.specs import get_spec
 from compiler.validation import (
     ValidationIssue,
@@ -87,10 +87,11 @@ def validate_structure(graph: Graph) -> ValidationReport:
         )
 
     # 3. Reachability from SOURCE
-    # Nodes that cannot be reached from any node of type SOURCE.
+    # Nodes that cannot be reached from any node of type SOURCE or REPLAY_QUERY.
     reachable: Set[NodeId] = set()
     sources = [
-        nid for nid, node in graph.nodes.items() if node.node_type == NODE_TYPE_SOURCE
+        nid for nid, node in graph.nodes.items() 
+        if node.node_type in [NODE_TYPE_SOURCE, NODE_TYPE_REPLAY_QUERY]
     ]
 
     stack = list(sources)
