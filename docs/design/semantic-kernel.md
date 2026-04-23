@@ -2,40 +2,63 @@
 
 ## 1. IR Structural Layer
 
-### Node (abstract)
-Minimal executable unit with typed inputs/outputs and an Effect class.
+To ensure scalability and clarity, the IR distinguishes between four primary levels of representation:
 
-### ActorNode
-Decision-producing Node executing:
-f(inputs, policy, state, rng_seed)
+### 1.1 Operator (Math)
+A pure functional mapping specification (e.g., a `torch.nn.Module` forward pass or a loss function). 
+- **Properties**: Stateless, no scheduling semantics, reusable across Nodes.
+- **Form**: `f(x) → y`.
 
-### SourceNode
-External input Node with no dependencies.
+### 1.2 Node (Execution)
+The atomic executable unit in a scheduled **ExecutionPlan** step.
+- **Properties**: Runs in one execution context slice, consumes/emits **DataRefs**, subject to **Effects**.
+- **Role**: Nodes are what the executor actually runs.
 
-### TransformNode
-Pure computational mapping Node.
+### 1.3 Subgraph (Scheduling)
+A slice of a compiled **Graph** executed as a unit within an **ExecutionPlan**.
+- **Properties**: Scheduling unit, batching unit, optimization unit.
+- **Example**: "policy forward pass subgraph", "replay sampling subgraph".
 
-### Edge
-Directed dependency carrying DataRefs.
+### 1.4 Component (Design-time)
+A parameterized graph template (macro) that compiles into Nodes and Edges.
+- **Properties**: Not executed directly; expands into a subgraph during compilation.
+- **Example**: `PPOActorComponent` expands into Preprocessing, Policy, and Sampling Nodes.
 
-### Graph
-Static computation structure of Nodes and Edges.
+### 1.5 Hierarchy Summary
+- **Component**: Design-time abstraction (templates).
+- **Graph**: Static IR container.
+- **ExecutionPlan**: Static schedule derived from Graph.
+- **Control Layer**: Dynamic execution logic (expansion rules).
+- **Subgraph**: Runtime execution unit.
+- **Node**: Atomic unit executing an **Operator**.
 
-### DataRef
-Immutable typed value with metadata:
-- ownership
-- locality
-- version
-- determinism
+---
 
-### ExecutionPlan
-Unified schedule:
-- Static Graph Execution Layer
-- Temporal Interaction Loop Layer
+## 2. Control & Dynamic Execution
 
-### NodeStatefulness
-- Stateless
-- Stateful
+### 2.1 ControlNode
+Non-execution nodes that represent dynamic scheduling logic.
+- **Role**: Enables loops, recursion, and conditional graph activation.
+- **Applications**: MCTS recursion, NFSP policy switching, DAgger expert-labeling modes.
+
+### 2.2 The Model A Execution Philosophy
+The system follows **Model A (Explicit Scheduling)**:
+- Actor execution happens ONLY when the **ExecutionPlan** schedules **ActorNodes**.
+- No implicit loops; the scheduler is the sole source of control flow.
+- This enables native support for MCTS, NFSP, and DAgger without "trainer loop" hacks.
+
+---
+
+## 3. Persistence & Data Flow
+
+### 3.1 TransitionSinkNode
+Persistence is handled by a dedicated primitive, not as a side-effect of Actor execution.
+- **Signature**: `f(obs, action, reward, next_obs, version) → TransitionDataRef`.
+- **Role**: Collects interaction data and writes it to the downstream Replay/Dataset Graph.
+
+### 3.2 Decoupled Replay
+- **Replay** is a downstream graph consuming **DataRefs** emitted by SinkNodes.
+- It is NOT connected to the Actor; it is a separate consumer in the larger system graph.
 
 ---
 
@@ -319,41 +342,28 @@ Then:
 ## 5. RL Algorithm Validation
 
 ### PPO
-- ✔ Multi-pass execution required (policy + value + advantage)
-- ✔ ExecutionGranularity Level 2
-- ✔ Reproducible rollout batches supported
-
----
+- ✔ Multi-pass execution required (policy + value + advantage).
+- ✔ ExecutionGranularity Level 2.
 
 ### DQN
-- ✔ Single-pass execution sufficient
-- ✔ replay buffer externalized correctly
-- ✔ no binding ambiguity
-
----
+- ✔ Single-pass execution sufficient.
+- ✔ Replay buffer externalized via `TransitionSinkNode`.
 
 ### SAC
-- ✔ multi-pass (policy + Q + entropy)
-- ✔ stochastic ActorNode fully context-bound
-
----
+- ✔ Multi-pass (policy + Q + entropy).
+- ✔ Stochastic ActorNode fully context-bound via `rng_state`.
 
 ### NFSP
-- ✔ dual-policy execution requires shard-separated state
-- ✔ reservoir sampling stable under Stateful Node rules
-
----
+- ✔ Two LearningGraphs over different sampling distributions.
+- ✔ `ControlNode` manages policy switching between best-response and average policies.
 
 ### MCTS
-- ✔ requires nested execution loops
-- ✔ ExecutionGranularity Level 3 required
-- ✔ stateful tree shards correctly supported
-
----
+- ✔ Recursive Subgraph expansion via `TreeNode` (a ControlNode variant).
+- ✔ Recursion is graph expansion, not a runtime Python loop.
 
 ### DAgger
-- ✔ external expert queries handled via External Effect
-- ✔ dataset aggregation consistent across steps
+- ✔ Parallel execution of `ActorNode` and `ExpertPolicyNode`.
+- ✔ `TransitionSinkNode` (or `LabelMergeNode`) pairs observations with expert labels for the DatasetGraph.
 
 ---
 
@@ -759,32 +769,32 @@ Guarantee:
 # 7. RL Algorithm Validation
 
 ### PPO
-- ✔ rollout + update phases handled via multi-pass execution
-- ✔ stable batching across ActorNodes
+- ✔ Rollout + update phases handled via multi-pass execution.
+- ✔ Stable batching across ActorNodes.
 
 ### DQN
-- ✔ replay buffer externalized safely
-- ✔ Q-network execution fully cached
+- ✔ Replay buffer externalized via `TransitionSinkNode`.
+- ✔ Q-network execution fully cached.
 
 ### SAC
-- ✔ stochastic policy execution fully reproducible
-- ✔ entropy handling consistent in ExecutionContext
+- ✔ Stochastic policy execution fully reproducible via `rng_state`.
+- ✔ Entropy handling consistent in ExecutionContext.
 
 ### NFSP
-- ✔ dual policy execution separated by shard state
-- ✔ reservoir sampling state-safe
+- ✔ Dual policy execution separated by shard state.
+- ✔ `ControlNode` manages reservoir sampling and policy switching.
 
 ### MCTS
-- ✔ nested execution loops fully supported
-- ✔ stateful tree expansion shard-isolated
+- ✔ Recursive Subgraph expansion via `TreeNode`.
+- ✔ Stateful tree expansion shard-isolated.
 
 ### DAgger
-- ✔ expert queries handled as External Effects
-- ✔ dataset aggregation consistent across steps
+- ✔ Expert queries handled via parallel `ExpertPolicyNode`.
+- ✔ `TransitionSinkNode` ensures consistent dataset aggregation.
 
 ### Model-based RL
-- ✔ simulated Interaction Loops supported under ExecutionGranularity
-- ✔ recursive execution bounded by budgeting system
+- ✔ Simulated Interaction Loops supported under ExecutionGranularity.
+- ✔ Recursive expansion (dreaming) bounded by budgeting system via `ControlNode`.
 
 ---
 

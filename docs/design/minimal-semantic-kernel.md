@@ -4,34 +4,46 @@ This document defines the minimal, irreducible intermediate representation (IR) 
 
 ```mermaid
 graph TD
+    subgraph "Design-Time Templates"
+        Component["Component (Macro/Template)"]
+    end
+
     subgraph "Fundamental IR Primitives"
+        Operator["Operator (Stateless Function)"]
         Node["Node (Executable Unit)"]
-        DataRef["DataRef (Immutable Typed Value)"]
+        ControlNode["ControlNode (Dynamic Logic)"]
+        DataRef["DataRef (Immutable Value)"]
         Edge["Edge (Dependency)"]
-        Graph["Graph (Static DAG)"]
+        Graph["Graph (Static IR)"]
     end
 
     subgraph "Node Specializations"
         ActorNode["ActorNode (Action Producer)"]
+        TransitionSinkNode["TransitionSinkNode (Persistence)"]
         SourceNode["SourceNode (Input Producer)"]
         TransformNode["TransformNode (Pure Mapping)"]
     end
 
     subgraph "Execution Layer"
-        ExecutionContext["ExecutionContext (Runtime Descriptor)"]
-        ExecutionPlan["ExecutionPlan (Compiled Structure)"]
+        ExecutionPlan["ExecutionPlan (Static Schedule)"]
+        Subgraph["Subgraph (Scheduling Unit)"]
+        ExecutionContext["ExecutionContext (Runtime State)"]
     end
 
+    Component -->|Compiles to| Graph
+    Node -->|Executes| Operator
     Node -->|Processes| DataRef
     Node -->|Subject to| Effect["Effect (Constraint)"]
-    Graph -->|Composed of| Node
-    Graph -->|Connected by| Edge
+    ControlNode -->|Expands| Subgraph
+    Graph -->|Compiled to| ExecutionPlan
+    ExecutionPlan -->|Composed of| Subgraph
+    Subgraph -->|Composed of| Node
+    Node -.->|Reads| ExecutionContext
     Edge -->|Flows| DataRef
     ActorNode --|> Node
+    TransitionSinkNode --|> Node
     SourceNode --|> Node
     TransformNode --|> Node
-    ExecutionPlan -.->|Derived from| Graph
-    Node -.->|Reads| ExecutionContext
 ```
 
 ---
@@ -39,21 +51,30 @@ graph TD
 ## 1. Fundamental IR Primitives
 These are the only irreducible constructs. Everything else is derived.
 
-### 1.1 Node (Abstract)
-The minimal executable unit.
-- **Properties:**
-    - Typed inputs / outputs (**DataRefs**)
-    - Associated **Effect** class
-    - Execution function defined by implementation, not IR
-- **Constraint:** No semantics beyond execution boundary.
+### 1.1 Operator
+Pure functional mapping specification.
+- **Properties:** Stateless, no scheduling semantics, reusable.
+- **Role:** Math definition (e.g., `torch.nn.Module`, `f(x) -> y`).
 
-### 1.2 ActorNode
+### 1.2 Node
+Atomic executable unit in a scheduled **ExecutionPlan** step.
+- **Properties:** Consumes/emits **DataRefs**, subject to **Effects**.
+- **Role:** What the executor actually runs.
+
+### 1.3 ControlNode
+Non-execution node representing dynamic scheduling logic.
+- **Properties:** Loop expansion, recursion (MCTS), conditional activation.
+- **Role:** Enables non-DAG behaviors (DAgger switching, MCTS recursion).
+
+### 1.4 ActorNode
 Specialized Node producing actions.
 - **Signature:** `f(inputs, policy, state, rng_seed) → Action DataRef`
-- **Constraints:**
-    - Stochasticity only via `rng_seed` or `policy`
-    - Must emit `Action-schema` DataRef
-    - May be stateless or stateful (explicit flag)
+- **Constraint:** Does NOT persist data implicitly (see **TransitionSinkNode**).
+
+### 1.5 TransitionSinkNode (NEW)
+Specialized Node for data persistence.
+- **Signature:** `f(obs, action, reward, next_obs, meta) → Transition DataRef`
+- **Role:** Backbone of replay buffers, DAgger datasets, and NFSP logs.
 
 ### 1.3 SourceNode
 External input producer.
@@ -98,17 +119,18 @@ Compiled execution structure derived from Graph.
     - Batching groups
     - Granularity schedule
 
-### 1.9 ExecutionContext (Optional Fundamental Layer)
+### 1.9 ExecutionContext
 Runtime-scope execution descriptor.
-- **Fields:**
-    - `step_index`
-    - `rng_state`
-    - `version_clock`
-    - `execution_shard_id`
-    - `batching_group_id`
+- **Fields:** `step_index`, `rng_state`, `version_clock`, `shard_id`.
+- **Rule:** Immutable per execution slice.
 
-> [!IMPORTANT]
-> **Rule:** ExecutionContext is immutable per execution slice.
+### 1.10 Subgraph
+Runtime execution unit. A slice of a compiled Graph executed as a unit.
+- **Role:** Batching and optimization boundary.
+
+### 1.11 Component (Design-Time)
+Parameterized graph template (macro) that compiles into Nodes + Edges.
+- **Example:** `ActorComponent` expands into `PreprocessingNode` + `ActorNode` + `SinkNode`.
 
 ---
 
