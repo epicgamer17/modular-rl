@@ -15,7 +15,7 @@ def test_rollout_controller_basic():
     graph = Graph()
     graph.add_node("obs_in", NODE_TYPE_SOURCE)
     # Simple constant actor
-    register_operator("ConstActor", lambda n, i: 0)
+    register_operator("ConstActor", lambda n, i, context=None: 0)
     graph.add_node("actor", "ConstActor")
     graph.add_edge("obs_in", "actor")
     
@@ -47,8 +47,8 @@ def test_dagger_triviality():
     # Graph with two actors: student (drives env) and expert (provides labels)
     graph = Graph()
     graph.add_node("obs_in", NODE_TYPE_SOURCE)
-    register_operator("StudentActor", lambda n, i: 0) # Const 0
-    register_operator("ExpertActor", lambda n, i: 1)  # Const 1
+    register_operator("StudentActor", lambda n, i, context=None: 0) # Const 0
+    register_operator("ExpertActor", lambda n, i, context=None: 1)  # Const 1
     
     graph.add_node("actor", "StudentActor") # The node ID 'actor' is used by controller for env.step
     graph.add_node("expert", "ExpertActor")

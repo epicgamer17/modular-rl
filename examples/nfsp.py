@@ -38,7 +38,7 @@ class PolicyNetwork(nn.Module):
         return self.net(x)
 
 # 2. Operators
-def op_mixture_actor(node, inputs):
+def op_mixture_actor(node, inputs, context=None):
     obs = list(inputs.values())[0]
     q_net = node.params["q_net"]
     policy_net = node.params["policy_net"]
@@ -62,7 +62,7 @@ def op_mixture_actor(node, inputs):
             
     return {"action": action, "mode": mode}
 
-def op_sl_loss(node, inputs):
+def op_sl_loss(node, inputs, context=None):
     batch = list(inputs.values())[0]
     if not batch: return torch.tensor(0.0, requires_grad=True)
     

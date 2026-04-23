@@ -30,7 +30,7 @@ def test_parallel_actor_pool_throughput():
     """Verify ParallelActorPool executes in parallel and measure throughput."""
     # 1. Setup Graph & Environment
     env_name = "CartPole-v1"
-    register_operator("ConstActor", lambda n, i: 0)
+    register_operator("ConstActor", lambda n, i, context=None: 0)
     
     graph = Graph()
     graph.add_node("obs_in", NODE_TYPE_SOURCE)

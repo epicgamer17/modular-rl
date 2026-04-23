@@ -3,18 +3,23 @@ Minimal runtime executor for the RL IR.
 Handles topological sorting and sequential execution of graph nodes.
 """
 
-from typing import Dict, Any, List, Set, Callable
+from typing import Dict, Any, List, Set, Callable, Optional
 from core.graph import Graph, NodeId, Node
+from runtime.context import ExecutionContext
 
 # Global operator registry mapping node_type -> execution function
 # def run(node: Node, inputs: Dict[NodeId, Any]) -> Any
-OPERATOR_REGISTRY: Dict[str, Callable[[Node, Dict[NodeId, Any]], Any]] = {}
+OPERATOR_REGISTRY: Dict[str, Callable[[Node, Dict[NodeId, Any], ExecutionContext], Any]] = {}
 
-def register_operator(node_type: str, func: Callable[[Node, Dict[NodeId, Any]], Any]):
+def register_operator(node_type: str, func: Callable[[Node, Dict[NodeId, Any], ExecutionContext], Any]):
     """Registers an execution function for a node type."""
     OPERATOR_REGISTRY[node_type] = func
 
-def execute(graph: Graph, initial_inputs: Dict[NodeId, Any]) -> Dict[NodeId, Any]:
+def execute(
+    graph: Graph, 
+    initial_inputs: Dict[NodeId, Any],
+    context: Optional[ExecutionContext] = None
+) -> Dict[NodeId, Any]:
     """
     Executes the graph using the provided initial inputs for source nodes.
     
@@ -28,6 +33,8 @@ def execute(graph: Graph, initial_inputs: Dict[NodeId, Any]) -> Dict[NodeId, Any
     Returns:
         A dictionary mapping NodeId to their computed outputs.
     """
+    context = context or ExecutionContext()
+    
     # 1. Topological Sort (Kahn's Algorithm)
     order = _topological_sort(graph)
     
@@ -59,7 +66,7 @@ def execute(graph: Graph, initial_inputs: Dict[NodeId, Any]) -> Dict[NodeId, Any
             raise RuntimeError(f"No operator registered for node type: {node.node_type}")
             
         op_func = OPERATOR_REGISTRY[node.node_type]
-        output = op_func(node, inputs)
+        output = op_func(node, inputs, context=context)
         node_outputs[nid] = output
         
     return node_outputs

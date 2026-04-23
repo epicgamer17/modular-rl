@@ -8,6 +8,7 @@ import torch
 from core.graph import Graph
 from runtime.executor import execute
 from runtime.state import ReplayBuffer
+from runtime.context import ExecutionContext
 
 class RolloutController:
     """
@@ -33,7 +34,7 @@ class RolloutController:
         self._episode_count += 1
         return self.current_obs
 
-    def rollout_step(self) -> Dict[str, Any]:
+    def rollout_step(self, context: Optional[ExecutionContext] = None) -> Dict[str, Any]:
         """
         Performs a single rollout step:
         1. Invoke Actor via Graph
@@ -41,11 +42,12 @@ class RolloutController:
         3. Attach Metadata
         4. Record to buffers
         """
+        context = context or ExecutionContext()
         if self.current_obs is None:
             self.reset()
             
         # 1. Invoke Actor
-        results = execute(self.interact_graph, initial_inputs={"obs_in": self.current_obs})
+        results = execute(self.interact_graph, initial_inputs={"obs_in": self.current_obs}, context=context)
         # We assume the graph has an 'actor' node or similar. 
         # For generality, we can take the last node in topological order or a specific ID.
         # Here we look for a node with 'action' in its output or just use 'actor' ID.
@@ -72,7 +74,8 @@ class RolloutController:
             "metadata": {
                 "step_index": self._step_count,
                 "episode_id": self._episode_count,
-                "actor_results": results
+                "actor_results": results,
+                "context": context.to_dict()
             }
         }
 

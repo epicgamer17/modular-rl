@@ -6,6 +6,7 @@ from core.graph import Graph, NODE_TYPE_SOURCE
 from runtime.executor import execute, register_operator
 from runtime.state import ReplayBuffer
 
+
 def test_optimization_throughput():
     """
     Measures throughput improvement for:
@@ -20,18 +21,22 @@ def test_optimization_throughput():
     # --- 1. Operator Fusion Measurement ---
     def op_heavy_1(node, inputs):
         x = list(inputs.values())[0]
-        for _ in range(10): x = torch.sin(x)
+        for _ in range(10):
+            x = torch.sin(x)
         return x
 
     def op_heavy_2(node, inputs):
         x = list(inputs.values())[0]
-        for _ in range(10): x = torch.cos(x)
+        for _ in range(10):
+            x = torch.cos(x)
         return x
 
     def op_heavy_fused(node, inputs):
         x = list(inputs.values())[0]
-        for _ in range(10): x = torch.sin(x)
-        for _ in range(10): x = torch.cos(x)
+        for _ in range(10):
+            x = torch.sin(x)
+        for _ in range(10):
+            x = torch.cos(x)
         return x
 
     # Measure Separate
@@ -78,7 +83,7 @@ def test_optimization_throughput():
     rb = ReplayBuffer(capacity=10000)
     for i in range(1000):
         rb.add({"obs": torch.randn(100)})
-    
+
     # Measure Sync Sampling
     start = time.time()
     for _ in range(100):
@@ -87,7 +92,7 @@ def test_optimization_throughput():
 
     # Measure Prefetched Sampling
     rb.prefetch(batch_size=64, count=100)
-    time.sleep(0.1) # Wait for prefetch to fill
+    time.sleep(0.1)  # Wait for prefetch to fill
     start = time.time()
     for _ in range(100):
         _ = rb.sample(64)
@@ -95,9 +100,11 @@ def test_optimization_throughput():
 
     print(f"\nPrefetching Optimization:")
     print(f"Sync Duration: {duration_sync:.4f}s")
+    # TODO: Prefetch slows down execution, why?
     print(f"Prefetch Duration: {duration_prefetch:.4f}s")
     # Prefetch should be nearly instant (pop from list)
     print(f"Speedup: {duration_sync / duration_prefetch:.2f}x")
+
 
 if __name__ == "__main__":
     test_optimization_throughput()

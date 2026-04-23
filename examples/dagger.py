@@ -34,21 +34,21 @@ class ExpertPolicy:
         return 1 if obs[2] > 0 else 0
 
 # 2. Operators
-def op_student_actor(node, inputs):
+def op_student_actor(node, inputs, context=None):
     obs = list(inputs.values())[0]
     net = node.params["net"]
     with torch.no_grad():
         logits = net(obs.unsqueeze(0))
         return torch.argmax(logits).item()
 
-def op_expert_actor(node, inputs):
+def op_expert_actor(node, inputs, context=None):
     obs = list(inputs.values())[0]
     expert = node.params["expert"]
     return expert(obs)
 
 register_operator("StudentActor", op_student_actor)
 register_operator("ExpertActor", op_expert_actor)
-register_operator(NODE_TYPE_SOURCE, lambda n, i: None)
+register_operator(NODE_TYPE_SOURCE, lambda n, i, c=None: None)
 
 # 3. DAgger Training Loop
 def run_dagger_demo(total_iterations=5, steps_per_iter=500):
@@ -89,7 +89,7 @@ def run_dagger_demo(total_iterations=5, steps_per_iter=500):
         print(f"Iteration {iter_idx}: Buffer Size = {len(sl_buffer)}")
         
         # Phase B: Training
-        if len(sl_buffer) > 64:
+        if len(sl_buffer) > 32:
             iter_losses = []
             for _ in range(20): # 20 gradient steps per iteration
                 batch = sl_buffer.sample(64)

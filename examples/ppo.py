@@ -33,11 +33,18 @@ class ActorCritic(nn.Module):
         return self.actor(x), self.critic(x)
 
 # 2. Register Operators
-def op_policy_actor(node, inputs):
+def op_source(node, inputs, context=None):
+    return None
+
+def op_policy_actor(node, inputs, context=None):
     obs = list(inputs.values())[0]
     ac_net = node.params["ac_net"]
     param_store = node.params["param_store"]
     
+    # Snapshot version in context
+    if context:
+        context.snapshot_actor(node.node_id, param_store.version)
+        
     with torch.inference_mode():
         probs, _ = ac_net(obs.unsqueeze(0))
         dist = torch.distributions.Categorical(probs)
@@ -50,7 +57,7 @@ def op_policy_actor(node, inputs):
         "policy_version": param_store.version
     }
 
-def op_gae(node, inputs):
+def op_gae(node, inputs, context=None):
     trajectory = list(inputs.values())[0]
     gamma = node.params["gamma"]
     gae_lambda = node.params["gae_lambda"]
@@ -75,8 +82,7 @@ def op_gae(node, inputs):
     returns = advantages + values[:-1]
     return {"advantages": advantages, "returns": returns}
 
-def op_ppo_objective(node, inputs):
-    # Merge inputs from 'traj_in' and 'gae'
+def op_ppo_objective(node, inputs, context=None):
     traj_data = inputs.get("traj_in")
     gae_data = inputs.get("gae")
     if not traj_data or not gae_data:
@@ -87,7 +93,7 @@ def op_ppo_objective(node, inputs):
     param_store = node.params["param_store"]
     clip_epsilon = node.params["clip_epsilon"]
     
-    # STALE POLICY DETECTION
+    # STALE POLICY DETECTION using Context or Data
     data_version = data.get("policy_version")
     if data_version is not None and data_version != param_store.version:
         if node.params.get("strict_on_policy", True):
@@ -113,23 +119,21 @@ def op_ppo_objective(node, inputs):
     
     return actor_loss + 0.5 * critic_loss + 0.01 * entropy_loss
 
-def op_optimizer_step(node, inputs):
+def op_optimizer_step(node, inputs, context=None):
     opt_state = node.params["opt_state"]
     param_store = node.params["param_store"]
     loss = list(inputs.values())[0]
     
     if loss.requires_grad:
         opt_state.step(loss)
-        # Explicitly notify param_store that parameters changed (if not shared by ref)
-        # In our case, ParameterStore wraps the same tensors, so we just increment version.
-        param_store.update_parameters({}) # Increment version only
+        param_store.update_parameters({}) # Increment version
     return loss.item()
 
 register_operator("PolicyActor", op_policy_actor)
 register_operator("GAE", op_gae)
 register_operator("PPOObjective", op_ppo_objective)
 register_operator("Optimizer", op_optimizer_step)
-register_operator(NODE_TYPE_SOURCE, lambda n, i: None)
+register_operator(NODE_TYPE_SOURCE, op_source)
 
 # 3. Training Function
 def run_ppo_demo(total_steps=1000):
