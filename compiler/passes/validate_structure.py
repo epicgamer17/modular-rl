@@ -7,6 +7,7 @@ from collections import deque
 from typing import Set, Dict
 
 from core.graph import Graph, NodeId, NODE_TYPE_SOURCE, NODE_TYPE_SINK
+from runtime.specs import get_spec
 from compiler.validation import (
     ValidationIssue,
     ValidationReport,
@@ -113,11 +114,17 @@ def validate_structure(graph: Graph) -> ValidationReport:
             )
 
     # 4. Sinkless source branches
-    # Every node reachable from a SOURCE should eventually reach a node of type SINK.
+    # Every node reachable from a SOURCE should eventually reach a node of type SINK
+    # or an impure node (which performs side effects like logging or state updates).
     has_path_to_sink: Set[NodeId] = set()
-    sinks = [
-        nid for nid, node in graph.nodes.items() if node.node_type == NODE_TYPE_SINK
-    ]
+    sinks = []
+    for nid, node in graph.nodes.items():
+        spec = get_spec(node.node_type)
+        is_explicit_sink = node.node_type == NODE_TYPE_SINK
+        has_side_effects = spec and (not spec.pure or len(spec.side_effects) > 0)
+        
+        if is_explicit_sink or has_side_effects:
+            sinks.append(nid)
 
     # Build reverse adjacency for backward traversal from sinks
     reverse_adj: Dict[NodeId, Set[NodeId]] = {nid: set() for nid in graph.nodes}
@@ -135,7 +142,9 @@ def validate_structure(graph: Graph) -> ValidationReport:
 
     for nid in reachable:
         node = graph.nodes[nid]
-        if node.node_type != NODE_TYPE_SINK and nid not in has_path_to_sink:
+        # A node is valid if it's a sink itself or can reach one
+        is_sink = nid in sinks
+        if not is_sink and nid not in has_path_to_sink:
             report.add(
                 ValidationIssue(
                     severity=SEVERITY_ERROR,

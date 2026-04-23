@@ -4,7 +4,7 @@ Defines types for ports and verifies compatibility between nodes.
 """
 
 from dataclasses import dataclass
-from typing import Dict, Union, Any, Tuple
+from typing import Dict, Union, Any, Tuple, List, Set, Optional, Callable
 
 from core.schema import TensorSpec, Schema, Field
 
@@ -12,27 +12,98 @@ from core.schema import TensorSpec, Schema, Field
 Spec = Union[TensorSpec, Schema]
 
 
+
+@dataclass(frozen=True)
+class PortSpec:
+    """
+    Detailed specification for an individual input or output port.
+    """
+    spec: Spec
+    required: bool = True
+    variadic: bool = False
+    default: Any = None
+    description: str = ""
+
+
 @dataclass(frozen=True)
 class OperatorSpec:
     """
-    Defines the data contract for an operator.
-
-    Attributes:
-        inputs: Mapping of input port names to their required Specs.
-        outputs: Mapping of output port names to their produced Specs.
+    Defines the full metadata and data contract for an operator.
     """
+    name: str
+    version: str = "1.0.0"
 
-    inputs: Dict[str, Spec]
-    outputs: Dict[str, Spec]
+    inputs: Dict[str, PortSpec] = None
+    outputs: Dict[str, PortSpec] = None
+
+    pure: bool = False
+    stateful: bool = False
+    deterministic: bool = False
+
+    side_effects: List[str] = None
+
+    requires_models: List[str] = None
+    requires_buffers: List[str] = None
+    requires_optimizer: bool = False
+
+    allowed_contexts: Set[str] = None   # {"actor", "learner"}
+
+    tags: Set[str] = None
+    shape_fn: Optional[Callable[[Dict[str, Spec]], Dict[str, Spec]]] = None
+
+    def __post_init__(self) -> None:
+        """Initialize optional collections."""
+        pass
 
     @classmethod
     def create(
-        cls, inputs: Dict[str, Spec], outputs: Union[Spec, Dict[str, Spec]]
+        cls, 
+        name: str,
+        inputs: Dict[str, Union[Spec, PortSpec]] = None, 
+        outputs: Union[Spec, Dict[str, Union[Spec, PortSpec]]] = None,
+        version: str = "1.0.0",
+        pure: bool = False,
+        stateful: bool = False,
+        deterministic: bool = False,
+        side_effects: List[str] = None,
+        requires_models: List[str] = None,
+        requires_buffers: List[str] = None,
+        requires_optimizer: bool = False,
+        allowed_contexts: Set[str] = None,
+        tags: Set[str] = None,
+        shape_fn: Optional[Callable[[Dict[str, Spec]], Dict[str, Spec]]] = None
     ) -> "OperatorSpec":
-        """Helper to create a spec, allowing single output to be passed directly."""
-        if not isinstance(outputs, dict):
-            outputs = {"default": outputs}
-        return cls(inputs=inputs, outputs=outputs)
+        """Helper to create a spec with defaults and single output support."""
+        # Process inputs: Wrap raw Specs in PortSpec
+        processed_inputs = {}
+        if inputs:
+            for k, v in inputs.items():
+                processed_inputs[k] = v if isinstance(v, PortSpec) else PortSpec(spec=v)
+
+        # Process outputs: Wrap raw Specs in PortSpec
+        processed_outputs = {}
+        if outputs is not None:
+            if not isinstance(outputs, dict):
+                outputs = {"default": outputs}
+            for k, v in outputs.items():
+                processed_outputs[k] = v if isinstance(v, PortSpec) else PortSpec(spec=v)
+            
+        return cls(
+            name=name,
+            version=version,
+            inputs=processed_inputs,
+            outputs=processed_outputs,
+            pure=pure,
+            stateful=stateful,
+            deterministic=deterministic,
+            side_effects=side_effects or [],
+            requires_models=requires_models or [],
+            requires_buffers=requires_buffers or [],
+            requires_optimizer=requires_optimizer,
+            allowed_contexts=allowed_contexts or {"actor", "learner"},
+            tags=tags or set(),
+            shape_fn=shape_fn
+        )
 
 
 # Helper functions to create specs with a cleaner syntax
@@ -77,14 +148,30 @@ TransitionBatch = Schema(
 _SPEC_REGISTRY: Dict[str, OperatorSpec] = {}
 
 
+import warnings
+
 def register_spec(node_type: str, spec: OperatorSpec) -> None:
     """Registers a specification for a given node type."""
+    if node_type in _SPEC_REGISTRY:
+        existing = _SPEC_REGISTRY[node_type]
+        if existing == spec:
+            return  # Identical, skip warning
+        if existing.version == spec.version:
+            warnings.warn(
+                f"Duplicate version '{spec.version}' for operator '{node_type}'. "
+                "Registering multiple times with the same version is discouraged."
+            )
     _SPEC_REGISTRY[node_type] = spec
 
 
-def get_spec(node_type: str) -> str | OperatorSpec:
+def get_spec(node_type: str) -> Optional[OperatorSpec]:
     """Retrieves the specification for a node type, or None if not registered."""
     return _SPEC_REGISTRY.get(node_type)
+
+
+def clear_registry() -> None:
+    """Resets the operator specification registry. Primarily used for testing."""
+    _SPEC_REGISTRY.clear()
 
 
 def is_compatible(src: Spec, dst: Spec) -> bool:

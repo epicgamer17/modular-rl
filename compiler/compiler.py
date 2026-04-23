@@ -6,10 +6,14 @@ Orchestrates validation passes and optimization.
 from typing import Set, Optional
 from core.graph import Graph
 from compiler.validation import ValidationReport, SEVERITY_ERROR, SEVERITY_WARN
+from compiler.passes.validate_metadata import validate_metadata
 from compiler.passes.validate_structure import validate_structure
 from compiler.passes.validate_ports import validate_ports
 from compiler.passes.validate_rl import validate_rl_semantics
 from compiler.passes.validate_handles import validate_handles
+from compiler.passes.validate_purity import validate_purity
+from compiler.passes.infer_shapes import infer_shapes
+from compiler.optimizer import optimize_graph
 
 
 def compile_graph(
@@ -17,6 +21,8 @@ def compile_graph(
     strict: bool = False,
     model_handles: Optional[Set[str]] = None,
     buffer_handles: Optional[Set[str]] = None,
+    context: str = "both",
+    optimize: bool = True,
 ) -> Graph:
     """
     Compiles an RL IR graph by running all validation passes.
@@ -35,7 +41,18 @@ def compile_graph(
     """
     report = ValidationReport()
 
-    # 1. Structural Checks (Required, Cycles, unreachable nodes)
+    # 0. Metadata Checks (Ensure all types have specifications)
+    report.merge(validate_metadata(graph, strict=strict))
+
+    # 1. Shape Inference (Populate node schemas for validation)
+    graph = infer_shapes(graph)
+
+    # 2. Optimization Passes (DNE, fusion)
+    # Applying these early removes dead nodes that might otherwise trigger validation errors
+    if optimize:
+        graph = optimize_graph(graph)
+
+    # 3. Structural Checks (Required, Cycles, unreachable nodes)
     report.merge(validate_structure(graph))
 
     # 2. Port Contract Checks (Compatible types, Schema field audit)
@@ -46,6 +63,9 @@ def compile_graph(
 
     # 4. Handle Registry Checks (Model/Buffer handle existence)
     report.merge(validate_handles(graph, model_handles, buffer_handles))
+
+    # 5. Purity and Side Effect Checks
+    report.merge(validate_purity(graph, context))
 
     # Check for hard errors
     if report.has_errors():

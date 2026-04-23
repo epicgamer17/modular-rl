@@ -14,6 +14,8 @@ from runtime.values import (
     MissingInput,
     ExecutionError,
 )
+from runtime.tracing import TraceLogger
+import time
 
 # Global operator registry mapping node_type -> execution function
 # def run(node: Node, inputs: Dict[NodeId, Any]) -> Any
@@ -116,6 +118,7 @@ def execute(
     graph: Graph,
     initial_inputs: Dict[NodeId, Any],
     context: Optional[ExecutionContext] = None,
+    tracer: Optional[TraceLogger] = None,
 ) -> Dict[NodeId, Any]:
     """
     Executes the graph using the provided initial inputs for source nodes.
@@ -131,6 +134,8 @@ def execute(
         A dictionary mapping NodeId to their computed outputs.
     """
     context = context or ExecutionContext()
+    if tracer:
+        tracer.start_step()
 
     # 1. Topological Sort (Kahn's Algorithm)
     order = _topological_sort(graph)
@@ -163,6 +168,16 @@ def execute(
                 key = edge.dst_port if edge.dst_port else edge.src
                 inputs[key] = node_outputs[edge.src]
 
+        # 1.5 Inject default values for missing optional ports
+        from runtime.specs import get_spec
+        from runtime.values import Value
+        op_spec = get_spec(node.node_type)
+        if op_spec:
+            for port_name, p_spec in op_spec.inputs.items():
+                # If the port is missing but has a default, inject it
+                if port_name not in inputs and p_spec.default is not None:
+                    inputs[port_name] = Value(p_spec.default)
+
         # Execute operator
         if node.node_type not in OPERATOR_REGISTRY:
             raise RuntimeError(
@@ -186,8 +201,11 @@ def execute(
 
         if skip_reason:
             output = Skipped(skip_reason)
+            runtime_ms = 0.0
         else:
+            start_time = time.perf_counter()
             output = op_func(node, unwrapped_inputs, context=context)
+            runtime_ms = (time.perf_counter() - start_time) * 1000
 
         # Ensure output is a RuntimeValue
         if not isinstance(output, RuntimeValue):
@@ -195,6 +213,19 @@ def execute(
                 output = NoOp()
             else:
                 output = Value(output)
+
+        final_skip_reason = skip_reason
+        if isinstance(output, Skipped) and not final_skip_reason:
+            final_skip_reason = output.reason
+
+        if tracer:
+            tracer.record_node(
+                node_id=nid,
+                inputs=unwrapped_inputs,
+                outputs=output,
+                runtime_ms=runtime_ms,
+                skipped_reason=final_skip_reason,
+            )
 
         node_outputs[nid] = output
 

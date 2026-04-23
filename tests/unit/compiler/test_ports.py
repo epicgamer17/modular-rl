@@ -16,13 +16,13 @@ pytestmark = pytest.mark.unit
 # Setup specifications for test nodes
 register_spec(
     "QValuesSingle",
-    OperatorSpec.create(inputs={"obs": ObsTensor}, outputs=ActionValuesTensor),
+    OperatorSpec.create(name="QValuesSingle", inputs={"obs": ObsTensor}, outputs=ActionValuesTensor),
 )
 register_spec(
-    "TDLoss", OperatorSpec.create(inputs={"batch": TransitionBatch}, outputs=ScalarLoss)
+    "TDLoss", OperatorSpec.create(name="TDLoss", inputs={"batch": TransitionBatch}, outputs=ScalarLoss)
 )
-register_spec("Sampler", OperatorSpec.create(inputs={}, outputs=TransitionBatch))
-register_spec("ObservationSource", OperatorSpec.create(inputs={}, outputs=ObsTensor))
+register_spec("Sampler", OperatorSpec.create(name="Sampler", inputs={}, outputs=TransitionBatch))
+register_spec("ObservationSource", OperatorSpec.create(name="ObservationSource", inputs={}, outputs=ObsTensor))
 
 
 def test_ports_correct_obs_wiring() -> None:

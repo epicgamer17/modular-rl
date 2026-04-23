@@ -16,7 +16,7 @@ pytestmark = pytest.mark.unit
 # Define TDLoss to expect the standard TransitionBatch
 register_spec(
     "TDLoss",
-    OperatorSpec.create(inputs={"batch": TransitionBatch}, outputs=Tensor((), "float32")),
+    OperatorSpec.create(name="TDLoss", inputs={"batch": TransitionBatch}, outputs=Tensor((), "float32")),
 )
 
 
@@ -34,7 +34,7 @@ def test_schema_missing_done_fails() -> None:
     )
 
     register_spec(
-        "IncompleteSampler", OperatorSpec.create(inputs={}, outputs=IncompleteBatch)
+        "IncompleteSampler", OperatorSpec.create(name="IncompleteSampler", inputs={}, outputs=IncompleteBatch)
     )
 
     g = Graph()
@@ -64,7 +64,7 @@ def test_schema_wrong_dtype_fails() -> None:
     )
 
     register_spec(
-        "WrongDtypeSampler", OperatorSpec.create(inputs={}, outputs=WrongDtypeBatch)
+        "WrongDtypeSampler", OperatorSpec.create(name="WrongDtypeSampler", inputs={}, outputs=WrongDtypeBatch)
     )
 
     g = Graph()
@@ -84,7 +84,7 @@ def test_schema_wrong_dtype_fails() -> None:
 def test_schema_valid_batch_passes() -> None:
     """Verifies that a valid TransitionBatch passes schema validation."""
     register_spec(
-        "ValidSampler", OperatorSpec.create(inputs={}, outputs=TransitionBatch)
+        "ValidSampler", OperatorSpec.create(name="ValidSampler", inputs={}, outputs=TransitionBatch)
     )
 
     g = Graph()

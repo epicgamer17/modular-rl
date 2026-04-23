@@ -20,10 +20,10 @@ def test_explainable_port_mismatch_e204() -> None:
     """Rule E204: Port mismatch should show connection path and Expected/Got blocks."""
     # Use unique names to avoid registry conflicts
     register_spec(
-        "ExpSampler", OperatorSpec.create(inputs={}, outputs=TransitionBatch)
+        "ExpSampler", OperatorSpec.create(name="ExpSampler", inputs={}, outputs=TransitionBatch)
     )
     register_spec(
-        "ExpQNet", OperatorSpec.create(inputs={"obs": SingleObs}, outputs=BatchObs)
+        "ExpQNet", OperatorSpec.create(name="ExpQNet", inputs={"obs": SingleObs}, outputs=BatchObs)
     )
 
     g = Graph()
@@ -61,10 +61,10 @@ def test_explainable_field_mismatch_e311() -> None:
         ]
     )
 
-    register_spec("BadSampler", OperatorSpec.create(inputs={}, outputs=BadBatch))
+    register_spec("BadSampler", OperatorSpec.create(name="BadSampler", inputs={}, outputs=BadBatch))
     register_spec(
         "ExpTDLoss",
-        OperatorSpec.create(inputs={"batch": TransitionBatch}, outputs=ScalarLoss),
+        OperatorSpec.create(name="ExpTDLoss", inputs={"batch": TransitionBatch}, outputs=ScalarLoss),
     )
 
     g = Graph()
@@ -96,7 +96,7 @@ def test_explainable_missing_field_e310() -> None:
     )
 
     register_spec(
-        "IncompleteSampler", OperatorSpec.create(inputs={}, outputs=IncompleteBatch)
+        "IncompleteSampler", OperatorSpec.create(name="IncompleteSampler", inputs={}, outputs=IncompleteBatch)
     )
 
     g = Graph()

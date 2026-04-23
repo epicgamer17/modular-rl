@@ -15,13 +15,13 @@ pytestmark = pytest.mark.unit
 
 # Register specific operators for shape/rank validation tests
 register_spec(
-    "QValuesSingle", OperatorSpec.create(inputs={"obs": SingleObs}, outputs=SingleQ)
+    "QValuesSingle", OperatorSpec.create(name="QValuesSingle", inputs={"obs": SingleObs}, outputs=SingleQ)
 )
 register_spec(
-    "QValuesBatch", OperatorSpec.create(inputs={"obs": BatchObs}, outputs=BatchQ)
+    "QValuesBatch", OperatorSpec.create(name="QValuesBatch", inputs={"obs": BatchObs}, outputs=BatchQ)
 )
-register_spec("SingleObsSource", OperatorSpec.create(inputs={}, outputs=SingleObs))
-register_spec("BatchObsSource", OperatorSpec.create(inputs={}, outputs=BatchObs))
+register_spec("SingleObsSource", OperatorSpec.create(name="SingleObsSource", inputs={}, outputs=SingleObs))
+register_spec("BatchObsSource", OperatorSpec.create(name="BatchObsSource", inputs={}, outputs=BatchObs))
 
 
 def test_shape_single_to_single_passes() -> None:

@@ -1,8 +1,14 @@
 import pytest
 from core.graph import Graph, NODE_TYPE_SOURCE, NODE_TYPE_SINK, Edge
+from runtime.specs import register_spec, OperatorSpec
 from compiler.compiler import compile_graph
 
 pytestmark = pytest.mark.unit
+
+# Register dummy specs to satisfy validate_metadata
+register_spec(NODE_TYPE_SOURCE, OperatorSpec.create(name=NODE_TYPE_SOURCE))
+register_spec(NODE_TYPE_SINK, OperatorSpec.create(name=NODE_TYPE_SINK))
+register_spec("SomeType", OperatorSpec.create(name="SomeType"))
 
 
 def test_compile_strict_mode_converts_warnings_to_errors() -> None:
@@ -36,7 +42,7 @@ def test_compile_normal_mode_allows_warnings() -> None:
 
     # Should not raise in normal mode
     result = compile_graph(g, strict=False)
-    assert result == g
+    assert isinstance(result, Graph)
 
 
 def test_compile_hard_error_always_fails() -> None:
