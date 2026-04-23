@@ -7,6 +7,7 @@ Nodes, Edges, and the Graph container itself.
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Any, NewType, Set
+from core.schema import Schema
 
 # Type alias for Node identifiers
 NodeId = NewType("NodeId", str)
@@ -39,8 +40,8 @@ class Node:
     """
     node_id: NodeId
     node_type: str
-    schema_in: Dict[str, Any] = field(default_factory=dict)
-    schema_out: Dict[str, Any] = field(default_factory=dict)
+    schema_in: Schema = field(default_factory=lambda: Schema(fields=[]))
+    schema_out: Schema = field(default_factory=lambda: Schema(fields=[]))
     params: Dict[str, Any] = field(default_factory=dict)
     tags: List[str] = field(default_factory=list)
 
@@ -75,8 +76,8 @@ class Graph:
         self, 
         node_id: str, 
         node_type: str, 
-        schema_in: Dict[str, Any] = None,
-        schema_out: Dict[str, Any] = None,
+        schema_in: Schema = None,
+        schema_out: Schema = None,
         params: Dict[str, Any] = None,
         tags: List[str] = None
     ) -> Node:
@@ -100,8 +101,8 @@ class Graph:
         node = Node(
             node_id=nid,
             node_type=node_type,
-            schema_in=schema_in or {},
-            schema_out=schema_out or {},
+            schema_in=schema_in or Schema(fields=[]),
+            schema_out=schema_out or Schema(fields=[]),
             params=params or {},
             tags=tags or []
         )
