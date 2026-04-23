@@ -18,6 +18,7 @@ NODE_TYPE_TRANSFORM = "Transform"
 NODE_TYPE_SOURCE = "Source"
 NODE_TYPE_SINK = "Sink"
 NODE_TYPE_CONTROL = "Control"
+NODE_TYPE_TRANSFER = "Transfer"
 
 class EdgeType(Enum):
     """Types of edges representing different flow semantics."""

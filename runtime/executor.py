@@ -15,6 +15,10 @@ def register_operator(node_type: str, func: Callable[[Node, Dict[NodeId, Any], E
     """Registers an execution function for a node type."""
     OPERATOR_REGISTRY[node_type] = func
 
+# Register built-in operators
+from runtime.operators.transfer import register_transfer_operators
+register_transfer_operators(register_operator)
+
 def execute(
     graph: Graph, 
     initial_inputs: Dict[NodeId, Any],
