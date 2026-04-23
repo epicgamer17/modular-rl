@@ -58,10 +58,10 @@ def test_dagger_triviality():
     
     # DAgger Recording Logic: Record Student's Obs and Expert's Action
     def dagger_record_fn(step_data):
-        expert_action = step_data["metadata"]["actor_results"]["expert"]
+        expert_val = step_data["metadata"]["actor_results"]["expert"]
         sl_buffer.add({
             "obs": step_data["obs"],
-            "action": torch.tensor(expert_action)
+            "action": torch.tensor(expert_val.data)
         })
         
     runtime = ActorRuntime(graph, env, recording_fn=dagger_record_fn)

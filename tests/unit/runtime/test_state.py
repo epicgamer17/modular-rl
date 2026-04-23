@@ -42,10 +42,10 @@ def test_parameter_store_updates():
     
     # Update
     new_w = torch.ones(2, 2)
-    store.update_parameters({"weight": new_w})
+    store.update_state({"weight": new_w})
     
     assert store.version == 1
-    assert torch.all(store.get_parameters()["weight"] == 1.0)
+    assert torch.all(store.get_state()["weight"] == 1.0)
     # Check in-place mutation vs replacement
     # Our implementation uses .copy_() for existing keys
     assert initial_w.sum() == 4.0 # initial_w was modified in-place

@@ -41,7 +41,7 @@ def test_replay_query_filtering():
     })
     
     res = execute(graph, initial_inputs={})
-    samples = res["query"]
+    samples = res["query"].data
     assert len(samples) == 5
     for s in samples:
         assert s["metadata"]["on_policy"] is True
@@ -55,7 +55,7 @@ def test_replay_query_filtering():
     })
     
     res_expert = execute(graph_expert, initial_inputs={})
-    samples_expert = res_expert["query"]
+    samples_expert = res_expert["query"].data
     assert len(samples_expert) == 5
     for s in samples_expert:
         assert s["metadata"]["is_expert"] is True
@@ -74,7 +74,7 @@ def test_replay_query_temporal_window():
     })
     
     res = execute(graph, initial_inputs={})
-    samples = res["query"]
+    samples = res["query"].data
     assert len(samples) == 3
     # Should be the last 3 added (7, 8, 9)
     vals = sorted([s["val"].item() for s in samples])
@@ -94,7 +94,7 @@ def test_replay_query_contiguous():
     })
     
     res = execute(graph, initial_inputs={})
-    samples = res["query"]
+    samples = res["query"].data
     assert len(samples) == 4
     # Check if contiguous
     first_val = samples[0]["val"].item()
@@ -117,7 +117,7 @@ def test_replay_query_version_constraint():
     })
     
     res = execute(graph, initial_inputs={})
-    samples = res["query"]
+    samples = res["query"].data
     assert len(samples) == 1
     # Check version
     snap = samples[0]["metadata"]["context"]["actor_snapshots"]["actor"]

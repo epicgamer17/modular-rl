@@ -17,7 +17,7 @@ def test_metrics_sink_emits_periodically(capsys):
     graph = Graph()
     graph.add_node("data_source", NODE_TYPE_SOURCE)
     graph.add_node("metrics", NODE_TYPE_METRICS_SINK, params={"log_frequency": 5})
-    graph.add_edge("data_source", "metrics")
+    graph.add_edge("data_source", "metrics", dst_port="batch")
     
     # Run multiple times with different learner steps
     for i in range(11):
@@ -44,7 +44,7 @@ def test_metrics_sink_output_dict():
     graph = Graph()
     graph.add_node("data_source", NODE_TYPE_SOURCE)
     graph.add_node("metrics", NODE_TYPE_METRICS_SINK)
-    graph.add_edge("data_source", "metrics")
+    graph.add_edge("data_source", "metrics", dst_port="batch")
     
     ctx = ExecutionContext(learner_step=1, actor_step=10, sync_step=2, episode_count=1)
     data = {
@@ -54,7 +54,7 @@ def test_metrics_sink_output_dict():
     }
     
     outputs = execute(graph, {"data_source": data}, context=ctx)
-    metrics = outputs["metrics"]
+    metrics = outputs["metrics"].data
     
     assert metrics["loss"] == 0.5
     assert metrics["reward"] == 10.0

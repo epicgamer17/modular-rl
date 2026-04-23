@@ -47,7 +47,7 @@ def test_minimal_linear_graph():
     expected = torch.tensor([4.0, 6.0])
     
     assert "layer1" in results
-    assert torch.allclose(results["layer1"], expected)
+    assert torch.allclose(results["layer1"].data, expected)
     print("\nExecution Results:")
     print(f"  obs: {results['obs']}")
     print(f"  layer1: {results['layer1']}")

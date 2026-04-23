@@ -28,7 +28,7 @@ def test_runtime_split_async_behavior():
     
     def op_actor(node, inputs, context=None):
         if context:
-            context.bind_actor(node.node_id, ActorSnapshot(ps.version, ps.get_parameters()))
+            context.bind_actor(node.node_id, ActorSnapshot(ps.version, ps.get_state()))
         return 0
         
     register_operator("ActorNode", op_actor)
@@ -78,7 +78,7 @@ def test_runtime_split_async_behavior():
     assert results["learner"] == "ok"
     
     # Scenario B: Actor updates policy, making old data stale
-    ps.update_parameters({}) # Increment version
+    ps.update_state({}) # Increment version
     
     # Wait for more data
     time.sleep(0.01)

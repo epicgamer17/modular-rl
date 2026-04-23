@@ -21,12 +21,14 @@ def test_declarative_replay_query_and_min_size():
         return {"data": batch, "collated": True}
         
     train_graph = Graph()
+    train_graph.add_node("traj_in", NODE_TYPE_SOURCE)
     train_graph.add_node("sampler", NODE_TYPE_REPLAY_QUERY, params={
         "replay_buffer": rb,
         "batch_size": 2,
         "min_size": 5,
         "collator": mock_collator
     })
+    # sampler should not have an edge from traj_in unless it actually needs it
     
     # Track if the downstream node was called with valid data
     received_batch = None
@@ -97,10 +99,12 @@ def test_learner_runtime_no_override_dqn_style():
     
     learner = LearnerRuntime(graph, replay_buffer=rb)
     results = learner.update_step()
-    
     assert results["opt"] == "stepped"
     
     # Clear buffer to trigger min_size
     rb.buffer.clear()
     results = learner.update_step()
-    assert results["opt"] == "skipped"
+    # Now it should be a MissingInput/Skipped because buffer is empty
+    from runtime.values import RuntimeValue
+    assert isinstance(results["opt"], RuntimeValue)
+    assert not results["opt"].has_data

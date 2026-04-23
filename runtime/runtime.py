@@ -156,7 +156,15 @@ class LearnerRuntime:
             self.train_graph, initial_inputs=initial_inputs, context=context
         )
         context.learner_step += 1
-        return results
+        
+        # Unwrap values for usability (keep Skipped/NoOp as is)
+        unwrapped = {}
+        for k, v in results.items():
+            if hasattr(v, "has_data") and v.has_data:
+                unwrapped[k] = v.data
+            else:
+                unwrapped[k] = v
+        return unwrapped
 
     def execute(
         self,

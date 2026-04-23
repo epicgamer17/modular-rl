@@ -42,10 +42,10 @@ def test_explicit_transfer_semantics():
     results = execute(graph, initial_inputs={"replay_out": cpu_ref})
     
     # 3. Verification
-    assert results["update"] == "update_done"
+    assert results["update"].data == "update_done"
     
     # Verify the transfer history of the object that reached the learner
-    to_gpu_ref = results["to_gpu"]
+    to_gpu_ref = results["to_gpu"].data
     assert to_gpu_ref.location == StorageLocation.GPU
     assert any(h["reason"] == "explicit_move" for h in to_gpu_ref.transfer_history)
     
@@ -62,10 +62,10 @@ def test_serialization_semantics():
     data = torch.tensor([1, 2, 3])
     results = execute(graph, initial_inputs={"data_in": data})
     
-    assert isinstance(results["serialize"], bytes)
-    assert isinstance(results["deserialize"], DataRef)
-    assert torch.equal(results["deserialize"].data, data)
-    assert results["deserialize"].location == StorageLocation.CPU
+    assert isinstance(results["serialize"].data, bytes)
+    assert isinstance(results["deserialize"].data, DataRef)
+    assert torch.equal(results["deserialize"].data.data, data)
+    assert results["deserialize"].data.location == StorageLocation.CPU
 
 if __name__ == "__main__":
     test_explicit_transfer_semantics()

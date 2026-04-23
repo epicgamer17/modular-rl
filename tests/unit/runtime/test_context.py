@@ -13,7 +13,7 @@ pytestmark = pytest.mark.unit
 def test_context_snapshot_consistency():
     """Verify that ExecutionContext correctly snapshots actor versions."""
     ctx = ExecutionContext(step_id=100)
-    ctx.bind_actor("policy_1", ActorSnapshot(policy_version=5, parameters={}, config={}))
+    ctx.bind_actor("policy_1", ActorSnapshot(policy_version=5, state={}, config={}))
     
     data = ctx.to_dict()
     assert data["step_id"] == 100
@@ -43,11 +43,11 @@ def test_parallel_context_isolation():
     # Operator that snapshots its version in the context
     def op_actor_with_ver(node, inputs, context=None):
         if context:
-            context.bind_actor(node.node_id, ActorSnapshot(ps.version, ps.get_parameters()))
+            context.bind_actor(node.node_id, ActorSnapshot(ps.version, ps.get_state()))
         return 0
         
     register_operator("VersionedActor", op_actor_with_ver)
-    register_operator(NODE_TYPE_SOURCE, lambda n, i, c=None: None)
+    register_operator(NODE_TYPE_SOURCE, lambda n, i, context=None: None)
     
     graph.add_node("actor", "VersionedActor")
     graph.add_edge("obs_in", "actor")
@@ -68,7 +68,7 @@ def test_parallel_context_isolation():
     # Run in batches while updating ParameterStore in background
     def updater():
         for _ in range(5):
-            ps.update_parameters({"w": torch.tensor(1.0)}) # Increment version
+            ps.update_state({"w": torch.tensor(1.0)}) # Increment version
             
     update_thread = threading.Thread(target=updater)
     update_thread.start()
