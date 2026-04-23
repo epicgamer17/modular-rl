@@ -7,7 +7,8 @@ from typing import Any, Dict, List, Optional, Callable
 import torch
 from core.graph import Graph
 from runtime.executor import execute
-from runtime.context import ExecutionContext
+from runtime.context import ExecutionContext, ActorSnapshot
+from runtime.state import ParameterStore
 
 class ActorRuntime:
     """
@@ -38,6 +39,15 @@ class ActorRuntime:
         if self.current_obs is None:
             self.reset()
             
+        # Bind snapshots for all actors defined in the graph that have parameters
+        for nid, node in self.interact_graph.nodes.items():
+            if "param_store" in node.params:
+                ps = node.params["param_store"]
+                if isinstance(ps, ParameterStore):
+                    if not context.get_actor_snapshot(nid):
+                        snapshot = ActorSnapshot(ps.version, ps.get_parameters())
+                        context.bind_actor(nid, snapshot)
+
         results = execute(self.interact_graph, initial_inputs={"obs_in": self.current_obs}, context=context)
         action_data = results.get("actor")
         

@@ -9,6 +9,7 @@ import torch.optim as optim
 import gymnasium as gym
 import random
 import numpy as np
+from torch.func import functional_call
 from core.graph import (
     Graph,
     NODE_TYPE_SOURCE,
@@ -46,6 +47,7 @@ def op_q_actor(node, inputs, context=None):
     if obs is None:
         return None
     q_net = node.params["q_net"]
+    param_store = node.params.get("param_store")
     epsilon = node.params["epsilon"]
     act_dim = node.params["act_dim"]
 
@@ -54,8 +56,15 @@ def op_q_actor(node, inputs, context=None):
     if rng.random() < epsilon:
         return rng.randint(0, act_dim - 1)
 
+    # Use frozen snapshot if available
+    snapshot = context.get_actor_snapshot(node.node_id) if context else None
+    if snapshot:
+        params = snapshot.parameters
+    else:
+        params = dict(q_net.named_parameters())
+
     with torch.inference_mode():
-        q_values = q_net(obs.unsqueeze(0))
+        q_values = functional_call(q_net, params, (obs.unsqueeze(0),))
         return torch.argmax(q_values).item()
 
 
@@ -130,6 +139,7 @@ def train_dqn(env_name="CartPole-v1", total_steps=30_000):
     target_net.load_state_dict(q_net.state_dict())
 
     rb = ReplayBuffer(capacity=50000)
+    param_store = ParameterStore(dict(q_net.named_parameters()))
     opt = optim.Adam(q_net.parameters(), lr=1e-3)
     opt_state = OptimizerState(opt)
 
@@ -137,7 +147,7 @@ def train_dqn(env_name="CartPole-v1", total_steps=30_000):
     interact_graph = Graph()
     interact_graph.add_node("obs_in", NODE_TYPE_SOURCE)
     interact_graph.add_node(
-        "actor", "QActor", params={"q_net": q_net, "epsilon": 0.1, "act_dim": act_dim}
+        "actor", "QActor", params={"q_net": q_net, "param_store": param_store, "epsilon": 0.1, "act_dim": act_dim}
     )
     interact_graph.add_edge("obs_in", "actor")
 

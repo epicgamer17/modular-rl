@@ -2,7 +2,7 @@ import pytest
 import torch
 import gymnasium as gym
 import threading
-from runtime.context import ExecutionContext
+from runtime.context import ExecutionContext, ActorSnapshot
 from runtime.runtime import ActorRuntime
 from runtime.scheduler import ParallelActorPool
 from runtime.state import ParameterStore, ReplayBuffer
@@ -14,11 +14,11 @@ pytestmark = pytest.mark.unit
 def test_context_snapshot_consistency():
     """Verify that ExecutionContext correctly snapshots actor versions."""
     ctx = ExecutionContext(step_id=100)
-    ctx.snapshot_actor("policy_1", version=5)
+    ctx.bind_actor("policy_1", ActorSnapshot(policy_version=5, parameters={}, config={}))
     
     data = ctx.to_dict()
     assert data["step_id"] == 100
-    assert data["actor_snapshots"]["policy_1"] == 5
+    assert data["actor_snapshots"]["policy_1"]["policy_version"] == 5
 
 def test_context_derivation():
     """Verify that derived contexts inherit lineage and increment step IDs."""
@@ -44,7 +44,7 @@ def test_parallel_context_isolation():
     # Operator that snapshots its version in the context
     def op_actor_with_ver(node, inputs, context=None):
         if context:
-            context.snapshot_actor(node.node_id, ps.version)
+            context.bind_actor(node.node_id, ActorSnapshot(ps.version, ps.get_parameters()))
         return 0
         
     register_operator("VersionedActor", op_actor_with_ver)
@@ -98,7 +98,8 @@ def test_parallel_context_isolation():
         # In this simple test, we just ensure every trace has a version recorded
         # Causal consistency means the version recorded MUST be the one that existed 
         # at the time of execution.
-        ver = ctx["actor_snapshots"]["actor"]
+        snap = ctx["actor_snapshots"]["actor"]
+        ver = snap["policy_version"] if isinstance(snap, dict) else snap
         assert isinstance(ver, int)
         
     print(f"Verified 9.1: Causal consistency maintained across {num_actors} parallel actors.")

@@ -84,11 +84,12 @@ class ParameterStore:
         Updates parameters in-place and increments version.
         Explicitly uses .copy_() to maintain reference integrity if needed.
         """
-        for name, param in new_params.items():
-            if name in self._params:
-                self._params[name].copy_(param)
-            else:
-                self._params[name] = param.detach().clone()
+        with torch.no_grad():
+            for name, param in new_params.items():
+                if name in self._params:
+                    self._params[name].copy_(param)
+                else:
+                    self._params[name] = param.detach().clone()
         self._version += 1
 
 class OptimizerState:

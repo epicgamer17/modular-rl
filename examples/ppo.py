@@ -9,6 +9,7 @@ import torch.optim as optim
 import gymnasium as gym
 import random
 import numpy as np
+from torch.func import functional_call
 from core.graph import Graph, NODE_TYPE_SOURCE, NODE_TYPE_ACTOR, NODE_TYPE_TRANSFORM
 from runtime.executor import execute, register_operator
 from runtime.state import ReplayBuffer, ParameterStore, OptimizerState
@@ -41,12 +42,18 @@ def op_policy_actor(node, inputs, context=None):
     ac_net = node.params["ac_net"]
     param_store = node.params["param_store"]
     
-    # Snapshot version in context
-    if context:
-        context.snapshot_actor(node.node_id, param_store.version)
+    # Use frozen snapshot if available in context
+    snapshot = context.get_actor_snapshot(node.node_id) if context else None
+    
+    if snapshot:
+        params = snapshot.parameters
+        version = snapshot.policy_version
+    else:
+        params = dict(ac_net.named_parameters())
+        version = param_store.version
         
     with torch.inference_mode():
-        probs, _ = ac_net(obs.unsqueeze(0))
+        probs, _ = functional_call(ac_net, params, (obs.unsqueeze(0),))
         dist = torch.distributions.Categorical(probs)
         action = dist.sample()
         log_prob = dist.log_prob(action)
@@ -54,7 +61,7 @@ def op_policy_actor(node, inputs, context=None):
     return {
         "action": action.item(),
         "log_prob": log_prob.item(),
-        "policy_version": param_store.version
+        "policy_version": version
     }
 
 def op_gae(node, inputs, context=None):

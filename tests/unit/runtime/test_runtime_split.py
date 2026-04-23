@@ -4,7 +4,7 @@ import gymnasium as gym
 import threading
 import time
 from runtime.runtime import ActorRuntime, LearnerRuntime
-from runtime.context import ExecutionContext
+from runtime.context import ExecutionContext, ActorSnapshot
 from runtime.state import ParameterStore, ReplayBuffer
 from core.graph import Graph, NODE_TYPE_SOURCE
 from core.schema import TAG_ON_POLICY
@@ -28,7 +28,7 @@ def test_runtime_split_async_behavior():
     
     def op_actor(node, inputs, context=None):
         if context:
-            context.snapshot_actor(node.node_id, ps.version)
+            context.bind_actor(node.node_id, ActorSnapshot(ps.version, ps.get_parameters()))
         return 0
         
     register_operator("ActorNode", op_actor)
@@ -48,8 +48,8 @@ def test_runtime_split_async_behavior():
     
     def op_ppo_learner(node, inputs, context=None):
         batch = inputs["traj_in"]
-        # Explicit staleness check (Semantic requirement of PPO)
-        data_version = batch["metadata"]["context"]["actor_snapshots"]["actor"]
+        snap = batch["metadata"]["context"]["actor_snapshots"]["actor"]
+        data_version = snap["policy_version"] if isinstance(snap, dict) else snap
         if data_version != ps.version:
             raise ValueError(f"FORBIDDEN STALENESS: Data v{data_version} != Policy v{ps.version}")
         return "ok"
@@ -87,7 +87,9 @@ def test_runtime_split_async_behavior():
     # We find an old entry
     old_entry = None
     for item in rb.buffer:
-        if item["metadata"]["context"]["actor_snapshots"]["actor"] == 0:
+        snap = item["metadata"]["context"]["actor_snapshots"]["actor"]
+        data_version = snap["policy_version"] if isinstance(snap, dict) else snap
+        if data_version == 0:
             old_entry = item
             break
             
