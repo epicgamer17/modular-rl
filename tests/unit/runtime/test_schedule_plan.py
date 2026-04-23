@@ -44,7 +44,7 @@ def test_schedule_plan_parallel_strategy():
     
     # Track which threads ran the actors
     thread_ids = set()
-    def mock_step():
+    def mock_step(context=None):
         thread_ids.add(threading.get_ident())
         
     runtime_1 = MagicMock()

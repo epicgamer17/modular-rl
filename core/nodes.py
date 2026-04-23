@@ -84,6 +84,17 @@ def create_schedule_def() -> NodeDef:
         description="Defines a declarative execution schedule for actors and learners."
     )
 
+def create_target_sync_def() -> NodeDef:
+    """Creates a definition for a TargetSync node."""
+    from core.graph import NODE_TYPE_TARGET_SYNC
+    from core.schema import Schema
+    return NodeDef(
+        node_type=NODE_TYPE_TARGET_SYNC,
+        input_schema=Schema(fields=[]),
+        output_schema=Schema(fields=[]),
+        description="Synchronizes parameters between online and target networks."
+    )
+
 # --- Registry ---
 
 class NodeRegistry:

@@ -47,10 +47,25 @@ def compile_schedule(graph: Graph, user_hints: Dict[str, Any] = None) -> Schedul
     if has_on_policy and "step" not in sync:
         sync.append("step")
         
+    # 5. Target Sync Logic
+    sync_freq = hints.get("target_sync_frequency")
+    sync_tau = hints.get("target_sync_tau", 1.0)
+    sync_on = hints.get("target_sync_on", "learner_step")
+    
+    from core.graph import NODE_TYPE_TARGET_SYNC
+    has_target_sync = any(n.node_type == NODE_TYPE_TARGET_SYNC for n in graph.nodes.values())
+    
+    if sync_freq is None:
+        # Default to 100 learner steps if target sync nodes exist but no hint given
+        sync_freq = 100 if has_target_sync else 0
+
     return SchedulePlan(
         actor_frequency=actor_freq,
         learner_frequency=learner_freq,
         prefetch_depth=prefetch,
         batching_strategy=strategy,
-        sync_points=sync
+        sync_points=sync,
+        target_sync_frequency=sync_freq,
+        target_sync_tau=sync_tau,
+        target_sync_on=sync_on
     )

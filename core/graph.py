@@ -21,6 +21,7 @@ NODE_TYPE_CONTROL = "Control"
 NODE_TYPE_REPLAY_QUERY = "ReplayQuery"
 NODE_TYPE_SCHEDULE = "Schedule"
 NODE_TYPE_TRANSFER = "Transfer"
+NODE_TYPE_TARGET_SYNC = "TargetSync"
 
 class EdgeType(Enum):
     """Types of edges representing different flow semantics."""

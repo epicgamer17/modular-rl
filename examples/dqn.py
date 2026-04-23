@@ -11,7 +11,13 @@ import random
 import numpy as np
 from typing import Optional, Dict, Any
 from torch.func import functional_call
-from core.graph import Graph, NODE_TYPE_SOURCE, NODE_TYPE_ACTOR, NODE_TYPE_REPLAY_QUERY
+from core.graph import (
+    Graph,
+    NODE_TYPE_SOURCE,
+    NODE_TYPE_ACTOR,
+    NODE_TYPE_REPLAY_QUERY,
+    NODE_TYPE_TARGET_SYNC,
+)
 from core.schema import TAG_OFF_POLICY, Schema
 from runtime.executor import register_operator
 from runtime.context import ExecutionContext
@@ -119,7 +125,6 @@ def train_dqn(total_steps=1000):
     interact_graph.add_edge("obs_in", "actor")
 
     train_graph = Graph()
-    # ReplayQuery is now a first-class node
     train_graph.add_node("sampler", NODE_TYPE_REPLAY_QUERY)
     train_graph.add_node(
         "loss",
@@ -127,6 +132,14 @@ def train_dqn(total_steps=1000):
         params={"q_net": q_net, "target_net": target_net, "gamma": 0.99},
     )
     train_graph.add_node("opt", "Optimizer", params={"opt_state": opt_state})
+    
+    # 4. NEW: Declarative Target Sync
+    train_graph.add_node("sync", NODE_TYPE_TARGET_SYNC, params={
+        "source_net": q_net,
+        "target_net": target_net,
+        "sync_type": "periodic_hard"
+    })
+    
     train_graph.add_edge("sampler", "loss")
     train_graph.add_edge("loss", "opt")
 
@@ -151,18 +164,19 @@ def train_dqn(total_steps=1000):
                         )
                         for k in batch[0].keys()
                     }
-                    super().update_step(collated)
-
-                # Target Update
-                if random.random() < 0.01:
-                    # TODO: make this update with training steps
-                    target_net.load_state_dict(q_net.state_dict())
+                    super().update_step(collated, context=context)
 
     learner_runtime = DQNLearner(train_graph, replay_buffer=rb)
 
     # 3. Compiler-Driven Scheduling
     plan = compile_schedule(
-        train_graph, user_hints={"actor_frequency": 1, "learner_frequency": 1}
+        train_graph, 
+        user_hints={
+            "actor_frequency": 1, 
+            "learner_frequency": 1,
+            "target_sync_frequency": 100, # Sync every 100 learner steps
+            "target_sync_on": "learner_step"
+        }
     )
     executor = ScheduleExecutor(plan, actor_runtime, learner_runtime)
 

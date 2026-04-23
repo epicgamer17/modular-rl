@@ -42,12 +42,20 @@ class ExecutionContext:
         step_id: int = 0,
         policy_versions: Optional[Dict[str, int]] = None,
         device: str = "cpu",
-        seed: int = 42
+        seed: int = 42,
+        global_step: int = 0,
+        env_step: int = 0,
+        learner_step: int = 0
     ):
         self.step_id = step_id
         self.policy_versions = policy_versions or {}
         self.device = device
         self.seed = seed
+        
+        # Clocks
+        self.global_step = global_step
+        self.env_step = env_step
+        self.learner_step = learner_step
         
         # RNG state isolation
         self.rng = random.Random(seed)
@@ -59,6 +67,12 @@ class ExecutionContext:
         self.actor_snapshots: Dict[str, ActorSnapshot] = {}
         self.device_placement: Dict[str, str] = {}
         self.trace_lineage: List[str] = []
+        
+        # Target Sync State
+        self.sync_state: Dict[str, Any] = {
+            "last_learner_sync": 0,
+            "last_env_sync": 0
+        }
 
     def bind_actor(self, actor_id: str, snapshot: ActorSnapshot):
         """Binds an actor to a specific immutable snapshot for this context."""
@@ -74,11 +88,16 @@ class ExecutionContext:
             step_id=step_id if step_id is not None else self.step_id + 1,
             policy_versions=self.policy_versions.copy(),
             device=self.device,
-            seed=self.rng.randint(0, 10**6)
+            seed=self.rng.randint(0, 10**6),
+            global_step=self.global_step,
+            env_step=self.env_step,
+            learner_step=self.learner_step
         )
         new_ctx.trace_lineage = self.trace_lineage + [self.trace_id]
         # Inherit actor snapshots
         new_ctx.actor_snapshots = self.actor_snapshots.copy()
+        # Inherit sync state
+        new_ctx.sync_state = self.sync_state.copy()
         return new_ctx
 
     def to_dict(self) -> Dict[str, Any]:

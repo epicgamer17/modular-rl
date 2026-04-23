@@ -39,6 +39,10 @@ def op_replay_query(node, inputs, context=None):
 
 register_operator(NODE_TYPE_REPLAY_QUERY, op_replay_query)
 
+from core.graph import NODE_TYPE_TARGET_SYNC
+from runtime.operators.target_sync import op_target_sync
+register_operator(NODE_TYPE_TARGET_SYNC, op_target_sync)
+
 def execute(
     graph: Graph, 
     initial_inputs: Dict[NodeId, Any],
