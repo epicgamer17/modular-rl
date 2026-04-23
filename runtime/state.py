@@ -8,6 +8,48 @@ from typing import List, Dict, Any, Optional
 import torch
 import random
 import threading
+import torch.nn as nn
+
+
+class ModelRegistry:
+    """
+    A central registry for named PyTorch modules.
+    Allows graph nodes to reference models by name (ModelHandle) 
+    instead of carrying raw Python objects.
+    """
+
+    def __init__(self):
+        self._models: Dict[str, nn.Module] = {}
+
+    def register(self, name: str, model: nn.Module) -> None:
+        """Registers a model under a specific handle."""
+        self._models[name] = model
+
+    def get(self, name: str) -> nn.Module:
+        """Retrieves a model by its handle."""
+        if name not in self._models:
+            raise KeyError(f"Model handle '{name}' not found in registry.")
+        return self._models[name]
+
+
+class BufferRegistry:
+    """
+    A central registry for named ReplayBuffers.
+    Allows graph nodes to reference buffers by string handles.
+    """
+
+    def __init__(self):
+        self._buffers: Dict[str, Any] = {}
+
+    def register(self, name: str, buffer: Any) -> None:
+        """Registers a buffer under a specific handle."""
+        self._buffers[name] = buffer
+
+    def get(self, name: str) -> Any:
+        """Retrieves a buffer by its handle."""
+        if name not in self._buffers:
+            raise KeyError(f"Buffer handle '{name}' not found in registry.")
+        return self._buffers[name]
 
 
 class ReplayBuffer:
@@ -33,6 +75,12 @@ class ReplayBuffer:
             else:
                 self.buffer[self.position] = new_entry
             self.position = (self.position + 1) % self.capacity
+
+    def clear(self) -> None:
+        """Empties the buffer and resets the position."""
+        with self._lock:
+            self.buffer.clear()
+            self.position = 0
 
     def sample(
         self, batch_size: int, seed: Optional[int] = None
@@ -154,42 +202,44 @@ class ReplayBuffer:
 
 class ParameterStore:
     """
-    Manages model parameters and versioning.
+    Manages model state (parameters and buffers) and versioning.
     """
 
-    def __init__(self, parameters: Dict[str, torch.Tensor]):
-        self._params = parameters
+    def __init__(self, state: Dict[str, torch.Tensor]):
+        self._state = state
         self._version = 0
 
     @property
     def version(self) -> int:
         return self._version
 
-    def get_parameters(self) -> Dict[str, torch.Tensor]:
-        """Returns the current parameters."""
-        return self._params
+    def get_state(self) -> Dict[str, torch.Tensor]:
+        """Returns the current state (parameters and buffers)."""
+        return self._state
 
-    def update_parameters(self, new_params: Dict[str, torch.Tensor]) -> None:
+    def update_state(self, new_state: Dict[str, torch.Tensor]) -> None:
         """
-        Updates parameters in-place and increments version.
+        Updates state in-place and increments version.
         Explicitly uses .copy_() to maintain reference integrity if needed.
         """
         with torch.no_grad():
-            for name, param in new_params.items():
-                if name in self._params:
-                    self._params[name].copy_(param)
+            for name, tensor in new_state.items():
+                if name in self._state:
+                    self._state[name].copy_(tensor)
                 else:
-                    self._params[name] = param.detach().clone()
+                    self._state[name] = tensor.detach().clone()
         self._version += 1
 
 
 class OptimizerState:
     """
     Stores optimizer-specific state (e.g., moments, step count).
+    Guarantees the full optimization lifecycle: zero_grad, backward, clip, and step.
     """
 
-    def __init__(self, optimizer: torch.optim.Optimizer):
+    def __init__(self, optimizer: torch.optim.Optimizer, grad_clip: Optional[float] = None):
         self.optimizer = optimizer
+        self.grad_clip = grad_clip
 
     def get_state(self) -> Dict[str, Any]:
         """Returns the internal state of the optimizer."""
@@ -199,8 +249,39 @@ class OptimizerState:
         """Sets the internal state of the optimizer."""
         self.optimizer.load_state_dict(state_dict)
 
-    def step(self, loss: torch.Tensor) -> None:
-        """Performs a single optimization step."""
+    def step(self, loss: torch.Tensor) -> Dict[str, float]:
+        """
+        Performs a single optimization step.
+        Guarantees: zero_grad, backward, grad_clipping, and step.
+        
+        Returns:
+            Dictionary with grad_norm, lr, and loss.
+        """
         self.optimizer.zero_grad(set_to_none=True)
+        
+        loss_value = loss.item()
         loss.backward()
+        
+        # Calculate grad norm and perform clipping
+        grad_norm = 0.0
+        params = []
+        for group in self.optimizer.param_groups:
+            for p in group['params']:
+                if p.grad is not None:
+                    params.append(p)
+        
+        if params:
+            # Use torch.nn.utils.clip_grad_norm_ to get norm even if clipping is disabled
+            max_norm = self.grad_clip if self.grad_clip is not None else float('inf')
+            grad_norm = torch.nn.utils.clip_grad_norm_(params, max_norm).item()
+
         self.optimizer.step()
+        
+        # Get current learning rate (from first param group)
+        lr = self.optimizer.param_groups[0]['lr']
+        
+        return {
+            "loss": loss_value,
+            "grad_norm": grad_norm,
+            "lr": lr
+        }

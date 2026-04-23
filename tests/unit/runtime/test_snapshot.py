@@ -29,7 +29,7 @@ class MockEnv:
 
 def test_actor_snapshot_immutability():
     """
-    Test 12.2: Ensure actor continues using frozen snapshot even if parameters are modified.
+    Test 12.2: Ensure actor continues using frozen snapshot even if state is modified.
     """
     # 1. Setup
     model = SimpleModel()
@@ -41,8 +41,8 @@ def test_actor_snapshot_immutability():
     def op_actor(node, inputs, context=None):
         obs = list(inputs.values())[0]
         snapshot = context.get_actor_snapshot(node.node_id)
-        # Use functional call with snapshot parameters
-        out = functional_call(model, snapshot.parameters, (obs,))
+        # Use functional call with snapshot state
+        out = functional_call(model, snapshot.state, (obs,))
         return out
 
     register_operator("SnapshotActor", op_actor)
@@ -62,7 +62,7 @@ def test_actor_snapshot_immutability():
     assert ctx.get_actor_snapshot("actor").policy_version == 0
     
     # 3. Modify Parameters in ParameterStore
-    ps.update_parameters({"w": torch.tensor([2.0])})
+    ps.update_state({"w": torch.tensor([2.0])})
     assert ps.version == 1
     
     # 4. Second Step with SAME Context: Should still use snapshot v0 (w=1.0)
@@ -88,7 +88,7 @@ def test_manual_snapshot_binding():
     
     def manual_op(node, inputs, context=None):
         snap = context.get_actor_snapshot(node.node_id)
-        return functional_call(model, snap.parameters, (list(inputs.values())[0],))
+        return functional_call(model, snap.state, (list(inputs.values())[0],))
 
     register_operator("SnapshotActorManual", manual_op)
     graph.add_node("actor", "SnapshotActorManual", params={"param_store": ps})
@@ -98,8 +98,8 @@ def test_manual_snapshot_binding():
     runtime = ActorRuntime(graph, env)
     
     # Manually bind a "fake" snapshot
-    fake_params = {"w": torch.tensor([5.0])}
-    fake_snapshot = ActorSnapshot(policy_version=99, parameters=fake_params)
+    fake_state = {"w": torch.tensor([5.0])}
+    fake_snapshot = ActorSnapshot(policy_version=99, state=fake_state)
     
     ctx = ExecutionContext()
     ctx.bind_actor("actor", fake_snapshot)
@@ -110,3 +110,28 @@ def test_manual_snapshot_binding():
     assert step["action"] == 5.0
     
     print("Manual Snapshot Binding Verified.")
+
+def test_snapshot_includes_buffers():
+    """Verify that snapshots include both parameters and buffers."""
+    class ModelWithBuffer(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.w = nn.Parameter(torch.tensor([1.0]))
+            self.register_buffer("b", torch.tensor([0.5]))
+        def forward(self, x):
+            return x * self.w + self.b
+
+    model = ModelWithBuffer()
+    state = {**dict(model.named_parameters()), **dict(model.named_buffers())}
+    ps = ParameterStore(state)
+    
+    ctx = ExecutionContext()
+    snap = ActorSnapshot(policy_version=1, state=ps.get_state())
+    
+    assert "w" in snap.state
+    assert "b" in snap.state
+    assert snap.state["b"] == 0.5
+    
+    # Verify functional call works with both
+    out = functional_call(model, snap.state, (torch.tensor([1.0]),))
+    assert out == 1.5

@@ -14,6 +14,11 @@ def test_schedule_plan_execution_logic():
     )
     
     actor_runtime = MagicMock()
+    # Mock must increment counter to avoid infinite loop
+    def actor_step_inc(context=None):
+        if context: context.actor_step += 1
+    actor_runtime.step.side_effect = actor_step_inc
+    
     learner_runtime = MagicMock()
     
     executor = ScheduleExecutor(plan, actor_runtime, learner_runtime)
@@ -46,6 +51,7 @@ def test_schedule_plan_parallel_strategy():
     thread_ids = set()
     def mock_step(context=None):
         thread_ids.add(threading.get_ident())
+        if context: context.actor_step += 1
         
     runtime_1 = MagicMock()
     runtime_1.step.side_effect = mock_step

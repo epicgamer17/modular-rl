@@ -10,7 +10,9 @@ from runtime.dataref import DataRef, StorageLocation
 from runtime.context import ExecutionContext
 
 def op_transfer_to_device(node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None) -> DataRef:
-    data = list(inputs.values())[0]
+    data = inputs.get("data")
+    if data is None and inputs:
+        data = list(inputs.values())[0]
     device_id = node.params.get("device_id")
     
     # If it's already a DataRef, move it
@@ -24,7 +26,9 @@ def op_transfer_to_device(node: Node, inputs: Dict[str, Any], context: Optional[
     return ref
 
 def op_transfer_to_cpu(node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None) -> DataRef:
-    data = list(inputs.values())[0]
+    data = inputs.get("data")
+    if data is None and inputs:
+        data = list(inputs.values())[0]
     
     if isinstance(data, DataRef):
         data.move_to(StorageLocation.CPU)
@@ -39,10 +43,15 @@ def op_prefetch(node: Node, inputs: Dict[str, Any], context: Optional[ExecutionC
     In sequential executor, this is a no-op that passes data through.
     In async executor, this triggers non-blocking transfer.
     """
-    return list(inputs.values())[0]
+    data = inputs.get("data")
+    if data is None and inputs:
+        data = list(inputs.values())[0]
+    return data
 
 def op_serialize(node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None) -> bytes:
-    data = list(inputs.values())[0]
+    data = inputs.get("data")
+    if data is None and inputs:
+        data = list(inputs.values())[0]
     # Use torch.save or pickle for serialization
     import io
     buf = io.BytesIO()
@@ -50,7 +59,9 @@ def op_serialize(node: Node, inputs: Dict[str, Any], context: Optional[Execution
     return buf.getvalue()
 
 def op_deserialize(node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None) -> DataRef:
-    raw_data = list(inputs.values())[0]
+    raw_data = inputs.get("data")
+    if raw_data is None and inputs:
+        raw_data = list(inputs.values())[0]
     import io
     buf = io.BytesIO(raw_data)
     data = torch.load(buf)

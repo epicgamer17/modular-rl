@@ -86,8 +86,10 @@ def test_learner_runtime_basic():
     train_graph.add_node("opt", "MockOpt")
     train_graph.add_edge("traj_in", "opt")
     
+    from runtime.context import ExecutionContext
+    ctx = ExecutionContext()
     learner = LearnerRuntime(train_graph)
-    results = learner.update_step(batch={"dummy": "data"})
+    results = learner.update_step(batch={"dummy": "data"}, context=ctx)
     
     assert results["opt"] == "updated"
-    assert learner._update_count == 1
+    assert ctx.learner_step == 1

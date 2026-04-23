@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional
 import torch
 import random
 import uuid
+from runtime.state import ModelRegistry, BufferRegistry
 
 class ActorSnapshot:
     """
@@ -17,12 +18,12 @@ class ActorSnapshot:
     def __init__(
         self, 
         policy_version: int, 
-        parameters: Dict[str, torch.Tensor], 
+        state: Dict[str, torch.Tensor], 
         config: Optional[Dict[str, Any]] = None
     ):
         self.policy_version = policy_version
-        # Deep copy parameters to ensure immutability
-        self.parameters = {k: v.detach().clone() for k, v in parameters.items()}
+        # Deep copy state (parameters and buffers) to ensure immutability
+        self.state = {k: v.detach().clone() for k, v in state.items()}
         self.config = config.copy() if config else {}
 
     def to_dict(self) -> Dict[str, Any]:
@@ -43,22 +44,38 @@ class ExecutionContext:
         policy_versions: Optional[Dict[str, int]] = None,
         device: str = "cpu",
         seed: int = 42,
-        global_step: int = 0,
+        shard_id: int = 0,
+        actor_step: int = 0,
         env_step: int = 0,
-        learner_step: int = 0
+        learner_step: int = 0,
+        sync_step: int = 0,
+        episode_step: int = 0,
+        episode_count: int = 0,
+        global_step: int = 0,
+        model_registry: Optional[ModelRegistry] = None,
+        buffer_registry: Optional[BufferRegistry] = None
     ):
         self.step_id = step_id
         self.policy_versions = policy_versions or {}
         self.device = device
         self.seed = seed
+        self.shard_id = shard_id
+        self.model_registry = model_registry or ModelRegistry()
+        self.buffer_registry = buffer_registry or BufferRegistry()
         
         # Clocks
-        self.global_step = global_step
+        self.actor_step = actor_step
         self.env_step = env_step
         self.learner_step = learner_step
+        self.sync_step = sync_step
+        self.episode_step = episode_step
+        self.episode_count = episode_count
+        self.global_step = global_step
         
         # RNG state isolation
-        self.rng = random.Random(seed)
+        # Use shard_id to decorrelate RNG streams across parallel workers
+        actual_seed = seed + (shard_id * 1000000)
+        self.rng = random.Random(actual_seed)
         self.torch_generator = torch.Generator(device=device)
         self.torch_generator.manual_seed(seed)
         
@@ -73,6 +90,14 @@ class ExecutionContext:
             "last_learner_sync": 0,
             "last_env_sync": 0
         }
+
+    def get_model(self, handle: str) -> torch.nn.Module:
+        """Resolves a ModelHandle string to a live PyTorch module."""
+        return self.model_registry.get(handle)
+
+    def get_buffer(self, handle: str) -> Any:
+        """Resolves a BufferHandle string to a live ReplayBuffer."""
+        return self.buffer_registry.get(handle)
 
     def bind_actor(self, actor_id: str, snapshot: ActorSnapshot):
         """Binds an actor to a specific immutable snapshot for this context."""
@@ -89,9 +114,16 @@ class ExecutionContext:
             policy_versions=self.policy_versions.copy(),
             device=self.device,
             seed=self.rng.randint(0, 10**6),
-            global_step=self.global_step,
+            shard_id=self.shard_id,
+            actor_step=self.actor_step,
             env_step=self.env_step,
-            learner_step=self.learner_step
+            learner_step=self.learner_step,
+            sync_step=self.sync_step,
+            episode_step=self.episode_step,
+            episode_count=self.episode_count,
+            global_step=self.global_step,
+            model_registry=self.model_registry,
+            buffer_registry=self.buffer_registry
         )
         new_ctx.trace_lineage = self.trace_lineage + [self.trace_id]
         # Inherit actor snapshots
