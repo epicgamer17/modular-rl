@@ -58,6 +58,22 @@ class ValidationReport:
         """
         return any(issue.severity == SEVERITY_ERROR for issue in self.issues)
 
+    def has_warnings(self) -> bool:
+        """Checks if the report contains any issues with WARN severity.
+
+        Returns:
+            True if there is at least one warning, False otherwise.
+        """
+        return any(issue.severity == SEVERITY_WARN for issue in self.issues)
+
+    def merge(self, other: "ValidationReport") -> None:
+        """Merges another validation report into this one.
+
+        Args:
+            other: The report to merge.
+        """
+        self.issues.extend(other.issues)
+
     def get_issues_by_severity(self, severity: str) -> List[ValidationIssue]:
         """Filters issues by severity.
 

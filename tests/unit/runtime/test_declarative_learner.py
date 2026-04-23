@@ -79,14 +79,17 @@ def test_learner_runtime_no_override_dqn_style():
         "min_size": 5
     })
     
+    from runtime.values import NoOp
     def op_loss(node, inputs, context=None):
         batch = list(inputs.values())[0]
-        if batch is None: return None
+        if isinstance(batch, NoOp) or batch is None:
+            return NoOp()
         return torch.tensor(1.0, requires_grad=True)
         
     def op_opt(node, inputs, context=None):
         loss = list(inputs.values())[0]
-        if loss is None: return "skipped"
+        if isinstance(loss, NoOp) or loss is None:
+            return NoOp()
         return "stepped"
         
     register_operator("LossNode", op_loss)

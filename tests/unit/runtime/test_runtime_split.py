@@ -32,7 +32,8 @@ def test_runtime_split_async_behavior():
         return 0
         
     register_operator("ActorNode", op_actor)
-    register_operator(NODE_TYPE_SOURCE, lambda n, i, c=None: None)
+    from runtime.values import NoOp
+    register_operator(NODE_TYPE_SOURCE, lambda n, i, c=None: NoOp())
     
     interact_graph.add_node("actor", "ActorNode")
     interact_graph.add_edge("obs_in", "actor")

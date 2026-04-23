@@ -133,7 +133,8 @@ register_operator("MixtureActor", op_mixture_actor)
 register_operator("TDLoss", op_td_loss)
 register_operator("SLLoss", op_sl_loss)
 register_operator("Optimizer", op_optimizer_step)
-register_operator(NODE_TYPE_SOURCE, lambda n, i, context=None: None)
+from runtime.values import NoOp
+register_operator(NODE_TYPE_SOURCE, lambda n, i, context=None: NoOp())
 
 # 3. Training Loop
 def run_nfsp_demo(total_steps=5000):

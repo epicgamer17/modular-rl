@@ -122,7 +122,8 @@ register_operator("QValuesSingle", op_q_values_single)
 register_operator("QValuesBatch", op_q_values_batch)
 register_operator("TDLoss", op_td_loss)
 register_operator("Optimizer", op_optimizer_step)
-register_operator(NODE_TYPE_SOURCE, lambda n, i, context=None: None)
+from runtime.values import NoOp
+register_operator(NODE_TYPE_SOURCE, lambda n, i, context=None: NoOp())
 
 
 # 3. Training Loop

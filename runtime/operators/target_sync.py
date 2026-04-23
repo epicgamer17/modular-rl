@@ -46,3 +46,4 @@ def op_target_sync(node: Node, inputs: Dict[str, Any], context: Optional[Executi
                 target_param.data.copy_(
                     target_param.data * (1.0 - tau) + source_param.data * tau
                 )
+    return NoOp()

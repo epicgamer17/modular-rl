@@ -22,11 +22,26 @@ OPERATOR_REGISTRY: Dict[
 ] = {}
 
 
+from runtime.validator import validate_operator_output
+
+
+def ValidatedOperator(op_func):
+    """Decorator that applies runtime assertions to an operator's output."""
+
+    def wrapper(node: Node, inputs: Dict[NodeId, Any], context: ExecutionContext) -> Any:
+        output = op_func(node, inputs, context)
+        validate_operator_output(node, output)
+        return output
+
+    return wrapper
+
+
 def register_operator(
     node_type: str, func: Callable[[Node, Dict[NodeId, Any], ExecutionContext], Any]
 ):
     """Registers an execution function for a node type."""
-    OPERATOR_REGISTRY[node_type] = func
+    # Wrap all registered operators with validation logic
+    OPERATOR_REGISTRY[node_type] = ValidatedOperator(func)
 
 
 # Register built-in operators
@@ -36,8 +51,9 @@ register_transfer_operators(register_operator)
 
 # Built-in operators
 from core.graph import NODE_TYPE_SOURCE, NODE_TYPE_REPLAY_QUERY
+from runtime.values import NoOp, Skipped, Value
 
-register_operator(NODE_TYPE_SOURCE, lambda node, inputs, context=None: None)
+register_operator(NODE_TYPE_SOURCE, lambda node, inputs, context=None: NoOp())
 
 
 def op_replay_query(node, inputs, context=None):

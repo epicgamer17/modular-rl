@@ -11,9 +11,10 @@ def test_minimal_linear_graph():
     Obs (Source) -> Linear -> Output
     """
     # 1. Define and register operators
+    from runtime.values import NoOp
     def run_source(node, inputs, context=None):
         # Source nodes just pass through initial values provided in execute()
-        return None 
+        return NoOp()
         
     def run_linear(node, inputs, context=None):
         # Simple linear transformation: y = x @ W

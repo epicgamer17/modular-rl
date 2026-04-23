@@ -47,7 +47,8 @@ def test_parallel_context_isolation():
         return 0
         
     register_operator("VersionedActor", op_actor_with_ver)
-    register_operator(NODE_TYPE_SOURCE, lambda n, i, context=None: None)
+    from runtime.values import NoOp
+    register_operator(NODE_TYPE_SOURCE, lambda n, i, context=None: NoOp())
     
     graph.add_node("actor", "VersionedActor")
     graph.add_edge("obs_in", "actor")
