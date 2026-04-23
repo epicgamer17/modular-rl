@@ -7,6 +7,7 @@ Follows the rule of explicit mutation and no hidden global state.
 from typing import List, Dict, Any, Optional
 import torch
 import random
+import threading
 
 class ReplayBuffer:
     """
@@ -27,13 +28,29 @@ class ReplayBuffer:
     def sample(self, batch_size: int, seed: Optional[int] = None) -> List[Dict[str, torch.Tensor]]:
         """
         Samples a batch of transitions from the buffer.
-        If seed is provided, sampling is deterministic.
         """
+        if hasattr(self, "_prefetch_queue") and self._prefetch_queue:
+            return self._prefetch_queue.pop(0)
+
         if not self.buffer:
             return []
             
         rng = random.Random(seed)
         return rng.sample(self.buffer, min(len(self.buffer), batch_size))
+
+    def prefetch(self, batch_size: int, count: int = 1):
+        """Asynchronously prefetch samples in a background thread."""
+        if not hasattr(self, "_prefetch_queue"):
+            self._prefetch_queue = []
+
+        def worker():
+            for _ in range(count):
+                sample = self.sample(batch_size)
+                self._prefetch_queue.append(sample)
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        return thread
 
     def __len__(self) -> int:
         return len(self.buffer)
