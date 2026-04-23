@@ -1,6 +1,6 @@
 """
 DQN Implementation using the RL IR.
-Demonstrates a full system with interaction, record, and training graphs.
+Demonstrates off-policy learning with ReplayQuery and prefetching.
 """
 
 import torch
@@ -9,16 +9,16 @@ import torch.optim as optim
 import gymnasium as gym
 import random
 import numpy as np
+from typing import Optional, Dict, Any
 from torch.func import functional_call
-from core.graph import (
-    Graph,
-    NODE_TYPE_SOURCE,
-    NODE_TYPE_ACTOR,
-    NODE_TYPE_SINK,
-    NODE_TYPE_TRANSFORM,
-)
-from runtime.executor import execute, register_operator
+from core.graph import Graph, NODE_TYPE_SOURCE, NODE_TYPE_ACTOR, NODE_TYPE_REPLAY_QUERY
+from core.schema import TAG_OFF_POLICY, Schema
+from runtime.executor import register_operator
+from runtime.context import ExecutionContext
 from runtime.state import ReplayBuffer, ParameterStore, OptimizerState
+from runtime.runtime import ActorRuntime, LearnerRuntime
+from runtime.scheduler import ScheduleExecutor
+from compiler.scheduler import compile_schedule
 
 
 # 1. Define Q-Network
@@ -38,71 +38,37 @@ class QNetwork(nn.Module):
 
 
 # 2. Register Operators
-def op_source(node, inputs, context=None):
-    return None
-
-
 def op_q_actor(node, inputs, context=None):
     obs = list(inputs.values())[0]
-    if obs is None:
-        return None
     q_net = node.params["q_net"]
-    param_store = node.params.get("param_store")
     epsilon = node.params["epsilon"]
     act_dim = node.params["act_dim"]
 
-    # Use context for RNG if provided
-    rng = context.rng if context else random
-    if rng.random() < epsilon:
-        return rng.randint(0, act_dim - 1)
+    if random.random() < epsilon:
+        return random.randint(0, act_dim - 1)
 
-    # Use frozen snapshot if available
     snapshot = context.get_actor_snapshot(node.node_id) if context else None
-    if snapshot:
-        params = snapshot.parameters
-    else:
-        params = dict(q_net.named_parameters())
+    params = snapshot.parameters if snapshot else dict(q_net.named_parameters())
 
     with torch.inference_mode():
         q_values = functional_call(q_net, params, (obs.unsqueeze(0),))
         return torch.argmax(q_values).item()
 
 
-def op_replay_add(node, inputs, context=None):
-    rb = node.params["buffer"]
-    if not inputs:
-        return None
-    transition = list(inputs.values())[0]
-    if transition:
-        rb.add(transition)
-    return None
-
-
-def op_sample_batch(node, inputs, context=None):
-    rb = node.params["buffer"]
-    batch_size = node.params["batch_size"]
-    batch = rb.sample(batch_size)
-    collated = {}
-    if batch:
-        for k in batch[0].keys():
-            collated[k] = torch.stack([t[k] for t in batch])
-    return collated
-
-
 def op_td_loss(node, inputs, context=None):
-    batch = list(inputs.values())[0]
-    if not batch:
+    batch_dict = list(inputs.values())[0]
+    if not batch_dict:
         return torch.tensor(0.0, requires_grad=True)
 
     q_net = node.params["q_net"]
     target_net = node.params["target_net"]
     gamma = node.params["gamma"]
 
-    states = batch["obs"]
-    actions = batch["action"].long()
-    rewards = batch["reward"]
-    next_states = batch["next_obs"]
-    dones = batch["done"]
+    states = batch_dict["obs"]
+    actions = batch_dict["action"].long()
+    rewards = batch_dict["reward"]
+    next_states = batch_dict["next_obs"]
+    dones = batch_dict["done"]
 
     current_q = q_net(states).gather(1, actions.unsqueeze(1)).squeeze(1)
     with torch.no_grad():
@@ -115,22 +81,23 @@ def op_td_loss(node, inputs, context=None):
 def op_optimizer_step(node, inputs, context=None):
     opt_state = node.params["opt_state"]
     loss = list(inputs.values())[0]
-    if loss.requires_grad:
+    if hasattr(loss, "requires_grad") and loss.requires_grad:
         opt_state.step(loss)
     return loss.item()
 
 
-register_operator(NODE_TYPE_SOURCE, op_source)
 register_operator("QActor", op_q_actor)
-register_operator("ReplayAdd", op_replay_add)
-register_operator("SampleBatch", op_sample_batch)
 register_operator("TDLoss", op_td_loss)
 register_operator("Optimizer", op_optimizer_step)
+register_operator(NODE_TYPE_SOURCE, lambda n, i, context=None: None)
+register_operator(
+    NODE_TYPE_REPLAY_QUERY, lambda n, i, context=None: None
+)  # Handled by LearnerRuntime
 
 
-# 3. Main Training Loop
-def train_dqn(env_name="CartPole-v1", total_steps=30_000):
-    env = gym.make(env_name)
+# 3. Training Loop
+def train_dqn(total_steps=1000):
+    env = gym.make("CartPole-v1")
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.n
 
@@ -143,23 +110,17 @@ def train_dqn(env_name="CartPole-v1", total_steps=30_000):
     opt = optim.Adam(q_net.parameters(), lr=1e-3)
     opt_state = OptimizerState(opt)
 
-    # Graphs
+    # 1. Graph Definitions
     interact_graph = Graph()
     interact_graph.add_node("obs_in", NODE_TYPE_SOURCE)
     interact_graph.add_node(
-        "actor", "QActor", params={"q_net": q_net, "param_store": param_store, "epsilon": 0.1, "act_dim": act_dim}
+        "actor", "QActor", params={"q_net": q_net, "epsilon": 0.1, "act_dim": act_dim}
     )
     interact_graph.add_edge("obs_in", "actor")
 
-    record_graph = Graph()
-    record_graph.add_node("transition_in", NODE_TYPE_SOURCE)
-    record_graph.add_node("replay", "ReplayAdd", params={"buffer": rb})
-    record_graph.add_edge("transition_in", "replay")
-
     train_graph = Graph()
-    train_graph.add_node(
-        "sampler", "SampleBatch", params={"buffer": rb, "batch_size": 128}
-    )
+    # ReplayQuery is now a first-class node
+    train_graph.add_node("sampler", NODE_TYPE_REPLAY_QUERY)
     train_graph.add_node(
         "loss",
         "TDLoss",
@@ -169,59 +130,46 @@ def train_dqn(env_name="CartPole-v1", total_steps=30_000):
     train_graph.add_edge("sampler", "loss")
     train_graph.add_edge("loss", "opt")
 
-    obs, _ = env.reset()
-    losses = []
-    episode_reward = 0
+    # 2. Runtime Setup
+    actor_runtime = ActorRuntime(interact_graph, env, replay_buffer=rb)
 
-    for step in range(total_steps):
-        # 1. Interaction
-        res_interact = execute(
-            interact_graph,
-            initial_inputs={"obs_in": torch.tensor(obs, dtype=torch.float32)},
-        )
-        action = res_interact["actor"]
+    class DQNLearner(LearnerRuntime):
+        def update_step(
+            self,
+            batch: Optional[Dict[str, Any]] = None,
+            context: Optional[ExecutionContext] = None,
+        ):
+            if len(self.replay_buffer) > 64:
+                # Use query system
+                batch = self.replay_buffer.sample_query(batch_size=32)
+                if batch:
+                    collated = {
+                        k: (
+                            torch.stack([t[k] for t in batch])
+                            if isinstance(batch[0][k], torch.Tensor)
+                            else batch[0][k]
+                        )
+                        for k in batch[0].keys()
+                    }
+                    super().update_step(collated)
 
-        next_obs, reward, terminated, truncated, _ = env.step(action)
-        done = terminated or truncated
-        episode_reward += reward
+                # Target Update
+                if random.random() < 0.01:
+                    # TODO: make this update with training steps
+                    target_net.load_state_dict(q_net.state_dict())
 
-        # 2. Recording
-        transition = {
-            "obs": torch.tensor(obs, dtype=torch.float32),
-            "action": torch.tensor(action),
-            "reward": torch.tensor(reward, dtype=torch.float32),
-            "next_obs": torch.tensor(next_obs, dtype=torch.float32),
-            "done": torch.tensor(float(done)),
-        }
-        execute(record_graph, initial_inputs={"transition_in": transition})
+    learner_runtime = DQNLearner(train_graph, replay_buffer=rb)
 
-        obs = next_obs
-        if done:
-            obs, _ = env.reset()
-            if step % 200 == 0:
-                print(f"Step {step}, Episode Reward: {episode_reward}")
-            episode_reward = 0
+    # 3. Compiler-Driven Scheduling
+    plan = compile_schedule(
+        train_graph, user_hints={"actor_frequency": 1, "learner_frequency": 1}
+    )
+    executor = ScheduleExecutor(plan, actor_runtime, learner_runtime)
 
-        # 3. Training
-        if len(rb) > 64:
-            train_results = execute(train_graph, initial_inputs={})
-            losses.append(train_results["opt"])
-
-        # 4. Target Update
-        if step % 100 == 0:
-            target_net.load_state_dict(q_net.state_dict())
-
-    return losses
+    print(f"Starting DQN with Compiled Schedule: {plan.to_dict()}")
+    executor.run(total_actor_steps=total_steps)
+    print("DQN Modern Demo Finished.")
 
 
 if __name__ == "__main__":
-    print("Starting DQN training on CartPole...")
-    losses = train_dqn(total_steps=1000)
-    if losses:
-        avg_initial_loss = np.mean(losses[:100])
-        avg_final_loss = np.mean(losses[-100:])
-        print(f"Initial Loss (avg first 100 steps): {avg_initial_loss:.4f}")
-        print(f"Final Loss (avg last 100 steps): {avg_final_loss:.4f}")
-        # In 1000 steps on CartPole, loss should at least be stable or decreasing
-        # We don't assert strictly to avoid flakey tests, but print for verification
-    print("DQN System Execution Successful!")
+    train_dqn()

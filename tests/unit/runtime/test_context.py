@@ -4,7 +4,6 @@ import gymnasium as gym
 import threading
 from runtime.context import ExecutionContext, ActorSnapshot
 from runtime.runtime import ActorRuntime
-from runtime.scheduler import ParallelActorPool
 from runtime.state import ParameterStore, ReplayBuffer
 from core.graph import Graph, NODE_TYPE_SOURCE
 from runtime.executor import register_operator
@@ -56,7 +55,7 @@ def test_parallel_context_isolation():
     # 2. Parallel Rollout with Delayed Sync Simulation
     num_actors = 32
     runtimes = [ActorRuntime(graph, gym.make("CartPole-v1")) for _ in range(num_actors)]
-    pool = ParallelActorPool(runtimes)
+    # pool = ParallelActorPool(runtimes) # Legacy removed
     
     # Buffers to collect results
     collected_contexts = []

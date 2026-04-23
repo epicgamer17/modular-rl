@@ -73,6 +73,17 @@ def create_replay_query_def(output_schema: Schema) -> NodeDef:
         description="Queries the replay buffer with constraints."
     )
 
+def create_schedule_def() -> NodeDef:
+    """Creates a definition for a Schedule node."""
+    from core.graph import NODE_TYPE_SCHEDULE
+    from core.schema import Schema
+    return NodeDef(
+        node_type=NODE_TYPE_SCHEDULE,
+        input_schema=Schema(fields=[]),
+        output_schema=Schema(fields=[]),
+        description="Defines a declarative execution schedule for actors and learners."
+    )
+
 # --- Registry ---
 
 class NodeRegistry:

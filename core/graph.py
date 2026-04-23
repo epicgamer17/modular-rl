@@ -19,6 +19,7 @@ NODE_TYPE_SOURCE = "Source"
 NODE_TYPE_SINK = "Sink"
 NODE_TYPE_CONTROL = "Control"
 NODE_TYPE_REPLAY_QUERY = "ReplayQuery"
+NODE_TYPE_SCHEDULE = "Schedule"
 NODE_TYPE_TRANSFER = "Transfer"
 
 class EdgeType(Enum):

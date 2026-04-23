@@ -3,75 +3,98 @@ Scheduler and Loop nodes for the RL IR runtime.
 Handles periodic tasks, main execution loops, and parallel rollout pooling.
 """
 
-import threading
 from typing import List, Callable, Any, Optional, Dict
+import threading
 import time
-from runtime.runtime import ActorRuntime
+from runtime.runtime import ActorRuntime, LearnerRuntime
+from dataclasses import dataclass, field
 
-class EveryN:
-    """Triggers an action every N steps."""
-    def __init__(self, n: int, action: Callable[[], Any]):
-        self.n = n
-        self.action = action
-        self._count = 0
 
-    def step(self) -> Optional[Any]:
-        self._count += 1
-        if self._count >= self.n:
-            result = self.action()
-            self._count = 0
-            return result
-        return None
-
-class ParallelActorPool:
+@dataclass
+class SchedulePlan:
     """
-    Executes multiple ActorRuntimes in parallel using threading.
+    Declarative execution plan for RL loops.
     """
-    def __init__(self, runtimes: List[ActorRuntime]):
-        self.runtimes = runtimes
 
-    def rollout(self, steps_per_actor: int) -> List[List[Dict[str, Any]]]:
-        """
-        Runs all actors in parallel for a fixed number of steps.
-        """
-        results = [None] * len(self.runtimes)
-        threads = []
+    actor_frequency: int = 1
+    learner_frequency: int = 1
+    prefetch_depth: int = 1
+    batching_strategy: str = "serial"  # "serial", "parallel", "vectorized"
+    sync_points: List[str] = field(default_factory=list)  # ["step", "episode", "epoch"]
 
-        def worker(idx, runtime, steps):
-            results[idx] = runtime.collect_trajectory(steps)
+    def to_dict(self):
+        return {
+            "actor_frequency": self.actor_frequency,
+            "learner_frequency": self.learner_frequency,
+            "prefetch_depth": self.prefetch_depth,
+            "batching_strategy": self.batching_strategy,
+            "sync_points": self.sync_points,
+        }
 
-        for i, runtime in enumerate(self.runtimes):
-            t = threading.Thread(target=worker, args=(i, runtime, steps_per_actor))
-            threads.append(t)
-            t.start()
 
-        for t in threads:
-            t.join()
+from typing import List, Callable, Any, Optional, Dict, Union
 
-        return results
 
-class Loop:
+class ScheduleExecutor:
     """
-    A high-level execution loop coordinating interaction and training.
+    Executes a SchedulePlan by coordinating Actor and Learner runtimes.
+    Supports parallel and serial execution strategies.
     """
+
     def __init__(
         self,
-        interact_fn: Callable[[], Any],
-        train_fn: Callable[[], Any],
-        every_n_train: int = 1
+        plan: SchedulePlan,
+        actor_runtime: Union[ActorRuntime, List[ActorRuntime]],
+        learner_runtime: LearnerRuntime,
     ):
-        self.interact_fn = interact_fn
-        self.train_fn = train_fn
-        self.trainer = EveryN(every_n_train, train_fn)
-        self.running = False
+        self.plan = plan
+        self.actor_runtimes = (
+            actor_runtime if isinstance(actor_runtime, list) else [actor_runtime]
+        )
+        self.learner_runtime = learner_runtime
+        self._running = False
 
-    def run(self, total_steps: int):
-        self.running = True
-        for _ in range(total_steps):
-            if not self.running:
+    def run(self, total_actor_steps: int):
+        self._running = True
+        actor_steps = 0
+
+        while actor_steps < total_actor_steps and self._running:
+            # 1. Actor Execution (Strategy-aware)
+            current_steps = self._execute_actors()
+            actor_steps += current_steps
+
+            # 2. Learner Step(s)
+            for _ in range(self.plan.learner_frequency):
+                # Learner usually needs data from a buffer
+                # In this simplified model, we assume update_step handles its own sampling
+                self.learner_runtime.update_step()
+
+            if actor_steps >= total_actor_steps:
                 break
-            self.interact_fn()
-            self.trainer.step()
+
+    def _execute_actors(self) -> int:
+        """Executes actor steps based on the batching strategy."""
+        num_steps = 0
+
+        if self.plan.batching_strategy == "parallel" and len(self.actor_runtimes) > 1:
+            # Multi-threaded parallel execution
+            threads = []
+            for runtime in self.actor_runtimes:
+                for _ in range(self.plan.actor_frequency):
+                    t = threading.Thread(target=runtime.step)
+                    threads.append(t)
+                    t.start()
+                    num_steps += 1
+            for t in threads:
+                t.join()
+        else:
+            # Serial execution (standard or single actor)
+            for runtime in self.actor_runtimes:
+                for _ in range(self.plan.actor_frequency):
+                    runtime.step()
+                    num_steps += 1
+
+        return num_steps
 
     def stop(self):
-        self.running = False
+        self._running = False

@@ -1,6 +1,6 @@
 """
 NFSP (Neural Fictitious Self-Play) Implementation using the RL IR.
-Tests the composability of multiple actors and dual-buffer recording.
+Demonstrates dual-buffer management and complex orchestration.
 """
 
 import torch
@@ -9,9 +9,14 @@ import torch.optim as optim
 import gymnasium as gym
 import random
 import numpy as np
-from core.graph import Graph, NODE_TYPE_SOURCE
-from runtime.executor import execute, register_operator
+from typing import Optional, Dict, Any
+from core.graph import Graph, NODE_TYPE_SOURCE, NODE_TYPE_ACTOR
+from runtime.executor import register_operator
+from runtime.context import ExecutionContext
 from runtime.state import ReplayBuffer, ParameterStore, OptimizerState
+from runtime.runtime import ActorRuntime, LearnerRuntime
+from runtime.scheduler import ScheduleExecutor
+from compiler.scheduler import compile_schedule
 
 # 1. Networks
 class QNetwork(nn.Module):
@@ -48,14 +53,11 @@ def op_mixture_actor(node, inputs, context=None):
     # Choose between Best Response (RL) and Average Policy (SL)
     mode = "best_response" if random.random() < eta else "average_policy"
     
-    if mode == "best_response":
-        # DQN epsilon-greedy (simplified for NFSP)
-        with torch.no_grad():
+    with torch.no_grad():
+        if mode == "best_response":
             q_values = q_net(obs.unsqueeze(0))
             action = torch.argmax(q_values).item()
-    else:
-        # Average policy sampling
-        with torch.no_grad():
+        else:
             probs = policy_net(obs.unsqueeze(0))
             dist = torch.distributions.Categorical(probs)
             action = dist.sample().item()
@@ -72,138 +74,71 @@ def op_sl_loss(node, inputs, context=None):
     
     probs = policy_net(obs)
     dist = torch.distributions.Categorical(probs)
-    # Supervised learning: minimize negative log likelihood of observed best-response actions
-    loss = -dist.log_prob(actions).mean()
-    return loss
-
-# Reuse DQN operators from previous examples if possible, or redefine for isolation
-# For this example, I'll redefine the training logic for NFSP specifics
+    return -dist.log_prob(actions).mean()
 
 register_operator("MixtureActor", op_mixture_actor)
 register_operator("SLLoss", op_sl_loss)
+register_operator(NODE_TYPE_SOURCE, lambda n, i, context=None: None)
 
-# 3. Training Function
+# 3. Training Loop
 def run_nfsp_demo(total_steps=1000):
     env = gym.make("CartPole-v1")
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.n
     
-    # State: Best Response (RL)
+    # RL State
     q_net = QNetwork(obs_dim, act_dim)
     rl_buffer = ReplayBuffer(capacity=10000)
-    rl_opt = OptimizerState(optim.Adam(q_net.parameters(), lr=1e-3))
     
-    # State: Average Policy (SL)
+    # SL State
     policy_net = PolicyNetwork(obs_dim, act_dim)
     sl_buffer = ReplayBuffer(capacity=10000)
     sl_opt = OptimizerState(optim.Adam(policy_net.parameters(), lr=1e-3))
     
-    # Graphs
+    # 1. Graph Definitions
     interact_graph = Graph()
     interact_graph.add_node("obs_in", NODE_TYPE_SOURCE)
     interact_graph.add_node("actor", "MixtureActor", params={
-        "q_net": q_net, 
-        "policy_net": policy_net, 
-        "eta": 0.1, # NFSP anticipatory parameter
-        "act_dim": act_dim
+        "q_net": q_net, "policy_net": policy_net, "eta": 0.1, "act_dim": act_dim
     })
     interact_graph.add_edge("obs_in", "actor")
     
-    # Interaction loop
-    obs, _ = env.reset()
-    for step in range(total_steps):
-        # 1. Act
-        res = execute(interact_graph, initial_inputs={"obs_in": torch.tensor(obs, dtype=torch.float32)})
-        out = res["actor"]
-        action = out["action"]
-        mode = out["mode"]
-        
-        next_obs, reward, terminated, truncated, _ = env.step(action)
-        done = terminated or truncated
-        
-        # 2. Record to Dual Buffers
-        # RL Buffer: standard transition
-        rl_buffer.add({
-            "obs": torch.tensor(obs, dtype=torch.float32),
-            "action": torch.tensor(action),
-            "reward": torch.tensor(reward, dtype=torch.float32),
-            "next_obs": torch.tensor(next_obs, dtype=torch.float32),
-            "done": torch.tensor(float(done))
-        })
-        
-        # SL Buffer: only if best response was chosen (Fictitious Play principle)
-        if mode == "best_response":
+    train_graph = Graph()
+    train_graph.add_node("batch_in", NODE_TYPE_SOURCE)
+    train_graph.add_node("loss", "SLLoss", params={"policy_net": policy_net})
+    train_graph.add_edge("batch_in", "loss")
+    
+    # 2. Runtime Setup
+    # Custom recording to handle dual buffers
+    def nfsp_record(step_data):
+        # Always record to RL buffer
+        rl_buffer.add(step_data)
+        # Record to SL buffer only if best response was used
+        if step_data["metadata"]["actor_results"]["actor"]["mode"] == "best_response":
             sl_buffer.add({
-                "obs": torch.tensor(obs, dtype=torch.float32),
-                "action": torch.tensor(action)
+                "obs": step_data["obs"],
+                "action": torch.tensor(step_data["metadata"]["actor_results"]["actor"]["action"])
             })
             
-        obs = next_obs
-        if done: obs, _ = env.reset()
-        
-        # 3. Train Both
-        if len(rl_buffer) > 64:
-            # RL Update (simplified call to DQN-like logic)
-            # (Normally we would use a graph, but for NFSP demo we focus on composability)
-            pass
-            
-        if len(sl_buffer) > 64:
-            # SL Update
-            batch = sl_buffer.sample(64)
-            collated = {k: torch.stack([t[k] for t in batch]) for k in batch[0].keys()}
-            loss = op_sl_loss(None, {"batch": collated}, policy_net=policy_net) # Direct op call for brevity
-            sl_opt.step(loss)
-            
-    print("NFSP Demo Execution Successful.")
-
-# Update op_sl_loss to handle params correctly if called directly
-def op_sl_loss_fixed(node, inputs, **kwargs):
-    batch = inputs.get("batch") or list(inputs.values())[0]
-    policy_net = (node.params if node else kwargs)["policy_net"]
-    obs = batch["obs"]
-    actions = batch["action"].long()
-    probs = policy_net(obs)
-    dist = torch.distributions.Categorical(probs)
-    return -dist.log_prob(actions).mean()
-
-# Replace with fixed version
-register_operator("SLLoss", op_sl_loss_fixed)
-
-if __name__ == "__main__":
-    # We redefine run_nfsp_demo slightly to be cleaner
-    def run_nfsp_clean(total_steps=1000):
-        env = gym.make("CartPole-v1")
-        obs_dim = env.observation_space.shape[0]
-        act_dim = env.action_space.n
-        q_net = QNetwork(obs_dim, act_dim)
-        policy_net = PolicyNetwork(obs_dim, act_dim)
-        rl_buffer = ReplayBuffer(capacity=10000)
-        sl_buffer = ReplayBuffer(capacity=10000)
-        sl_opt = OptimizerState(optim.Adam(policy_net.parameters(), lr=1e-3))
-        
-        interact_graph = Graph()
-        interact_graph.add_node("obs_in", NODE_TYPE_SOURCE)
-        interact_graph.add_node("actor", "MixtureActor", params={
-            "q_net": q_net, "policy_net": policy_net, "eta": 0.1, "act_dim": act_dim
-        })
-        interact_graph.add_edge("obs_in", "actor")
-        
-        obs, _ = env.reset()
-        for step in range(total_steps):
-            res = execute(interact_graph, initial_inputs={"obs_in": torch.tensor(obs, dtype=torch.float32)})
-            out = res["actor"]
-            next_obs, reward, terminated, truncated, _ = env.step(out["action"])
-            done = terminated or truncated
-            rl_buffer.add({"obs": torch.tensor(obs, dtype=torch.float32), "action": torch.tensor(out["action"]), "reward": torch.tensor(reward, dtype=torch.float32), "next_obs": torch.tensor(next_obs, dtype=torch.float32), "done": torch.tensor(float(done))})
-            if out["mode"] == "best_response":
-                sl_buffer.add({"obs": torch.tensor(obs, dtype=torch.float32), "action": torch.tensor(out["action"])})
-            obs = next_obs
-            if done: obs, _ = env.reset()
+    actor_runtime = ActorRuntime(interact_graph, env, recording_fn=nfsp_record)
+    
+    class NFSP_SL_Learner(LearnerRuntime):
+        def update_step(self, batch: Optional[Dict[str, Any]] = None, context: Optional[ExecutionContext] = None):
             if len(sl_buffer) > 64:
                 batch = sl_buffer.sample(64)
                 collated = {k: torch.stack([t[k] for t in batch]) for k in batch[0].keys()}
-                loss = op_sl_loss_fixed(None, {"batch": collated}, policy_net=policy_net)
+                loss = super().update_step(collated)["loss"]
                 sl_opt.step(loss)
-        print("NFSP Execution Successful.")
+                
+    learner_runtime = NFSP_SL_Learner(train_graph, replay_buffer=sl_buffer)
+    
+    # 3. Compiled Scheduling
+    plan = compile_schedule(interact_graph, user_hints={"actor_frequency": 1, "learner_frequency": 1})
+    executor = ScheduleExecutor(plan, actor_runtime, learner_runtime)
+    
+    print(f"Starting NFSP with Compiled Schedule: {plan.to_dict()}")
+    executor.run(total_actor_steps=total_steps)
+    print("NFSP Modern Demo Finished.")
 
-    run_nfsp_clean()
+if __name__ == "__main__":
+    run_nfsp_demo()

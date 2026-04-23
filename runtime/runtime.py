@@ -18,11 +18,13 @@ class ActorRuntime:
         self, 
         interact_graph: Graph, 
         env: Any,
-        recording_fn: Optional[Callable[[Dict[str, Any]], None]] = None
+        recording_fn: Optional[Callable[[Dict[str, Any]], None]] = None,
+        replay_buffer: Optional[Any] = None
     ):
         self.interact_graph = interact_graph
         self.env = env
         self.recording_fn = recording_fn
+        self.replay_buffer = replay_buffer
         self.current_obs = None
         self._step_count = 0
         self._episode_count = 0
@@ -74,8 +76,12 @@ class ActorRuntime:
             }
         }
 
+        # Handle recording
         if self.recording_fn:
             self.recording_fn(step_data)
+        elif self.replay_buffer:
+            # Default behavior: add to buffer
+            self.replay_buffer.add(step_data)
 
         self.current_obs = next_obs
         self._step_count += 1
@@ -99,10 +105,10 @@ class LearnerRuntime:
     def __init__(
         self,
         train_graph: Graph,
-        buffer: Optional[Any] = None
+        replay_buffer: Optional[Any] = None
     ):
         self.train_graph = train_graph
-        self.buffer = buffer
+        self.replay_buffer = replay_buffer
         self._update_count = 0
 
     def update_step(self, batch: Optional[Dict[str, Any]] = None, context: Optional[ExecutionContext] = None) -> Dict[str, Any]:
@@ -119,3 +125,6 @@ class LearnerRuntime:
         results = execute(self.train_graph, initial_inputs=initial_inputs, context=context)
         self._update_count += 1
         return results
+    def execute(self, batch: Optional[Dict[str, Any]] = None, context: Optional[ExecutionContext] = None) -> Dict[str, Any]:
+        """Synonym for update_step."""
+        return self.update_step(batch, context)
