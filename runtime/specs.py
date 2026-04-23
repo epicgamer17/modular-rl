@@ -7,6 +7,11 @@ from dataclasses import dataclass
 from typing import Dict, Union, Any, Tuple, List, Set, Optional, Callable
 
 from core.schema import TensorSpec, Schema, Field
+from core.types import (
+    RLType, TensorType, TrajectoryType, EpisodeType, 
+    DistributionType, PolicySnapshotType, ReplayBatchType,
+    ScalarMetricType, RNGKeyType, HiddenStateType
+)
 
 # Type aliases for spec objects
 Spec = Union[TensorSpec, Schema]
@@ -121,14 +126,46 @@ class OperatorSpec:
 
 
 # Helper functions to create specs with a cleaner syntax
-def Tensor(shape: Tuple[int, ...], dtype: str) -> TensorSpec:
+def Tensor(shape: Tuple[int, ...], dtype: str, rl_type: Optional[RLType] = None) -> TensorSpec:
     """Creates a TensorSpec with specified shape and dtype."""
-    return TensorSpec(shape=shape, dtype=dtype)
+    return TensorSpec(shape=shape, dtype=dtype, rl_type=rl_type)
 
 
 def Scalar(dtype: str) -> TensorSpec:
     """Creates a 0-d TensorSpec (scalar) with specified dtype."""
     return TensorSpec(shape=(), dtype=dtype)
+
+
+def Trajectory(length: Union[int, str]) -> TrajectoryType:
+    return TrajectoryType(length=length)
+
+
+def Episode() -> EpisodeType:
+    return EpisodeType()
+
+
+def Distribution(dist_type: str, is_logits: bool = False) -> DistributionType:
+    return DistributionType(dist_type=dist_type, is_logits=is_logits)
+
+
+def PolicySnapshot(version: int = 0) -> PolicySnapshotType:
+    return PolicySnapshotType(version=version)
+
+
+def ReplayBatch() -> ReplayBatchType:
+    return ReplayBatchType()
+
+
+def ScalarMetric() -> ScalarMetricType:
+    return ScalarMetricType()
+
+
+def RNGKey() -> RNGKeyType:
+    return RNGKeyType()
+
+
+def HiddenState() -> HiddenStateType:
+    return HiddenStateType()
 
 
 # Common RL-specific types
@@ -199,6 +236,11 @@ def is_compatible(src: Spec, dst: Spec) -> bool:
     - If Schemas: field sets, shapes, and dtypes must match.
     """
     if isinstance(src, TensorSpec) and isinstance(dst, TensorSpec):
+        # Check semantic types if present
+        if src.rl_type and dst.rl_type:
+            if not src.rl_type.is_compatible(dst.rl_type):
+                return False
+        
         # We allow -1 to match any dimension for now (simple broadcast/flexible batch check)
         if len(src.shape) != len(dst.shape):
             return False
@@ -208,6 +250,10 @@ def is_compatible(src: Spec, dst: Spec) -> bool:
         return src.dtype == dst.dtype
 
     if isinstance(src, Schema) and isinstance(dst, Schema):
+        return src.is_compatible(dst)
+
+    # Check RLType objects directly
+    if isinstance(src, RLType) and isinstance(dst, RLType):
         return src.is_compatible(dst)
 
     return False

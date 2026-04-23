@@ -55,6 +55,7 @@ def register_dqn_specs():
                 "avg_q": PortSpec(spec=Scalar("float32"), required=False),
                 "reward": PortSpec(spec=Scalar("float32"), required=False),
                 "epsilon": PortSpec(spec=Scalar("float32"), required=False),
+                "replay_size": PortSpec(spec=Scalar("int64"), required=False),
                 "batch": PortSpec(spec=TransitionBatch, required=False),
                 "default": PortSpec(spec=Scalar("float32"), required=False, variadic=True),
             },

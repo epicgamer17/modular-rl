@@ -2,7 +2,7 @@ import pytest
 from core.graph import Graph
 from compiler.rewrite import RewriteEngine, find_linear_chain
 from compiler.fusion_rules import METRICS_FOLD_RULE, RL_IR_FUSION_RULES
-from runtime.specs import register_spec, OperatorSpec, clear_registry
+from runtime.specs import register_spec, OperatorSpec, Scalar, clear_registry
 
 pytestmark = pytest.mark.unit
 
@@ -10,7 +10,7 @@ pytestmark = pytest.mark.unit
 def setup_specs():
     # Register common types
     register_spec("Mean", OperatorSpec.create(name="Mean", pure=True, deterministic=True))
-    register_spec("MetricsSink", OperatorSpec.create(name="MetricsSink", pure=False, deterministic=True))
+    register_spec("MetricsSink", OperatorSpec.create(name="MetricsSink", inputs={"replay_size": Scalar("int64")}, pure=False, deterministic=True))
     register_spec("Clip", OperatorSpec.create(name="Clip", pure=True, deterministic=True))
     register_spec("Cast", OperatorSpec.create(name="Cast", pure=True, deterministic=True))
     register_spec("GAE", OperatorSpec.create(name="GAE", pure=True, deterministic=True))

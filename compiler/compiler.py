@@ -14,6 +14,7 @@ from compiler.passes.validate_handles import validate_handles
 from compiler.passes.validate_purity import validate_purity
 from compiler.passes.validate_ir_purity import validate_ir_purity
 from compiler.passes.infer_shapes import infer_shapes
+from compiler.passes.autobatch import vectorize_graph
 from compiler.optimizer import optimize_graph
 
 
@@ -24,6 +25,7 @@ def compile_graph(
     buffer_handles: Optional[Set[str]] = None,
     context: str = "both",
     optimize: bool = True,
+    autobatch: bool = False,
     optimization_report: Optional[Any] = None,
 ) -> Graph:
     """
@@ -54,7 +56,11 @@ def compile_graph(
     # 1. Shape Inference (Populate node schemas for validation)
     graph = infer_shapes(graph)
 
-    # 2. Optimization Passes (DNE, fusion)
+    # 2. AutoBatching / Vectorization (Step 3)
+    if autobatch:
+        graph = vectorize_graph(graph)
+
+    # 3. Optimization Passes (DNE, fusion)
     # Applying these early removes dead nodes that might otherwise trigger validation errors
     if optimize:
         graph = optimize_graph(graph, report=optimization_report)

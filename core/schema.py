@@ -4,7 +4,8 @@ Defines data specifications for tensors, fields, schemas, and trajectories.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Tuple, Optional, Set
+from typing import Dict, List, Any, Tuple, Optional, Set, Union
+from core.types import RLType
 
 # Semantic Tag Constants
 TAG_ON_POLICY = "OnPolicy"
@@ -27,6 +28,7 @@ class TensorSpec:
     shape: Tuple[int, ...]
     dtype: str
     tags: List[str] = field(default_factory=list)
+    rl_type: Optional[RLType] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -113,6 +115,9 @@ class Schema:
                 return False
             if spec.dtype != other_spec.dtype:
                 return False
+            if spec.rl_type and other_spec.rl_type:
+                if not spec.rl_type.is_compatible(other_spec.rl_type):
+                    return False
         
         return True
 
