@@ -1,100 +1,152 @@
-# Semantic Kernel Nouns
+# RL IR Semantic Kernel
 
-Component:
-A modular unit of logic that interacts with the Blackboard via declared input (requires) and output (provides) contracts.
+## 1. IR Structural Layer
 
-Node:
-A structural unit in the execution graph that encapsulates a component and manages its runtime execution context.
+### Node (abstract)
+Minimal executable unit in the IR graph with typed inputs and outputs, independent of RL semantics.
 
-Edge:
-A directed dependency between nodes derived from overlapping output and input contracts at graph-build time.
+---
 
-Actor:
-An engine configuration and hardware-wrapped execution loop specialized for environment interaction and trajectory generation.
+### ActorNode
+Node that produces outputs conditioned on input DataRefs and an attached decision mechanism.
+- May be deterministic or stochastic
+- May use policies, heuristics, or external sampling
+- Does not encode execution semantics internally
 
-Source:
-A provider of initial data, such as a batch from a replay buffer or a raw observation from an environment.
+---
 
-Transform:
-A stateless mathematical mapping that produces new blackboard state from existing inputs without managing execution state.
+### SourceNode
+Node that introduces external or initial DataRefs with no input dependencies.
+- Default state: stateless
 
-Objective:
-A target key or loss scalar that serves as a sink for backward-reachability pruning in the execution graph.
+---
 
-Service:
-A long-lived, stateful resource node that persists across multiple graph executions to manage shared resources like buffers.
+### TransformNode
+Node that maps input DataRefs to output DataRefs via computation.
+- May be stateless or stateful (via NodeStatefulness axis)
 
-Controller:
-The BlackboardEngine orchestrator that manages the execution lifecycle and dynamic resolution of the dependency graph.
+---
 
-Schema:
-A formal contract (Key) that defines the semantic type, shape, and metadata expected at a specific blackboard path.
+### Edge
+Directed dependency carrying DataRefs between Nodes.
 
-DataRef:
-A standardized dotted-path string (e.g., "data.observations") used to address and validate entries within the Blackboard's structure.
+---
 
-ExecutionPlan:
-A topologically sorted sequence of component indices resolved to satisfy a set of requested targets for a given step.
+### Graph
+Collection of Nodes and Edges forming a complete computation structure.
 
-## The Data Contract
+---
 
-What crosses graph edges? The system recognizes four fundamental types of data that cross edges in the execution graph.
+### DataRef (refined)
+Immutable reference to a typed value with metadata:
+- Ownership: origin Node or external source
+- Locality: local / shared / external
+- Version/Freshness: logical generation index
 
-ScalarValue:
-A primitive numeric value (int, float, bool) or static metadata entry used for telemetry, control flags, and hyperparameter scheduling.
+---
 
-DataRef:
-A symbolic handle to a multidimensional tensor governed by a Schema that ensures mathematical compatibility across graph edges.
+### ExecutionPlan (refined)
+Compiled representation derived from Graph.
 
-StreamHandle:
-An asynchronous pointer to a continuous data producer that feeds sequences of Blackboard states from external sources.
+Two distinct forms:
+1. Graph Execution Plan
+   - Schedules Node evaluation via dependency ordering
+2. Interaction Loop Plan
+   - Defines temporal RL interaction cycles (step/episode structure)
 
-ResourceHandle:
-A stable reference to a persistent Service Node that provides components with access to shared state and side-effecting logic.
+---
 
-## Implementation Mapping
+### NodeStatefulness (orthogonal axis)
+Defines whether a Node carries persistent state.
 
-The following table maps the Semantic Kernel abstractions to their concrete implementations in the current codebase:
+- Stateless: output depends only on inputs
+- Stateful: output depends on inputs + internal memory
 
-| Semantic Concept | Implementation | Primary Location |
-| :--- | :--- | :--- |
-| **Component** | `PipelineComponent` (ABC) | `core/component.py` |
-| **Node** | Component instance in graph | `core/execution_graph.py` |
-| **Edge** | `edges` mapping in `ExecutionGraph` | `core/execution_graph.py` |
-| **Actor** | `ActorWorker` | `executors/workers/actor_worker.py` |
-| **Source** | `initial_keys` / `batch_iterator` | `core/blackboard_engine.py` |
-| **Transform** | Component `execute()` logic | `core/component.py` |
-| **Objective** | `target_keys` | `core/blackboard_engine.py` |
-| **Service** | Stateful resource (e.g. Buffer) | `data/storage/circular.py` |
-| **Controller** | `BlackboardEngine` | `core/blackboard_engine.py` |
-| **Schema** | `Key` dataclass | `core/contracts.py` |
-| **DataRef** | `Key.path` (dotted string) | `core/contracts.py` |
-| **ExecutionPlan** | `ExecutionGraph.execution_order` | `core/execution_graph.py` |
-| **ScalarValue** | `int`, `float`, `bool` primitives | `core/blackboard.py` |
-| **StreamHandle** | `Iterable[Dict[str, Any]]` | `core/blackboard_engine.py` |
-| **ResourceHandle**| Injected external objects | `registries/*.py` |
+---
 
-## Node Lifecycle
+## 2. Data Schema Layer (RL semantics as types)
 
-| Node Category | Initialization | Inputs | Outputs | State | Failure | Reset |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Component** | `__init__` with static config and resource handles. | Read-only Blackboard view via `requires`. | Dictionary of path-based updates to the Blackboard. | Stateless (Math) or Static (Network Weights). | Contract violation or runtime logic error (NaN). | None; intended as deterministic transforms. |
-| **Service** (Replay) | Once-per-session instantiation with shared memory. | Method calls (`insert`, `sample`) carrying payloads. | Sampled data batches or update acknowledgments. | Yes; persistent memory across multiple steps. | Memory exhaustion (OOM) or empty-state sampling. | `clear()` method to purge all stored state. |
-| **Actor** (Worker) | Orchestrated worker process with a local Engine. | `StreamHandle` (Env) and `ResourceHandle` (Weights). | Completed trajectories and episode-level telemetry. | Yes; encapsulates environment and local engine state. | Environment crash or invalid model outputs. | Re-run `play_sequence` loop with new iterator. |
-| **Source** (Env) | Wrapped within an Observation component. | External hardware signals or simulation triggers. | Raw facts (obs, rewards) for the initial Blackboard. | Yes; represents the external physical/simulated state. | Simulation error, timeout, or illegal action. | `env.reset()` at episode or task boundaries. |
+These are NOT nodes. They are typed DataRefs.
 
-## Graph Edge Classes
+### State
+System/environment configuration at a time step.
 
-The following classes define the allowed types of edges that connect nodes within the execution graph:
+### Action
+Decision output produced by ActorNode.
 
-Data:
-An edge representing the flow of a Tensor or ScalarValue payload from a provider to a consumer via a standardized Blackboard path.
+### Reward
+Scalar or structured feedback signal.
 
-Control:
-An edge used to signal execution branching or termination conditions, typically mapped to flags within the `meta` domain.
+### Transition
+Tuple: (State, Action, Reward, NextState)
 
-Resource:
-An edge connecting a compute node to a stateful Service, allowing the component to perform side-effecting operations like sampling or updates.
+### Trajectory
+Ordered sequence of Transitions.
 
-Dependency:
-A structural link that enforces a specific execution order between nodes, ensuring that prerequisites are satisfied before a node runs.
+### Policy
+Mapping from State → Action distribution or function.
+
+### ValueFunction
+Mapping from State or State-Action → expected return.
+
+---
+
+## 3. Execution Semantics Layer
+
+### Graph Execution Semantics
+- Executes Nodes via ExecutionPlan
+- Resolves dependencies through Edges
+- Applies NodeStatefulness only at execution time
+
+---
+
+### Interaction Loop Semantics
+- Executes RL cycles over time steps
+- Per step:
+  1. Read State from SourceNodes/environment
+  2. Execute ActorNodes → Actions
+  3. Environment advances externally
+  4. Produce Reward and next State
+- Does not modify Graph structure
+
+---
+
+### Scheduling Semantics
+- Graph scheduling: dependency resolution over Nodes
+- Interaction scheduling: temporal RL loop execution
+- Strictly separated concerns
+
+---
+
+## 4. Unification Rule
+
+### Node unification
+ActorNode, SourceNode, TransformNode are all specializations of Node:
+- SourceNode: no dependencies
+- TransformNode: pure computation
+- ActorNode: decision-producing computation
+
+### RL concepts are NOT Nodes
+State, Action, Reward, Policy, ValueFunction are:
+- Data schemas attached to DataRefs
+- Never executed as graph primitives
+- Never part of scheduling logic
+
+---
+
+## 5. Minimal Change Summary
+
+- ActorNode generalized (deterministic/stochastic/externally driven)
+- Introduced NodeStatefulness axis
+- Split ExecutionPlan into graph vs interaction semantics
+- Extended DataRef with metadata (ownership, locality, freshness)
+
+---
+
+## 6. Remaining Ambiguities
+
+- Environment boundary not formally represented
+- Learning/update phase not structurally modeled
+- Multi-agent interaction semantics undefined
+- Temporal abstraction (options/macro-actions) absent
+- Policy update semantics unclear (data vs structure)
