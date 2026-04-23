@@ -1189,3 +1189,375 @@ It ensures:
 - multi-graph coordination
 - distributed execution efficiency
 - deterministic RL reproducibility at scale
+
+# RL IR Learning Compilation Layer
+
+This section elevates learning to a first-class compilation target in the RL IR system. Learning is not treated as an external loop, but as a set of executable graphs operating over DataRefs, ExecutionContexts, and multi-graph interactions.
+
+It assumes:
+- Fully defined IR semantic kernel
+- Execution model (Interaction Loop + ExecutionContext)
+- Runtime engine (0.3)
+- Optimization system (0.4)
+
+---
+
+# 1. Learning Graph Model
+
+## 1.1 Learning as Graph Execution
+
+Learning is represented as a **second-order graph execution layer** operating over base RL graphs.
+
+Instead of "training loops", the system defines:
+
+> Learning Graphs = Graphs that transform DataRefs representing parameters, trajectories, and gradients into updated DataRefs.
+
+---
+
+## 1.2 Gradient Updates as IR Computation
+
+Gradients are not external artifacts; they are DataRefs produced by Graph execution:
+
+### Gradient Node semantics
+- Input: (Model parameters DataRef, Trajectory DataRef, loss signal DataRef)
+- Output: Gradient DataRef
+- Effect: Pure or Stochastic (depending on estimator)
+
+Gradient computation is a **TransformGraph subroutine**, not a primitive.
+
+---
+
+## 1.3 Policy and Value Updates as Executable Graphs
+
+Policy/value updates are represented as:
+
+- UpdateGraph(policy)
+- UpdateGraph(value_function)
+
+Each update graph:
+- consumes gradients
+- applies optimizer transforms (SGD, Adam abstracted as TransformNodes)
+- outputs new parameter DataRefs
+
+No parameter mutation exists outside graph execution.
+
+---
+
+## 1.4 Unification of Inference and Learning Graphs
+
+Inference and learning are unified via:
+
+- same Node types
+- same ExecutionContext model
+- different ExecutionGranularity schedules
+
+Difference is purely:
+- which subgraph is activated
+- which DataRefs are treated as mutable targets (versioned outputs)
+
+---
+
+# 2. Cross-Graph Optimization Rules
+
+## 2.1 Graph Families
+
+The system operates over interacting graph families:
+
+- Policy Graph
+- Value Graph
+- Replay Graph
+- Environment Model Graph
+- Learning Graph
+
+---
+
+## 2.2 Cross-Graph Equivalence Rules
+
+Optimization across graphs is allowed only under equivalence constraints:
+
+### Rule A: Structural equivalence
+Two subgraphs are equivalent if:
+- identical Node topology
+- identical Effect classes
+- identical DataRef schema shapes
+
+---
+
+### Rule B: Semantic equivalence
+Allowed if:
+- outputs are functionally identical under identical ExecutionContext
+- stochastic divergence is RNG-consistent
+
+---
+
+### Rule C: Versioned equivalence
+Allowed if:
+- all DataRef inputs share identical version sets
+- no intervening StateMutating effects across graphs
+
+---
+
+## 2.3 Cross-Graph Safety Constraints
+
+Forbidden optimizations:
+- merging policy and environment model execution
+- sharing mutable state across replay and policy graphs
+- collapsing stochastic boundaries across graph families
+- fusing learning graphs with inference graphs when update paths exist
+
+---
+
+# 3. Learning Schedule Compiler
+
+## 3.1 Unified Schedule Abstraction
+
+Training and interaction are compiled into a single schedule:
+
+> Learning Schedule = ordered ExecutionPlan over both Interaction and Learning Graphs
+
+---
+
+## 3.2 Scheduling Components
+
+### Rollout Phase
+- executes Policy Graph
+- generates trajectories
+- writes to Replay Graph
+
+---
+
+### Replay Phase
+- samples Replay Graph
+- feeds Learning Graphs
+
+---
+
+### Update Phase
+- executes Learning Graph
+- produces parameter DataRefs
+
+---
+
+## 3.3 Frequency Scheduling
+
+Learning schedule encodes:
+
+- update frequency (per step / per N steps)
+- replay ratio
+- gradient accumulation windows
+- delayed update policies
+
+All expressed as ExecutionGranularity extensions, not external loops.
+
+---
+
+## 3.4 Unified Loop Model
+
+Each Interaction Loop step includes:
+
+1. Rollout execution
+2. Replay sampling (optional)
+3. Learning graph execution (optional)
+4. Parameter DataRef update commit
+
+---
+
+# 4. Distributed Learning Model
+
+## 4.1 Consistency Model
+
+Learning uses **eventually consistent but version-causal parameter updates**.
+
+Guarantees:
+- DataRef version ordering is globally monotonic per graph family
+- No out-of-order parameter application within shard scope
+- Cross-shard convergence via version reconciliation
+
+---
+
+## 4.2 Parameter Synchronization
+
+Parameters are DataRefs with special semantics:
+
+- updated only via Learning Graph outputs
+- versioned per update step
+- propagated via ExecutionContext synchronization barriers
+
+No direct mutation allowed.
+
+---
+
+## 4.3 Replay + Policy Drift Handling
+
+Replay buffers may contain stale policies:
+
+Mitigation:
+- version-tagged trajectories
+- importance weighting encoded as TransformNodes
+- drift correction computed inside Learning Graph
+
+---
+
+## 4.4 Asynchronous Learners
+
+Supported via:
+- independent shard ExecutionContexts
+- delayed gradient application
+- version reconciliation at merge points
+
+Constraint:
+> learning remains deterministic given full version history
+
+---
+
+# 5. Model-Based RL Graph Semantics
+
+## 5.1 Environment Model as First-Class Graph
+
+Environment model is a full graph:
+
+- State transition graph
+- Reward prediction graph
+- latent dynamics graph
+
+It is not external; it is executable IR.
+
+---
+
+## 5.2 Simulated Interaction Loop
+
+Model-based RL introduces:
+
+> Nested Interaction Loops executed inside Environment Model Graph
+
+Structure:
+- Real Interaction Loop
+  - contains simulated Interaction Loop(s)
+
+Each simulated loop:
+- uses model graph instead of external environment
+- produces synthetic trajectories
+
+---
+
+## 5.3 Learning from Simulation
+
+Synthetic DataRefs are:
+- indistinguishable from real DataRefs at IR level
+- marked only by provenance metadata
+
+---
+
+# 6. Learning Optimization System
+
+## 6.1 Optimization Target Beyond Execution
+
+Optimization includes:
+
+- sample efficiency
+- gradient signal quality
+- replay usefulness
+- trajectory informativeness
+
+Not just compute cost.
+
+---
+
+## 6.2 Update Prioritization
+
+Learning Graph execution is prioritized by:
+
+- TD-error magnitude (DQN, SAC)
+- advantage magnitude (PPO)
+- uncertainty estimates (model-based RL)
+- novelty scores (exploration-driven RL)
+
+Encoded as scheduling weights in ExecutionPlan.
+
+---
+
+## 6.3 Sample Prioritization
+
+Replay Graph sampling is optimized via:
+
+- importance sampling transforms
+- prioritized replay weighting nodes
+- trajectory compression scoring
+
+---
+
+## 6.4 Trajectory Optimization
+
+Trajectories are:
+
+- filtered
+- reweighted
+- truncated
+- or merged
+
+based on learning signal density.
+
+---
+
+# 7. RL Workload Validation
+
+## PPO
+- ✔ learning graph = policy + value update graphs
+- ✔ rollout + update unified scheduling valid
+
+## DQN
+- ✔ replay graph central to learning graph
+- ✔ target network updates as DataRef transitions
+
+## SAC
+- ✔ stochastic policy learning fully graph-represented
+- ✔ entropy and Q updates unified in learning graph
+
+## NFSP
+- ✔ dual learning graphs (best response + average policy)
+- ✔ reservoir replay consistent under versioning
+
+## MCTS
+- ✔ value learning integrated with search graph
+- ✔ simulation reuse via model graph compatible
+
+## DAgger
+- ✔ expert labeling integrated into replay graph
+- ✔ supervised update expressed as learning graph
+
+## Model-based RL
+- ✔ fully native support via environment model graph
+- ✔ nested simulated Interaction Loops valid
+
+---
+
+# 8. Remaining Risks
+
+## 8.1 Cross-graph learning instability
+- subtle coupling between policy/value/replay graphs may create feedback loops
+
+## 8.2 Replay staleness amplification
+- long-lived trajectories may dominate learning signal incorrectly
+
+## 8.3 Model-based recursion explosion
+- nested simulated loops may exceed ExecutionGranularity bounds
+
+## 8.4 Distributed parameter drift
+- asynchronous learning shards may diverge before reconciliation
+
+## 8.5 Optimization objective ambiguity
+- multi-signal prioritization may conflict (reward vs novelty vs uncertainty)
+
+---
+
+# 9. Integration Statement
+
+This layer completes the RL IR system by making learning itself a compiled graph computation:
+
+Graph → ExecutionPlan → Runtime Execution → Learning Graph Updates → Parameter DataRef Evolution
+
+It ensures:
+- inference and learning are structurally unified
+- all RL algorithms are expressible as graph compositions
+- learning dynamics are optimizable at compilation time
+- distributed learning remains version-consistent and reproducible
