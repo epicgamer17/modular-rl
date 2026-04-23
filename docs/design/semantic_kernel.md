@@ -410,3 +410,782 @@ The system is now execution-complete under the following constraints:
 - Graph execution is strictly separated from interaction dynamics
 
 Remaining gaps are scalability and asynchronous execution extensions, not core IR correctness.
+
+# RL IR Runtime Execution Engine
+
+This section defines the concrete runtime system that executes a compiled RL IR ExecutionPlan. It assumes the semantic kernel and execution model are already fully specified.
+
+The runtime is responsible for deterministic, effect-aware, distributed execution of RL graphs under Interaction Loop dynamics.
+
+---
+
+# 1. Runtime Architecture
+
+The execution engine is composed of five tightly separated subsystems:
+
+---
+
+## 1.1 Scheduler
+
+### Responsibilities
+- Compiles Graph → ExecutionPlan (static + interaction layers)
+- Performs dependency resolution over Nodes/Edges
+- Assigns ExecutionGranularity structure
+- Partitions execution into batching groups and shards
+- Emits executable DAG slices per Interaction Loop step
+
+### Boundaries
+- Does NOT execute Nodes
+- Does NOT manage memory or state
+- Does NOT evaluate policies
+
+---
+
+## 1.2 Executor
+
+### Responsibilities
+- Executes Nodes according to ExecutionPlan
+- Applies Effect rules (Pure, Stochastic, External, StateMutating)
+- Materializes DataRefs
+- Invokes ActorNode execution contract
+- Applies batching and operator fusion
+
+### Boundaries
+- Does NOT generate ExecutionPlan
+- Does NOT manage global RNG lifecycle
+- Does NOT persist long-term state beyond ExecutionContext scope
+
+---
+
+## 1.3 Context Manager
+
+### Responsibilities
+- Constructs and propagates ExecutionContext
+- Maintains:
+  - step_index
+  - version_clock
+  - shard identity
+  - batching group identity
+- Ensures deterministic context propagation across Scheduler → Executor → Nodes
+
+### Boundaries
+- Does NOT execute computation
+- Does NOT store DataRef values
+- Does NOT perform scheduling
+
+---
+
+## 1.4 State Manager
+
+### Responsibilities
+- Maintains all Stateful Node memory
+- Isolates state by:
+  - execution_shard_id
+  - Node identity
+- Applies state updates only after successful Node execution
+- Ensures rollback capability on failure
+
+### Boundaries
+- Does NOT execute Nodes
+- Does NOT interpret policy logic
+- Does NOT manage RNG
+
+---
+
+## 1.5 RNG Manager
+
+### Responsibilities
+- Generates deterministic random streams
+- Derives seeds from ExecutionContext:
+  - step_index
+  - Node ID
+  - DataRef version hash
+  - shard_id
+- Ensures reproducibility across distributed runs
+
+### Boundaries
+- Does NOT store stateful memory
+- Does NOT participate in scheduling or execution logic
+
+---
+
+# 2. Execution Lifecycle
+
+## 2.1 Compilation Phase
+
+Graph compilation proceeds as:
+
+1. Graph validation (type + effect consistency)
+2. Dependency resolution (Edge traversal)
+3. ExecutionGranularity assignment
+4. ExecutionPlan generation:
+   - static execution layers
+   - interaction loop structure
+5. batching + shard partitioning
+6. context template creation
+
+Output: ExecutionPlan
+
+---
+
+## 2.2 Runtime Execution Flow
+
+Each Interaction Loop iteration executes as follows:
+
+---
+
+### Step 1: Context Initialization
+- Context Manager creates ExecutionContext:
+  - step_index incremented
+  - RNG state initialized
+  - shard + batching groups assigned
+
+---
+
+### Step 2: Graph Execution (Inner Loop)
+
+For each ExecutionGranularity pass:
+
+1. Scheduler selects executable Nodes
+2. Executor executes Nodes in dependency order
+3. DataRefs are either:
+   - materialized (computed)
+   - reused from cache
+4. Effects are applied according to rule system
+
+---
+
+### Step 3: Actor Execution Phase
+
+- ActorNodes are executed using:
+  - resolved Policy DataRefs
+  - ExecutionContext RNG state
+  - bound NodeState (if applicable)
+
+Outputs:
+- Action DataRefs
+
+---
+
+### Step 4: Environment Interaction Phase
+
+- External environment consumes Actions
+- Produces:
+  - next State DataRefs
+  - Reward DataRefs
+- Injected into DataRef system as External Effects
+
+---
+
+### Step 5: State Commit Phase
+
+- State Manager applies:
+  - updates from Stateful Nodes
+  - memory transitions
+- Version clock incremented
+
+---
+
+### Step 6: Cache Update Phase
+
+- Executor updates cache with:
+  - (Node, input versions, effect class)
+- Invalidates stale entries
+
+---
+
+# 3. Memory Model
+
+## 3.1 DataRef Storage States
+
+A DataRef exists in three runtime states:
+
+### Symbolic
+- Exists in ExecutionPlan
+- Has dependencies only
+- Not yet computed
+
+### Materialized
+- Fully computed value
+- Stored in execution memory pool
+- Can be cached or reused
+
+### Cached
+- Materialized value indexed by:
+  - Node ID
+  - input version set
+  - ExecutionContext signature
+
+---
+
+## 3.2 Memory Lifecycle
+
+1. Symbolic DataRef created during planning
+2. Materialization during execution
+3. Optional caching after successful computation
+4. Invalidated when:
+   - version mismatch occurs
+   - state mutation invalidates dependency chain
+
+---
+
+## 3.3 Cache Semantics
+
+- Pure Nodes → permanent cache eligible
+- Stochastic Nodes → cache tied to RNG state
+- Stateful Nodes → cache invalid unless state snapshot identical
+
+---
+
+# 4. Distributed Execution Model
+
+## 4.1 ExecutionContext Partitioning
+
+ExecutionContext is split into shards:
+
+- shard_id defines execution partition
+- each shard has independent:
+  - RNG stream
+  - State Manager slice
+  - DataRef cache segment
+
+No shared mutable state across shards.
+
+---
+
+## 4.2 Batching Coordination
+
+- batching_group_id defines vectorized execution groups
+- batches are executed atomically within a shard
+- cross-shard batching is forbidden unless explicitly synchronized
+
+---
+
+## 4.3 Stateful Node Synchronization
+
+Stateful Nodes are managed via:
+
+- shard-local state ownership
+- synchronized commit barriers at:
+  - end of Interaction Loop step
+  - ExecutionPlan checkpoint boundaries
+
+Conflict resolution:
+- last-write wins is forbidden
+- state merges must be deterministic and schema-defined
+
+---
+
+# 5. Failure & Determinism Model
+
+## 5.1 Partial Execution Failure
+
+On failure:
+
+- Execution is rolled back to last consistent checkpoint:
+  - DataRef cache state
+  - Stateful Node memory
+  - version_clock
+
+No partial commits allowed within Interaction Loop step.
+
+---
+
+## 5.2 Replay Consistency
+
+Guaranteed if:
+- ExecutionContext identical
+- ExecutionPlan identical
+- DataRef versions identical
+- RNG streams identical
+
+Replay is bitwise deterministic across shards.
+
+---
+
+## 5.3 Stochastic Divergence Prevention
+
+Prevented by:
+- deterministic RNGManager seeding
+- no implicit randomness in Nodes
+- strict policy evaluation via ExecutionContext
+
+---
+
+# 6. Execution Budgeting Model (CRITICAL NEW)
+
+## 6.1 Budget Types
+
+Execution budgets constrain runtime:
+
+- Node execution budget (max Nodes per step)
+- Graph pass budget (ExecutionGranularity limit)
+- Interaction Loop budget (episode length)
+- compute budget (aggregate constraint)
+
+---
+
+## 6.2 Enforcement Points
+
+Budgets enforced at:
+
+- Scheduler (pre-execution pruning)
+- Executor (runtime enforcement)
+- Context Manager (step-level limits)
+
+---
+
+## 6.3 ExecutionGranularity Constraints
+
+- inner_graph_pass_count ≤ budget limit
+- nested loops (MCTS, NFSP) must declare max depth
+- ActorNode expansions may be truncated safely
+
+---
+
+## 6.4 Early Stopping / Truncation
+
+Allowed only when:
+
+- ExecutionPlan defines safe checkpoint boundary
+- DataRef consistency preserved
+- Partial outputs marked as incomplete but valid schema
+
+Guarantee:
+> No invalid partial state is committed
+
+---
+
+# 7. RL Algorithm Validation
+
+### PPO
+- ✔ rollout + update phases handled via multi-pass execution
+- ✔ stable batching across ActorNodes
+
+### DQN
+- ✔ replay buffer externalized safely
+- ✔ Q-network execution fully cached
+
+### SAC
+- ✔ stochastic policy execution fully reproducible
+- ✔ entropy handling consistent in ExecutionContext
+
+### NFSP
+- ✔ dual policy execution separated by shard state
+- ✔ reservoir sampling state-safe
+
+### MCTS
+- ✔ nested execution loops fully supported
+- ✔ stateful tree expansion shard-isolated
+
+### DAgger
+- ✔ expert queries handled as External Effects
+- ✔ dataset aggregation consistent across steps
+
+### Model-based RL
+- ✔ simulated Interaction Loops supported under ExecutionGranularity
+- ✔ recursive execution bounded by budgeting system
+
+---
+
+# 8. Remaining System Risks
+
+## 8.1 Extreme-scale distributed drift
+- long-running shard divergence under network delay
+
+## 8.2 Deep recursive execution (MCTS-like systems)
+- risk of exponential ExecutionPlan expansion
+
+## 8.3 Asynchronous actor serving mismatch
+- current model assumes step-synchronized execution
+
+## 8.4 Memory pressure from Stateful Nodes
+- large-scale MCTS / NFSP may exceed shard-local state limits
+
+## 8.5 Environment latency coupling
+- external environment not formally bounded in time model
+
+---
+
+# 9. Integration Statement
+
+This runtime model completes the RL IR system by defining:
+
+- deterministic execution semantics
+- shard-safe distributed computation
+- reproducible stochastic evaluation
+- strict effect-aware scheduling
+- bounded recursive execution
+
+All RL families (PPO, DQN, SAC, NFSP, MCTS, DAgger, model-based RL) execute without structural reinterpretation under this runtime.
+
+# RL IR Compilation Optimization & Advanced Execution Layer
+
+This section defines the optimization compiler and advanced execution transformations applied to ExecutionPlans prior to runtime execution. It operates strictly on the finalized IR semantic kernel and ExecutionPlan model.
+
+It does not modify runtime semantics; it improves efficiency, locality, and execution structure while preserving correctness under the Effect system.
+
+---
+
+# 1. Optimization Pass System
+
+The compiler applies ordered, effect-aware transformation passes over the ExecutionPlan DAG.
+
+---
+
+## 1.1 Operator Fusion Rules
+
+Fusion is allowed only under **Effect compatibility constraints**:
+
+### Allowed fusion cases
+- Pure → Pure (TransformNode chains)
+- Pure → Stochastic (if stochasticity is deferred to final node)
+- Actor pre-processing pipelines (observation transforms + policy input encoding)
+
+### Fusion rules
+- Linear TransformNode chains are collapsed into single fused operators
+- ActorNode pre-processing pipelines may be fused with policy evaluation if schema-compatible
+- Edge compression allowed when DataRef intermediate is unused externally
+
+### Forbidden fusion cases
+- Any fusion involving External Effect Nodes
+- Any fusion crossing Stateful Node boundaries
+- Any fusion that merges different stochastic RNG domains
+
+---
+
+## 1.2 Redundant Computation Elimination
+
+Elimination is performed via **versioned DataRef equivalence checking**:
+
+Remove computations if:
+- identical Node signature
+- identical input DataRef version set
+- identical Effect class
+
+Supports:
+- memoized subgraph reuse
+- duplicate policy evaluation elimination
+- repeated value function computation sharing
+
+---
+
+## 1.3 Subtree Reuse Across Timesteps
+
+ExecutionPlan allows reuse of identical subgraphs across Interaction Loop steps:
+
+Reuse condition:
+- same Graph substructure
+- same ExecutionContext schema (excluding step_index)
+- no intervening Stateful mutation affecting subtree inputs
+
+Used heavily in:
+- PPO rollout reuse
+- SAC critic reuse
+- model-based rollout reuse
+
+---
+
+## 1.4 Stochastic Node Optimization Constraints
+
+Stochastic Nodes impose strict optimization limits:
+
+- cannot be hoisted across ExecutionContext boundaries
+- cannot be deduplicated across differing RNG states
+- may be partially cached only if RNG seed is identical
+
+Optimization allowed:
+- batching of identical stochastic distributions
+- vectorized sampling of ActorNodes
+
+---
+
+# 2. Memory Optimization Model
+
+## 2.1 DataRef Lifetime Analysis
+
+Each DataRef is assigned a lifetime interval:
+
+- defined by last consumer Node
+- bounded by ExecutionPlan step range
+- extended only by caching or replay dependencies
+
+Dead DataRefs are eligible for eviction immediately after last use.
+
+---
+
+## 2.2 Cache Eviction Policies
+
+Cache eviction is governed by:
+
+- LRU within ExecutionContext shard
+- Effect-based priority:
+  - Pure Nodes → lowest eviction priority
+  - Stochastic Nodes → medium priority
+  - External Nodes → immediate eviction after consumption
+  - Stateful Nodes → never evicted while state active
+
+---
+
+## 2.3 Materialization Minimization
+
+The compiler reduces memory footprint by:
+
+- keeping symbolic DataRefs as long as possible
+- delaying computation until forced by ActorNode or External Effect boundary
+- fusing intermediate transforms to avoid temporary materialization
+
+---
+
+## 2.4 Stateful Node Compression Strategies
+
+State compression is applied to Stateful Nodes via:
+
+- delta encoding of state transitions
+- snapshot merging at checkpoint boundaries
+- shard-local compaction of redundant state history
+
+Constraints:
+- compression must preserve deterministic replay
+- cannot merge across execution_shard_id boundaries
+
+---
+
+# 3. Execution Reordering System
+
+Execution order may be modified under strict invariants:
+
+---
+
+## 3.1 Safe Reordering Conditions
+
+Reordering allowed if:
+- no dependency violation in Edge graph
+- no change in DataRef version semantics
+- no interaction with Stateful or External effects
+
+---
+
+## 3.2 Effect-aware Scheduling Optimization
+
+Execution ordering prioritizes:
+
+1. Pure TransformNodes (max parallelism)
+2. Batching-compatible ActorNodes
+3. Stochastic Nodes (RNG-grouped execution)
+4. Stateful Nodes (serialized per shard)
+5. External Nodes (environment boundary sync points)
+
+---
+
+## 3.3 Batching Reorganization
+
+Batching groups may be restructured across Graph layers:
+
+- ActorNodes with identical policy schema merged
+- TransformNodes grouped by operator signature
+- cross-layer batching allowed only within same ExecutionContext step
+
+Constraint:
+> batching cannot violate DataRef version dependencies
+
+---
+
+# 4. Multi-Graph Composition Model (CRITICAL)
+
+The system operates over multiple interacting graphs:
+
+---
+
+## 4.1 Graph Types
+
+### Policy Graph
+- Produces Actions from States
+- Contains ActorNodes and policy transforms
+
+---
+
+### Value Graph
+- Computes ValueFunction estimates
+- Contains pure TransformNodes and critic ActorNodes
+
+---
+
+### Environment Model Graph
+- Simulates environment transitions
+- Used in model-based RL
+
+---
+
+### Replay Graph
+- Processes stored Trajectories
+- Supports sampling and batching for learning
+
+---
+
+## 4.2 Dependency Relationships
+
+- Policy Graph → consumes Value Graph outputs (advantage, Q-values)
+- Value Graph → consumes Replay Graph DataRefs
+- Environment Model Graph → feeds synthetic transitions into Replay Graph
+- Replay Graph → feeds all training graphs
+
+---
+
+## 4.3 Cross-Graph Execution Rule
+
+Graphs are not merged but executed under a **shared ExecutionContext family**, ensuring:
+
+- shared version_clock
+- isolated RNG streams per graph type
+- synchronized step_index alignment
+
+---
+
+# 5. Async and Streaming Execution Model
+
+## 5.1 Partial Graph Execution
+
+Graphs may execute partially when:
+- only a subset of outputs is required
+- downstream ActorNodes trigger early consumption
+- ExecutionBudget constraints are hit
+
+Constraint:
+> partial execution must preserve deterministic replay boundaries
+
+---
+
+## 5.2 Streaming Actor Execution
+
+ActorNodes support streaming execution:
+
+- observation arrives incrementally
+- partial policy evaluation allowed
+- final Action emitted only at completion boundary
+
+Used in:
+- large observation models
+- multimodal RL policies
+
+---
+
+## 5.3 Asynchronous Environment Interaction
+
+Environment interface may be asynchronous:
+
+- Actions sent without blocking Graph execution
+- Rewards/States arrive as delayed External Effects
+- ExecutionContext reconciles late arrivals via versioning
+
+Constraint:
+- no reordering of Interaction Loop steps allowed
+
+---
+
+# 6. Cost Model for Execution Planning
+
+The compiler assigns cost estimates to optimize ExecutionPlans.
+
+---
+
+## 6.1 Node Compute Cost
+
+Each Node type has base cost model:
+
+- TransformNode → O(f(input size))
+- ActorNode → O(policy inference cost)
+- Stateful Node → O(state read/write cost)
+- External Node → O(network/environment latency)
+
+---
+
+## 6.2 Batching Efficiency Score
+
+Batching is scored by:
+
+- compute reduction factor
+- memory reuse ratio
+- cache hit probability
+- GPU utilization efficiency (abstracted)
+
+Higher score → preferred batching configuration
+
+---
+
+## 6.3 Distributed Execution Cost Heuristics
+
+Includes:
+- shard communication cost
+- state synchronization overhead
+- cross-graph dependency cost
+- RNG stream divergence risk penalty
+
+---
+
+# 7. RL Workload Validation
+
+## PPO
+- ✔ subtree reuse for rollout efficiency
+- ✔ batching across ActorNodes
+- ✔ value/policy graph separation optimal
+
+## DQN
+- ✔ replay graph optimization critical
+- ✔ Q-function fusion supported
+- ✔ caching extremely effective
+
+## SAC
+- ✔ stochastic Actor batching optimized
+- ✔ critic graph reuse across steps
+
+## NFSP
+- ✔ replay + policy dual graph reuse valid
+- ✔ state compression required for reservoir buffers
+
+## MCTS
+- ✔ subtree reuse across simulations essential
+- ✔ partial execution critical for pruning
+- ✔ state compression heavily used
+
+## DAgger
+- ✔ replay graph dominates cost model
+- ✔ external labeling optimized via batching
+
+## Model-based RL
+- ✔ environment model graph optimization critical
+- ✔ recursive graph execution controlled via cost model
+
+---
+
+# 8. Remaining Risks
+
+## 8.1 Cross-graph optimization interference
+- risk of incorrect fusion across graph boundaries
+
+## 8.2 Stochastic caching correctness edge cases
+- rare RNG collision scenarios in distributed batching
+
+## 8.3 Deep MCTS subtree explosion
+- exponential graph reuse still computationally expensive
+
+## 8.4 Async environment drift
+- delayed rewards may break strict step alignment assumptions
+
+## 8.5 Memory pressure under multi-graph replay sharing
+- replay graph becomes dominant memory consumer
+
+---
+
+# 9. Integration Statement
+
+This layer completes the compilation pipeline:
+
+Graph → Optimizer → ExecutionPlan → Runtime Engine
+
+It ensures:
+- maximal compute reuse via subtree sharing
+- effect-safe optimization
+- multi-graph coordination
+- distributed execution efficiency
+- deterministic RL reproducibility at scale
