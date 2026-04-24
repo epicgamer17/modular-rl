@@ -21,7 +21,10 @@ def make_env(env_id: str, seed: int, idx: int, capture_video: bool, run_name: st
 
 
 # TODO: allow for PufferLib Envs?
-class VectorEnv:
+from runtime.environment import EnvAdapter, StepResult, ObsBatch
+from core.schema import TensorSpec
+
+class VectorEnv(EnvAdapter):
     """
     Wrapper around Gymnasium's VectorEnv to ensure consistent interface.
     Supports both Sync and Async variants.
@@ -49,10 +52,22 @@ class VectorEnv:
         else:
             self.envs = gym.vector.SyncVectorEnv(env_fns)
 
+        # Populate specs
+        obs_shape = self.envs.single_observation_space.shape
+        obs_dtype = str(self.envs.single_observation_space.dtype)
+        self.obs_spec = TensorSpec(shape=obs_shape, dtype=obs_dtype)
+        
+        if hasattr(self.envs.single_action_space, "n"):
+            # Discrete
+            self.act_spec = TensorSpec(shape=(), dtype="int64")
+        else:
+            # Continuous
+            self.act_spec = TensorSpec(shape=self.envs.single_action_space.shape, dtype=str(self.envs.single_action_space.dtype))
+
         self.observation_space = self.envs.single_observation_space
         self.action_space = self.envs.single_action_space
 
-    def reset(self, seed: Optional[int] = None) -> torch.Tensor:
+    def reset(self, seed: Optional[int] = None) -> ObsBatch:
         """Reset all environments and return batched observations."""
         obs, info = self.envs.reset(seed=seed)
         import torch

@@ -2,6 +2,11 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 import torch
 import numpy as np
+from abc import ABC, abstractmethod
+from core.schema import TensorSpec
+
+# Type alias for batched observations
+ObsBatch = torch.Tensor
 
 @dataclass(frozen=True)
 class StepResult:
@@ -9,7 +14,7 @@ class StepResult:
     Contract for environment step results.
     Always batched (B, ...). If single environment, B=1.
     """
-    obs: torch.Tensor       # [B, ...]
+    obs: ObsBatch           # [B, ...]
     reward: torch.Tensor    # [B]
     terminated: torch.Tensor # [B] (bool)
     truncated: torch.Tensor  # [B] (bool)
@@ -41,7 +46,31 @@ class StepResult:
             f"Truncated must be bool tensor, got {self.truncated.dtype}"
         )
 
-class SingleToBatchEnvAdapter:
+class EnvAdapter(ABC):
+    """
+    Canonical interface for environment interaction.
+    Always batched (B, ...).
+    """
+    num_envs: int
+    obs_spec: TensorSpec
+    act_spec: TensorSpec
+
+    @abstractmethod
+    def reset(self, seed: Optional[int] = None) -> ObsBatch:
+        """Reset all environments and return batched observations."""
+        pass
+
+    @abstractmethod
+    def step(self, action_batch: Any) -> StepResult:
+        """Step all environments and return StepResult."""
+        pass
+
+    @abstractmethod
+    def close(self) -> None:
+        """Close environments."""
+        pass
+
+class SingleToBatchEnvAdapter(EnvAdapter):
     """
     Adapts a single (non-vectorized) environment to the batched StepResult contract.
     Returns batches of size B=1.
@@ -49,10 +78,20 @@ class SingleToBatchEnvAdapter:
     def __init__(self, env: Any):
         self.env = env
         self.num_envs = 1
-        self.observation_space = getattr(env, "observation_space", None)
-        self.action_space = getattr(env, "action_space", None)
+        
+        # Convert gym spaces to TensorSpec
+        obs_shape = env.observation_space.shape
+        obs_dtype = str(env.observation_space.dtype)
+        self.obs_spec = TensorSpec(shape=obs_shape, dtype=obs_dtype)
+        
+        if hasattr(env.action_space, "n"):
+            # Discrete
+            self.act_spec = TensorSpec(shape=(), dtype="int64")
+        else:
+            # Continuous
+            self.act_spec = TensorSpec(shape=env.action_space.shape, dtype=str(env.action_space.dtype))
 
-    def reset(self, seed: Optional[int] = None) -> torch.Tensor:
+    def reset(self, seed: Optional[int] = None) -> ObsBatch:
         """Reset the environment and return batched observation."""
         obs, info = self.env.reset(seed=seed)
         # obs shape: [...] -> [1, ...]
