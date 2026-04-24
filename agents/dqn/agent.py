@@ -8,6 +8,8 @@ from agents.dqn.operators import register_dqn_operators
 from agents.dqn.specs import register_dqn_specs
 from core.schema import Schema, TensorSpec, Field
 from runtime.collator import ReplayCollator
+from runtime.operators.losses import register_loss_operators
+from runtime.specs import register_base_specs
 from runtime.state import (
     ReplayBuffer,
     OptimizerState,
@@ -63,15 +65,9 @@ class DQNAgent:
         self.actor_graph = build_actor_graph(config)
         self.learner_graph = build_learner_graph(config, self.collator)
 
-        # Inject opt_state handle into learner graph node
-        for node in self.learner_graph.nodes.values():
-            if node.node_type == "Optimizer":
-                node.params["optimizer_handle"] = "main_opt"
-                # Remove direct object if it exists (for absolute purity)
-                if "opt_state" in node.params:
-                    del node.params["opt_state"]
-
         # 6. Register Operators and Specs (idempotent)
+        register_base_specs()
+        register_loss_operators()
         register_dqn_operators()
         register_dqn_specs()
 

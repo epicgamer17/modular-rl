@@ -417,3 +417,218 @@ The compiler runs these passes in order:
 6. **State Encapsulation**: All mutable state lives in Runtime layer, accessed via registries
 7. **Named Ports**: Data flow is explicit via dst_port, not implicit list ordering
 8. **RuntimeValue**: Control flow uses explicit wrappers (Value, NoOp, Skipped, MissingInput), not None
+9. **JSON Serializability**: Node params must be primitives (no nn.Module, Optimizer, ReplayBuffer)
+10. **Canonical Handles**: Parameters use `model_handle`, `target_handle`, `optimizer_handle`, `buffer_id`
+
+---
+
+## Operator Specifications
+
+### OperatorSpec Structure
+
+```python
+@dataclass(frozen=True)
+class OperatorSpec:
+    name: str
+    version: str = "1.0.0"
+    
+    # IO Ports
+    inputs: Dict[str, PortSpec]   # {port_name: PortSpec}
+    outputs: Dict[str, PortSpec]
+    
+    # Execution Properties
+    pure: bool                    # No side effects
+    stateful: bool                # Maintains internal state
+    deterministic: bool           # Same inputs → same outputs
+    
+    # Dependencies
+    requires_models: List[str]    # Model handles needed
+    requires_buffers: List[str]   # Buffer handles needed
+    requires_optimizer: bool      # Needs optimizer state
+    
+    allowed_contexts: Set[str]    # {"actor", "learner"}
+    
+    # Gradient Properties (learner ops)
+    differentiable: bool = True
+    creates_grad: bool = False
+    consumes_grad: bool = False
+    updates_params: bool = False
+    parameter_handles: List[str] = []
+    
+    # Meta
+    tags: Set[str] = set()
+    shape_fn: Optional[Callable] = None
+    
+    # Cost Model
+    estimated_flops: int = 0
+    memory_reads: int = 0
+    kernel_launch_cost: float = 0.0
+```
+
+### PortSpec Structure
+
+```python
+@dataclass(frozen=True)
+class PortSpec:
+    spec: Spec                    # TensorSpec or Schema
+    required: bool = True
+    variadic: bool = False        # Accepts multiple inputs
+    default: Any = None
+    description: str = ""
+```
+
+---
+
+## Rewrite System
+
+### FusionRule
+
+Fuses adjacent node chains into single operators:
+
+```python
+FusionRule(
+    name="fuse_a_b",
+    pattern=["OpA", "OpB"],      # Chain to match
+    replacement="FusedOp"         # Single fused node
+)
+```
+
+### RewriteEngine
+
+```python
+engine = RewriteEngine()
+engine.add_rule(FusionRule(...))
+optimized = engine.apply(graph)
+```
+
+Ensures numerical equivalence between original and fused graphs.
+
+---
+
+## Autobatching
+
+### Vectorization Pass
+
+Transforms single-step graphs to batched:
+
+```
+Single: obs [D] → policy → action [A]
+Batched: obs [B, D] → policy → action [B, A]
+```
+
+- Adds "batched" tag to TensorSpec
+- Updates RLType.shape with "B" prefix
+- Skips nodes tagged "no_batch"
+
+---
+
+## Validation Codes
+
+### Metadata (M)
+| Code | Description |
+|------|-------------|
+| M001 | Unregistered operator type |
+
+### Purity (P)
+| Code | Description |
+|------|-------------|
+| P001 | nn.Module in node params |
+| P002 | Optimizer in node params |
+| P003 | ReplayBuffer in node params |
+| P004 | Callable/lambda in node params |
+
+### Structure (S)
+| Code | Description |
+|------|-------------|
+| S001 | Cycle detected in graph |
+| S002 | Disconnected node |
+
+### RL Semantics (R)
+| Code | Description |
+|------|-------------|
+| R001 | Off-policy data to on-policy node |
+
+---
+
+## Type System
+
+### RLType Hierarchy
+
+```
+RLType (base)
+├── TensorType (shape, dtype, tags)
+├── DistributionType (dist_type, is_logits)
+├── TrajectoryType (length)
+├── EpisodeType
+├── PolicySnapshotType (version)
+├── ReplayBatchType
+├── ScalarMetricType
+├── RNGKeyType
+└── HiddenStateType
+```
+
+### Compatibility Rules
+
+- OnPolicy vs OffPolicy: Incompatible
+- Logits vs Probs: Incompatible
+- Stale snapshot (version < 0): Warning
+- Same category + compatible tags: Compatible
+
+---
+
+## Agent Architecture
+
+### DQNAgent
+
+```
+DQNAgent
+├── q_net: QNetwork
+├── target_net: QNetwork  
+├── optimizer: Adam
+├── opt_state: OptimizerState
+├── rb: ReplayBuffer
+├── model_registry: ModelRegistry
+│   ├── "q_net" → q_net
+│   └── "target_q" → target_net
+├── buffer_registry: BufferRegistry
+│   └── "main" → rb
+├── optimizer_registry: OptimizerRegistry
+│   └── "main_opt" → opt_state
+├── replay_schema: Schema
+├── collator: ReplayCollator
+├── actor_graph: Graph (interact)
+└── learner_graph: Graph (train)
+```
+
+### Graph Construction
+
+1. Build graphs using builder functions
+2. Inject handles (not objects) into node params
+3. Register operators and specs
+4. Compile with `compile_graph()`
+5. Validate handles exist in registries
+
+---
+
+## Module Map
+
+| Module | Contents |
+|--------|----------|
+| `core/graph.py` | Graph, Node, Edge, NodeId |
+| `core/schema.py` | Schema, Field, TensorSpec, tags |
+| `core/types.py` | RLType hierarchy |
+| `core/nodes.py` | NodeDef, NodeInstance, Registry |
+| `runtime/executor.py` | execute(), register_operator() |
+| `runtime/context.py` | ExecutionContext, ActorSnapshot |
+| `runtime/runtime.py` | ActorRuntime, LearnerRuntime |
+| `runtime/state.py` | ReplayBuffer, ParameterStore, *Registry |
+| `runtime/values.py` | RuntimeValue wrappers |
+| `runtime/specs.py` | OperatorSpec, PortSpec, register_spec() |
+| `runtime/collator.py` | ReplayCollator |
+| `runtime/operators/` | Built-in operators |
+| `compiler/compiler.py` | compile_graph() |
+| `compiler/rewrite.py` | RewriteEngine, FusionRule |
+| `compiler/analyzer.py` | Static analysis |
+| `compiler/passes/` | Validation passes |
+| `agents/dqn/` | DQNAgent, graphs, operators, specs |
+| `agents/ppo/` | PPOAgent, graphs, operators, specs |

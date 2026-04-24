@@ -67,7 +67,8 @@ def test_adv_norm_zero_mean():
     # unless we mock torch.distributions.Categorical or similar, or just trust the code we see.
     # However, we can verify that the loss is calculated.
     
-    loss = op_ppo_objective(node, {"batch": batch, "gae": gae_data}, context=ctx)
+    results = op_ppo_objective(node, {"batch": batch, "gae": gae_data}, context=ctx)
+    loss = results["loss"]
     
     assert isinstance(loss, torch.Tensor)
     assert not torch.isnan(loss)

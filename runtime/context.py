@@ -8,7 +8,7 @@ from typing import Dict, Any, List, Optional
 import torch
 import random
 import uuid
-from runtime.state import ModelRegistry, BufferRegistry, OptimizerRegistry
+from runtime.state import ModelRegistry, BufferRegistry, OptimizerRegistry, GradientRegistry
 
 class ActorSnapshot:
     """
@@ -60,7 +60,8 @@ class ExecutionContext:
         global_step: int = 0,
         model_registry: Optional[ModelRegistry] = None,
         buffer_registry: Optional[BufferRegistry] = None,
-        optimizer_registry: Optional[OptimizerRegistry] = None
+        optimizer_registry: Optional[OptimizerRegistry] = None,
+        gradient_registry: Optional[GradientRegistry] = None,
     ):
         self.step_id = step_id
         self.policy_versions = policy_versions or {}
@@ -70,6 +71,7 @@ class ExecutionContext:
         self.model_registry = model_registry or ModelRegistry()
         self.buffer_registry = buffer_registry or BufferRegistry()
         self.optimizer_registry = optimizer_registry or OptimizerRegistry()
+        self.gradient_registry = gradient_registry or GradientRegistry()
         
         # Clocks
         self.actor_step = actor_step
@@ -111,6 +113,10 @@ class ExecutionContext:
         """Resolves an OptimizerHandle string to a live OptimizerState."""
         return self.optimizer_registry.get(handle)
 
+    def get_gradients(self, handle: str) -> Optional[torch.Tensor]:
+        """Resolves a gradient handle to a stored gradient buffer."""
+        return self.gradient_registry.get(handle)
+
     def bind_actor(self, actor_id: str, snapshot: ActorSnapshot):
         """Binds an actor to a specific immutable snapshot for this context."""
         self.actor_snapshots[actor_id] = snapshot
@@ -136,7 +142,8 @@ class ExecutionContext:
             global_step=self.global_step,
             model_registry=self.model_registry,
             buffer_registry=self.buffer_registry,
-            optimizer_registry=self.optimizer_registry
+            optimizer_registry=self.optimizer_registry,
+            gradient_registry=self.gradient_registry,
         )
         new_ctx.trace_lineage = self.trace_lineage + [self.trace_id]
         # Inherit actor snapshots

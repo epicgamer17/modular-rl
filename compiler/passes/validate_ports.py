@@ -61,22 +61,28 @@ def validate_ports(graph: Graph) -> ValidationReport:
             dst_port = dst_op_spec.inputs.get(port_name)
 
             if not dst_port:
-                # Search for compatible alternatives for a helpful suggestion
-                compatible_alternatives = [
-                    p
-                    for p, ps in dst_op_spec.inputs.items()
-                    if is_compatible(src_port.spec, ps.spec)
-                ]
-                suggestion = ""
-                if compatible_alternatives:
-                    suggestion = f" Did you mean dst_port='{compatible_alternatives[0]}'?"
+                # If the port name is not found, check if there is a variadic port
+                # that can accept arbitrary named inputs (like WeightedSum)
+                variadic_port = next((p for p in dst_op_spec.inputs.values() if p.variadic), None)
+                if variadic_port:
+                    dst_port = variadic_port
+                else:
+                    # Search for compatible alternatives for a helpful suggestion
+                    compatible_alternatives = [
+                        p
+                        for p, ps in dst_op_spec.inputs.items()
+                        if is_compatible(src_port.spec, ps.spec)
+                    ]
+                    suggestion = ""
+                    if compatible_alternatives:
+                        suggestion = f" Did you mean dst_port='{compatible_alternatives[0]}'?"
 
-                report.add(
-                    ValidationIssue(
-                        severity=SEVERITY_ERROR,
-                        code="E203",
-                        node_id=str(edge.dst),
-                        message=(
+                    report.add(
+                        ValidationIssue(
+                            severity=SEVERITY_ERROR,
+                            code="E203",
+                            node_id=str(edge.dst),
+                            message=(
                             f"Node '{edge.dst}' of type '{dst_node.node_type}' "
                             f"has no input port named '{port_name}'.{suggestion}"
                         ),
@@ -220,7 +226,15 @@ def validate_ports(graph: Graph) -> ValidationReport:
                                     connected_ports.add(compatible[0])
 
         for port_name, port_spec in spec.inputs.items():
-            if port_spec.required and port_name not in connected_ports:
+            is_satisfied = port_name in connected_ports
+            
+            # Special case for variadic ports (like 'default' in WeightedSum)
+            # They are satisfied if ANY ports are connected (since they accept any name)
+            if not is_satisfied and port_spec.variadic:
+                if connected_ports:
+                    is_satisfied = True
+
+            if port_spec.required and not is_satisfied:
                 report.add(
                     ValidationIssue(
                         severity=SEVERITY_ERROR,

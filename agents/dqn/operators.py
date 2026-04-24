@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.func import functional_call
+from torch.utils.checkpoint import checkpoint
 from typing import Dict, Any, Optional
 from core.graph import Node
 from runtime.context import ExecutionContext
@@ -49,13 +50,12 @@ def op_q_values_single(
             return functional_call(q_net, state, (obs,))
 
 
-def op_q_values_batch(
+def op_q_forward(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
 ) -> torch.Tensor:
     """
-    Computes average Q-values for a batch.
-    Expects input 'batch' containing 'obs'.
-    Returns scalar average Q-value.
+    Computes Q-values for a batch.
+    Expects input 'obs'.
     """
     obs = inputs.get("obs")
     if obs is None:
@@ -63,10 +63,12 @@ def op_q_values_batch(
 
     model_handle = node.params.get("model_handle", "online_q")
     q_net = context.get_model(model_handle)
-
-    with torch.inference_mode():
-        # returns [B, A]
-        return q_net(obs)
+    if node.params.get("no_grad_region", False):
+        with torch.inference_mode():
+            return q_net(obs)
+    if node.params.get("activation_checkpoint", False):
+        return checkpoint(lambda x: q_net(x), obs, use_reentrant=False)
+    return q_net(obs)
 
 
 def op_td_loss(
@@ -93,8 +95,13 @@ def op_td_loss(
     next_states = batch["next_obs"]
     dones = batch["done"]
 
-    # current_q: [B]
-    current_q = q_net(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+    def current_q_forward(x: torch.Tensor) -> torch.Tensor:
+        return q_net(x).gather(1, actions.unsqueeze(1)).squeeze(1)
+
+    if node.params.get("activation_checkpoint", False):
+        current_q = checkpoint(current_q_forward, states, use_reentrant=False)
+    else:
+        current_q = current_q_forward(states)
 
     with torch.no_grad():
         # target_q: [B]
@@ -147,11 +154,45 @@ def op_get_field(
     return getattr(val, field)
 
 
+def op_gather_action_q(
+    node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
+) -> torch.Tensor:
+    q_values = inputs.get("q_values")
+    actions = inputs.get("actions")
+    if q_values is None:
+        return MissingInput("q_values")
+    if actions is None:
+        return MissingInput("actions")
+    return q_values.gather(1, actions.long().unsqueeze(1)).squeeze(1)
+
+
+def op_bellman_target(
+    node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
+) -> torch.Tensor:
+    next_q_values = inputs.get("next_q_values")
+    rewards = inputs.get("rewards")
+    dones = inputs.get("dones")
+    gamma = node.params.get("gamma", 0.99)
+    if next_q_values is None:
+        return MissingInput("next_q_values")
+    if rewards is None:
+        return MissingInput("rewards")
+    if dones is None:
+        return MissingInput("dones")
+    with torch.no_grad():
+        max_next_q = next_q_values.max(1)[0]
+        return rewards + (1 - dones.float()) * gamma * max_next_q
+
+
 def register_dqn_operators():
     """Register all DQN related operators."""
     register_operator("QValuesSingle", op_q_values_single)
-    register_operator("QValuesBatch", op_q_values_batch)
+    register_operator("QForward", op_q_forward)
+    # TODO: remove this legacy alias
+    register_operator("QValuesBatch", op_q_forward)  # Legacy alias
     register_operator("TDLoss", op_td_loss)
     register_operator("Optimizer", op_optimizer_step)
     register_operator("ReduceMean", op_reduce_mean)
     register_operator("GetField", op_get_field)
+    register_operator("GatherActionQ", op_gather_action_q)
+    register_operator("BellmanTarget", op_bellman_target)

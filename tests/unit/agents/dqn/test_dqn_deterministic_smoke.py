@@ -1,7 +1,6 @@
 import pytest
 import torch
 import numpy as np
-from examples.dqn import train_dqn
 
 pytestmark = pytest.mark.slow
 

@@ -61,7 +61,10 @@ def create_train_graph(config: PPOConfig) -> Graph:
     graph.add_node(
         "opt", 
         "PPO_Optimizer", 
-        params={"optimizer_handle": config.optimizer_handle}
+        params={
+            "optimizer_handle": config.optimizer_handle,
+            "model_handle": config.model_handle
+        }
     )
     
     # 3. Metrics Sink

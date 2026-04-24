@@ -1,5 +1,6 @@
 from core.graph import (
     Graph,
+    EdgeType,
     NODE_TYPE_SOURCE,
     NODE_TYPE_ACTOR,
     NODE_TYPE_REPLAY_QUERY,
@@ -95,7 +96,6 @@ def build_learner_graph(config: DQNConfig, collator) -> Graph:
     )
 
     # 2. TD Loss
-    loss_spec = TensorSpec(shape=(), dtype="float32")
     graph.add_node(
         "td_loss",
         "TDLoss",
@@ -106,8 +106,32 @@ def build_learner_graph(config: DQNConfig, collator) -> Graph:
         },
     )
 
-    # 3. Optimizer Step
-    graph.add_node("opt", "Optimizer")
+    # 3. Explicit gradient computation and application
+    graph.add_node(
+        "backward_td_loss",
+        "Backward",
+        params={
+            "model_handle": config.model_handle,
+            "optimizer_handle": "main_opt",
+        },
+    )
+    graph.add_node(
+        "accumulate_td_loss",
+        "AccumulateGrad",
+        params={
+            "model_handle": config.model_handle,
+            "k": 1,
+        },
+    )
+    graph.add_node(
+        "opt",
+        "OptimizerStepEvery",
+        params={
+            "model_handle": config.model_handle,
+            "optimizer_handle": "main_opt",
+            "k": 1,
+        },
+    )
 
     # 4. Target Sync
     graph.add_node(
@@ -137,7 +161,9 @@ def build_learner_graph(config: DQNConfig, collator) -> Graph:
 
     # Wiring
     graph.add_edge("sampler", "td_loss", dst_port="batch")
-    graph.add_edge("td_loss", "opt", dst_port="loss")
+    graph.add_edge("td_loss", "backward_td_loss", dst_port="loss")
+    graph.add_edge("backward_td_loss", "accumulate_td_loss", edge_type=EdgeType.CONTROL)
+    graph.add_edge("accumulate_td_loss", "opt", edge_type=EdgeType.CONTROL)
     # Note: sync is usually triggered externally or as a leaf in this graph
     graph.add_edge("opt", "sync")
 

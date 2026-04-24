@@ -13,9 +13,8 @@ def test_dqn_strict_compile():
     config = DQNConfig(obs_dim=4, act_dim=2)
     agent = DQNAgent(config)
     
-    # This should not raise any exceptions
     agent.compile(strict=True)
-    
+
     assert agent.actor_graph is not None
     assert agent.learner_graph is not None
 
@@ -32,9 +31,12 @@ def test_dqn_graph_separation():
     assert "LinearDecay" in node_types_actor
     assert "Exploration" in node_types_actor
     
-    # Learner graph should have ReplayQuery, TDLoss, Optimizer, and TargetSync
+    # Learner graph should have ReplayQuery, TDLoss, Backward, AccumulateGrad,
+    # OptimizerStepEvery, and TargetSync
     node_types_learner = [n.node_type for n in agent.learner_graph.nodes.values()]
     assert "ReplayQuery" in node_types_learner
     assert "TDLoss" in node_types_learner
-    assert "Optimizer" in node_types_learner
+    assert "Backward" in node_types_learner
+    assert "AccumulateGrad" in node_types_learner
+    assert "OptimizerStepEvery" in node_types_learner
     assert "TargetSync" in node_types_learner

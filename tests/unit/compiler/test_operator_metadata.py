@@ -20,6 +20,10 @@ def test_operator_metadata_registration() -> None:
         requires_models=["main"],
         requires_optimizer=True,
         allowed_contexts={"learner"},
+        differentiable=True,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
         tags={"off_policy", "heavy"},
     )
 
@@ -38,19 +42,19 @@ def test_operator_metadata_registration() -> None:
 
 def test_operator_metadata_defaults() -> None:
     """Verifies that defaults are correctly applied when metadata is missing."""
-    spec = OperatorSpec.create(name="SimpleOp")
+    spec = OperatorSpec.create(name="SimpleOp", allowed_contexts={"actor"})
 
     assert spec.version == "1.0.0"
     assert spec.pure is False
     assert spec.requires_optimizer is False
-    assert spec.allowed_contexts == {"actor", "learner"}
+    assert spec.allowed_contexts == {"actor"}
     assert spec.tags == set()
 
 
 def test_duplicate_version_warning() -> None:
     """Verifies that registering the same version with different specs issues a warning."""
-    spec1 = OperatorSpec.create(name="VersionedOp", version="1.0.0", pure=True)
-    spec2 = OperatorSpec.create(name="VersionedOp", version="1.0.0", pure=False)
+    spec1 = OperatorSpec.create(name="VersionedOp", version="1.0.0", pure=True, allowed_contexts={"actor"})
+    spec2 = OperatorSpec.create(name="VersionedOp", version="1.0.0", pure=False, allowed_contexts={"actor"})
 
     register_spec("VersionedOp", spec1)
     with pytest.warns(UserWarning, match="Duplicate version '1.0.0'"):

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.func import functional_call
+from torch.utils.checkpoint import checkpoint
 from typing import Dict, Any, Optional
 
 from core.graph import Node
@@ -172,7 +173,10 @@ def op_ppo_objective(
     if node.params.get("normalize_advantages", True):
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-    probs, values = ac_net(obs)
+    if node.params.get("activation_checkpoint", False):
+        probs, values = checkpoint(lambda x: ac_net(x), obs, use_reentrant=False)
+    else:
+        probs, values = ac_net(obs)
     values = values.view(-1)
     dist = torch.distributions.Categorical(probs)
     new_log_probs = dist.log_prob(actions)
@@ -255,15 +259,96 @@ def op_optimizer_step(
 
     # Perform optimization step
     step_results = opt_state.step(loss)
-    
+
     # Merge metrics
     metrics.update(step_results)
     return metrics
 
 
+def op_ppo_ratio(
+    node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
+) -> torch.Tensor:
+    new_log_probs = inputs.get("new_log_probs")
+    old_log_probs = inputs.get("old_log_probs")
+    if new_log_probs is None:
+        return MissingInput("new_log_probs")
+    if old_log_probs is None:
+        return MissingInput("old_log_probs")
+    return torch.exp(new_log_probs - old_log_probs)
+
+
+def op_clip(
+    node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
+) -> torch.Tensor:
+    val = inputs.get("input")
+    low = node.params.get("low")
+    high = node.params.get("high")
+    if val is None:
+        return MissingInput("input")
+    return torch.clamp(val, low, high)
+
+
+def op_ppo_surrogate_min(
+    node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
+) -> torch.Tensor:
+    ratio = inputs.get("ratio")
+    clipped_ratio = inputs.get("clipped_ratio")
+    advantages = inputs.get("advantages")
+    if ratio is None:
+        return MissingInput("ratio")
+    if clipped_ratio is None:
+        return MissingInput("clipped_ratio")
+    if advantages is None:
+        return MissingInput("advantages")
+
+    surr1 = ratio * advantages
+    surr2 = clipped_ratio * advantages
+    return -torch.min(surr1, surr2)
+
+
+def op_ppo_value_loss(
+    node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
+) -> torch.Tensor:
+    values = inputs.get("values")
+    returns = inputs.get("returns")
+    old_values = inputs.get("old_values")
+    clip_epsilon = node.params.get("clip_epsilon", 0.2)
+    if values is None:
+        return MissingInput("values")
+    if returns is None:
+        return MissingInput("returns")
+
+    if node.params.get("clip_value_loss", True) and old_values is not None:
+        v_clipped = old_values + torch.clamp(
+            values - old_values, -clip_epsilon, clip_epsilon
+        )
+        v_loss_unclipped = (values - returns) ** 2
+        v_loss_clipped = (v_clipped - returns) ** 2
+        return 0.5 * torch.max(v_loss_unclipped, v_loss_clipped)
+    else:
+        return 0.5 * (values - returns) ** 2
+
+
+def op_entropy(
+    node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
+) -> torch.Tensor:
+    probs = inputs.get("probs")
+    if probs is None:
+        return MissingInput("probs")
+    dist = torch.distributions.Categorical(probs)
+    return dist.entropy()
+
+
 def register_ppo_operators():
     """Register all PPO related operators."""
-    register_operator("PPO_PolicyActor", op_policy_actor)
+    register_operator("PolicyForward", op_policy_actor)
+    # TODO: Remove this legacy alias
+    register_operator("PPO_PolicyActor", op_policy_actor)  # Legacy alias
     register_operator("PPO_GAE", op_gae)
     register_operator("PPO_Objective", op_ppo_objective)
     register_operator("PPO_Optimizer", op_optimizer_step)
+    register_operator("Ratio", op_ppo_ratio)
+    register_operator("Clip", op_clip)
+    register_operator("SurrogateMin", op_ppo_surrogate_min)
+    register_operator("ValueLoss", op_ppo_value_loss)
+    register_operator("Entropy", op_entropy)

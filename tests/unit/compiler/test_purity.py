@@ -60,7 +60,7 @@ def test_context_violation_error() -> None:
     """Verifies that nodes not allowed in context trigger D002."""
     register_spec(
         "LearnerOnlyOp",
-        OperatorSpec.create(name="LearnerOnlyOp", allowed_contexts={"learner"}),
+        OperatorSpec.create(name="LearnerOnlyOp", allowed_contexts={"learner"}, differentiable=False, creates_grad=False, consumes_grad=False, updates_params=False),
     )
 
     g = Graph()

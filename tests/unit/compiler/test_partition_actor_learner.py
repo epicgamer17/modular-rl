@@ -12,10 +12,10 @@ def setup_function():
 def test_partition_actor_learner_basic():
     """Verifies that a global graph is correctly partitioned into actor and learner subgraphs."""
     # Register specs with allowed contexts
-    register_spec("QNetwork", OperatorSpec.create("QNetwork", allowed_contexts={"actor", "learner"}))
+    register_spec("QNetwork", OperatorSpec.create("QNetwork", allowed_contexts={"actor", "learner"}, differentiable=True, creates_grad=False, consumes_grad=False, updates_params=False))
     register_spec("GreedyPolicy", OperatorSpec.create("GreedyPolicy", allowed_contexts={"actor"}))
-    register_spec("ReplayBuffer", OperatorSpec.create("ReplayBuffer", allowed_contexts={"learner"}))
-    register_spec("Optimizer", OperatorSpec.create("Optimizer", allowed_contexts={"learner"}))
+    register_spec("ReplayBuffer", OperatorSpec.create("ReplayBuffer", allowed_contexts={"learner"}, differentiable=False, creates_grad=False, consumes_grad=False, updates_params=False))
+    register_spec("Optimizer", OperatorSpec.create("Optimizer", allowed_contexts={"learner"}, differentiable=True, creates_grad=False, consumes_grad=True, updates_params=True))
 
     graph = Graph()
     graph.add_node("obs", NODE_TYPE_SOURCE) # Default to actor
@@ -70,7 +70,7 @@ def test_partition_actor_learner_basic():
 
 def test_partition_optimizer_absent_from_actor():
     """Ensures that learner-only nodes like Optimizer never end up in the actor partition."""
-    register_spec("Optimizer", OperatorSpec.create("Optimizer", allowed_contexts={"learner"}))
+    register_spec("Optimizer", OperatorSpec.create("Optimizer", allowed_contexts={"learner"}, differentiable=True, creates_grad=False, consumes_grad=True, updates_params=True))
     
     graph = Graph()
     graph.add_node("opt", "Optimizer")

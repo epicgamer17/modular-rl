@@ -62,7 +62,8 @@ def test_ratio_equals_one_when_same_policy():
     
     # If ratio=1, and advantages=1, surr1=1, surr2=1, min=1. actor_loss = -1.0.
     # If critic_loss=0 and entropy_coef=0:
-    loss = op_ppo_objective(node, {"batch": batch, "gae": gae}, context=context)
+    results = op_ppo_objective(node, {"batch": batch, "gae": gae}, context=context)
+    loss = results["loss"]
     
     # entropy for this distribution:
     dist = torch.distributions.Categorical(probs)
@@ -106,7 +107,8 @@ def test_clip_bounds_ratio():
     
     node = Node("ppo", "PPO_Objective", params={"clip_epsilon": clip_epsilon, "entropy_coef": 0, "normalize_advantages": False})
     
-    loss = op_ppo_objective(node, {"batch": batch, "gae": gae}, context=context)
+    results = op_ppo_objective(node, {"batch": batch, "gae": gae}, context=context)
+    loss = results["loss"]
     
     # surr1 = 2.0 * 1.0 = 2.0
     # surr2 = clip(2.0, 0.8, 1.2) * 1.0 = 1.2
@@ -134,11 +136,12 @@ def test_entropy_positive():
     
     node = Node("ppo", "PPO_Objective", params={"clip_epsilon": 0.2, "entropy_coef": 1.0, "critic_coef": 0, "normalize_advantages": False})
     
-    loss = op_ppo_objective(node, {"batch": batch, "gae": gae}, context=context)
+    results = op_ppo_objective(node, {"batch": batch, "gae": gae}, context=context)
+    loss = results["loss"]
     
     # ratio=1, adv=0 => actor_loss = 0
     # critic_loss = 0 (next_values and returns are 0)
     # loss = 0 + 0 - 1.0 * entropy = -entropy
     # For [0.5, 0.5], entropy = - (0.5*log(0.5) + 0.5*log(0.5)) = -log(0.5) = log(2) ≈ 0.6931
-    assert loss < 0 # -entropy should be negative
+    assert loss.item() < 0 # -entropy should be negative
     assert loss == pytest.approx(-0.6931, abs=1e-4)

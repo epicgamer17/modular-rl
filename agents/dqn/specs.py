@@ -21,7 +21,18 @@ def register_dqn_specs():
 
     # --- Built-in Specs (Required for strict compilation) ---
     register_spec(
-        "Source", OperatorSpec.create("Source", inputs={}, outputs={}, pure=True)
+        "Source",
+        OperatorSpec.create(
+            "Source",
+            inputs={},
+            outputs={},
+            pure=True,
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        ),
     )
     register_spec(
         "ReplayQuery",
@@ -31,7 +42,12 @@ def register_dqn_specs():
             outputs={"default": TransitionBatch},
             pure=False,
             stateful=True,
+            allowed_contexts={"learner"},
             requires_buffers=["main"],
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
     register_spec(
@@ -42,8 +58,13 @@ def register_dqn_specs():
             outputs={},
             pure=False,
             stateful=True,
+            allowed_contexts={"learner"},
             side_effects=["target_update"],
             requires_models=["source", "target"],
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
     register_spec(
@@ -64,7 +85,12 @@ def register_dqn_specs():
             outputs={},
             pure=False,
             stateful=True,
+            allowed_contexts={"actor", "learner"},
             side_effects=["logging"],
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
 
@@ -78,6 +104,12 @@ def register_dqn_specs():
             outputs={"q_values": SingleQ},
             pure=True,
             deterministic=True,
+            allowed_contexts={"actor", "learner"},
+            differentiable=True,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+            parameter_handles=["model_handle"],
         ),
     )
 
@@ -90,20 +122,34 @@ def register_dqn_specs():
             outputs={"loss": Scalar("float32")},
             pure=True,
             deterministic=True,
+            allowed_contexts={"actor", "learner"},
+            differentiable=True,
+            creates_grad=True,
+            consumes_grad=False,
+            updates_params=False,
+            parameter_handles=["model_handle", "target_handle"],
         ),
     )
 
-    # 2b. QValuesBatch
+    # 2b. QForward
     register_spec(
-        "QValuesBatch",
+        "QForward",
         OperatorSpec.create(
-            name="QValuesBatch",
+            name="QForward",
             inputs={"obs": BatchObs},
             outputs={"q_values": BatchQ},
             pure=True,
             deterministic=True,
+            allowed_contexts={"actor", "learner"},
+            differentiable=True,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+            parameter_handles=["model_handle"],
         ),
     )
+    # Legacy alias
+    register_spec("QValuesBatch", get_spec("QForward"))
 
     # 2c. ReduceMean
     register_spec(
@@ -113,6 +159,11 @@ def register_dqn_specs():
             inputs={"input": BatchQ},
             outputs={"output": Scalar("float32")},
             pure=True,
+            allowed_contexts={"actor", "learner"},
+            differentiable=True,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
 
@@ -124,6 +175,11 @@ def register_dqn_specs():
             inputs={"input": TransitionBatch},  # Could be generic Schema
             outputs={"output": BatchObs},  # Could be generic Spec
             pure=True,
+            allowed_contexts={"actor", "learner"},
+            differentiable=True,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
 
@@ -136,7 +192,12 @@ def register_dqn_specs():
             outputs={"loss_val": Scalar("float32")},
             pure=False,
             stateful=True,
+            allowed_contexts={"learner"},
             side_effects=["model_update"],
+            differentiable=True,
+            creates_grad=False,
+            consumes_grad=True,
+            updates_params=True,
         ),
     )
 
@@ -148,6 +209,11 @@ def register_dqn_specs():
             inputs={"clock": PortSpec(spec=Scalar("int64"), required=False)},
             outputs={"epsilon": Scalar("float32")},
             pure=True,
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
 
@@ -163,5 +229,42 @@ def register_dqn_specs():
             outputs={"action": Scalar("int64")},
             pure=False,
             deterministic=False,  # Stochastic due to epsilon
+            allowed_contexts={"actor"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        ),
+    )
+
+    register_spec(
+        "GatherActionQ",
+        OperatorSpec.create(
+            name="GatherActionQ",
+            inputs={"q_values": BatchQ, "actions": Scalar("int64")},
+            outputs={"q_selected": Scalar("float32")},
+            differentiable=True,
+            allowed_contexts={"learner"},
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        ),
+    )
+
+    register_spec(
+        "BellmanTarget",
+        OperatorSpec.create(
+            name="BellmanTarget",
+            inputs={
+                "next_q_values": BatchQ,
+                "rewards": Scalar("float32"),
+                "dones": Scalar("float32"),
+            },
+            outputs={"target": Scalar("float32")},
+            differentiable=False,
+            allowed_contexts={"learner"},
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )

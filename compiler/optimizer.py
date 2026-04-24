@@ -13,9 +13,10 @@ from core.graph import (
 )
 from runtime.specs import get_spec
 from compiler.rewrite import FusionRule, RewriteEngine
-from typing import List, Dict, Set, Optional
+from typing import List, Dict, Set, Optional, Any
 from dataclasses import dataclass, field
 import copy
+from compiler.passes.memory_optimizations import optimize_memory
 
 
 @dataclass
@@ -151,4 +152,5 @@ def optimize_graph(graph: Graph, report: Optional[OptimizationReport] = None) ->
     """Entry point for all graph optimizations."""
     g = dead_node_elimination(graph, report=report)
     g = node_fusion(g, report=report)
+    g = optimize_memory(g)
     return g

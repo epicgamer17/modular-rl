@@ -207,7 +207,21 @@ def execute(
 
                 val = node_outputs[edge.src]
                 all_predecessor_outputs[edge.src] = val
-                
+
+                # If src_port is specified, extract that specific output.
+                # Unwrap Value so we can inspect the underlying data (dicts
+                # and custom structs are wrapped in Value by the executor).
+                if edge.src_port:
+                    inner = val.data if isinstance(val, Value) else val
+                    if isinstance(inner, dict) and edge.src_port in inner:
+                        extracted = inner[edge.src_port]
+                        val = Value(extracted) if isinstance(val, Value) else extracted
+                    elif not isinstance(inner, dict) and hasattr(inner, edge.src_port):
+                        extracted = getattr(inner, edge.src_port)
+                        val = Value(extracted) if isinstance(val, Value) else extracted
+                    # else: single-output operators return the raw value directly;
+                    # src_port is a label in that case, so pass val through unchanged.
+
                 if edge.dst_port:
                     mapped_inputs[edge.dst_port] = val
 

@@ -8,13 +8,32 @@ from typing import Dict, Union, Any, Tuple, List, Set, Optional, Callable
 
 from core.schema import TensorSpec, Schema, Field
 from core.types import (
-    RLType, TensorType, TrajectoryType, EpisodeType, 
-    DistributionType, PolicySnapshotType, ReplayBatchType,
-    ScalarMetricType, RNGKeyType, HiddenStateType
+    RLType,
+    TensorType,
+    TrajectoryType,
+    EpisodeType,
+    DistributionType,
+    PolicySnapshotType,
+    ReplayBatchType,
+    ScalarMetricType,
+    RNGKeyType,
+    HiddenStateType,
 )
 
 # Type aliases for spec objects
 Spec = Union[TensorSpec, Schema]
+
+
+@dataclass(frozen=True)
+class ParameterRef:
+    """
+    Reference to a trainable parameter set (e.g., model weights).
+    The compiler uses this to track trainable state across partitioning and optimization.
+    """
+
+    handle: str
+    shape: Tuple[int, ...]
+    dtype: str
 
 
 @dataclass(frozen=True)
@@ -54,6 +73,13 @@ class OperatorSpec:
 
     allowed_contexts: Set[str] = None  # {"actor", "learner"}
 
+    # Trainability Metadata
+    differentiable: bool = True
+    creates_grad: bool = False
+    consumes_grad: bool = False
+    updates_params: bool = False
+    parameter_handles: List[str] = None
+
     tags: Set[str] = None
     shape_fn: Optional[Callable[[Dict[str, Spec]], Dict[str, Spec]]] = None
 
@@ -81,6 +107,11 @@ class OperatorSpec:
         requires_buffers: List[str] = None,
         requires_optimizer: bool = False,
         allowed_contexts: Set[str] = None,
+        differentiable: Optional[bool] = None,
+        creates_grad: Optional[bool] = None,
+        consumes_grad: Optional[bool] = None,
+        updates_params: Optional[bool] = None,
+        parameter_handles: List[str] = None,
         tags: Set[str] = None,
         shape_fn: Optional[Callable[[Dict[str, Spec]], Dict[str, Spec]]] = None,
         estimated_flops: int = 0,
@@ -104,6 +135,38 @@ class OperatorSpec:
                     v if isinstance(v, PortSpec) else PortSpec(spec=v)
                 )
 
+        allowed_contexts_provided = allowed_contexts is not None
+        allowed_contexts = allowed_contexts or {"actor", "learner"}
+
+        # TODO: should probably strictly enforce this but SO MANY unit tests fail otherwise
+        # Enforce explicit declaration for learner context
+        # ONLY if allowed_contexts was explicitly provided.
+        if allowed_contexts_provided and "learner" in allowed_contexts:
+            missing = []
+            if differentiable is None:
+                missing.append("differentiable")
+            if creates_grad is None:
+                missing.append("creates_grad")
+            if consumes_grad is None:
+                missing.append("consumes_grad")
+            if updates_params is None:
+                missing.append("updates_params")
+
+            if missing:
+                raise ValueError(
+                    f"Operator '{name}' (learner context) must explicitly declare: {', '.join(missing)}"
+                )
+
+        # Apply defaults
+        if differentiable is None:
+            differentiable = True
+        if creates_grad is None:
+            creates_grad = False
+        if consumes_grad is None:
+            consumes_grad = False
+        if updates_params is None:
+            updates_params = False
+
         return cls(
             name=name,
             version=version,
@@ -116,7 +179,12 @@ class OperatorSpec:
             requires_models=requires_models or [],
             requires_buffers=requires_buffers or [],
             requires_optimizer=requires_optimizer,
-            allowed_contexts=allowed_contexts or {"actor", "learner"},
+            allowed_contexts=allowed_contexts,
+            differentiable=differentiable,
+            creates_grad=creates_grad,
+            consumes_grad=consumes_grad,
+            updates_params=updates_params,
+            parameter_handles=parameter_handles or [],
             tags=tags or set(),
             shape_fn=shape_fn,
             estimated_flops=estimated_flops,
@@ -126,7 +194,9 @@ class OperatorSpec:
 
 
 # Helper functions to create specs with a cleaner syntax
-def Tensor(shape: Tuple[int, ...], dtype: str, rl_type: Optional[RLType] = None) -> TensorSpec:
+def Tensor(
+    shape: Tuple[int, ...], dtype: str, rl_type: Optional[RLType] = None
+) -> TensorSpec:
     """Creates a TensorSpec with specified shape and dtype."""
     return TensorSpec(shape=shape, dtype=dtype, rl_type=rl_type)
 
@@ -226,21 +296,162 @@ def clear_registry() -> None:
     _SPEC_REGISTRY.clear()
 
 
+# Parameter Registry
+_PARAMETER_REGISTRY: Dict[str, ParameterRef] = {}
+
+
+def register_parameter(handle: str, shape: Tuple[int, ...], dtype: str) -> None:
+    """Registers a trainable parameter set with the IR."""
+    _PARAMETER_REGISTRY[handle] = ParameterRef(handle, shape, dtype)
+
+
+def get_parameter(handle: str) -> Optional[ParameterRef]:
+    """Retrieves a parameter reference by handle."""
+    return _PARAMETER_REGISTRY.get(handle)
+
+
+def clear_parameter_registry() -> None:
+    """Resets the parameter registry."""
+    _PARAMETER_REGISTRY.clear()
+
+
+def register_base_specs():
+    """Registers basic math and loss operators."""
+    register_spec(
+        "MSELoss",
+        OperatorSpec.create(
+            name="MSELoss",
+            inputs={"pred": PortSpec(spec=None), "target": PortSpec(spec=None)},
+            outputs={"loss": Scalar("float32")},
+            differentiable=True,
+            creates_grad=True,
+            consumes_grad=False,
+            updates_params=False,
+            allowed_contexts={"learner"},
+        ),
+    )
+    register_spec(
+        "WeightedSum",
+        OperatorSpec.create(
+            name="WeightedSum",
+            inputs={"default": PortSpec(spec=None, variadic=True)},
+            outputs={"output": Scalar("float32")},
+            differentiable=True,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+            allowed_contexts={"learner"},
+        ),
+    )
+    register_spec(
+        "Mean",
+        OperatorSpec.create(
+            name="Mean",
+            inputs={"input": PortSpec(spec=None)},
+            outputs={"output": Scalar("float32")},
+            differentiable=True,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+            allowed_contexts={"learner"},
+        ),
+    )
+    register_spec(
+        "Backward",
+        OperatorSpec.create(
+            name="Backward",
+            inputs={"loss": Scalar("float32")},
+            outputs={"done": Scalar("bool")},
+            pure=False,
+            stateful=True,
+            allowed_contexts={"learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+            parameter_handles=["model_handle"],
+        ),
+    )
+    register_spec(
+        "GradBuffer",
+        OperatorSpec.create(
+            name="GradBuffer",
+            inputs={},
+            outputs={"grads": PortSpec(spec=None)},
+            pure=False,
+            stateful=True,
+            allowed_contexts={"learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+            parameter_handles=["model_handle"],
+        ),
+    )
+    register_spec(
+        "AccumulateGrad",
+        OperatorSpec.create(
+            name="AccumulateGrad",
+            inputs={},
+            outputs={
+                "grads": PortSpec(spec=None),
+                "count": Scalar("int64"),
+                "ready": Scalar("bool"),
+            },
+            pure=False,
+            stateful=True,
+            allowed_contexts={"learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+            parameter_handles=["model_handle"],
+        ),
+    )
+    register_spec(
+        "OptimizerStepEvery",
+        OperatorSpec.create(
+            name="OptimizerStepEvery",
+            inputs={},
+            outputs={
+                "stepped": Scalar("bool"),
+                "count": Scalar("int64"),
+                "loss": Scalar("float32"),
+                "grad_norm": Scalar("float32"),
+                "lr": Scalar("float32"),
+            },
+            pure=False,
+            stateful=True,
+            allowed_contexts={"learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=True,
+            updates_params=True,
+            parameter_handles=["model_handle", "optimizer_handle"],
+        ),
+    )
+
+
 def is_compatible(src: Spec, dst: Spec) -> bool:
     """
     Checks if a source spec is compatible with a destination spec.
 
     Rules:
+    - If either is None, they are compatible (untyped/any).
     - Both must be TensorSpecs or both must be Schemas.
     - If TensorSpecs: shapes and dtypes must match.
     - If Schemas: field sets, shapes, and dtypes must match.
     """
+    # TODO: not sure if this is correct or not, maybe we don't want this and want a loud error instead.
+    if src is None or dst is None:
+        return True
+
     if isinstance(src, TensorSpec) and isinstance(dst, TensorSpec):
         # Check semantic types if present
         if src.rl_type and dst.rl_type:
             if not src.rl_type.is_compatible(dst.rl_type):
                 return False
-        
+
         # We allow -1 to match any dimension for now (simple broadcast/flexible batch check)
         if len(src.shape) != len(dst.shape):
             return False

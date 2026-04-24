@@ -48,6 +48,8 @@ def test_lr_anneals():
         def __init__(self):
             self.last_obs = torch.zeros(4)
             self.last_done = torch.zeros(1)
+            self.last_episode_return = 0.0
+            self.last_episode_length = 0
             
     actor_runtime = MockActorRuntime()
     

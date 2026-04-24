@@ -16,10 +16,14 @@ def test_autowire_one_valid_passes() -> None:
             inputs={
                 "obs": SingleObs, 
                 "other": PortSpec(spec=BatchObs, required=False)
-            }
+            },
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
-    register_spec("ObsSrc", OperatorSpec.create(name="ObsSrc", outputs=SingleObs))
+    register_spec("ObsSrc", OperatorSpec.create(name="ObsSrc", outputs=SingleObs, differentiable=False, creates_grad=False, consumes_grad=False, updates_params=False))
 
     g = Graph()
     g.add_node("s", "ObsSrc")
@@ -34,9 +38,9 @@ def test_autowire_ambiguous_fails() -> None:
     """Verifies that multiple compatible ports trigger E206."""
     register_spec(
         "MultiInput",
-        OperatorSpec.create(name="MultiInput", inputs={"in1": SingleObs, "in2": SingleObs}),
+        OperatorSpec.create(name="MultiInput", inputs={"in1": SingleObs, "in2": SingleObs}, differentiable=False, creates_grad=False, consumes_grad=False, updates_params=False),
     )
-    register_spec("Src", OperatorSpec.create(name="Src", outputs=SingleObs))
+    register_spec("Src", OperatorSpec.create(name="Src", outputs=SingleObs, differentiable=False, creates_grad=False, consumes_grad=False, updates_params=False))
 
     g = Graph()
     g.add_node("s", "Src")
@@ -52,9 +56,9 @@ def test_autowire_ambiguous_fails() -> None:
 def test_typo_suggestion() -> None:
     """Verifies that a typo in dst_port suggests a compatible port (E203)."""
     register_spec(
-        "Target", OperatorSpec.create(name="Target", inputs={"correct_port": SingleObs})
+        "Target", OperatorSpec.create(name="Target", inputs={"correct_port": SingleObs}, differentiable=False, creates_grad=False, consumes_grad=False, updates_params=False)
     )
-    register_spec("Src", OperatorSpec.create(name="Src", outputs=SingleObs))
+    register_spec("Src", OperatorSpec.create(name="Src", outputs=SingleObs, differentiable=False, creates_grad=False, consumes_grad=False, updates_params=False))
 
     g = Graph()
     g.add_node("s", "Src")
@@ -72,10 +76,10 @@ def test_mismatch_suggestion() -> None:
     register_spec(
         "MismatchTarget",
         OperatorSpec.create(
-            name="MismatchTarget", inputs={"obs": BatchObs, "single_obs": SingleObs}
+            name="MismatchTarget", inputs={"obs": BatchObs, "single_obs": SingleObs}, differentiable=False, creates_grad=False, consumes_grad=False, updates_params=False
         ),
     )
-    register_spec("SingleSrc", OperatorSpec.create(name="SingleSrc", outputs=SingleObs))
+    register_spec("SingleSrc", OperatorSpec.create(name="SingleSrc", outputs=SingleObs, differentiable=False, creates_grad=False, consumes_grad=False, updates_params=False))
 
     g = Graph()
     g.add_node("s", "SingleSrc")

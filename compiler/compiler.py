@@ -13,8 +13,12 @@ from compiler.passes.validate_rl import validate_rl_semantics
 from compiler.passes.validate_handles import validate_handles
 from compiler.passes.validate_purity import validate_purity
 from compiler.passes.validate_ir_purity import validate_ir_purity
+from compiler.passes.validate_grad_semantics import validate_grad_semantics
 from compiler.passes.infer_shapes import infer_shapes
 from compiler.passes.autobatch import vectorize_graph
+from compiler.passes.autodiff import autodiff
+from compiler.passes.collect_trainable_parameters import collect_trainable_parameters
+from compiler.passes.analyze_gradients import analyze_gradients
 from compiler.optimizer import optimize_graph
 
 
@@ -26,6 +30,7 @@ def compile_graph(
     context: str = "both",
     optimize: bool = True,
     autobatch: bool = False,
+    autodiff_lowering: bool = True,
     optimization_report: Optional[Any] = None,
 ) -> Graph:
     """
@@ -56,7 +61,11 @@ def compile_graph(
     # 1. Shape Inference (Populate node schemas for validation)
     graph = infer_shapes(graph)
 
-    # 2. AutoBatching / Vectorization (Step 3)
+    # 2. Autodiff Lowering (Decompose Loss -> Backward + GradBuffer)
+    if autodiff_lowering and context in ["learner", "both"]:
+        graph = autodiff(graph)
+
+    # 2b. AutoBatching / Vectorization (Step 3)
     if autobatch:
         graph = vectorize_graph(graph)
 
@@ -79,9 +88,24 @@ def compile_graph(
 
     # 5. Purity and Side Effect Checks
     report.merge(validate_purity(graph, context))
+
+    # 5b. Gradient Safety Checks
+    report.merge(validate_grad_semantics(graph, context))
     
     # 6. IR Serialization Purity (No live objects in params)
     report.merge(validate_ir_purity(graph))
+
+    # 7. Collect Trainable Parameters
+    graph.parameters = collect_trainable_parameters(graph)
+
+    # 8. Gradient Flow Analysis
+    if context in ["learner", "both"]:
+        from compiler.validation import ValidationIssue
+        grad_report = analyze_gradients(graph)
+        for warn in grad_report.warnings:
+            report.add(ValidationIssue(severity=SEVERITY_WARN, code="G001", node_id=None, message=warn))
+        for err in grad_report.errors:
+            report.add(ValidationIssue(severity=SEVERITY_ERROR, code="G001", node_id=None, message=err))
 
     # Check for hard errors
     if report.has_errors():

@@ -788,3 +788,317 @@ Two actors in same graph: Student + Expert
 Expert labels captured in metadata
 Custom recording function aggregates
 ```
+
+---
+
+## Operator Specifications
+
+### Register Operator Spec
+
+Need:
+
+```python
+spec = OperatorSpec.create(
+    name="MyOp",
+    inputs={"batch": TransitionBatch},
+    outputs={"loss": ScalarLoss},
+    pure=False,
+    stateful=True,
+    deterministic=False,
+    requires_models=["main"],
+    requires_optimizer=True,
+    allowed_contexts={"learner"},
+    differentiable=True,
+    creates_grad=True,
+    consumes_grad=True,
+    updates_params=True,
+    parameter_handles=["model_handle"],
+    tags={"off_policy", "heavy"},
+    estimated_flops=1000,
+)
+register_spec("MyOp", spec)
+```
+
+Spec properties:
+
+- `pure`: No side effects
+- `stateful`: Maintains internal state
+- `deterministic`: Same inputs → same outputs
+- `requires_models`: List of model handles needed
+- `requires_optimizer`: Needs optimizer state
+- `allowed_contexts`: {"actor", "learner"}
+- `differentiable`: Can compute gradients
+- `creates_grad`: Produces gradient tensors
+- `consumes_grad`: Input requires gradients
+- `updates_params`: Modifies model parameters
+- `parameter_handles`: Which params are touched
+
+---
+
+### Get Operator Spec
+
+Need:
+
+```python
+spec = get_spec("QValuesSingle")
+```
+
+Returns:
+
+```
+OperatorSpec or None if not registered
+```
+
+---
+
+### Check Spec Compatibility
+
+Need:
+
+```python
+is_compatible(source_spec, dest_spec)
+```
+
+Returns:
+
+```
+True if shapes, dtypes, and RL types match
+```
+
+---
+
+## Rewrite & Fusion
+
+### RewriteEngine
+
+Need:
+
+```python
+engine = RewriteEngine()
+```
+
+Methods:
+
+- `add_rule(FusionRule(...))`
+- `apply(graph)` - returns optimized graph
+
+---
+
+### FusionRule
+
+Need:
+
+```python
+rule = FusionRule(
+    name="fuse_a_b",
+    pattern=["OpA", "OpB"],
+    replacement="FusedOp"
+)
+```
+
+Fuses chain A → B into single FusedOp node.
+
+---
+
+### Find Linear Chain
+
+Need:
+
+```python
+find_linear_chain(graph, ["OpA", "OpB", "OpC"])
+```
+
+Returns:
+
+```
+List of NodeIds forming exact chain
+```
+
+Only if:
+
+- Exact edge chain exists
+- Single consumer per node
+- No branching
+
+---
+
+## Autobatching
+
+### Vectorize Graph
+
+Need:
+
+```python
+from compiler.passes.autobatch import vectorize_graph
+batch_graph = vectorize_graph(graph)
+```
+
+Transforms single-step schemas to batched:
+
+- [D] → [B, D]
+- Adds "batched" tag to specs and RLTypes
+- Nodes with "no_batch" tag are skipped
+
+---
+
+## Parameter Conventions
+
+### Canonical Parameter Names
+
+Required:
+
+- `model_handle` - reference to model (not `q_net`, `policy`)
+- `target_handle` - reference to target network
+- `optimizer_handle` - reference to optimizer state
+- `buffer_id` - reference to replay buffer
+
+Banned:
+
+- `source_handle`, `q_handle`, `opt_state`, `q_net`, `target_q`, `replay_buffer`
+
+---
+
+## Type System
+
+### RLType Categories
+
+```python
+RLTypeCategory.TENSOR
+RLTypeCategory.TRAJECTORY
+RLTypeCategory.EPISODE
+RLTypeCategory.DISTRIBUTION
+RLTypeCategory.POLICY_SNAPSHOT
+RLTypeCategory.REPLAY_BATCH
+RLTypeCategory.SCALAR_METRIC
+RLTypeCategory.RNG_KEY
+RLTypeCategory.HIDDEN_STATE
+```
+
+### TensorType
+
+```python
+TensorType(shape=("B", 4), dtype="float32", tags={"obs", "batched"})
+```
+
+### DistributionType
+
+```python
+DistributionType(dist_type="Categorical", is_logits=True)
+```
+
+### PolicySnapshotType
+
+```python
+PolicySnapshotType(version=5)
+```
+
+---
+
+## Graph Serialization
+
+### Roundtrip Test
+
+Graphs can be serialized and deserialized while preserving structure.
+
+---
+
+## Autowiring
+
+### Auto-wire Node Connections
+
+System can automatically infer and create edges between nodes based on port specifications.
+
+---
+
+## Agent System
+
+### DQNAgent
+
+Need:
+
+```python
+from agents.dqn.agent import DQNAgent
+from agents.dqn.config import DQNConfig
+
+config = DQNConfig(
+    obs_dim=4,
+    act_dim=2,
+    hidden_dim=64,
+    lr=1e-3,
+    buffer_capacity=1000
+)
+agent = DQNAgent(config)
+```
+
+Creates:
+
+- QNetwork + TargetNetwork
+- OptimizerState
+- ReplayBuffer
+- ModelRegistry, BufferRegistry, OptimizerRegistry
+- Actor graph + Learner graph
+- ReplayCollator with schema
+
+Methods:
+
+- `get_execution_context(seed)` - creates context with registries
+- `compile(strict=False)` - validates both graphs
+- `actor_graph`, `learner_graph` - the IR graphs
+
+---
+
+### PPOAgent
+
+Similar structure with:
+
+- On-policy buffer (flush after each epoch)
+- GAE computation
+- PPO objective with clipping
+
+---
+
+## Optimizer Registry
+
+Need:
+
+```python
+from runtime.state import OptimizerRegistry
+
+registry = OptimizerRegistry()
+registry.register("main_opt", opt_state)
+opt = registry.get("main_opt")
+```
+
+---
+
+## Validation Codes
+
+### Purity Errors
+
+- P001: nn.Module in params
+- P002: Optimizer in params
+- P003: ReplayBuffer in params
+- P004: Callable/lambda in params
+
+### Metadata Errors
+
+- M001: Unregistered operator type
+
+### Structure Errors
+
+- S001: Cycle detected
+- S002: Disconnected node
+
+---
+
+## Cost Model
+
+### Operator Cost Estimates
+
+OperatorSpec can include:
+
+- `estimated_flops`: FLOPs for this operation
+- `memory_reads`: Bytes read from memory
+- `kernel_launch_cost`: Overhead in microseconds
+
+Used by optimizer for scheduling decisions.

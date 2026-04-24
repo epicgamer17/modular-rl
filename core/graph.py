@@ -86,12 +86,14 @@ class Edge:
         src: Source NodeId.
         dst: Destination NodeId.
         edge_type: The semantic type of the connection.
+        src_port: Optional named port on the source node for this output.
         dst_port: Optional named port on the destination node for this input.
     """
 
     src: NodeId
     dst: NodeId
     edge_type: EdgeType = EdgeType.DATA
+    src_port: Optional[str] = None
     dst_port: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -99,6 +101,7 @@ class Edge:
             "src": str(self.src),
             "dst": str(self.dst),
             "edge_type": self.edge_type.value,
+            "src_port": self.src_port,
             "dst_port": self.dst_port,
         }
 
@@ -108,6 +111,7 @@ class Edge:
             src=NodeId(data["src"]),
             dst=NodeId(data["dst"]),
             edge_type=EdgeType(data["edge_type"]),
+            src_port=data.get("src_port"),
             dst_port=data.get("dst_port"),
         )
 
@@ -125,6 +129,7 @@ class Graph:
         self.nodes: Dict[NodeId, Node] = {}
         self.edges: List[Edge] = []
         self._adjacency: Dict[NodeId, Set[NodeId]] = {}
+        self.parameters: Dict[str, Any] = {}  # Map handle -> ParameterRef metadata
 
     def add_node(
         self,
@@ -178,6 +183,7 @@ class Graph:
         src: str,
         dst: str,
         edge_type: EdgeType = EdgeType.DATA,
+        src_port: Optional[str] = None,
         dst_port: Optional[str] = None,
     ) -> Edge:
         """
@@ -197,10 +203,16 @@ class Graph:
         """
         snid = NodeId(src)
         dnid = NodeId(dst)
-        assert snid in self.nodes, f"Source node {src} not found"
-        assert dnid in self.nodes, f"Destination node {dst} not found"
+        assert snid in self.nodes, f"Source node {src} does not exist"
+        assert dnid in self.nodes, f"Destination node {dst} does not exist"
 
-        edge = Edge(src=snid, dst=dnid, edge_type=edge_type, dst_port=dst_port)
+        edge = Edge(
+            src=snid,
+            dst=dnid,
+            edge_type=edge_type,
+            src_port=src_port,
+            dst_port=dst_port,
+        )
         self.edges.append(edge)
         self._adjacency[snid].add(dnid)
         return edge
@@ -220,6 +232,7 @@ class Graph:
         return {
             "nodes": {str(nid): node.to_dict() for nid, node in self.nodes.items()},
             "edges": [edge.to_dict() for edge in self.edges],
+            "parameters": self.parameters,
         }
 
     @classmethod
@@ -236,5 +249,7 @@ class Graph:
             edge = Edge.from_dict(edge_data)
             graph.edges.append(edge)
             graph._adjacency[edge.src].add(edge.dst)
+
+        graph.parameters = data.get("parameters", {})
 
         return graph
