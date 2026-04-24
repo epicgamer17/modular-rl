@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Callable, Dict, Any, Optional, Set
 from core.graph import Graph, NodeId, Node, Edge
+from runtime.specs import get_spec
 import copy
 
 def find_linear_chain(graph: Graph, types: List[str]) -> List[NodeId]:
@@ -26,7 +27,7 @@ def find_linear_chain(graph: Graph, types: List[str]) -> List[NodeId]:
         if edge.src in out_edges:
             out_edges[edge.src].append(edge)
 
-    from runtime.specs import get_spec
+    # Map for easy lookup of outgoing edges
 
     def is_standard(node_type: str) -> bool:
         spec = get_spec(node_type)
@@ -212,7 +213,21 @@ class RewriteEngine:
             if chain:
                 # Check constraints if any
                 nodes = [graph.nodes[nid] for nid in chain]
-                if rule.constraints and not rule.constraints(nodes):
+                
+                # Check for backward boundary
+                is_boundary = False
+                for n in nodes:
+                    spec = get_spec(n.node_type)
+                    if spec and (spec.creates_grad or spec.consumes_grad):
+                        is_boundary = True
+                        break
+                
+                if is_boundary:
+                    if report:
+                        report.add_skipped_fusion(rule.name, chain, "backward boundary blocks fusion")
+                    # Break the while loop to avoid infinite loop on same chain
+                    changed = False
+                elif rule.constraints and not rule.constraints(nodes):
                     # Skip if constraints fail
                     pass 
                 elif not self._is_profitable(rule, nodes):
@@ -226,6 +241,8 @@ class RewriteEngine:
                     if updated_graph is not graph:
                         graph = updated_graph
                         changed = True
+            else:
+                changed = False
                 
         return graph
 

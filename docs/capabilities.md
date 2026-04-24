@@ -59,6 +59,8 @@ Need:
 ```python
 graph.add_edge("sampler", "loss", dst_port="batch")
 graph.add_edge("q_values", "metrics", dst_port="avg_q")
+# Or with source port:
+graph.add_edge("obs", "q_net", src_port="observation", dst_port="obs")
 ```
 
 Returns:
@@ -71,6 +73,47 @@ Only if:
 
 - src and dst exist in graph.nodes
 - No cycle introduced (DAG constraint)
+
+---
+
+### Edge Types
+
+Need:
+
+```python
+from core.graph import EdgeType
+graph.add_edge("a", "b", edge_type=EdgeType.DATA)   # Data flow
+graph.add_edge("a", "b", edge_type=EdgeType.CONTROL) # Control dependency
+```
+
+Edge types:
+
+- `EdgeType.DATA`: Data flow (default)
+- `EdgeType.CONTROL`: Control dependency (execution order only)
+- `EdgeType.EFFECT`: Side effect
+
+---
+
+### Graph Serialization
+
+Need:
+
+```python
+# Serialize to dict (JSON-compatible)
+data = graph.to_dict()
+
+# Deserialize from dict
+restored = Graph.from_dict(data)
+```
+
+Returns:
+
+```
+to_dict: {"nodes": {...}, "edges": [...], "parameters": {...}}
+from_dict: Graph with same structure
+```
+
+Also stores `graph.parameters` after compilation (parameter handle mapping).
 
 ---
 
@@ -135,6 +178,52 @@ Only if:
 
 - shape is tuple of ints
 - dtype is valid torch dtype
+
+---
+
+## Graph Compilation
+
+### Compile Graph
+
+Need:
+
+```python
+from compiler.compiler import compile_graph
+
+compiled = compile_graph(
+    graph,
+    strict=False,
+    model_handles={"online_q", "target_q"},
+    buffer_handles={"main"},
+    context="both",          # "actor", "learner", or "both"
+    optimize=True,           # Run optimization passes
+    autobatch=False,         # Vectorize for batching
+    autodiff_lowering=True,  # Insert Backward/GradBuffer nodes
+)
+```
+
+Compilation pipeline (in order):
+
+1. **validate_metadata**: Check all node types have specs
+2. **infer_shapes**: Propagate TensorSpec through graph
+3. **autodiff** (if enabled): Insert Backward/GradBuffer nodes
+4. **autobatch** (if enabled): Vectorize single-step to batched
+5. **optimize_graph**: Dead node elimination, fusion
+6. **validate_structure**: No cycles, reachable nodes
+7. **validate_ports**: Schema compatibility at edges
+8. **validate_rl_semantics**: On-policy/off-policy rules
+9. **validate_handles**: Model/buffer handles exist
+10. **validate_purity**: No side effects in wrong context
+11. **validate_grad_semantics**: Gradient lifecycle safety
+12. **validate_ir_purity**: No live objects in params
+13. **collect_trainable_parameters**: Populate graph.parameters
+14. **analyze_gradients**: Report gradient flow issues
+
+Returns:
+
+```
+Graph with validated structure, parameters populated, optimizations applied
+```
 
 ---
 
@@ -1102,3 +1191,206 @@ OperatorSpec can include:
 - `kernel_launch_cost`: Overhead in microseconds
 
 Used by optimizer for scheduling decisions.
+
+---
+
+## Memory Optimizations
+
+### Activation Checkpointing
+
+Need:
+
+```python
+from compiler.passes.memory_optimizations import apply_activation_checkpointing
+graph = apply_activation_checkpointing(graph)
+```
+
+Reduces memory by recomputing activations during backward pass instead of storing them.
+
+---
+
+## Gradient Analysis
+
+### Analyze Gradients
+
+Need:
+
+```python
+from compiler.passes.analyze_gradients import analyze_gradients
+report = analyze_gradients(graph)
+```
+
+Returns GradientReport with:
+
+- `params_with_grad`: Parameters in gradient path
+- `params_without_grad`: Parameters not receiving gradients
+- `unused_branches`: Differentiable nodes with no consumers
+- `warnings`: List of issues found
+
+Detects:
+
+- Detached gradient flow (non-differentiable operators in path)
+- Dead parameters (no path to loss)
+- Unused differentiable branches
+
+---
+
+## Autodiff Lowering
+
+### Insert Backward Nodes
+
+Need:
+
+```python
+compiled = compile_graph(graph, context="learner", autodiff_lowering=True)
+```
+
+Automatically inserts:
+
+- `Backward` node downstream of loss nodes
+- `GradBuffer` node for gradient storage
+- Connects Loss → Backward → Optimizer
+
+---
+
+## Collect Trainable Parameters
+
+### Parameter Handle Mapping
+
+Need:
+
+```python
+from compiler.passes.collect_trainable_parameters import collect_trainable_parameters
+param_map = collect_trainable_parameters(graph)
+```
+
+Returns:
+
+```python
+{
+    "online_q": ["q_values", "loss"],
+    "target_q": ["target_sync"]
+}
+```
+
+Maps parameter handles to lists of node IDs that use them.
+
+---
+
+## Gradient Validation
+
+### Validate Gradient Semantics
+
+Need:
+
+```python
+from compiler.passes.validate_grad_semantics import validate_grad_semantics
+report = validate_grad_semantics(graph, context="learner")
+```
+
+Validates gradient lifecycle:
+
+- G001: Optimizer without preceding Backward
+- G002: Backward without optimizer
+- G003: Same params updated twice in one step
+- G004: Inference updates params (actor context)
+- G005: Actor graph contains gradient nodes
+
+---
+
+## Optimization Report
+
+### Track Optimizations
+
+Need:
+
+```python
+from compiler.optimizer import optimize_graph, OptimizationReport
+report = OptimizationReport()
+optimized = optimize_graph(graph, report=report)
+```
+
+Report contains:
+
+- `steps`: List of optimization steps applied
+- `dead_nodes_removed`: Nodes eliminated
+- `fusion_count`: Number of fusions performed
+
+Each step records:
+
+- `rule_name`: Name of rule applied
+- `pattern`: Original node chain
+- `replacement`: Fused node type
+- `removed_nodes`: Nodes eliminated
+
+---
+
+## Explainable Errors
+
+### Port Mismatch (E204)
+
+Detailed error showing:
+
+```
+q_net.obs <- sampler
+Expected: SingleObs[float32, shape=(4,)]
+Got:      TransitionBatch[obs: float32, action: int64, ...]
+```
+
+### Field Mismatch (E311)
+
+Shows exact field causing incompatibility:
+
+```
+loss.batch <- sampler
+Field 'action' mismatch:
+Expected: int64
+Got:      float32
+```
+
+### Missing Field (E310)
+
+Shows missing required field:
+
+```
+loss.batch <- sampler
+Field 'reward' missing from schema
+Expected in batch: reward: float32
+```
+
+---
+
+## Graph Parameters
+
+### Trainable Parameters in Graph
+
+Graph stores parameter metadata:
+
+```python
+graph.parameters = {
+    "online_q": ["q_values", "loss"],
+    "target_q": ["target_sync"]
+}
+```
+
+Set during compilation via `collect_trainable_parameters`.
+
+---
+
+## Validation Codes (Extended)
+
+### Gradient (G)
+| Code | Description |
+|------|-------------|
+| G001 | Optimizer without Backward |
+| G002 | Backward without Optimizer |
+| G003 | Parameter updated twice |
+| G004 | Inference updates params |
+| G005 | Gradient nodes in actor |
+
+### Explainability (E)
+| Code | Description |
+|------|-------------|
+| E204 | Port mismatch with path |
+| E310 | Missing field in schema |
+| E311 | Field type/dtype mismatch |

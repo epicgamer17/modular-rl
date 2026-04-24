@@ -72,9 +72,23 @@ class OnPolicyLearner(LearnerRuntime):
         # 3. PPO Update Loop (Epochs & Minibatches)
         all_results = []
         for epoch in range(self.config.epochs):
+            epoch_kl = []
             for minibatch in buffer.iterate_minibatches(self.config.minibatch_size):
                 res = super().update_step(batch=minibatch, context=context)
                 all_results.append(res)
+
+                # 3.1 Extract KL for early stopping
+                # The 'opt' node returns the metrics from 'ppo' objective
+                opt_res = res.get("opt", {})
+                if isinstance(opt_res, dict) and "approx_kl" in opt_res:
+                    epoch_kl.append(opt_res["approx_kl"])
+
+            # 3.2 Check for Early Stopping
+            if self.config.target_kl is not None and epoch_kl:
+                mean_kl = sum(epoch_kl) / len(epoch_kl)
+                if mean_kl > self.config.target_kl:
+                    # Optional: log or record early stopping
+                    break
 
         # 4. Clear the buffer
         buffer.clear()

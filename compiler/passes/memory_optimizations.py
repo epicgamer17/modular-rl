@@ -2,7 +2,7 @@
 Memory optimization passes for training graphs.
 """
 
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Any
 
 from core.graph import Graph, Node, NodeId
 from runtime.specs import get_spec
@@ -78,7 +78,7 @@ def apply_activation_checkpointing(graph: Graph) -> Graph:
     return new_graph
 
 
-def hoist_no_grad_regions(graph: Graph) -> Graph:
+def hoist_no_grad_regions(graph: Graph, report: Optional[Any] = None) -> Graph:
     """
     Marks target-network / inference-only regions so operators evaluate them under no-grad.
     """
@@ -91,17 +91,25 @@ def hoist_no_grad_regions(graph: Graph) -> Graph:
         should_hoist = False
         model_handle = str(node.params.get("model_handle", ""))
         target_handle = str(node.params.get("target_handle", ""))
+        
+        branch_name = None
         if "target" in model_handle.lower():
             should_hoist = True
-        if "target" in target_handle.lower():
+            branch_name = "target_q" if "q" in model_handle.lower() else model_handle
+        elif "target" in target_handle.lower():
             should_hoist = True
-        if node.node_type in {"BellmanTarget"}:
+            branch_name = "target_q" if "q" in target_handle.lower() else target_handle
+        elif node.node_type in {"BellmanTarget"}:
             should_hoist = True
+            branch_name = "target_q"
 
         if should_hoist:
             params = dict(node.params)
             params["no_grad_region"] = True
             new_graph.nodes[nid] = _clone_with_params(node, params)
+            
+            if report and branch_name:
+                report.add_hoisted_no_grad(branch_name)
 
     return new_graph
 
@@ -162,8 +170,8 @@ def assign_shared_buffer_reuse(graph: Graph) -> Graph:
     return new_graph
 
 
-def optimize_memory(graph: Graph) -> Graph:
+def optimize_memory(graph: Graph, report: Optional[Any] = None) -> Graph:
     graph = apply_activation_checkpointing(graph)
-    graph = hoist_no_grad_regions(graph)
+    graph = hoist_no_grad_regions(graph, report=report)
     graph = assign_shared_buffer_reuse(graph)
     return graph

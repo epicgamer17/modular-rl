@@ -131,15 +131,21 @@ User Code (examples/)
        │
        ├─► validate_metadata()
        ├─► infer_shapes()
-       ├─► optimize_graph()
+       ├─► autodiff()           (if autodiff_lowering=True)
+       ├─► vectorize_graph()    (if autobatch=True)
+       ├─► optimize_graph()     (DNE, fusion)
        ├─► validate_structure()
        ├─► validate_ports()
        ├─► validate_rl_semantics()
        ├─► validate_handles()
-       └─► validate_purity()
+       ├─► validate_purity()
+       ├─► validate_grad_semantics()
+       ├─► validate_ir_purity()
+       ├─► collect_trainable_parameters()
+       └─► analyze_gradients()
        │
        ▼
-  Validated Graph
+  Validated Graph with parameters
 ```
 
 ### Runtime Flow
@@ -548,6 +554,139 @@ Batched: obs [B, D] → policy → action [B, A]
 |------|-------------|
 | R001 | Off-policy data to on-policy node |
 
+### Gradient (G)
+| Code | Description |
+|------|-------------|
+| G001 | Optimizer without preceding Backward node |
+| G002 | Backward without optimizer |
+| G003 | Same parameter updated twice in one step |
+| G004 | Inference graph (actor) updates parameters |
+| G005 | Actor graph contains gradient nodes |
+
+### Explainability (E)
+| Code | Description |
+|------|-------------|
+| E204 | Port mismatch - shows connection path and Expected/Got |
+| E310 | Missing field in schema |
+| E311 | Field type/dtype mismatch |
+
+---
+
+## Gradient System
+
+### Autodiff Lowering
+
+The compiler can automatically insert gradient nodes:
+
+```
+Original: Loss → Optimizer
+Transformed: Loss → Backward → GradBuffer → Optimizer
+```
+
+Enabled via `compile_graph(..., autodiff_lowering=True)`.
+
+### Gradient Analysis
+
+`analyze_gradients()` produces a report with:
+
+- `params_with_grad`: Parameters receiving gradient flow
+- `params_without_grad`: Parameters detached from loss
+- `unused_branches`: Differentiable nodes with no consumers
+- `warnings`: Specific issues like "Detached gradient flow"
+
+### Gradient Validation
+
+Validates gradient lifecycle safety:
+
+- Backward must precede Optimizer
+- No duplicate parameter updates
+- Gradient nodes forbidden in actor context
+- Parameter updates forbidden in inference
+
+---
+
+## Memory Optimizations
+
+### Activation Checkpointing
+
+Located in `compiler/passes/memory_optimizations.py`:
+
+- `apply_activation_checkpointing(graph)` - reduces memory by recomputing activations
+- Recomputes forward pass tensors during backward instead of storing them
+
+---
+
+## Optimization Pipeline
+
+### OptimizationReport
+
+Tracks all optimizations applied to a graph:
+
+```python
+report = OptimizationReport()
+optimized = optimize_graph(graph, report=report)
+
+for step in report.steps:
+    print(f"Rule: {step.rule_name}")
+    print(f"Pattern: {step.pattern}")
+    print(f"Replacement: {step.replacement}")
+    print(f"Removed: {step.removed_nodes}")
+```
+
+### Dead Node Elimination
+
+Removes nodes not reachable from any sink node.
+
+### Fusion
+
+Combines adjacent pure/deterministic nodes into single operators while preserving numerical output.
+
+---
+
+## Graph Parameters
+
+Graph objects store parameter metadata after compilation:
+
+```python
+graph.parameters = {
+    "online_q": ["q_values_node", "loss_node"],
+    "target_q": ["sync_node"]
+}
+```
+
+Used for:
+
+- Partitioning actor vs learner
+- Identifying which nodes use which models
+- Gradient analysis
+
+---
+
+## Explainable Errors
+
+The validation system provides detailed error messages:
+
+**Port Mismatch (E204)**:
+```
+q_net.obs <- sampler
+Expected: SingleObs[float32, shape=(4,)]
+Got:      TransitionBatch[obs: float32, action: int64, ...]
+```
+
+**Field Mismatch (E311)**:
+```
+loss.batch <- sampler
+Field 'action' mismatch:
+Expected: int64
+Got:      float32
+```
+
+**Missing Field (E310)**:
+```
+loss.batch <- sampler
+Field 'reward' missing from schema
+```
+
 ---
 
 ## Type System
@@ -605,8 +744,9 @@ DQNAgent
 1. Build graphs using builder functions
 2. Inject handles (not objects) into node params
 3. Register operators and specs
-4. Compile with `compile_graph()`
+4. Compile with `compile_graph(autodiff_lowering=True)`
 5. Validate handles exist in registries
+6. Parameters populated in `graph.parameters`
 
 ---
 
@@ -614,21 +754,26 @@ DQNAgent
 
 | Module | Contents |
 |--------|----------|
-| `core/graph.py` | Graph, Node, Edge, NodeId |
+| `core/graph.py` | Graph, Node, Edge, NodeId, EdgeType |
 | `core/schema.py` | Schema, Field, TensorSpec, tags |
 | `core/types.py` | RLType hierarchy |
 | `core/nodes.py` | NodeDef, NodeInstance, Registry |
-| `runtime/executor.py` | execute(), register_operator() |
+| `runtime/executor.py` | execute(), register_operator(), _topological_sort() |
 | `runtime/context.py` | ExecutionContext, ActorSnapshot |
 | `runtime/runtime.py` | ActorRuntime, LearnerRuntime |
 | `runtime/state.py` | ReplayBuffer, ParameterStore, *Registry |
-| `runtime/values.py` | RuntimeValue wrappers |
-| `runtime/specs.py` | OperatorSpec, PortSpec, register_spec() |
+| `runtime/values.py` | RuntimeValue wrappers (Value, NoOp, Skipped, MissingInput) |
+| `runtime/specs.py` | OperatorSpec, PortSpec, register_spec(), get_spec() |
 | `runtime/collator.py` | ReplayCollator |
-| `runtime/operators/` | Built-in operators |
-| `compiler/compiler.py` | compile_graph() |
-| `compiler/rewrite.py` | RewriteEngine, FusionRule |
+| `runtime/operators/` | Built-in operators (exploration, target_sync, metrics, schedule, transfer) |
+| `compiler/compiler.py` | compile_graph() with autodiff, autobatch, optimization |
+| `compiler/rewrite.py` | RewriteEngine, FusionRule, find_linear_chain() |
+| `compiler/optimizer.py` | optimize_graph(), OptimizationReport, dead_node_elimination() |
 | `compiler/analyzer.py` | Static analysis |
-| `compiler/passes/` | Validation passes |
+| `compiler/passes/` | Validation & transformation passes |
+| `compiler/passes/autodiff.py` | autodiff() - inserts Backward/GradBuffer |
+| `compiler/passes/analyze_gradients.py` | analyze_gradients() - gradient flow analysis |
+| `compiler/passes/collect_trainable_parameters.py` | collect_trainable_parameters() |
+| `compiler/passes/memory_optimizations.py` | apply_activation_checkpointing() |
 | `agents/dqn/` | DQNAgent, graphs, operators, specs |
 | `agents/ppo/` | PPOAgent, graphs, operators, specs |

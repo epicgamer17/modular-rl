@@ -3,12 +3,12 @@ Autodiff lowering pass for RL IR.
 Inserts explicit Backward nodes downstream of Loss nodes.
 """
 
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Optional, Any
 from core.graph import Graph, EdgeType
 from runtime.specs import get_spec
 
 
-def autodiff(graph: Graph) -> Graph:
+def autodiff(graph: Graph, report: Optional[Any] = None) -> Graph:
     """
     Transforms the graph by inserting explicit Backward nodes.
 
@@ -58,13 +58,9 @@ def autodiff(graph: Graph) -> Graph:
 
                 # Connect Loss -> Backward
                 graph.add_edge(loss_id, backward_id, dst_port="loss")
-
-            # Redirect Loss -> Optimizer to Backward -> Optimizer?
-            # Or just add a control edge.
-            # In RL IR, Optimizer usually takes 'loss' input.
-            # If we insert Backward in between, we need to decide if Optimizer
-            # takes gradients or still loss.
-            # Request says: MSELoss gain backward node.
+                
+                if report:
+                    report.add_backward_pass(loss_id, model_handle)
 
             # Let's add GradBuffer nodes as well
             grad_id = f"grads_{model_handle}"
@@ -74,8 +70,5 @@ def autodiff(graph: Graph) -> Graph:
                 )
                 # GradBuffer depends on Backward being done
                 graph.add_edge(backward_id, grad_id, edge_type=EdgeType.CONTROL)
-
-            # If we want the optimizer to use gradients, we would rewire it here.
-            # For now, let's just ensure they are in the graph as requested.
 
     return graph
