@@ -1,6 +1,7 @@
 import pytest
 import torch
 import torch.nn as nn
+import numpy as np
 import gymnasium as gym
 from runtime.runtime import ActorRuntime
 from runtime.context import ExecutionContext, ActorSnapshot
@@ -21,11 +22,15 @@ class SimpleModel(nn.Module):
 class MockEnv:
     def __init__(self):
         self.reset_called = False
+        self.observation_space = gym.spaces.Box(low=0, high=1, shape=(1,))
+        self.action_space = gym.spaces.Discrete(2)
+        
     def reset(self, seed=None):
         self.reset_called = True
-        return torch.tensor([1.0]), {}
+        return np.array([1.0], dtype=np.float32), {}
+        
     def step(self, action):
-        return torch.tensor([1.0]), 0.0, False, False, {}
+        return np.array([1.0], dtype=np.float32), 0.0, False, False, {}
 
 def test_actor_snapshot_immutability():
     """

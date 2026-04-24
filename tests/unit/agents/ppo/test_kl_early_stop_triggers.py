@@ -48,6 +48,7 @@ def test_kl_early_stop_triggers():
         def __init__(self):
             self.last_obs = torch.zeros(4)
             self.last_done = torch.zeros(1)
+            self.last_terminated = torch.zeros(1)
             self.last_episode_return = 0.0
             self.last_episode_length = 0
             

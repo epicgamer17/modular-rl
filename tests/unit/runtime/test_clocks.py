@@ -1,6 +1,8 @@
 import pytest
 import torch
 import torch.nn as nn
+import numpy as np
+import gymnasium as gym
 from core.graph import Graph, NODE_TYPE_ACTOR, NODE_TYPE_TARGET_SYNC
 from runtime.context import ExecutionContext
 from runtime.scheduler import SchedulePlan, ScheduleExecutor
@@ -11,8 +13,12 @@ from runtime.executor import register_operator, OPERATOR_REGISTRY
 pytestmark = pytest.mark.unit
 
 class DummyEnv:
-    def reset(self, seed=None): return [0.0], {}
-    def step(self, action): return [0.0], 0.0, False, False, {}
+    def __init__(self):
+        self.steps = 0
+        self.observation_space = gym.spaces.Box(low=0, high=1, shape=(1,))
+        self.action_space = gym.spaces.Discrete(2)
+    def reset(self, seed=None): return np.array([0.0], dtype=np.float32), {}
+    def step(self, action): return np.array([0.0], dtype=np.float32), 0.0, False, False, {}
 
 def test_clocks_actor_learner_ratio(monkeypatch):
     """
@@ -95,14 +101,17 @@ def test_clocks_episode_tracking(monkeypatch):
     plan = SchedulePlan(actor_frequency=1, learner_frequency=0)
     
     class FiniteEnv:
-        def __init__(self): self.steps = 0
+        def __init__(self):
+            self.steps = 0
+            self.observation_space = gym.spaces.Box(low=0, high=1, shape=(1,))
+            self.action_space = gym.spaces.Discrete(2)
         def reset(self, seed=None): 
             self.steps = 0
-            return [0.0], {}
+            return np.array([0.0], dtype=np.float32), {}
         def step(self, action):
             self.steps += 1
             done = self.steps >= 5
-            return [0.0], 0.0, done, False, {}
+            return np.array([0.0], dtype=np.float32), 0.0, done, False, {}
 
     monkeypatch.setitem(OPERATOR_REGISTRY, NODE_TYPE_ACTOR, lambda n, i, context=None: {"action": 0})
     interact_graph = Graph()

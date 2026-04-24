@@ -5,65 +5,280 @@ hypothesis profile 'default'
 rootdir: /Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff
 configfile: pytest.ini (WARNING: ignoring pytest config in pyproject.toml!)
 plugins: anyio-4.12.1, hypothesis-6.151.9, cov-7.0.0
-collecting ... collected 1 item
+collecting ... collected 3 items
 
-tests/unit/runtime/test_env_adapter.py::test_manual_reset_requires_call [Actor] Episode 0 finished. Return: 8.00 | Steps: 1
-FAILED
-ERROR: Coverage failure: total of 21 is less than fail-under=90
+tests/unit/runtime/test_clocks.py::test_clocks_actor_learner_ratio FAILED
+tests/unit/runtime/test_clocks.py::test_clocks_target_sync_trigger FAILED
+tests/unit/runtime/test_clocks.py::test_clocks_episode_tracking [Actor] Episode 1 finished. Return: 0.00 | Steps: 5
+[Actor] Episode 2 finished. Return: 0.00 | Steps: 5
+PASSED
+ERROR: Coverage failure: total of 27 is less than fail-under=90
 
 
 =================================== FAILURES ===================================
-_______________________ test_manual_reset_requires_call ________________________
+_______________________ test_clocks_actor_learner_ratio ________________________
 
-    def test_manual_reset_requires_call():
-        """Verify that ActorRuntime handles manual reset when auto_reset=False."""
-        from runtime.runtime import ActorRuntime
-        from core.graph import Graph
-        import gymnasium as gym
-    
-        raw_env = gym.make("CartPole-v1")
-        # Wrap it - SingleToBatchEnvAdapter has auto_reset=False
-        env = wrap_env(raw_env)
-        assert env.auto_reset is False
-    
-        runtime = ActorRuntime(Graph(), env)
-        runtime.current_obs = env.reset(seed=42)
-    
-        # Mock the graph execution
-        import runtime.runtime as runtime_module
-    
-        orig_execute = runtime_module.execute
-        runtime_module.execute = lambda *args, **kwargs: {"actor": torch.tensor([0])}
-    
-        try:
-            # Step until done
-            for _ in range(1000):
-                step_data = runtime.step()
-                if step_data["done"].any():
-                    # On the next step, ActorRuntime should have called reset()
-                    # because auto_reset is False.
-                    # We can verify this by checking if current_obs was updated
-                    # from a reset() call.
-    
-                    # Let's spy on reset
-                    orig_reset = env.reset
-                    reset_called = False
-    
-                    def spy_reset(*args, **kwargs):
-                        nonlocal reset_called
-                        reset_called = True
-                        return orig_reset(*args, **kwargs)
-    
-                    env.reset = spy_reset
-    
-                    runtime.step()
->                   assert (
-                        reset_called
-                    ), "ActorRuntime should have called reset() for manual-reset env"
-E                   AssertionError: ActorRuntime should have called reset() for manual-reset env
-E                   assert False
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11dd1d670>
 
-tests/unit/runtime/test_env_adapter.py:215: AssertionError
+    def test_clocks_actor_learner_ratio(monkeypatch):
+        """
+        Test 5A: 100 actor steps + learner frequency 0.5 (1 learner every 2 actor steps).
+        Verifies that global counters in ExecutionContext correctly track distributed execution.
+        """
+        plan = SchedulePlan(
+            actor_frequency=2,
+            learner_frequency=1
+        )
+    
+        # Register dummy actor operator
+        monkeypatch.setitem(OPERATOR_REGISTRY, NODE_TYPE_ACTOR, lambda n, i, context=None: {"action": 0})
+    
+        interact_graph = Graph()
+        interact_graph.add_node("actor", NODE_TYPE_ACTOR)
+    
+        train_graph = Graph()
+    
+        env = DummyEnv()
+        actor = ActorRuntime(interact_graph, env)
+        learner = LearnerRuntime(train_graph)
+    
+        executor = ScheduleExecutor(plan, actor, learner)
+        ctx = ExecutionContext()
+    
+>       executor.run(total_actor_steps=100, context=ctx)
+
+tests/unit/runtime/test_clocks.py:47: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <runtime.scheduler.ScheduleExecutor object at 0x11ed6d0a0>
+total_actor_steps = 100
+context = <runtime.context.ExecutionContext object at 0x11ed6d0d0>
+
+    def run(self, total_actor_steps: int, context: Optional[ExecutionContext] = None):
+        self._running = True
+        context = context or ExecutionContext()
+        target_actor_step = context.actor_step + total_actor_steps
+    
+        while context.actor_step < target_actor_step and self._running:
+            # 1. Actor Execution (Strategy-aware)
+>           self._execute_actors(context)
+
+runtime/scheduler.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <runtime.scheduler.ScheduleExecutor object at 0x11ed6d0a0>
+context = <runtime.context.ExecutionContext object at 0x11ed6d0d0>
+
+    def _execute_actors(self, context: ExecutionContext) -> int:
+        """Executes actor steps based on the batching strategy."""
+        num_steps = 0
+    
+        if self.plan.batching_strategy == "parallel" and len(self.actor_runtimes) > 1:
+            # Multi-threaded parallel execution
+            threads = []
+            for runtime in self.actor_runtimes:
+                for _ in range(self.plan.actor_frequency):
+                    t = threading.Thread(target=runtime.step, args=(context,))
+                    threads.append(t)
+                    t.start()
+                    num_steps += 1
+            for t in threads:
+                t.join()
+        else:
+            # Serial execution (standard or single actor)
+            for runtime in self.actor_runtimes:
+                for _ in range(self.plan.actor_frequency):
+>                   runtime.step(context=context)
+
+runtime/scheduler.py:124: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <runtime.runtime.ActorRuntime object at 0x11d4a55e0>
+context = <runtime.context.ExecutionContext object at 0x11ed6d0d0>
+
+    def step(self, context: Optional[ExecutionContext] = None) -> Dict[str, Any]:
+        """Performs a single environment step and returns the trace."""
+        context = context or ExecutionContext()
+        if self.current_obs is None:
+>           self.reset(context=context)
+
+runtime/runtime.py:64: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <runtime.runtime.ActorRuntime object at 0x11d4a55e0>
+context = <runtime.context.ExecutionContext object at 0x11ed6d0d0>
+
+    def reset(self, context: Optional[ExecutionContext] = None) -> torch.Tensor:
+        if context and context.episode_step > 0:
+            print(
+                f"[Actor] Episode {context.episode_count} finished. Return: {self.episode_return:.2f} | Steps: {context.episode_step}"
+            )
+            self.last_episode_return = self.episode_return
+            self.last_episode_length = context.episode_step
+    
+>       obs = self.env.reset()
+              ^^^^^^^^^^^^^^^^
+
+runtime/runtime.py:48: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <runtime.environment.SingleToBatchEnvAdapter object at 0x11ed0eb70>
+seed = None
+
+    def reset(self, seed: Optional[int] = None) -> ObsBatch:
+        """Reset the environment and return batched observation."""
+>       obs, info = self.env.reset(seed=seed)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+runtime/environment.py:146: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.unit.runtime.test_clocks.DummyEnv object at 0x11dd1d8e0>
+seed = None
+
+>   def reset(self, seed=None): return np.array([0.0], dtype=np.float32), {}
+                                       ^^
+E   NameError: name 'np' is not defined
+
+tests/unit/runtime/test_clocks.py:19: NameError
+_______________________ test_clocks_target_sync_trigger ________________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11ed6e1e0>
+
+    def test_clocks_target_sync_trigger(monkeypatch):
+        """
+        Test 5B: Target sync every 10 learner steps triggers at 10, 20, 30...
+        Verifies that scheduler correctly uses context counters for periodic tasks.
+        """
+        plan = SchedulePlan(
+            actor_frequency=1,
+            learner_frequency=1
+        )
+    
+        sync_calls = 0
+        last_sync_step = -1
+        def mock_sync_op(node, inputs, context=None):
+            nonlocal sync_calls, last_sync_step
+            if context and context.learner_step > 0 and context.learner_step % 10 == 0:
+                if context.learner_step != last_sync_step:
+                    sync_calls += 1
+                    context.sync_step += 1
+                    last_sync_step = context.learner_step
+    
+        monkeypatch.setitem(OPERATOR_REGISTRY, NODE_TYPE_TARGET_SYNC, mock_sync_op)
+        monkeypatch.setitem(OPERATOR_REGISTRY, NODE_TYPE_ACTOR, lambda n, i, context=None: {"action": 0})
+    
+        interact_graph = Graph()
+        interact_graph.add_node("actor", NODE_TYPE_ACTOR)
+    
+        train_graph = Graph()
+        # Node owns the frequency (10)
+        train_graph.add_node("sync_node", NODE_TYPE_TARGET_SYNC, params={"sync_frequency": 10, "sync_on": "learner_step"})
+    
+        env = DummyEnv()
+        actor = ActorRuntime(interact_graph, env)
+        learner = LearnerRuntime(train_graph)
+    
+        executor = ScheduleExecutor(plan, actor, learner)
+        ctx = ExecutionContext()
+    
+        # Run 30 actor steps
+>       executor.run(total_actor_steps=30, context=ctx)
+
+tests/unit/runtime/test_clocks.py:92: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <runtime.scheduler.ScheduleExecutor object at 0x11ed6e600>
+total_actor_steps = 30
+context = <runtime.context.ExecutionContext object at 0x11ed6e630>
+
+    def run(self, total_actor_steps: int, context: Optional[ExecutionContext] = None):
+        self._running = True
+        context = context or ExecutionContext()
+        target_actor_step = context.actor_step + total_actor_steps
+    
+        while context.actor_step < target_actor_step and self._running:
+            # 1. Actor Execution (Strategy-aware)
+>           self._execute_actors(context)
+
+runtime/scheduler.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <runtime.scheduler.ScheduleExecutor object at 0x11ed6e600>
+context = <runtime.context.ExecutionContext object at 0x11ed6e630>
+
+    def _execute_actors(self, context: ExecutionContext) -> int:
+        """Executes actor steps based on the batching strategy."""
+        num_steps = 0
+    
+        if self.plan.batching_strategy == "parallel" and len(self.actor_runtimes) > 1:
+            # Multi-threaded parallel execution
+            threads = []
+            for runtime in self.actor_runtimes:
+                for _ in range(self.plan.actor_frequency):
+                    t = threading.Thread(target=runtime.step, args=(context,))
+                    threads.append(t)
+                    t.start()
+                    num_steps += 1
+            for t in threads:
+                t.join()
+        else:
+            # Serial execution (standard or single actor)
+            for runtime in self.actor_runtimes:
+                for _ in range(self.plan.actor_frequency):
+>                   runtime.step(context=context)
+
+runtime/scheduler.py:124: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <runtime.runtime.ActorRuntime object at 0x11ed6e480>
+context = <runtime.context.ExecutionContext object at 0x11ed6e630>
+
+    def step(self, context: Optional[ExecutionContext] = None) -> Dict[str, Any]:
+        """Performs a single environment step and returns the trace."""
+        context = context or ExecutionContext()
+        if self.current_obs is None:
+>           self.reset(context=context)
+
+runtime/runtime.py:64: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <runtime.runtime.ActorRuntime object at 0x11ed6e480>
+context = <runtime.context.ExecutionContext object at 0x11ed6e630>
+
+    def reset(self, context: Optional[ExecutionContext] = None) -> torch.Tensor:
+        if context and context.episode_step > 0:
+            print(
+                f"[Actor] Episode {context.episode_count} finished. Return: {self.episode_return:.2f} | Steps: {context.episode_step}"
+            )
+            self.last_episode_return = self.episode_return
+            self.last_episode_length = context.episode_step
+    
+>       obs = self.env.reset()
+              ^^^^^^^^^^^^^^^^
+
+runtime/runtime.py:48: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <runtime.environment.SingleToBatchEnvAdapter object at 0x11ed6e4e0>
+seed = None
+
+    def reset(self, seed: Optional[int] = None) -> ObsBatch:
+        """Reset the environment and return batched observation."""
+>       obs, info = self.env.reset(seed=seed)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+runtime/environment.py:146: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.unit.runtime.test_clocks.DummyEnv object at 0x11ed6e360>
+seed = None
+
+>   def reset(self, seed=None): return np.array([0.0], dtype=np.float32), {}
+                                       ^^
+E   NameError: name 'np' is not defined
+
+tests/unit/runtime/test_clocks.py:19: NameError
 =============================== warnings summary ===============================
 .venv/lib/python3.12/site-packages/torch/cuda/__init__.py:65
   /Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:65: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
@@ -88,7 +303,7 @@ compiler/passes/infer_shapes.py                      81     81     0%   1-141
 compiler/passes/memory_optimizations.py             116    116     0%   5-177
 compiler/passes/validate_grad_semantics.py           93     93     0%   6-197
 compiler/passes/validate_handles.py                  27     27     0%   6-95
-compiler/passes/validate_ir_purity.py                18     18     0%   1-82
+compiler/passes/validate_ir_purity.py                18      8    56%   27-70
 compiler/passes/validate_metadata.py                 11     11     0%   6-34
 compiler/passes/validate_ports.py                    91     91     0%   6-247
 compiler/passes/validate_purity.py                   21     21     0%   1-76
@@ -96,34 +311,35 @@ compiler/passes/validate_rl.py                       53     53     0%   6-170
 compiler/passes/validate_structure.py                66     66     0%   6-158
 compiler/rewrite.py                                 152    152     0%   1-263
 compiler/scheduler.py                                20     20     0%   7-51
-compiler/validation.py                               32     32     0%   6-93
-core/graph.py                                        92     38    59%   59, 70, 100, 110, 157-179, 204-218, 228, 232, 241-255
+compiler/validation.py                               32     10    69%   32-33, 51, 67, 75, 86, 90-93
+core/graph.py                                        92     27    71%   59, 70, 100, 110, 164, 166, 204-218, 232, 241-255
 core/inspect.py                                      55     50     9%   11-24, 33-65, 69-81
 core/nodes.py                                        50     17    66%   35, 39, 43, 49, 58, 67-69, 78-80, 89-91, 106, 109-110
-core/schema.py                                       69     27    61%   34, 42, 57, 64, 77, 83-85, 91-92, 96, 106-122, 136, 144
+core/schema.py                                       69     25    64%   34, 42, 57, 64, 77, 83-85, 96, 106-122, 136, 144
 core/types.py                                        78     21    73%   31-42, 46, 59-63, 66, 83-87, 90
 runtime/collator.py                                  29     23    21%   16-17, 29-74
 runtime/context.py                                   59     15    75%   24-27, 30, 106, 110, 114, 118, 122, 126, 130-153
 runtime/dataref.py                                   44     24    45%   41-46, 52, 59-79, 89-90
-runtime/environment.py                               82     13    84%   56, 61, 66, 72, 77, 82, 99, 104, 109, 131, 147, 163, 175
-runtime/executor.py                                 158    126    20%   37-39, 66-104, 158-312, 318-339
+runtime/environment.py                               82     17    79%   61, 66, 71, 77, 82, 87, 106, 111, 116, 140, 154-156, 171, 174, 183, 189
+runtime/executor.py                                 158     75    53%   37-39, 66-104, 163-166, 173, 188-192, 202-226, 237-253, 260, 270-274, 280, 283-284, 293, 299, 302, 321, 332-334, 337
 runtime/operators/exploration.py                     15      9    40%   29-47
 runtime/operators/metrics.py                         71     55    23%   15-17, 32-48, 64-137
 runtime/operators/schedule.py                        17     13    24%   14-31
 runtime/operators/target_sync.py                     28     22    21%   18-49
 runtime/operators/transfer.py                        51     35    31%   13-26, 29-38, 46-49, 52-59, 62-68
-runtime/runtime.py                                  111     42    62%   51, 64, 68-73, 92, 145, 149-160, 175-181, 190-191, 202-220, 228
-runtime/scheduler.py                                 62     41    34%   27, 51-56, 59-80, 84-103, 107-127, 130
-runtime/specs.py                                    177    177     0%   6-503
+runtime/runtime.py                                  111     38    66%   51, 69-73, 94, 145, 149-160, 175-181, 202-220, 228
+runtime/scheduler.py                                 62     18    71%   27, 72-77, 99-103, 111-119, 130
+runtime/specs.py                                    177    101    43%   93, 123-170, 201, 210, 214, 218, 222, 226, 230, 234, 238, 277-286, 296, 305, 310, 315, 320-411, 446-470, 476-503
 runtime/state.py                                    258    194    25%   26, 30-32, 46, 50-52, 66, 70-72, 89-91, 95-100, 104-107, 111-113, 117-128, 132-134, 138, 144-158, 162-175, 179, 184-187, 191-193, 202-205, 209-218, 222-224, 232, 252-284, 288-311, 322-338, 341, 350-351, 355, 359, 366-372, 382-383, 387, 391, 400-402, 406, 410-420, 424-439, 445-449, 460-474
 runtime/tracing.py                                   43     23    47%   20, 23, 30-54, 58-59, 62-63, 66-67, 76
 runtime/validator.py                                 27     21    22%   29-47, 52-79
 runtime/values.py                                    45     13    71%   9, 13, 22, 25, 28, 33, 36, 44, 47, 55, 58, 67, 70
-runtime/vector_env.py                                61     45    26%   11-20, 42-69, 73-75, 79-103, 113, 117, 121
+runtime/vector_env.py                                61     61     0%   1-121
 validate/graph_validator.py                          71     71     0%   6-127
 -------------------------------------------------------------------------------
-TOTAL                                              3003   2365    21%
-FAIL Required test coverage of 90% not reached. Total coverage: 21.25%
+TOTAL                                              3003   2186    27%
+FAIL Required test coverage of 90% not reached. Total coverage: 27.21%
 =========================== short test summary info ============================
-FAILED tests/unit/runtime/test_env_adapter.py::test_manual_reset_requires_call
-========================= 1 failed, 1 warning in 1.79s =========================
+FAILED tests/unit/runtime/test_clocks.py::test_clocks_actor_learner_ratio - N...
+FAILED tests/unit/runtime/test_clocks.py::test_clocks_target_sync_trigger - N...
+==================== 2 failed, 1 passed, 1 warning in 1.91s ====================

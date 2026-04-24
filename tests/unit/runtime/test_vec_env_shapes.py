@@ -9,14 +9,15 @@ def test_vec_env_shapes():
     num_envs = 4
     env = VectorEnv("CartPole-v1", num_envs=num_envs)
     
-    obs, info = env.reset(seed=42)
+    obs = env.reset(seed=42)
     
     # CartPole obs dim is 4
     assert obs.shape == (num_envs, 4)
     
     # Take a step
     actions = np.array([env.single_action_space.sample() for _ in range(num_envs)])
-    next_obs, rewards, terminations, truncations, infos = env.step(actions)
+    step_res = env.step(actions)
+    next_obs, rewards, terminations, truncations = step_res.obs, step_res.reward, step_res.terminated, step_res.truncated
     
     assert next_obs.shape == (num_envs, 4)
     assert rewards.shape == (num_envs,)
@@ -30,11 +31,12 @@ def test_async_vec_env_shapes():
     num_envs = 2
     env = VectorEnv("CartPole-v1", num_envs=num_envs, async_mode=True)
     
-    obs, info = env.reset(seed=42)
+    obs = env.reset(seed=42)
     assert obs.shape == (num_envs, 4)
     
     actions = np.array([env.single_action_space.sample() for _ in range(num_envs)])
-    next_obs, rewards, terminations, truncations, infos = env.step(actions)
+    step_res = env.step(actions)
+    next_obs, rewards = step_res.obs, step_res.reward
     
     assert next_obs.shape == (num_envs, 4)
     assert rewards.shape == (num_envs,)
