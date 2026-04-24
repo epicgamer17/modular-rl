@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 import torch
 import numpy as np
+import gymnasium as gym
 from abc import ABC, abstractmethod
 from core.schema import TensorSpec
 
@@ -145,22 +146,32 @@ class SingleToBatchEnvAdapter(EnvAdapter):
         """Reset the environment and return batched observation."""
         obs, info = self.env.reset(seed=seed)
         # obs shape: [...] -> [1, ...]
-        return torch.from_numpy(obs).float().unsqueeze(0)
+        # Normalize to float32 to prevent float64 leaks
+        return torch.from_numpy(obs).to(torch.float32).unsqueeze(0)
 
     def step(self, action: Any) -> StepResult:
         """Step the environment and return StepResult."""
-        # action is expected to be batched [1, ...]
-        if isinstance(action, (torch.Tensor, np.ndarray)) and action.shape[0] == 1:
-            actual_action = action[0]
-            if isinstance(actual_action, torch.Tensor):
-                actual_action = actual_action.cpu().numpy()
+        # Unbatch action for single env (expecting batch size 1)
+        if isinstance(action, (torch.Tensor, np.ndarray)):
+            actual_action = action[0] if action.ndim > 0 else action
         else:
             actual_action = action
+
+        # Normalize to env-native type
+        if hasattr(self.env.action_space, "n"):
+            # Discrete actions must be scalars (int)
+            actual_action = int(np.asarray(actual_action).item())
+        elif hasattr(self.env.action_space, "dtype"):
+            # Continuous/Box actions should match space dtype
+            native_dtype = self.env.action_space.dtype
+            if isinstance(actual_action, torch.Tensor):
+                actual_action = actual_action.cpu().numpy()
+            actual_action = np.array(actual_action, dtype=native_dtype)
 
         obs, reward, terminated, truncated, info = self.env.step(actual_action)
 
         return StepResult(
-            obs=torch.from_numpy(obs).float().unsqueeze(0),
+            obs=torch.from_numpy(obs).to(torch.float32).unsqueeze(0),
             reward=torch.tensor([reward], dtype=torch.float32),
             terminated=torch.tensor([terminated], dtype=torch.bool),
             truncated=torch.tensor([truncated], dtype=torch.bool),

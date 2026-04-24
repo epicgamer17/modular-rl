@@ -71,13 +71,20 @@ class VectorEnv(EnvAdapter):
     def reset(self, seed: Optional[int] = None) -> ObsBatch:
         """Reset all environments and return batched observations."""
         obs, info = self.envs.reset(seed=seed)
-        return torch.from_numpy(obs).float()
+        # Normalize to float32 to prevent float64 leaks
+        return torch.from_numpy(obs).to(torch.float32)
 
     def step(self, actions: Any) -> 'StepResult':
         """Step all environments with a batch of actions."""
         if isinstance(actions, torch.Tensor):
             actions = actions.cpu().numpy()
             
+        # Normalize actions to env-native dtype
+        if hasattr(self.envs.single_action_space, "dtype"):
+            native_dtype = self.envs.single_action_space.dtype
+            if isinstance(actions, np.ndarray):
+                actions = actions.astype(native_dtype)
+
         obs, reward, terminated, truncated, info = self.envs.step(actions)
         
         from runtime.environment import StepResult
@@ -102,8 +109,8 @@ class VectorEnv(EnvAdapter):
             batch_info = info if isinstance(info, list) else [info] * self.num_envs
 
         return StepResult(
-            obs=torch.from_numpy(obs).float(),
-            reward=torch.from_numpy(reward).float(),
+            obs=torch.from_numpy(obs).to(torch.float32),
+            reward=torch.from_numpy(reward).to(torch.float32),
             terminated=torch.from_numpy(terminated).bool(),
             truncated=torch.from_numpy(truncated).bool(),
             info=batch_info
