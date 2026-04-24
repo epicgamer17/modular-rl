@@ -34,7 +34,8 @@ def test_actor_runtime_basic():
     assert step_data["action"] == 0
     assert len(recorded_steps) == 1
     assert "metadata" in recorded_steps[0]
-    assert recorded_steps[0]["metadata"]["step_index"] == 0
+    assert recorded_steps[0]["metadata"]["step_index"] == 1
+    assert recorded_steps[0]["metadata"]["episode_step"].item() == 1
 
 def test_dagger_triviality():
     """

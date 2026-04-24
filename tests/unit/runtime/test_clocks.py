@@ -132,4 +132,4 @@ def test_clocks_episode_tracking(monkeypatch):
     
     assert ctx.actor_step == 12
     assert ctx.episode_count == 3 # Start(1) + Done(1) + Done(2) = 3
-    assert ctx.episode_step == 2 # 2 steps into Ep 3
+    assert ctx.episode_step.item() == 2 # 2 steps into Ep 3

@@ -33,25 +33,26 @@ class ActorRuntime:
         self.last_obs = None
         self.last_done = False
         self.last_terminated = False
-        self.episode_return = 0.0
+
+        self.num_envs = self.env.num_envs
+        self.episode_returns = torch.zeros(self.num_envs)
+        self.episode_lengths = torch.zeros(self.num_envs, dtype=torch.long)
+
         self.last_episode_return = 0.0
         self.last_episode_length = 0
 
-    def reset(self, context: Optional[ExecutionContext] = None) -> torch.Tensor:
-        if context and context.episode_step > 0:
-            print(
-                f"[Actor] Episode {context.episode_count} finished. Return: {self.episode_return:.2f} | Steps: {context.episode_step}"
-            )
-            self.last_episode_return = self.episode_return
-            self.last_episode_length = context.episode_step
-
-        obs = self.env.reset()
+    def reset(
+        self, seed: Optional[int] = None, context: Optional[ExecutionContext] = None
+    ) -> torch.Tensor:
+        obs = self.env.reset(seed=seed)
         # Ensure it's a tensor and has batch dimension
         if not isinstance(obs, torch.Tensor):
             obs = torch.tensor(obs, dtype=torch.float32)
 
         self.current_obs = obs
-        self.episode_return = 0.0
+        self.episode_returns.fill_(0.0)
+        self.episode_lengths.fill_(0)
+
         if context:
             context.episode_count += 1
             context.episode_step = 0
@@ -72,11 +73,20 @@ class ActorRuntime:
                         snapshot = ActorSnapshot(ps.version, ps.get_state())
                         context.bind_actor(nid, snapshot)
 
+        if context:
+            context.actor_step += 1
+            context.env_step += 1
+            context.global_step += 1
+            # episode_step is now per-env, handled via self.episode_lengths
+            self.episode_lengths += 1
+            context.episode_step = self.episode_lengths
+
         results = execute(
             self.interact_graph,
             initial_inputs={
                 "obs_in": self.current_obs,
                 "clock_in": torch.tensor(context.env_step, dtype=torch.int64),
+                "episode_step_in": self.episode_lengths,
             },
             context=context,
         )
@@ -94,18 +104,29 @@ class ActorRuntime:
             action = action_data
 
         step_res = self.env.step(action)
-        
+
         from runtime.environment import validate_step_result
+
         validate_step_result(step_res, self.env.num_envs)
 
-        self.episode_return += (
-            step_res.reward.sum().item()
-        )  # Sum across batch for logging, though usually we'd track per-env
+        # Update accounting
+        self.episode_returns += step_res.reward
 
-        # In single env case, B=1, we can just use the bools directly
-        # In multi-env case, ActorRuntime currently seems to assume sequential execution for one "actor"
-        # TODO: update ActorRuntime to handle full batch parallelism correctly
         done = step_res.terminated | step_res.truncated
+
+        if done.any():
+            for i in range(self.num_envs):
+                if done[i]:
+                    # Single env metrics (for simple logging/access)
+                    self.last_episode_return = self.episode_returns[i].item()
+                    self.last_episode_length = self.episode_lengths[i].item()
+
+                    # Reset trackers for this specific environment
+                    self.episode_returns[i] = 0.0
+                    self.episode_lengths[i] = 0
+
+                    if context:
+                        context.episode_count += 1
 
         step_data = {
             "obs": self.current_obs,
@@ -130,11 +151,12 @@ class ActorRuntime:
             # If any env is done and adapter doesn't auto-reset, we must manual reset
             # For now, we reset the whole adapter (standard gym vector reset behavior)
             # This is correct for B=1 and standard for many vector envs.
+            # TODO: do we want to keep this? we could instead just reset the done environments, or is this handled internally in the vector env reset()?
             self.current_obs = self.env.reset()
         else:
             # Environment either auto-resetted or is not done
             self.current_obs = step_res.obs
-            
+
         self.last_obs = step_res.obs
         self.last_done = done.any().item()
         self.last_terminated = step_res.terminated.any().item()
@@ -152,20 +174,41 @@ class ActorRuntime:
                 single_step = {}
                 for k, v in step_data.items():
                     if k == "metadata":
-                        single_step[k] = v
+                        # Unbatch metadata fields
+                        single_metadata = {}
+                        for mk, mv in v.items():
+                            if (
+                                isinstance(mv, torch.Tensor)
+                                and mv.ndim > 0
+                                and mv.shape[0] == batch_size
+                            ):
+                                single_metadata[mk] = mv[i]
+                            elif isinstance(mv, dict):
+                                # Recursively unbatch dictionaries (like actor_results)
+                                single_subdict = {}
+                                for sk, sv in mv.items():
+                                    # Handle both Value objects and raw tensors
+                                    from runtime.values import Value
+
+                                    data = sv.data if isinstance(sv, Value) else sv
+                                    if (
+                                        isinstance(data, torch.Tensor)
+                                        and data.ndim > 0
+                                        and data.shape[0] == batch_size
+                                    ):
+                                        single_subdict[sk] = data[i]
+                                    else:
+                                        single_subdict[sk] = data
+                                single_metadata[mk] = single_subdict
+                            else:
+                                single_metadata[mk] = mv
+                        single_step[k] = single_metadata
                     elif isinstance(v, torch.Tensor):
                         single_step[k] = v[i]
                     else:
                         single_step[k] = v
                 self.replay_buffer.add(single_step)
 
-        context.actor_step += 1
-        context.env_step += 1
-        context.episode_step += 1
-        context.global_step += 1
-
-        if done.any():
-            self.reset(context=context)
         return step_data
 
     def collect_trajectory(
