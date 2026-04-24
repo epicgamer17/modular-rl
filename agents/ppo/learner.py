@@ -44,8 +44,8 @@ class OnPolicyLearner(LearnerRuntime):
         last_obs = torch.as_tensor(
             self.actor_runtime.last_obs, dtype=torch.float32, device=device
         )
-        last_done = torch.as_tensor(
-            self.actor_runtime.last_done, dtype=torch.float32, device=device
+        last_terminated = torch.as_tensor(
+            self.actor_runtime.last_terminated, dtype=torch.float32, device=device
         )
 
         with torch.no_grad():
@@ -64,7 +64,7 @@ class OnPolicyLearner(LearnerRuntime):
         # 2. Compute GAE
         buffer.compute_returns_advantages(
             next_value=next_value,
-            next_done=last_done,
+            next_terminated=last_terminated,
             gamma=self.config.gamma,
             gae_lambda=self.config.gae_lambda,
         )

@@ -30,6 +30,7 @@ class ActorRuntime:
         self.current_obs = None
         self.last_obs = None
         self.last_done = False
+        self.last_terminated = False
         self.episode_return = 0.0
         self.last_episode_return = 0.0
         self.last_episode_length = 0
@@ -112,6 +113,7 @@ class ActorRuntime:
         self.current_obs = next_obs
         self.last_obs = next_obs
         self.last_done = done
+        self.last_terminated = terminated
 
         # Handle recording
         # TODO: what is this? what does recording function do? i dont love defaults and branching like this, maybe something to work on

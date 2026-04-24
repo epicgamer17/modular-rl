@@ -100,7 +100,7 @@ class RolloutBuffer:
     def compute_returns_advantages(
         self,
         next_value: torch.Tensor,
-        next_done: torch.Tensor,
+        next_terminated: torch.Tensor,
         gamma: float,
         gae_lambda: float,
     ):
@@ -110,7 +110,7 @@ class RolloutBuffer:
 
         Args:
             next_value: [num_envs] value of the next state
-            next_done: [num_envs] done flag (terminated or truncated) of the next state
+            next_terminated: [num_envs] terminated flag (actual game over) of the next state
             gamma: discount factor
             gae_lambda: GAE parameter
         """
@@ -118,8 +118,8 @@ class RolloutBuffer:
         for t in reversed(range(self.rollout_steps)):
             if t == self.rollout_steps - 1:
                 # For the last step in rollout, we use next_value if NOT terminated.
-                # If it was truncated, we still bootstrap (next_done will be True,
-                next_non_terminal = 1.0 - next_done.float()
+                # If it was truncated, we still bootstrap (next_terminated will be False).
+                next_non_terminal = 1.0 - next_terminated.float()
                 next_values = next_value
             else:
                 # Within the rollout, we know exactly if it was terminated.
