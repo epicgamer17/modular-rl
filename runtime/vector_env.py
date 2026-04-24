@@ -1,6 +1,7 @@
 import gymnasium as gym
 from typing import Callable, List, Optional, Any
 import numpy as np
+import torch
 
 
 # TODO: should this be handled here? how do we also allow for PettingZoo or MuJoCo etc?
@@ -51,13 +52,45 @@ class VectorEnv:
         self.observation_space = self.envs.single_observation_space
         self.action_space = self.envs.single_action_space
 
-    def reset(self, seed: Optional[int] = None):
-        """Reset all environments."""
-        return self.envs.reset(seed=seed)
+    def reset(self, seed: Optional[int] = None) -> torch.Tensor:
+        """Reset all environments and return batched observations."""
+        obs, info = self.envs.reset(seed=seed)
+        import torch
+        return torch.from_numpy(obs).float()
 
-    def step(self, actions: np.ndarray):
+    def step(self, actions: np.ndarray) -> 'StepResult':
         """Step all environments with a batch of actions."""
-        return self.envs.step(actions)
+        obs, reward, terminated, truncated, info = self.envs.step(actions)
+        
+        from runtime.environment import StepResult
+        import torch
+        
+        # Convert info (dict of arrays) to list of dicts
+        if isinstance(info, dict):
+            # Gym VectorEnv often returns info as a dict of arrays
+            # We need to reconstruct it into a list of dicts
+            batch_info = []
+            for i in range(self.num_envs):
+                env_info = {}
+                for k, v in info.items():
+                    # Handle both array-like and list-like info values
+                    if hasattr(v, "__getitem__"):
+                        try:
+                            env_info[k] = v[i]
+                        except (IndexError, KeyError):
+                            # Fallback for keys that might not be batched or have different structure
+                            pass
+                batch_info.append(env_info)
+        else:
+            batch_info = info if isinstance(info, list) else [info] * self.num_envs
+
+        return StepResult(
+            obs=torch.from_numpy(obs).float(),
+            reward=torch.from_numpy(reward).float(),
+            terminated=torch.from_numpy(terminated).bool(),
+            truncated=torch.from_numpy(truncated).bool(),
+            info=batch_info
+        )
 
     def close(self):
         """Close all environments."""

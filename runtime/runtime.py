@@ -23,8 +23,10 @@ class ActorRuntime:
         recording_fn: Optional[Callable[[Dict[str, Any]], None]] = None,
         replay_buffer: Optional[Any] = None,
     ):
+        from runtime.environment import wrap_env
+
         self.interact_graph = interact_graph
-        self.env = env
+        self.env = wrap_env(env)
         self.recording_fn = recording_fn
         self.replay_buffer = replay_buffer
         self.current_obs = None
@@ -43,8 +45,12 @@ class ActorRuntime:
             self.last_episode_return = self.episode_return
             self.last_episode_length = context.episode_step
 
-        obs, _ = self.env.reset()
-        self.current_obs = torch.tensor(obs, dtype=torch.float32)
+        obs = self.env.reset()
+        # Ensure it's a tensor and has batch dimension
+        if not isinstance(obs, torch.Tensor):
+            obs = torch.tensor(obs, dtype=torch.float32)
+
+        self.current_obs = obs
         self.episode_return = 0.0
         if context:
             context.episode_count += 1
@@ -70,7 +76,7 @@ class ActorRuntime:
             self.interact_graph,
             initial_inputs={
                 "obs_in": self.current_obs,
-                "clock_in": torch.tensor(context.env_step, dtype=torch.int64)
+                "clock_in": torch.tensor(context.env_step, dtype=torch.int64),
             },
             context=context,
         )
@@ -87,19 +93,24 @@ class ActorRuntime:
         else:
             action = action_data
 
-        next_obs_raw, reward, terminated, truncated, _ = self.env.step(action)
-        self.episode_return += float(reward)
-        done = terminated or truncated
-        next_obs = torch.tensor(next_obs_raw, dtype=torch.float32)
+        step_res = self.env.step(action)
+        self.episode_return += (
+            step_res.reward.sum().item()
+        )  # Sum across batch for logging, though usually we'd track per-env
+
+        # In single env case, B=1, we can just use the bools directly
+        # In multi-env case, ActorRuntime currently seems to assume sequential execution for one "actor"
+        # TODO: update ActorRuntime to handle full batch parallelism correctly
+        done = step_res.terminated | step_res.truncated
 
         step_data = {
             "obs": self.current_obs,
             "action": action,
-            "reward": torch.tensor(reward, dtype=torch.float32),
-            "next_obs": next_obs,
-            "done": torch.tensor(float(done)),
-            "terminated": torch.tensor(float(terminated)),
-            "truncated": torch.tensor(float(truncated)),
+            "reward": step_res.reward,
+            "next_obs": step_res.obs,
+            "done": done.float(),
+            "terminated": step_res.terminated.float(),
+            "truncated": step_res.truncated.float(),
             "metadata": {
                 "step_index": context.actor_step,
                 "episode_id": context.episode_count,
@@ -110,26 +121,37 @@ class ActorRuntime:
         }
 
         # 4. State Update
-        self.current_obs = next_obs
-        self.last_obs = next_obs
-        self.last_done = done
-        self.last_terminated = terminated
+        self.current_obs = step_res.obs
+        self.last_obs = step_res.obs
+        self.last_done = done.any().item()
+        self.last_terminated = step_res.terminated.any().item()
 
         # Handle recording
         # TODO: what is this? what does recording function do? i dont love defaults and branching like this, maybe something to work on
         if self.recording_fn:
             self.recording_fn(step_data)
         elif self.replay_buffer is not None:
-            # Default behavior: add to buffer
-            self.replay_buffer.add(step_data)
+            # ReplayBuffer expects individual transitions.
+            # We unbatch the StepResult into individual transitions.
+            batch_size = step_res.obs.shape[0]
+            # TODO: are there problems with interleaving here? what if we need sequential data? does doing what we do here with vector envs cause problems?
+            for i in range(batch_size):
+                single_step = {}
+                for k, v in step_data.items():
+                    if k == "metadata":
+                        single_step[k] = v
+                    elif isinstance(v, torch.Tensor):
+                        single_step[k] = v[i]
+                    else:
+                        single_step[k] = v
+                self.replay_buffer.add(single_step)
 
-        self.current_obs = next_obs
         context.actor_step += 1
         context.env_step += 1
         context.episode_step += 1
         context.global_step += 1
 
-        if done:
+        if done.any():
             self.reset(context=context)
         return step_data
 
@@ -141,7 +163,7 @@ class ActorRuntime:
         for _ in range(max_steps):
             step_data = self.step(context)
             trajectory.append(step_data)
-            if step_data["done"].item() > 0:
+            if step_data["done"].any():
                 break
         return trajectory
 
@@ -174,7 +196,7 @@ class LearnerRuntime:
             self.train_graph, initial_inputs=initial_inputs, context=context
         )
         context.learner_step += 1
-        
+
         # Unwrap values for usability (keep Skipped/NoOp as is)
         unwrapped = {}
         for k, v in results.items():

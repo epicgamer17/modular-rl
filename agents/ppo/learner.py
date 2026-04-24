@@ -49,8 +49,8 @@ class OnPolicyLearner(LearnerRuntime):
         )
 
         with torch.no_grad():
-            _, next_value = self.ac_net(last_obs.unsqueeze(0))
-            next_value = next_value.squeeze(0)
+            _, next_value = self.ac_net(last_obs)
+            next_value = next_value.squeeze(-1)
 
         # 1. LR Annealing
         if self.config.anneal_lr:
