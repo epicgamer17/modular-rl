@@ -41,6 +41,7 @@ class VectorEnv(EnvAdapter):
     ):
         self.num_envs = num_envs
         self.env_id = env_id
+        self.auto_reset = True
 
         env_fns = [
             make_env(env_id, seed + i, i, capture_video, run_name)

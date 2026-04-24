@@ -125,7 +125,16 @@ class ActorRuntime:
         }
 
         # 4. State Update
-        self.current_obs = step_res.obs
+        # Update current observation, handling manual reset if necessary
+        if done.any() and not self.env.auto_reset:
+            # If any env is done and adapter doesn't auto-reset, we must manual reset
+            # For now, we reset the whole adapter (standard gym vector reset behavior)
+            # This is correct for B=1 and standard for many vector envs.
+            self.current_obs = self.env.reset()
+        else:
+            # Environment either auto-resetted or is not done
+            self.current_obs = step_res.obs
+            
         self.last_obs = step_res.obs
         self.last_done = done.any().item()
         self.last_terminated = step_res.terminated.any().item()
