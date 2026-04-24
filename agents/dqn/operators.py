@@ -106,8 +106,15 @@ def op_td_loss(
     with torch.no_grad():
         # target_q: [B]
         max_next_q = target_net(next_states).max(1)[0]
+        
+        # Enforce no-broadcast policy
+        assert rewards.shape == max_next_q.shape, f"Rewards shape {rewards.shape} must match max_next_q shape {max_next_q.shape}"
+        assert dones.shape == max_next_q.shape, f"Dones shape {dones.shape} must match max_next_q shape {max_next_q.shape}"
+        
         target_q = rewards + (1 - dones) * gamma * max_next_q
 
+    # Enforce no-broadcast in MSE loss input
+    assert current_q.shape == target_q.shape, f"Current Q shape {current_q.shape} must match Target Q shape {target_q.shape}"
     return nn.functional.mse_loss(current_q, target_q)
 
 
@@ -181,6 +188,11 @@ def op_bellman_target(
         return MissingInput("dones")
     with torch.no_grad():
         max_next_q = next_q_values.max(1)[0]
+        
+        # Enforce no-broadcast policy
+        assert rewards.shape == max_next_q.shape, f"Rewards shape {rewards.shape} must match max_next_q shape {max_next_q.shape}"
+        assert dones.shape == max_next_q.shape, f"Dones shape {dones.shape} must match max_next_q shape {max_next_q.shape}"
+        
         return rewards + (1 - dones.float()) * gamma * max_next_q
 
 

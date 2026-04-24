@@ -105,6 +105,12 @@ def op_gae(
     with torch.no_grad():
         _, next_values_all = ac_net(next_obs)
         next_values_all = next_values_all.view(-1)
+        
+        # Enforce no-broadcast policy
+        assert rewards.shape == values.shape, f"Rewards shape {rewards.shape} must match Values shape {values.shape}"
+        assert rewards.shape == next_values_all.shape, f"Rewards shape {rewards.shape} must match Next Values shape {next_values_all.shape}"
+        assert rewards.shape == terminateds.shape, f"Rewards shape {rewards.shape} must match Terminateds shape {terminateds.shape}"
+        assert rewards.shape == truncateds.shape, f"Rewards shape {rewards.shape} must match Truncateds shape {truncateds.shape}"
 
     for t in reversed(range(len(rewards))):
         # Timeout masking: only reset GAE on actual termination
@@ -178,8 +184,18 @@ def op_ppo_objective(
     else:
         probs, values = ac_net(obs)
     values = values.view(-1)
+    
+    # Enforce no-broadcast policy
+    assert values.shape == returns.shape, f"Values shape {values.shape} must match Returns shape {returns.shape}"
+    assert advantages.shape == values.shape, f"Advantages shape {advantages.shape} must match Values shape {values.shape}"
+    if old_values is not None:
+        assert old_values.shape == values.shape, f"Old Values shape {old_values.shape} must match Values shape {values.shape}"
+    
     dist = torch.distributions.Categorical(probs)
     new_log_probs = dist.log_prob(actions)
+    
+    assert new_log_probs.shape == old_log_probs.shape, f"New Log Probs shape {new_log_probs.shape} must match Old Log Probs shape {old_log_probs.shape}"
+    
     entropy = dist.entropy().mean()
 
     # 1. Policy Loss
@@ -301,6 +317,10 @@ def op_ppo_surrogate_min(
     if advantages is None:
         return MissingInput("advantages")
 
+    # Enforce no-broadcast policy
+    assert ratio.shape == advantages.shape, f"Ratio shape {ratio.shape} must match Advantages shape {advantages.shape}"
+    assert clipped_ratio.shape == advantages.shape, f"Clipped Ratio shape {clipped_ratio.shape} must match Advantages shape {advantages.shape}"
+
     surr1 = ratio * advantages
     surr2 = clipped_ratio * advantages
     return -torch.min(surr1, surr2)
@@ -317,6 +337,11 @@ def op_ppo_value_loss(
         return MissingInput("values")
     if returns is None:
         return MissingInput("returns")
+
+    # Enforce no-broadcast policy
+    assert values.shape == returns.shape, f"Values shape {values.shape} must match Returns shape {returns.shape}"
+    if old_values is not None:
+        assert old_values.shape == values.shape, f"Old Values shape {old_values.shape} must match Values shape {values.shape}"
 
     if node.params.get("clip_value_loss", True) and old_values is not None:
         v_clipped = old_values + torch.clamp(
