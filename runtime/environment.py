@@ -117,6 +117,32 @@ class EnvAdapter(ABC):
         pass
 
 
+class EnvWrapper(EnvAdapter):
+    """
+    Base class for wrapping an EnvAdapter (middleware pattern).
+    Allows transformations on batched tensors (obs, reward, etc).
+    """
+
+    def __init__(self, adapter: EnvAdapter):
+        self.adapter = adapter
+        self.num_envs = adapter.num_envs
+        self.obs_spec = adapter.obs_spec
+        self.act_spec = adapter.act_spec
+        self.auto_reset = adapter.auto_reset
+
+    def reset(self, seed: Optional[int] = None) -> ObsBatch:
+        return self.adapter.reset(seed=seed)
+
+    def step(self, action_batch: Any) -> StepResult:
+        return self.adapter.step(action_batch)
+
+    def close(self) -> None:
+        self.adapter.close()
+
+    def __getattr__(self, name):
+        return getattr(self.adapter, name)
+
+
 class SingleToBatchEnvAdapter(EnvAdapter):
     """
     Adapts a single (non-vectorized) environment to the batched StepResult contract.
@@ -181,22 +207,15 @@ class SingleToBatchEnvAdapter(EnvAdapter):
     def close(self):
         self.env.close()
 
-    def __getattr__(self, name):
-        return getattr(self.env, name)
 
-
-def wrap_env(env: Any) -> Any:
+def wrap_env(env: Any) -> EnvAdapter:
     """Ensures the environment follows the batched contract."""
-    # Check if it's already vectorized or has a step method that returns StepResult
-    # For now, we'll be explicit: if it's not our VectorEnv, we wrap it.
-    # In a more mature system, we'd check for a 'is_vectorized' property.
     if isinstance(env, EnvAdapter):
         return env
 
-    # If it has num_envs > 1, assume it's already batched (e.g. raw gym VectorEnv)
-    if hasattr(env, "num_envs") and env.num_envs > 1:
-        # TODO: Should we wrap existing VectorEnvs to ensure StepResult?
-        # For now, let's assume VectorEnv is our primary entry point.
-        return env
+    # Pre-built gymnasium VectorEnv (or anything exposing num_envs) → VectorEnv.
+    if hasattr(env, "num_envs"):
+        from runtime.vector_env import VectorEnv
+        return VectorEnv(envs=env)
 
     return SingleToBatchEnvAdapter(env)

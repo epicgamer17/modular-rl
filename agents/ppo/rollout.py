@@ -16,26 +16,21 @@ def create_ppo_recording_fn(buffer: ReplayBuffer) -> Callable[[Dict[str, Any]], 
 
     def ppo_record(step_data: Dict[str, Any]) -> None:
         # Flatten actor_results into top level for the collator
-        results = step_data["metadata"].get("actor_results", {})
-        actor_val = results.get("actor")
-
-        if (
-            actor_val
-            and hasattr(actor_val, "data")
-            and isinstance(actor_val.data, dict)
-        ):
-            step_data.update(actor_val.data)
-            # Extract directly from actor_val.data
-            buffer.add(
-                obs=step_data["obs"],
-                action=step_data["action"],
-                reward=step_data["reward"],
-                terminated=step_data["terminated"],
-                truncated=step_data["truncated"],
-                # TODO: silent defaults lead to errors, clean this up unless it is intentional.
-                value=torch.tensor(actor_val.data.get("value", 0.0)),
-                log_prob=torch.tensor(actor_val.data.get("log_prob", 0.0)),
-                policy_version=actor_val.data.get("policy_version", 0),
-            )
+        metadata = step_data.get("metadata", {})
+        results = metadata.get("actor_results", {})
+        actor_data = results.get("actor")
+        env_idx = metadata.get("env_idx")
+        # Extract directly from actor_data (already unwrapped by ActorRuntime)
+        buffer.add(
+            obs=step_data["obs"],
+            action=step_data["action"],
+            reward=step_data["reward"],
+            terminated=step_data["terminated"],
+            truncated=step_data["truncated"],
+            value=actor_data["value"],
+            log_prob=actor_data["log_prob"],
+            policy_version=actor_data["policy_version"],
+            env_idx=env_idx,
+        )
 
     return ppo_record

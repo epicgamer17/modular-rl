@@ -28,45 +28,60 @@ class VectorEnv(EnvAdapter):
     """
     Wrapper around Gymnasium's VectorEnv to ensure consistent interface.
     Supports both Sync and Async variants.
+
+    Accepts either an `env_id` (factory path: builds the underlying gym vector env)
+    or a pre-built `envs` instance (adapter path: wraps it directly).
     """
 
     def __init__(
         self,
-        env_id: str,
-        num_envs: int,
+        env_id: Optional[str] = None,
+        num_envs: int = 1,
         seed: int = 42,
         async_mode: bool = False,
         capture_video: bool = False,
         run_name: str = "default",
+        envs: Optional[Any] = None,
     ):
-        self.num_envs = num_envs
-        self.env_id = env_id
         self.auto_reset = True
 
-        env_fns = [
-            make_env(env_id, seed + i, i, capture_video, run_name)
-            for i in range(num_envs)
-        ]
-
-        if async_mode:
-            self.envs = gym.vector.AsyncVectorEnv(env_fns)
+        if envs is not None:
+            self.envs = envs
+            self.num_envs = envs.num_envs
+            spec = getattr(envs, "spec", None)
+            self.env_id = spec.id if spec is not None else None
         else:
-            self.envs = gym.vector.SyncVectorEnv(env_fns)
+            if env_id is None:
+                raise ValueError("VectorEnv requires either env_id or envs")
+            self.num_envs = num_envs
+            self.env_id = env_id
 
-        # Populate specs
-        obs_shape = self.envs.single_observation_space.shape
-        obs_dtype = str(self.envs.single_observation_space.dtype)
-        self.obs_spec = TensorSpec(shape=obs_shape, dtype=obs_dtype)
-        
-        if hasattr(self.envs.single_action_space, "n"):
+            env_fns = [
+                make_env(env_id, seed + i, i, capture_video, run_name)
+                for i in range(num_envs)
+            ]
+
+            if async_mode:
+                self.envs = gym.vector.AsyncVectorEnv(env_fns)
+            else:
+                self.envs = gym.vector.SyncVectorEnv(env_fns)
+
+        # Populate specs. Gym vector envs expose single_{obs,action}_space;
+        # fall back to {observation,action}_space for non-gym-vector inputs.
+        obs_space = getattr(self.envs, "single_observation_space", None) or self.envs.observation_space
+        act_space = getattr(self.envs, "single_action_space", None) or self.envs.action_space
+
+        self.obs_spec = TensorSpec(shape=obs_space.shape, dtype=str(obs_space.dtype))
+
+        if hasattr(act_space, "n"):
             # Discrete
             self.act_spec = TensorSpec(shape=(), dtype="int64")
         else:
             # Continuous
-            self.act_spec = TensorSpec(shape=self.envs.single_action_space.shape, dtype=str(self.envs.single_action_space.dtype))
+            self.act_spec = TensorSpec(shape=act_space.shape, dtype=str(act_space.dtype))
 
-        self.observation_space = self.envs.single_observation_space
-        self.action_space = self.envs.single_action_space
+        self.observation_space = obs_space
+        self.action_space = act_space
 
     def reset(self, seed: Optional[int] = None) -> ObsBatch:
         """Reset all environments and return batched observations."""
@@ -78,10 +93,10 @@ class VectorEnv(EnvAdapter):
         """Step all environments with a batch of actions."""
         if isinstance(actions, torch.Tensor):
             actions = actions.cpu().numpy()
-            
+
         # Normalize actions to env-native dtype
-        if hasattr(self.envs.single_action_space, "dtype"):
-            native_dtype = self.envs.single_action_space.dtype
+        if hasattr(self.action_space, "dtype"):
+            native_dtype = self.action_space.dtype
             if isinstance(actions, np.ndarray):
                 actions = actions.astype(native_dtype)
 
@@ -127,3 +142,8 @@ class VectorEnv(EnvAdapter):
     @property
     def single_action_space(self):
         return self.envs.single_action_space
+
+    def __getattr__(self, name):
+        if name == "envs":
+            raise AttributeError(name)
+        return getattr(self.envs, name)

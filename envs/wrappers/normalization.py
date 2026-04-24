@@ -37,15 +37,18 @@ class RunningMeanStd:
         self.count = tot_count
 
 
-class NormalizeObservation(gym.Wrapper):
+class NormalizeObservation:
     """
     Gymnasium wrapper to normalize observations using running mean and standard deviation.
+    Supports both single and vectorized environments.
     """
 
-    def __init__(self, env: gym.Env, epsilon: float = 1e-8):
-        super().__init__(env)
+    def __init__(self, env: Any, epsilon: float = 1e-8):
+        self.env = env
+        self.observation_space = env.observation_space
+        self.action_space = env.action_space
         self.num_envs = getattr(env, "num_envs", 1)
-        self.is_vector_env = getattr(env, "is_vector_env", False)
+        self.is_vector_env = isinstance(env, gym.vector.VectorEnv) or getattr(env, "is_vector_env", self.num_envs > 1) or hasattr(env, "num_envs")
         self.obs_rms = RunningMeanStd(shape=self.observation_space.shape)
         self.epsilon = epsilon
 
@@ -67,3 +70,9 @@ class NormalizeObservation(gym.Wrapper):
 
     def _normalize(self, obs: np.ndarray) -> np.ndarray:
         return (obs - self.obs_rms.mean) / np.sqrt(self.obs_rms.var + self.epsilon)
+
+    def close(self):
+        return self.env.close()
+
+    def __getattr__(self, name):
+        return getattr(self.env, name)

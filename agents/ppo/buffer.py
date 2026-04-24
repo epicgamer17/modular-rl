@@ -68,34 +68,54 @@ class RolloutBuffer:
         value: torch.Tensor,
         log_prob: torch.Tensor,
         policy_version: int = 0,
+        env_idx: Optional[int] = None,
     ):
         """
-        Add a batch of transitions to the buffer.
+        Add transition(s) to the buffer.
 
         Args:
-            obs: [num_envs, obs_dim]
-            action: [num_envs]
-            reward: [num_envs]
-            terminated: [num_envs]
-            truncated: [num_envs]
-            value: [num_envs]
-            log_prob: [num_envs]
+            obs: [obs_dim] if env_idx is set, else [num_envs, obs_dim]
+            action: scalar if env_idx is set, else [num_envs]
+            reward: scalar if env_idx is set, else [num_envs]
+            terminated: scalar if env_idx is set, else [num_envs]
+            truncated: scalar if env_idx is set, else [num_envs]
+            value: scalar if env_idx is set, else [num_envs]
+            log_prob: scalar if env_idx is set, else [num_envs]
             policy_version: current policy version
+            env_idx: index of the environment for single transition add
         """
         assert self.ptr < self.rollout_steps, "Buffer is full"
 
-        self.obs[self.ptr].copy_(obs)
-        self.actions[self.ptr].copy_(action)
-        self.rewards[self.ptr].copy_(reward)
-        self.terminateds[self.ptr].copy_(terminated)
-        self.truncateds[self.ptr].copy_(truncated)
-        self.values[self.ptr].copy_(value)
-        self.log_probs[self.ptr].copy_(log_prob)
-        self.policy_version[self.ptr].fill_(policy_version)
+        if env_idx is not None:
+            # Single transition add
+            self.obs[self.ptr, env_idx].copy_(obs)
+            self.actions[self.ptr, env_idx] = action
+            self.rewards[self.ptr, env_idx] = reward
+            self.terminateds[self.ptr, env_idx] = terminated
+            self.truncateds[self.ptr, env_idx] = truncated
+            self.values[self.ptr, env_idx] = value
+            self.log_probs[self.ptr, env_idx] = log_prob
+            self.policy_version[self.ptr, env_idx] = policy_version
 
-        self.ptr += 1
-        if self.ptr == self.rollout_steps:
-            self.full = True
+            # Increment pointer only after all environments have been filled for this step
+            if env_idx == self.num_envs - 1:
+                self.ptr += 1
+                if self.ptr == self.rollout_steps:
+                    self.full = True
+        else:
+            # Batch add (all environments at once)
+            self.obs[self.ptr].copy_(obs)
+            self.actions[self.ptr].copy_(action)
+            self.rewards[self.ptr].copy_(reward)
+            self.terminateds[self.ptr].copy_(terminated)
+            self.truncateds[self.ptr].copy_(truncated)
+            self.values[self.ptr].copy_(value)
+            self.log_probs[self.ptr].copy_(log_prob)
+            self.policy_version[self.ptr].fill_(policy_version)
+
+            self.ptr += 1
+            if self.ptr == self.rollout_steps:
+                self.full = True
 
     def compute_returns_advantages(
         self,

@@ -35,7 +35,6 @@ class ActorCritic(nn.Module):
             layer_init(nn.Linear(hidden_dim, hidden_dim)),
             nn.Tanh(),
             layer_init(nn.Linear(hidden_dim, act_dim), std=0.01),
-            nn.Softmax(dim=-1),
         )
         self.critic = nn.Sequential(
             layer_init(nn.Linear(obs_dim, hidden_dim)),

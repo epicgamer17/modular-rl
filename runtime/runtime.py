@@ -23,6 +23,15 @@ class ActorRuntime:
         recording_fn: Optional[Callable[[Dict[str, Any]], None]] = None,
         replay_buffer: Optional[Any] = None,
     ):
+        """
+        Args:
+            replay_buffer: If set, each step's batched ``step_data`` is unbatched
+                and written transition-by-transition via ``replay_buffer.add``.
+            recording_fn: Observational hook invoked with each unbatched transition
+                on every step. Runs in addition to (not instead of) the replay
+                buffer write, so users can log/print without reimplementing the
+                unbatching logic.
+        """
         from runtime.environment import wrap_env
 
         self.interact_graph = interact_graph
@@ -31,10 +40,9 @@ class ActorRuntime:
         self.replay_buffer = replay_buffer
         self.current_obs = None
         self.last_obs = None
-        self.last_done = False
-        self.last_terminated = False
-
         self.num_envs = self.env.num_envs
+        self.last_done = torch.zeros(self.num_envs, dtype=torch.bool)
+        self.last_terminated = torch.zeros(self.num_envs, dtype=torch.bool)
         self.episode_returns = torch.zeros(self.num_envs)
         self.episode_lengths = torch.zeros(self.num_envs, dtype=torch.long)
 
@@ -128,11 +136,21 @@ class ActorRuntime:
                     if context:
                         context.episode_count += 1
 
+        # Handle truncation bootstrapping: if truncated, next_obs should be the final_observation
+        # from the info dict (standard gymnasium behavior for auto-resetting vector envs)
+        real_next_obs = step_res.obs.clone()
+        for i in range(self.num_envs):
+            if step_res.truncated[i] and "final_observation" in step_res.info[i]:
+                final_obs = step_res.info[i]["final_observation"]
+                if not isinstance(final_obs, torch.Tensor):
+                    final_obs = torch.from_numpy(final_obs).to(torch.float32)
+                real_next_obs[i] = final_obs
+
         step_data = {
             "obs": self.current_obs,
             "action": action,
             "reward": step_res.reward,
-            "next_obs": step_res.obs,
+            "next_obs": real_next_obs,
             "done": done.float(),
             "terminated": step_res.terminated.float(),
             "truncated": step_res.truncated.float(),
@@ -157,59 +175,63 @@ class ActorRuntime:
             # Environment either auto-resetted or is not done
             self.current_obs = step_res.obs
 
-        self.last_obs = step_res.obs
-        self.last_done = done.any().item()
-        self.last_terminated = step_res.terminated.any().item()
+        self.last_obs = real_next_obs
+        self.last_done = done
+        self.last_terminated = step_res.terminated
 
-        # Handle recording
-        # TODO: what is this? what does recording function do? i dont love defaults and branching like this, maybe something to work on
-        if self.recording_fn:
-            self.recording_fn(step_data)
-        elif self.replay_buffer is not None:
-            # ReplayBuffer expects individual transitions.
-            # We unbatch the StepResult into individual transitions.
-            batch_size = step_res.obs.shape[0]
-            # TODO: are there problems with interleaving here? what if we need sequential data? does doing what we do here with vector envs cause problems?
+        # 5. Unbatch and handle recording/buffer write
+        if self.replay_buffer is not None or self.recording_fn:
+            batch_size = step_data["obs"].shape[0]
             for i in range(batch_size):
-                single_step = {}
-                for k, v in step_data.items():
-                    if k == "metadata":
-                        # Unbatch metadata fields
-                        single_metadata = {}
-                        for mk, mv in v.items():
-                            if (
-                                isinstance(mv, torch.Tensor)
-                                and mv.ndim > 0
-                                and mv.shape[0] == batch_size
-                            ):
-                                single_metadata[mk] = mv[i]
-                            elif isinstance(mv, dict):
-                                # Recursively unbatch dictionaries (like actor_results)
-                                single_subdict = {}
-                                for sk, sv in mv.items():
-                                    # Handle both Value objects and raw tensors
-                                    from runtime.values import Value
-
-                                    data = sv.data if isinstance(sv, Value) else sv
-                                    if (
-                                        isinstance(data, torch.Tensor)
-                                        and data.ndim > 0
-                                        and data.shape[0] == batch_size
-                                    ):
-                                        single_subdict[sk] = data[i]
-                                    else:
-                                        single_subdict[sk] = data
-                                single_metadata[mk] = single_subdict
-                            else:
-                                single_metadata[mk] = mv
-                        single_step[k] = single_metadata
-                    elif isinstance(v, torch.Tensor):
-                        single_step[k] = v[i]
-                    else:
-                        single_step[k] = v
-                self.replay_buffer.add(single_step)
+                single_step = self._unbatch_step_data(step_data, i)
+                if self.replay_buffer is not None:
+                    self.replay_buffer.add(single_step)
+                if self.recording_fn:
+                    self.recording_fn(single_step)
 
         return step_data
+
+    def _unbatch_step_data(self, step_data: Dict[str, Any], index: int) -> Dict[str, Any]:
+        """Extract a single transition from batched step_data."""
+        from runtime.values import Value
+
+        batch_size = step_data["obs"].shape[0]
+        single_step: Dict[str, Any] = {}
+        for k, v in step_data.items():
+            if k == "metadata":
+                single_metadata: Dict[str, Any] = {"env_idx": index}
+                for mk, mv in v.items():
+                    # Always unwrap RuntimeValues for metadata hooks
+                    m_data = mv.data if hasattr(mv, "has_data") and mv.has_data else mv
+                    
+                    if (
+                        isinstance(m_data, torch.Tensor)
+                        and m_data.ndim > 0
+                        and m_data.shape[0] == batch_size
+                    ):
+                        single_metadata[mk] = m_data[index]
+                    elif isinstance(m_data, dict):
+                        single_subdict: Dict[str, Any] = {}
+                        for sk, sv in m_data.items():
+                            s_data = sv.data if hasattr(sv, "has_data") and sv.has_data else sv
+                            if (
+                                isinstance(s_data, torch.Tensor)
+                                and s_data.ndim > 0
+                                and s_data.shape[0] == batch_size
+                            ):
+                                single_subdict[sk] = s_data[index]
+                            else:
+                                single_subdict[sk] = s_data
+                        single_metadata[mk] = single_subdict
+                    else:
+                        single_metadata[mk] = m_data
+                
+                single_step[k] = single_metadata
+            elif isinstance(v, torch.Tensor):
+                single_step[k] = v[index]
+            else:
+                single_step[k] = v
+        return single_step
 
     def collect_trajectory(
         self, max_steps: int, context: Optional[ExecutionContext] = None

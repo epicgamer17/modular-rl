@@ -7,11 +7,62 @@ configfile: pytest.ini (WARNING: ignoring pytest config in pyproject.toml!)
 plugins: anyio-4.12.1, hypothesis-6.151.9, cov-7.0.0
 collecting ... collected 1 item
 
-tests/unit/runtime/test_dtype_normalization.py::test_action_normalization_discrete DEBUG IN TEST: action type=<class 'int'>, val=1
-PASSED
-ERROR: Coverage failure: total of 18 is less than fail-under=90
+tests/unit/runtime/test_env_wrappers.py::test_gym_wrapper_composition FAILED
+ERROR: Coverage failure: total of 17 is less than fail-under=90
 
 
+=================================== FAILURES ===================================
+_________________________ test_gym_wrapper_composition _________________________
+
+    def test_gym_wrapper_composition():
+        """Verify that SingleToBatchEnvAdapter works with wrapped Gymnasium environments."""
+        # Create a simple env that returns high rewards
+        class HighRewardEnv(gym.Env):
+            def __init__(self):
+                super().__init__()
+                self.observation_space = gym.spaces.Box(low=0, high=1, shape=(1,))
+                self.action_space = gym.spaces.Discrete(2)
+            def reset(self, seed=None):
+                return np.array([0.0]), {}
+            def step(self, action):
+                return np.array([0.0]), 100.0, False, False, {}
+    
+        # Wrap it using a standard gym wrapper
+        class gym_ClipReward(gym.RewardWrapper):
+            def reward(self, reward):
+                return np.clip(reward, -1, 1)
+    
+        raw_env = HighRewardEnv()
+        wrapped_env = gym_ClipReward(raw_env)
+    
+        adapter = SingleToBatchEnvAdapter(wrapped_env)
+>       adapter.reset()
+
+tests/unit/runtime/test_env_wrappers.py:31: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <runtime.environment.SingleToBatchEnvAdapter object at 0x117058cb0>
+seed = None
+
+    def reset(self, seed: Optional[int] = None) -> ObsBatch:
+        """Reset the environment and return batched observation."""
+>       obs, info = self.env.reset(seed=seed)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+runtime/environment.py:173: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <gym_ClipReward<HighRewardEnv instance>>
+
+    def reset(
+        self, *, seed: int | None = None, options: dict[str, Any] | None = None
+    ) -> tuple[WrapperObsType, dict[str, Any]]:
+        """Uses the :meth:`reset` of the :attr:`env` that can be overwritten to change the returned data."""
+>       return self.env.reset(seed=seed, options=options)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: test_gym_wrapper_composition.<locals>.HighRewardEnv.reset() got an unexpected keyword argument 'options'
+
+.venv/lib/python3.12/site-packages/gymnasium/core.py:333: TypeError
 =============================== warnings summary ===============================
 .venv/lib/python3.12/site-packages/torch/cuda/__init__.py:65
   /Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:65: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
@@ -53,7 +104,7 @@ core/types.py                                        78     21    73%   31-42, 4
 runtime/collator.py                                  29     23    21%   16-17, 29-74
 runtime/context.py                                   59     41    31%   24-27, 30, 66-99, 106, 110, 114, 118, 122, 126, 130-153, 157
 runtime/dataref.py                                   44     24    45%   41-46, 52, 59-79, 89-90
-runtime/environment.py                               88     29    67%   61-88, 107, 112, 117, 141, 158, 164-169, 182, 185, 193-202
+runtime/environment.py                              103     53    49%   29-50, 61-88, 107, 112, 117, 127-131, 134, 137, 140, 143, 167, 176, 181-199, 208, 211, 219-228
 runtime/executor.py                                 158    126    20%   37-39, 66-104, 158-312, 318-339
 runtime/operators/exploration.py                     15      9    40%   29-47
 runtime/operators/metrics.py                         71     55    23%   15-17, 32-48, 64-137
@@ -67,9 +118,11 @@ runtime/state.py                                    258    200    22%   22, 26, 
 runtime/tracing.py                                   43     23    47%   20, 23, 30-54, 58-59, 62-63, 66-67, 76
 runtime/validator.py                                 27     21    22%   29-47, 52-79
 runtime/values.py                                    45     13    71%   9, 13, 22, 25, 28, 33, 36, 44, 47, 55, 58, 67, 70
-runtime/vector_env.py                                65     49    25%   11-20, 42-69, 73-75, 79-111, 121, 125, 129
+runtime/vector_env.py                                65     65     0%   1-129
 validate/graph_validator.py                          71     71     0%   6-127
 -------------------------------------------------------------------------------
-TOTAL                                              3035   2497    18%
-FAIL Required test coverage of 90% not reached. Total coverage: 17.73%
-========================= 1 passed, 1 warning in 1.81s =========================
+TOTAL                                              3050   2537    17%
+FAIL Required test coverage of 90% not reached. Total coverage: 16.82%
+=========================== short test summary info ============================
+FAILED tests/unit/runtime/test_env_wrappers.py::test_gym_wrapper_composition
+========================= 1 failed, 1 warning in 1.88s =========================

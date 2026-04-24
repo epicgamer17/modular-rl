@@ -51,8 +51,8 @@ def op_student_actor(node, inputs, context=None):
     net = context.get_model(model_handle)
     
     with torch.no_grad():
-        logits = net(obs.unsqueeze(0))
-        return torch.argmax(logits).item()
+        logits = net(obs)
+        return torch.argmax(logits, dim=-1)
 
 def op_expert_actor(node, inputs, context=None):
     obs = inputs.get("obs")
@@ -60,7 +60,9 @@ def op_expert_actor(node, inputs, context=None):
         return MissingInput("obs")
         
     expert = node.params["expert"]
-    return expert(obs)
+    # obs is [B, ...]
+    actions = [expert(o) for o in obs]
+    return torch.tensor(actions, dtype=torch.int64)
 
 def op_sl_loss(node, inputs, context=None):
     batch = inputs.get("batch")
@@ -92,9 +94,12 @@ register_operator("Optimizer", op_optimizer_step)
 
 # 3. DAgger Training Loop
 def run_dagger_demo(total_iterations=5, steps_per_iter=500):
-    env = gym.make("CartPole-v1")
-    obs_dim = env.observation_space.shape[0]
-    act_dim = env.action_space.n
+    from runtime.environment import wrap_env
+    raw_env = gym.make("CartPole-v1")
+    env = wrap_env(raw_env)
+    
+    obs_dim = env.obs_spec.shape[0]
+    act_dim = 2 # CartPole-v1
     
     student_net = StudentNetwork(obs_dim, act_dim)
     expert = ExpertPolicy()
@@ -138,14 +143,21 @@ def run_dagger_demo(total_iterations=5, steps_per_iter=500):
     train_graph.add_edge("loss", "metrics", dst_port="loss")
     
     # 2. Runtime Setup
-    def dagger_record(step_data):
+    def dagger_record(single_step):
         # Extract expert label from node results
-        expert_val = step_data["metadata"]["actor_results"].get("expert")
+        expert_val = single_step["metadata"]["actor_results"].get("expert")
         if expert_val and hasattr(expert_val, "data"):
+            # Buffer storage for a single transition
             sl_buffer.add({
-                "obs": step_data["obs"],
+                "obs": single_step["obs"],
                 "action": torch.tensor(expert_val.data)
             })
+ 
+        if single_step["done"]:
+            step_idx = single_step["metadata"]["step_index"]
+            print(
+                f"Step {step_idx} | Episode Return: {actor_runtime.last_episode_return:.2f}"
+            )
             
     actor_runtime = ActorRuntime(interact_graph, env, recording_fn=dagger_record)
     learner_runtime = LearnerRuntime(train_graph)

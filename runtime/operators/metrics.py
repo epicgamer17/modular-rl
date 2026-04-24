@@ -55,6 +55,7 @@ _TRACKER = MetricsTracker()
 def op_metrics_sink(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
 ) -> Dict[str, Any]:
+
     """
     Collects and logs metrics.
 

@@ -28,17 +28,15 @@ def test_ratio_equals_one_when_same_policy():
     # Actually, we can just check the math in op_ppo_objective
     # but the operator calls ac_net(obs)
     
-    # Let's mock ac_net to return probs such that log_prob(action) == old_log_prob
-    # For categorical, log_prob is log(p[action])
-    # so p[action] = exp(log_prob)
-    # actions = [0, 0, 0, 0]
-    # probs = [exp(-0.5), 1-exp(-0.5)] etc.
+    # Desired log probs: log(p[action=0]) = log_probs
+    # We construct logits such that log_softmax(logits)[action=0] = log_probs
+    # One way is to set logits[0] = log_probs and logits[1] = log(1 - exp(log_probs))
     actions = torch.zeros(steps).long()
-    probs = torch.zeros((steps, 2))
-    probs[:, 0] = torch.exp(log_probs)
-    probs[:, 1] = 1.0 - probs[:, 0]
+    logits = torch.zeros((steps, 2))
+    logits[:, 0] = log_probs
+    logits[:, 1] = torch.log(1.0 - torch.exp(log_probs))
     
-    model = MockAC(probs, torch.zeros((steps, 1)))
+    model = MockAC(logits, torch.zeros((steps, 1)))
     context = MockContext(model)
     
     batch = {
@@ -66,7 +64,7 @@ def test_ratio_equals_one_when_same_policy():
     loss = results["loss"]
     
     # entropy for this distribution:
-    dist = torch.distributions.Categorical(probs)
+    dist = torch.distributions.Categorical(logits=logits)
     entropy = dist.entropy().mean()
     
     # expected_loss = -1.0 + 0.5 * 0.0 - 0.01 * entropy
@@ -86,11 +84,12 @@ def test_clip_bounds_ratio():
     new_log_prob = torch.log(torch.tensor([2.0])) - 1.0
     
     actions = torch.zeros(steps).long()
-    probs = torch.zeros((steps, 2))
-    probs[:, 0] = torch.exp(new_log_prob)
-    probs[:, 1] = 1.0 - probs[:, 0]
+    # Construct logits that produce new_log_prob for action 0
+    logits = torch.zeros((steps, 2))
+    logits[:, 0] = new_log_prob
+    logits[:, 1] = torch.log(1.0 - torch.exp(new_log_prob))
     
-    model = MockAC(probs, torch.zeros((steps, 1)))
+    model = MockAC(logits, torch.zeros((steps, 1)))
     context = MockContext(model)
     
     batch = {
@@ -119,8 +118,9 @@ def test_entropy_positive():
     """Verify that entropy is positive for a non-deterministic policy."""
     steps = 1
     # Uniform distribution (max entropy)
-    probs = torch.tensor([[0.5, 0.5]])
-    model = MockAC(probs, torch.zeros((steps, 1)))
+    # Uniform distribution: logits [0, 0] result in [0.5, 0.5] after softmax
+    logits = torch.zeros((steps, 2))
+    model = MockAC(logits, torch.zeros((steps, 1)))
     context = MockContext(model)
     
     batch = {
