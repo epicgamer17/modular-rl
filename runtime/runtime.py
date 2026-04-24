@@ -94,6 +94,10 @@ class ActorRuntime:
             action = action_data
 
         step_res = self.env.step(action)
+        
+        from runtime.environment import validate_step_result
+        validate_step_result(step_res, self.env.num_envs)
+
         self.episode_return += (
             step_res.reward.sum().item()
         )  # Sum across batch for logging, though usually we'd track per-env

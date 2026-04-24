@@ -74,3 +74,70 @@ def test_env_adapter_specs():
     assert env.act_spec.dtype == "int64"
     
     env.close()
+
+def test_validate_step_result():
+    """Verify that validate_step_result catches shape and type mismatches."""
+    from runtime.environment import validate_step_result
+    
+    batch_size = 4
+    obs = torch.zeros((batch_size, 4))
+    reward = torch.zeros(batch_size)
+    terminated = torch.zeros(batch_size, dtype=torch.bool)
+    truncated = torch.zeros(batch_size, dtype=torch.bool)
+    info = [{}] * batch_size
+    
+    step_res = StepResult(obs, reward, terminated, truncated, info)
+    
+    # 1. Correct call
+    validate_step_result(step_res, batch_size)
+    
+    # 2. Shape mismatch
+    with pytest.raises(RuntimeError, match="shape mismatch"):
+        validate_step_result(step_res, batch_size + 1)
+        
+    # 3. Type mismatch (reward)
+    bad_reward_step_res = StepResult(obs, torch.zeros(batch_size, dtype=torch.long), terminated, truncated, info)
+    with pytest.raises(RuntimeError, match="must be floating point"):
+        validate_step_result(bad_reward_step_res, batch_size)
+
+def test_runtime_raises_scalar_reward():
+    """Verify that ActorRuntime raises RuntimeError if the environment returns a scalar reward (invalid batch)."""
+    from runtime.runtime import ActorRuntime
+    from core.graph import Graph
+    
+    class BadEnv:
+        num_envs = 1
+        observation_space = gym.spaces.Box(low=0, high=1, shape=(4,))
+        action_space = gym.spaces.Discrete(2)
+        
+        def step(self, action):
+            # Return a StepResult that has B=2 while num_envs=1
+            return StepResult(
+                obs=torch.zeros((2, 4)), 
+                reward=torch.zeros(2),
+                terminated=torch.zeros(2, dtype=torch.bool),
+                truncated=torch.zeros(2, dtype=torch.bool),
+                info=[{}, {}]
+            )
+        def reset(self, seed=None):
+            return torch.zeros((1, 4)), {}
+        def close(self):
+            pass
+    
+    env = BadEnv()
+    actor_rt = ActorRuntime(Graph(), env)
+    # Ensure it didn't wrap it (or if it did, it's still our BadEnv behavior)
+    actor_rt.env = env # Force it
+    
+    actor_rt.current_obs = torch.zeros((1, 4))
+    
+    # Mock the graph execution to return a dummy action
+    import runtime.runtime as runtime_module
+    orig_execute = runtime_module.execute
+    runtime_module.execute = lambda *args, **kwargs: {"actor": torch.tensor([0])}
+    
+    try:
+        with pytest.raises(RuntimeError, match="shape mismatch"):
+            actor_rt.step()
+    finally:
+        runtime_module.execute = orig_execute

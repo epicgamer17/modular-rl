@@ -46,6 +46,43 @@ class StepResult:
             f"Truncated must be bool tensor, got {self.truncated.dtype}"
         )
 
+def validate_step_result(step_res: StepResult, num_envs: int) -> None:
+    """
+    Runtime validation of StepResult against expected num_envs.
+    Raises RuntimeError if any contract is violated.
+    """
+    # 1. Shape Checks
+    if step_res.reward.shape != (num_envs,):
+        raise RuntimeError(
+            f"StepResult.reward shape mismatch. Expected ({num_envs},), got {step_res.reward.shape}"
+        )
+
+    if step_res.terminated.shape != (num_envs,):
+        raise RuntimeError(
+            f"StepResult.terminated shape mismatch. Expected ({num_envs},), got {step_res.terminated.shape}"
+        )
+
+    if step_res.truncated.shape != (num_envs,):
+        raise RuntimeError(
+            f"StepResult.truncated shape mismatch. Expected ({num_envs},), got {step_res.truncated.shape}"
+        )
+
+    # 2. Type Checks
+    if not torch.is_floating_point(step_res.reward):
+        raise RuntimeError(
+            f"StepResult.reward must be floating point, got {step_res.reward.dtype}"
+        )
+
+    if step_res.terminated.dtype != torch.bool:
+        raise RuntimeError(
+            f"StepResult.terminated must be bool, got {step_res.terminated.dtype}"
+        )
+
+    if step_res.truncated.dtype != torch.bool:
+        raise RuntimeError(
+            f"StepResult.truncated must be bool, got {step_res.truncated.dtype}"
+        )
+
 class EnvAdapter(ABC):
     """
     Canonical interface for environment interaction.

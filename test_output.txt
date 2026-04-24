@@ -1,0 +1,122 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.3, pytest-9.0.2, pluggy-1.6.0 -- /Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/.venv/bin/python3.12
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff
+configfile: pytest.ini (WARNING: ignoring pytest config in pyproject.toml!)
+plugins: anyio-4.12.1, hypothesis-6.151.9, cov-7.0.0
+collecting ... collected 1 item
+
+tests/unit/runtime/test_env_adapter.py::test_runtime_raises_scalar_reward FAILED
+ERROR: Coverage failure: total of 18 is less than fail-under=90
+
+
+=================================== FAILURES ===================================
+______________________ test_runtime_raises_scalar_reward _______________________
+
+    def test_runtime_raises_scalar_reward():
+        """Verify that ActorRuntime raises RuntimeError if the environment returns a scalar reward (invalid batch)."""
+        from runtime.runtime import ActorRuntime
+        from core.graph import Graph
+    
+        class BadEnv:
+            num_envs = 1
+            observation_space = gym.spaces.Box(low=0, high=1, shape=(4,))
+            action_space = gym.spaces.Discrete(2)
+    
+            def step(self, action):
+                # Return a StepResult that has B=2 while num_envs=1
+                return StepResult(
+                    obs=torch.zeros((2, 4)),
+                    reward=torch.zeros(2),
+                    terminated=torch.zeros(2, dtype=torch.bool),
+                    truncated=torch.zeros(2, dtype=torch.bool),
+                    info=[{}, {}]
+                )
+            def reset(self, seed=None):
+                return torch.zeros((1, 4)), {}
+            def close(self):
+                pass
+    
+        env = BadEnv()
+        runtime = ActorRuntime(Graph(), env)
+        # Ensure it didn't wrap it (or if it did, it's still our BadEnv behavior)
+        runtime.env = env # Force it
+    
+        runtime.current_obs = torch.zeros((1, 4))
+    
+        # Mock the graph execution to return a dummy action
+        import runtime.runtime
+        orig_execute = runtime.runtime.execute
+        runtime.runtime.execute = lambda *args, **kwargs: {"actor": torch.tensor([0])}
+    
+        try:
+            with pytest.raises(RuntimeError, match="shape mismatch"):
+>               runtime.step()
+                ^^^^^^^^^^^^
+E               AttributeError: module 'runtime' has no attribute 'step'
+
+tests/unit/runtime/test_env_adapter.py:141: AttributeError
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:65
+  /Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:65: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+    import pynvml  # type: ignore[import]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ tests coverage ================================
+_______________ coverage: platform darwin, python 3.12.3-final-0 _______________
+
+Name                                              Stmts   Miss  Cover   Missing
+-------------------------------------------------------------------------------
+compiler/analyzer.py                                 53     53     0%   6-100
+compiler/compiler.py                                 51     51     0%   6-128
+compiler/fusion_rules.py                              9      9     0%   1-43
+compiler/optimizer.py                               111    111     0%   5-196
+compiler/partition.py                                38     38     0%   1-78
+compiler/passes/analyze_gradients.py                122    122     0%   7-184
+compiler/passes/autobatch.py                         32     32     0%   6-70
+compiler/passes/autodiff.py                          35     35     0%   6-74
+compiler/passes/collect_trainable_parameters.py      18     18     0%   5-39
+compiler/passes/infer_shapes.py                      81     81     0%   1-141
+compiler/passes/memory_optimizations.py             116    116     0%   5-177
+compiler/passes/validate_grad_semantics.py           93     93     0%   6-197
+compiler/passes/validate_handles.py                  27     27     0%   6-95
+compiler/passes/validate_ir_purity.py                18     18     0%   1-82
+compiler/passes/validate_metadata.py                 11     11     0%   6-34
+compiler/passes/validate_ports.py                    91     91     0%   6-247
+compiler/passes/validate_purity.py                   21     21     0%   1-76
+compiler/passes/validate_rl.py                       53     53     0%   6-170
+compiler/passes/validate_structure.py                66     66     0%   6-158
+compiler/rewrite.py                                 152    152     0%   1-263
+compiler/scheduler.py                                20     20     0%   7-51
+compiler/validation.py                               32     32     0%   6-93
+core/graph.py                                        92     38    59%   59, 70, 100, 110, 157-179, 204-218, 228, 232, 241-255
+core/inspect.py                                      55     50     9%   11-24, 33-65, 69-81
+core/nodes.py                                        50     17    66%   35, 39, 43, 49, 58, 67-69, 78-80, 89-91, 106, 109-110
+core/schema.py                                       69     27    61%   34, 42, 57, 64, 77, 83-85, 91-92, 96, 106-122, 136, 144
+core/types.py                                        78     21    73%   31-42, 46, 59-63, 66, 83-87, 90
+runtime/collator.py                                  29     23    21%   16-17, 29-74
+runtime/context.py                                   59     41    31%   24-27, 30, 66-99, 106, 110, 114, 118, 122, 126, 130-153, 157
+runtime/dataref.py                                   44     24    45%   41-46, 52, 59-79, 89-90
+runtime/environment.py                               81     37    54%   26-45, 55-82, 98, 103, 108, 129, 133-135, 140-149, 158, 161, 170, 177
+runtime/executor.py                                 158    126    20%   37-39, 66-104, 158-312, 318-339
+runtime/operators/exploration.py                     15      9    40%   29-47
+runtime/operators/metrics.py                         71     55    23%   15-17, 32-48, 64-137
+runtime/operators/schedule.py                        17     13    24%   14-31
+runtime/operators/target_sync.py                     28     22    21%   18-49
+runtime/operators/transfer.py                        51     35    31%   13-26, 29-38, 46-49, 52-59, 62-68
+runtime/runtime.py                                  109     82    25%   41-58, 62-160, 166-172, 181-182, 193-211, 219
+runtime/scheduler.py                                 62     41    34%   27, 51-56, 59-80, 84-103, 107-127, 130
+runtime/specs.py                                    177    177     0%   6-503
+runtime/state.py                                    258    200    22%   22, 26, 30-32, 42, 46, 50-52, 62, 66, 70-72, 83-85, 89-91, 95-100, 104-107, 111-113, 117-128, 132-134, 138, 144-158, 162-175, 179, 184-187, 191-193, 202-205, 209-218, 222-224, 232, 252-284, 288-311, 322-338, 341, 350-351, 355, 359, 366-372, 382-383, 387, 391, 400-402, 406, 410-420, 424-439, 445-449, 460-474
+runtime/tracing.py                                   43     23    47%   20, 23, 30-54, 58-59, 62-63, 66-67, 76
+runtime/validator.py                                 27     21    22%   29-47, 52-79
+runtime/values.py                                    45     13    71%   9, 13, 22, 25, 28, 33, 36, 44, 47, 55, 58, 67, 70
+runtime/vector_env.py                                60     44    27%   11-20, 42-68, 72-74, 78-102, 112, 116, 120
+validate/graph_validator.py                          71     71     0%   6-127
+-------------------------------------------------------------------------------
+TOTAL                                              2999   2460    18%
+FAIL Required test coverage of 90% not reached. Total coverage: 17.97%
+=========================== short test summary info ============================
+FAILED tests/unit/runtime/test_env_adapter.py::test_runtime_raises_scalar_reward
+========================= 1 failed, 1 warning in 1.96s =========================
