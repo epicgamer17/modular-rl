@@ -112,6 +112,9 @@ def dead_node_elimination(graph: Graph, report: Optional[OptimizationReport] = N
                 changed = True
 
     # 3. Create new graph with only live nodes
+    removed_nodes = [nid for nid in graph.nodes if nid not in live_nodes]
+    if removed_nodes:
+        print(f"[DNE] Removing dead nodes: {removed_nodes}")
     new_graph = Graph()
     new_graph.nodes = {
         nid: node for nid, node in graph.nodes.items() if nid in live_nodes

@@ -57,7 +57,9 @@ def register_dqn_specs():
                 "epsilon": PortSpec(spec=Scalar("float32"), required=False),
                 "replay_size": PortSpec(spec=Scalar("int64"), required=False),
                 "batch": PortSpec(spec=TransitionBatch, required=False),
-                "default": PortSpec(spec=Scalar("float32"), required=False, variadic=True),
+                "default": PortSpec(
+                    spec=Scalar("float32"), required=False, variadic=True
+                ),
             },
             outputs={},
             pure=False,
@@ -156,7 +158,7 @@ def register_dqn_specs():
             name="Exploration",
             inputs={
                 "q_values": SingleQ,
-                "epsilon": PortSpec(spec=Scalar("float32"), required=False)
+                "epsilon": PortSpec(spec=Scalar("float32"), required=False),
             },
             outputs={"action": Scalar("int64")},
             pure=False,

@@ -118,12 +118,8 @@ def op_optimizer_step(
     # Resolve optimizer via handle from context (clean architecture)
     opt_handle = node.params.get("optimizer_handle", "main_opt")
     if context:
-        try:
-            opt_state = context.get_optimizer(opt_handle)
-            opt_state.step(loss)
-        except (KeyError, AttributeError):
-            # If no optimizer found, we just don't step (e.g. inference-only or misconfigured)
-            pass
+        opt_state = context.get_optimizer(opt_handle)
+        opt_state.step(loss)
 
     return loss.item()
 
@@ -131,38 +127,31 @@ def op_optimizer_step(
 def op_reduce_mean(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
 ) -> torch.Tensor:
-    """Computes the mean of the input tensor."""
-    data = inputs.get("input")
-    if data is None:
+    """Computes mean of input tensor."""
+    val = inputs.get("input")
+    if val is None:
         return MissingInput("input")
-    return data.mean()
+    return val.mean()
 
 
 def op_get_field(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
 ) -> Any:
-    """Extracts a field from a dictionary input."""
-    data = inputs.get("input")
-    if data is None:
+    """Extracts a field from a dictionary or object."""
+    val = inputs.get("input")
+    field = node.params.get("field")
+    if val is None:
         return MissingInput("input")
-    field_name = node.params.get("field")
-    if not isinstance(data, dict):
-        return ExecutionError(f"GetField expected dict input, got {type(data)}")
-    if field_name not in data:
-        return MissingInput(field_name)
-    return data[field_name]
+    if isinstance(val, dict):
+        return val.get(field)
+    return getattr(val, field)
 
 
 def register_dqn_operators():
+    """Register all DQN related operators."""
     register_operator("QValuesSingle", op_q_values_single)
     register_operator("QValuesBatch", op_q_values_batch)
     register_operator("TDLoss", op_td_loss)
     register_operator("Optimizer", op_optimizer_step)
     register_operator("ReduceMean", op_reduce_mean)
     register_operator("GetField", op_get_field)
-
-    from runtime.operators.schedule import op_linear_decay
-    from runtime.operators.exploration import op_epsilon_greedy
-
-    register_operator("LinearDecay", op_linear_decay)
-    register_operator("Exploration", op_epsilon_greedy)

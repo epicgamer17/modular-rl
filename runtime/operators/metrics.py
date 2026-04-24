@@ -88,11 +88,16 @@ def op_metrics_sink(
     }
 
     if _is_valid(loss):
-        metrics["loss"] = (
-            loss.mean().item()
-            if hasattr(loss, "mean")
-            else (float(loss) if isinstance(loss, (float, int)) else loss.item())
-        )
+        if isinstance(loss, dict):
+            for k, v in loss.items():
+                val = v.item() if hasattr(v, "item") else v
+                metrics[k] = float(val) if isinstance(val, (int, float, torch.Tensor)) else val
+        else:
+            metrics["loss"] = (
+                loss.mean().item()
+                if hasattr(loss, "mean")
+                else (float(loss) if isinstance(loss, (float, int)) else loss.item())
+            )
 
     if _is_valid(avg_q):
         metrics["avg_q"] = (

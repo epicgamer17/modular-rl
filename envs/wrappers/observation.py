@@ -6,42 +6,47 @@ import gymnasium as gym
 import gymnasium.spaces
 from pettingzoo.utils.env import ActionType, AECEnv, AgentID, ObsType
 from pettingzoo.utils.wrappers.base import BaseWrapper
-from .base import action_mask_to_info
 
-class ActionMaskInInfoWrapper(BaseWrapper):
+
+class ChannelLastToFirstWrapper(BaseWrapper):
     def observation_space(self, agent: AgentID) -> gymnasium.spaces.Space:
         orig_space = self.env.observation_space(agent)
-        if isinstance(orig_space, gymnasium.spaces.Dict):
-            obs_space = orig_space["observation"]
+        if isinstance(orig_space, gymnasium.spaces.Box) and len(orig_space.shape) == 3:
+            h, w, c = orig_space.shape
             return gymnasium.spaces.Box(
-                low=np.min(obs_space.low),
-                high=np.max(obs_space.high),
-                shape=obs_space.shape,
-                dtype=obs_space.dtype,
+                low=orig_space.low.min(),
+                high=orig_space.high.max(),
+                shape=(c, h, w),
+                dtype=orig_space.dtype,
             )
+        elif (
+            isinstance(orig_space, gymnasium.spaces.Dict)
+            and "observation" in orig_space.spaces
+        ):
+            obs_space = orig_space["observation"]
+            if len(obs_space.shape) == 3:
+                h, w, c = obs_space.shape
+                return gymnasium.spaces.Box(
+                    low=obs_space.low.min(),
+                    high=obs_space.high.max(),
+                    shape=(c, h, w),
+                    dtype=obs_space.dtype,
+                )
         return orig_space
-
-    def reset(self, seed: int | None = None, options: dict | None = None):
-        self.env.reset(seed=seed, options=options)
-        for agent in self.env.possible_agents:
-            obs = self.env.observe(agent)
-            self.env.infos[agent] = getattr(self.env, "infos", {}).get(agent, {})
-            agent_index = self.env.possible_agents.index(agent)
-            _ = action_mask_to_info(obs, self.env.infos[agent], agent_index)
 
     def observe(self, agent: AgentID) -> np.ndarray:
         obs = self.env.observe(agent)
-        info = self.env.infos[agent]
-        agent_index = self.env.possible_agents.index(agent)
-        return action_mask_to_info(obs, info, agent_index)
+        if isinstance(obs, dict) and "observation" in obs:
+            obs = obs["observation"]
+        if isinstance(obs, np.ndarray) and obs.ndim == 3:
+            obs = np.transpose(obs, (2, 0, 1))
+        return obs
 
-    def step(self, action: ActionType):
+    def step(self, action: ActionType) -> None:
         self.env.step(action)
-        agent = self.env.agent_selection
-        if agent in self.env.infos:
-            agent_index = self.env.possible_agents.index(agent)
-            obs = self.env.observe(agent)
-            _ = action_mask_to_info(obs, self.env.infos[agent], agent_index)
+
+    def reset(self, seed: int | None = None, options: dict | None = None):
+        self.env.reset(seed=seed, options=options)
 
     def last(self, observe: bool = True):
         _, reward, term, trunc, info = self.env.last(observe=False)
@@ -54,63 +59,32 @@ class ActionMaskInInfoWrapper(BaseWrapper):
     def state(self) -> np.ndarray:
         return self.env.state()
 
-class ChannelLastToFirstWrapper(BaseWrapper):
-    def observation_space(self, agent: AgentID) -> gymnasium.spaces.Space:
-        orig_space = self.env.observation_space(agent)
-        if isinstance(orig_space, gymnasium.spaces.Box) and len(orig_space.shape) == 3:
-            h, w, c = orig_space.shape
-            return gymnasium.spaces.Box(
-                low=orig_space.low.min(), high=orig_space.high.max(),
-                shape=(c, h, w), dtype=orig_space.dtype,
-            )
-        elif isinstance(orig_space, gymnasium.spaces.Dict) and "observation" in orig_space.spaces:
-            obs_space = orig_space["observation"]
-            if len(obs_space.shape) == 3:
-                h, w, c = obs_space.shape
-                return gymnasium.spaces.Box(
-                    low=obs_space.low.min(), high=obs_space.high.max(),
-                    shape=(c, h, w), dtype=obs_space.dtype,
-                )
-        return orig_space
-
-    def observe(self, agent: AgentID) -> np.ndarray:
-        obs = self.env.observe(agent)
-        if isinstance(obs, dict) and "observation" in obs:
-            obs = obs["observation"]
-        if isinstance(obs, np.ndarray) and obs.ndim == 3:
-            obs = np.transpose(obs, (2, 0, 1))
-        return obs
-
-    def step(self, action: ActionType) -> None: self.env.step(action)
-    def reset(self, seed: int | None = None, options: dict | None = None):
-        self.env.reset(seed=seed, options=options)
-    def last(self, observe: bool = True):
-        _, reward, term, trunc, info = self.env.last(observe=False)
-        if observe and not term and not trunc:
-            obs = self.observe(self.env.agent_selection)
-        else:
-            obs = None
-        return obs, reward, term, trunc, info
-    def state(self) -> np.ndarray: return self.env.state()
 
 class AppendAgentSelectionWrapper(BaseWrapper):
     def observation_space(self, agent: AgentID) -> gym.spaces.Space:
         orig_space = self.env.observation_space(agent)
+
         def _append_box(obs_space: gym.spaces.Box):
-            if len(obs_space.shape) != 1: return obs_space
+            if len(obs_space.shape) != 1:
+                return obs_space
             orig_low = np.asarray(obs_space.low).reshape(-1)
             orig_high = np.asarray(obs_space.high).reshape(-1)
             num_agents = len(self.env.possible_agents)
-            if num_agents == 0: return obs_space
+            if num_agents == 0:
+                return obs_space
             appended_low = np.zeros((num_agents,), dtype=orig_low.dtype)
             appended_high = np.ones((num_agents,), dtype=orig_high.dtype)
             return gym.spaces.Box(
                 low=np.concatenate([orig_low, appended_low]),
                 high=np.concatenate([orig_high, appended_high]),
                 shape=(obs_space.shape[0] + num_agents,),
-                dtype=obs_space.dtype
+                dtype=obs_space.dtype,
             )
-        if isinstance(orig_space, gym.spaces.Dict) and "observation" in orig_space.spaces:
+
+        if (
+            isinstance(orig_space, gym.spaces.Dict)
+            and "observation" in orig_space.spaces
+        ):
             return _append_box(orig_space["observation"])
         elif isinstance(orig_space, gym.spaces.Box):
             return _append_box(orig_space)
@@ -121,16 +95,22 @@ class AppendAgentSelectionWrapper(BaseWrapper):
         if isinstance(obs, dict) and "observation" in obs:
             obs = obs["observation"]
         obs = np.asarray(obs)
-        if obs.ndim != 1: return obs
+        if obs.ndim != 1:
+            return obs
         possible_agents = list(self.env.possible_agents)
         num_agents = len(possible_agents)
-        if num_agents == 0: return obs
+        if num_agents == 0:
+            return obs
         try:
             sel_agent = self.env.agent_selection
             selected_index = possible_agents.index(sel_agent)
         except Exception:
             selected_index = None
-        oh_dtype = obs.dtype if np.issubdtype(obs.dtype, (np.integer, np.floating)) else np.float32
+        oh_dtype = (
+            obs.dtype
+            if np.issubdtype(obs.dtype, (np.integer, np.floating))
+            else np.float32
+        )
         one_hot = np.zeros((num_agents,), dtype=oh_dtype)
         if selected_index is not None and 0 <= selected_index < num_agents:
             one_hot[selected_index] = 1
@@ -138,8 +118,10 @@ class AppendAgentSelectionWrapper(BaseWrapper):
 
     def reset(self, seed: int | None = None, options: dict | None = None):
         return self.env.reset(seed=seed, options=options)
+
     def step(self, action: ActionType) -> None:
         return self.env.step(action)
+
     def last(self, observe: bool = True):
         _, reward, term, trunc, info = self.env.last(observe=False)
         if observe and not term and not trunc:
@@ -147,17 +129,26 @@ class AppendAgentSelectionWrapper(BaseWrapper):
         else:
             obs = None
         return obs, reward, term, trunc, info
-    def state(self) -> np.ndarray: return self.env.state()
+
+    def state(self) -> np.ndarray:
+        return self.env.state()
+
 
 class TwoPlayerPlayerPlaneWrapper(BaseWrapper):
-    def __init__(self, env: AECEnv[AgentID, ObsType, ActionType], channel_first: bool = True):
+    def __init__(
+        self, env: AECEnv[AgentID, ObsType, ActionType], channel_first: bool = True
+    ):
         super().__init__(env)
         self.channel_first = channel_first
 
     def observation_space(self, agent: AgentID) -> gymnasium.spaces.Space:
         orig_space = self.env.observation_space(agent)
         if isinstance(orig_space, (gymnasium.spaces.Box, gymnasium.spaces.Dict)):
-            obs_space = orig_space["observation"] if isinstance(orig_space, gymnasium.spaces.Dict) else orig_space
+            obs_space = (
+                orig_space["observation"]
+                if isinstance(orig_space, gymnasium.spaces.Dict)
+                else orig_space
+            )
             shape = obs_space.shape
             if len(shape) == 3:
                 if self.channel_first:
@@ -166,7 +157,9 @@ class TwoPlayerPlayerPlaneWrapper(BaseWrapper):
                 else:
                     h, w, c = shape
                     new_shape = (h, w, c + 1)
-                return gymnasium.spaces.Box(low=0, high=1, shape=new_shape, dtype=obs_space.dtype)
+                return gymnasium.spaces.Box(
+                    low=0, high=1, shape=new_shape, dtype=obs_space.dtype
+                )
         return orig_space
 
     def observe(self, agent: AgentID) -> np.ndarray:
@@ -185,9 +178,12 @@ class TwoPlayerPlayerPlaneWrapper(BaseWrapper):
                 obs = np.concatenate([obs, plane], axis=2)
         return obs
 
-    def step(self, action: ActionType) -> None: self.env.step(action)
+    def step(self, action: ActionType) -> None:
+        self.env.step(action)
+
     def reset(self, seed: int | None = None, options: dict | None = None):
         self.env.reset(seed=seed, options=options)
+
     def last(self, observe: bool = True):
         _, reward, term, trunc, info = self.env.last(observe=False)
         if observe and not term and not trunc:
@@ -195,33 +191,50 @@ class TwoPlayerPlayerPlaneWrapper(BaseWrapper):
         else:
             obs = None
         return obs, reward, term, trunc, info
-    def state(self) -> np.ndarray: return self.env.state()
+
+    def state(self) -> np.ndarray:
+        return self.env.state()
+
 
 class FrameStackWrapper(BaseWrapper):
-    def __init__(self, env: AECEnv[AgentID, ObsType, ActionType], k: int = 4, channel_first: bool = True):
+    def __init__(
+        self,
+        env: AECEnv[AgentID, ObsType, ActionType],
+        k: int = 4,
+        channel_first: bool = True,
+    ):
         super().__init__(env)
         self.k = k
         self.channel_first = channel_first
-        self.stacks: dict[AgentID, deque] = {agent: deque(maxlen=k) for agent in self.env.possible_agents}
+        self.stacks: dict[AgentID, deque] = {
+            agent: deque(maxlen=k) for agent in self.env.possible_agents
+        }
 
     def reset(self, seed: int | None = None, options: dict | None = None):
         self.env.reset(seed=seed, options=options)
         for agent in self.env.agents:
             self.stacks[agent].clear()
             obs = self.env.observe(agent)
-            if isinstance(obs, dict) and "observation" in obs: obs = obs["observation"]
-            for _ in range(self.k): self.stacks[agent].append(obs)
+            if isinstance(obs, dict) and "observation" in obs:
+                obs = obs["observation"]
+            for _ in range(self.k):
+                self.stacks[agent].append(obs)
 
     def observe(self, agent: AgentID) -> np.ndarray:
         obs = self.env.observe(agent)
-        if isinstance(obs, dict) and "observation" in obs: obs = obs["observation"]
+        if isinstance(obs, dict) and "observation" in obs:
+            obs = obs["observation"]
         self.stacks[agent].append(obs)
         frames = list(self.stacks[agent])[::-1]
         return np.concatenate(frames, axis=0 if self.channel_first else -1)
 
     def observation_space(self, agent: AgentID) -> gymnasium.spaces.Space:
         orig_space = self.env.observation_space(agent)
-        obs_space = orig_space["observation"] if isinstance(orig_space, gymnasium.spaces.Dict) else orig_space
+        obs_space = (
+            orig_space["observation"]
+            if isinstance(orig_space, gymnasium.spaces.Dict)
+            else orig_space
+        )
         shape = obs_space.shape
         if len(shape) == 3:
             if self.channel_first:
@@ -234,9 +247,16 @@ class FrameStackWrapper(BaseWrapper):
             new_shape = (shape[0] * self.k,)
         else:
             raise NotImplementedError
-        return gymnasium.spaces.Box(low=np.min(obs_space.low), high=np.max(obs_space.high), shape=new_shape, dtype=obs_space.dtype)
+        return gymnasium.spaces.Box(
+            low=np.min(obs_space.low),
+            high=np.max(obs_space.high),
+            shape=new_shape,
+            dtype=obs_space.dtype,
+        )
 
-    def step(self, action: ActionType) -> None: self.env.step(action)
+    def step(self, action: ActionType) -> None:
+        self.env.step(action)
+
     def last(self, observe: bool = True):
         _, reward, term, trunc, info = self.env.last(observe=False)
         if observe and not term and not trunc:
@@ -244,4 +264,6 @@ class FrameStackWrapper(BaseWrapper):
         else:
             obs = None
         return obs, reward, term, trunc, info
-    def state(self) -> np.ndarray: return self.env.state()
+
+    def state(self) -> np.ndarray:
+        return self.env.state()

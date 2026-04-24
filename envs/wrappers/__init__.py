@@ -1,23 +1,15 @@
-from .base import action_mask_to_info
 from .observation import (
-    ActionMaskInInfoWrapper,
     ChannelLastToFirstWrapper,
     AppendAgentSelectionWrapper,
     TwoPlayerPlayerPlaneWrapper,
-    FrameStackWrapper
+    FrameStackWrapper,
 )
 from .action import InitialMovesWrapper, CatanatronWrapper
-from .video import (
-    EpisodeTrigger,
-    RecordVideo,
-    GymRecordVideo,
-    wrap_recording
-)
+from .video import EpisodeTrigger, RecordVideo, GymRecordVideo, wrap_recording
 from .puffer import AECSequentialWrapper
+from .normalization import NormalizeObservation, RunningMeanStd
 
 __all__ = [
-    "action_mask_to_info",
-    "ActionMaskInInfoWrapper",
     "ChannelLastToFirstWrapper",
     "AppendAgentSelectionWrapper",
     "TwoPlayerPlayerPlaneWrapper",
@@ -28,5 +20,7 @@ __all__ = [
     "RecordVideo",
     "GymRecordVideo",
     "wrap_recording",
-    "AECSequentialWrapper"
+    "AECSequentialWrapper",
+    "NormalizeObservation",
+    "RunningMeanStd",
 ]

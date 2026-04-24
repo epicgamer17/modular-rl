@@ -1,5 +1,5 @@
 from pettingzoo.classic import tictactoe_v3
-from envs.factories.wrappers import (
+from envs.wrappers import (
     ActionMaskInInfoWrapper,
     ChannelLastToFirstWrapper,
     FrameStackWrapper,

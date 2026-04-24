@@ -28,13 +28,19 @@ class ActorRuntime:
         self.recording_fn = recording_fn
         self.replay_buffer = replay_buffer
         self.current_obs = None
+        self.last_obs = None
+        self.last_done = False
         self.episode_return = 0.0
+        self.last_episode_return = 0.0
+        self.last_episode_length = 0
 
     def reset(self, context: Optional[ExecutionContext] = None) -> torch.Tensor:
         if context and context.episode_step > 0:
             print(
                 f"[Actor] Episode {context.episode_count} finished. Return: {self.episode_return:.2f} | Steps: {context.episode_step}"
             )
+            self.last_episode_return = self.episode_return
+            self.last_episode_length = context.episode_step
 
         obs, _ = self.env.reset()
         self.current_obs = torch.tensor(obs, dtype=torch.float32)
@@ -91,6 +97,8 @@ class ActorRuntime:
             "reward": torch.tensor(reward, dtype=torch.float32),
             "next_obs": next_obs,
             "done": torch.tensor(float(done)),
+            "terminated": torch.tensor(float(terminated)),
+            "truncated": torch.tensor(float(truncated)),
             "metadata": {
                 "step_index": context.actor_step,
                 "episode_id": context.episode_count,
@@ -99,6 +107,11 @@ class ActorRuntime:
                 "context": context.to_dict(),
             },
         }
+
+        # 4. State Update
+        self.current_obs = next_obs
+        self.last_obs = next_obs
+        self.last_done = done
 
         # Handle recording
         # TODO: what is this? what does recording function do? i dont love defaults and branching like this, maybe something to work on

@@ -5,9 +5,13 @@ from core.graph import Graph, NODE_TYPE_SOURCE
 from runtime.executor import execute, register_operator
 from runtime.state import ParameterStore, OptimizerState, ModelRegistry
 from runtime.context import ExecutionContext
-from examples.ppo import ActorCritic, op_gae, op_ppo_objective
+from agents.ppo.model import ActorCritic
+from agents.ppo.operators import op_gae, op_ppo_objective, register_ppo_operators
 
 pytestmark = pytest.mark.integration
+
+# Register PPO operators for integration tests
+register_ppo_operators()
 
 def test_ppo_stale_policy_detection():
     """Verify that PPOObjective detects and rejects stale policy data."""
@@ -24,7 +28,8 @@ def test_ppo_stale_policy_detection():
         "log_prob": torch.zeros(32),
         "reward": torch.zeros(32),
         "next_obs": torch.randn(32, obs_dim),
-        "done": torch.zeros(32),
+        "terminated": torch.zeros(32),
+        "truncated": torch.zeros(32),
         "policy_version": 0
     }
     
@@ -35,12 +40,12 @@ def test_ppo_stale_policy_detection():
     # 3. Setup PPO graph
     graph = Graph()
     graph.add_node("traj_in", NODE_TYPE_SOURCE)
-    graph.add_node("gae", "GAE", params={
+    graph.add_node("gae", "PPO_GAE", params={
         "model_handle": "ppo_net", 
         "gamma": 0.99, 
         "gae_lambda": 0.95
     })
-    graph.add_node("ppo", "PPOObjective", params={
+    graph.add_node("ppo", "PPO_Objective", params={
         "model_handle": "ppo_net", 
         "param_store_handle": "main_store", 
         "clip_epsilon": 0.2, 
@@ -75,8 +80,7 @@ def test_ppo_on_policy_tag_enforcement():
 
 if __name__ == "__main__":
     # Register needed operators if not already
-    register_operator("GAE", op_gae)
-    register_operator("PPOObjective", op_ppo_objective)
+    register_ppo_operators()
     
     test_ppo_stale_policy_detection()
     print("PPO Stale Policy Detection Verified!")
