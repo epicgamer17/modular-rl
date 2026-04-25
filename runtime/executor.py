@@ -24,6 +24,8 @@ OPERATOR_REGISTRY: Dict[
     str, Callable[[Node, Dict[NodeId, Any], ExecutionContext], Any]
 ] = {}
 
+from runtime.specs import register_spec, get_spec
+
 
 from runtime.validator import validate_operator_output
 
@@ -42,11 +44,15 @@ def ValidatedOperator(op_func):
 
 
 def register_operator(
-    node_type: str, func: Callable[[Node, Dict[NodeId, Any], ExecutionContext], Any]
+    node_type: str,
+    func: Callable[[Node, Dict[NodeId, Any], ExecutionContext], Any],
+    spec: Optional[Any] = None,
 ):
-    """Registers an execution function for a node type."""
+    """Registers an execution function and optional specification for a node type."""
     # Wrap all registered operators with validation logic
     OPERATOR_REGISTRY[node_type] = ValidatedOperator(func)
+    if spec:
+        register_spec(node_type, spec)
 
 
 # Register built-in operators
@@ -56,7 +62,6 @@ register_transfer_operators(register_operator)
 
 # Built-in operators
 from core.graph import NODE_TYPE_SOURCE, NODE_TYPE_REPLAY_QUERY
-from runtime.values import NoOp, Skipped, Value
 
 register_operator(NODE_TYPE_SOURCE, lambda node, inputs, context=None: NoOp())
 
@@ -89,7 +94,11 @@ def op_replay_query(node, inputs, context=None):
         # Create a temporary collator from the output schema
         collator = ReplayCollator(node.schema_out)
 
-    sampling_seed = context.seed + context.learner_step if context and context.seed is not None else None
+    sampling_seed = (
+        context.seed + context.learner_step
+        if context and context.seed is not None
+        else None
+    )
     batch = rb.sample_query(
         batch_size=batch_size,
         filters=filters,
@@ -196,8 +205,8 @@ def execute(
         # Gather inputs from predecessors
         # We distinguish between mapped (named port) and unmapped (control) inputs
         mapped_inputs = {}
-        all_predecessor_outputs = {} # For skip propagation
-        
+        all_predecessor_outputs = {}  # For skip propagation
+
         for edge in graph.edges:
             if edge.dst == nid:
                 if edge.src not in node_outputs:
@@ -227,33 +236,56 @@ def execute(
 
         # 1.5 Inject default values and validate contract
         from runtime.specs import get_spec
-        from runtime.values import Value
 
         op_spec = get_spec(node.node_type)
         final_inputs = {}
-        
+
         if op_spec:
-            # A. Enforce declared ports and requiredness
+            # A. Start with all provided inputs
+            final_inputs = dict(mapped_inputs)
+
+            # B. Enforce required ports from spec
             for port_name, p_spec in op_spec.inputs.items():
-                if port_name in mapped_inputs:
-                    final_inputs[port_name] = mapped_inputs[port_name]
-                elif p_spec.default is not None:
-                    final_inputs[port_name] = Value(p_spec.default)
-                elif p_spec.required:
+                if port_name not in final_inputs:
+                    if p_spec.default is not None:
+                        final_inputs[port_name] = Value(p_spec.default)
+                    elif p_spec.required and not p_spec.variadic:
+                        raise RuntimeError(
+                            f"Contract Violation: Node '{nid}' ({node.node_type}) "
+                            f"missing required port '{port_name}'."
+                        )
+
+            # C. Check for unknown ports (unless variadic)
+            has_variadic = any(p.variadic for p in op_spec.inputs.values())
+            if not has_variadic:
+                allowed = set(op_spec.inputs.keys())
+                received = set(final_inputs.keys())
+                unknown = received - allowed
+                if unknown:
                     raise RuntimeError(
                         f"Contract Violation: Node '{nid}' ({node.node_type}) "
-                        f"missing required port '{port_name}'."
+                        f"received undeclared ports {unknown}. "
+                        f"Allowed ports are {allowed}."
                     )
-            
-            # B. Check for undeclared ports (Warn/Ignore)
-            for port_name in mapped_inputs:
-                if port_name not in op_spec.inputs:
-                    # Ignore extra ports not in spec
-                    # We could warn here, but for now just don't pass them to the operator
-                    pass
         else:
             # No spec registered, fallback to all mapped inputs (legacy support)
             final_inputs = mapped_inputs
+
+        # 2. Propagate Skip if any input is MissingInput or Error
+        skip_reason = None
+        for k, v in all_predecessor_outputs.items():
+            if isinstance(v, (MissingInput, ExecutionError)):
+                skip_reason = f"Predecessor {k} failed or missing input"
+                break
+            if isinstance(v, Skipped):
+                skip_reason = f"Predecessor {k} was skipped"
+                break
+
+        # 3. Unwrap inputs for operator
+        unwrapped_inputs = {}
+        for k, v in final_inputs.items():
+            # Unwrap Value objects, pass other things as is (might be raw if from initial_inputs)
+            unwrapped_inputs[k] = v.data if isinstance(v, Value) else v
 
         # Execute operator
         if node.node_type not in OPERATOR_REGISTRY:
@@ -262,22 +294,6 @@ def execute(
             )
 
         op_func = OPERATOR_REGISTRY[node.node_type]
-
-        # 2. Skip Propagation
-        # A node skips if ANY of its predecessors (mapped or unmapped) skipped
-        skip_reason = None
-        for k, v in all_predecessor_outputs.items():
-            if isinstance(v, (Skipped, MissingInput, ExecutionError)):
-                # MetricsSink is a special case: it can handle N/A for missing inputs
-                if node.node_type != NODE_TYPE_METRICS_SINK:
-                    skip_reason = f"upstream_failed_{k}"
-                    break
-        
-        # 3. Unwrap inputs for operator
-        unwrapped_inputs = {}
-        for k, v in final_inputs.items():
-            # Unwrap Value objects, pass other things as is (might be raw if from initial_inputs)
-            unwrapped_inputs[k] = v.data if isinstance(v, Value) else v
 
         if skip_reason:
             output = Skipped(skip_reason)

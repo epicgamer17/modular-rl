@@ -3,7 +3,7 @@ Type specifications and operator contracts for the RL IR.
 Defines types for ports and verifies compatibility between nodes.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Union, Any, Tuple, List, Set, Optional, Callable
 
 from core.schema import TensorSpec, Schema, Field
@@ -61,27 +61,37 @@ class OperatorSpec:
     inputs: Dict[str, PortSpec] = None
     outputs: Dict[str, PortSpec] = None
 
+    # Core Traits (unified vocabulary)
     pure: bool = False
     stateful: bool = False
-    deterministic: bool = False
-
-    side_effects: List[str] = None
-
-    requires_models: List[str] = None
-    requires_buffers: List[str] = None
-    requires_optimizer: bool = False
-
-    allowed_contexts: Set[str] = None  # {"actor", "learner"}
-
-    # Trainability Metadata
+    updates_params: bool = False
+    reads_buffer: bool = False
     differentiable: bool = True
+    
+    # Math/Semantic Category
+    # Valid: "elementwise", "reduction", "distribution", "loss", "optimizer", "buffer_io", "control"
+    math_category: str = "elementwise"
+    
+    # Metadata and constraints
+    domain_tags: Set[str] = field(default_factory=set)
+    allowed_contexts: Set[str] = field(default_factory=lambda: {"actor", "learner"})
+    tags: Set[str] = field(default_factory=set)
+
+    # Execution/Compiler Metadata
+    version_id: str = "1.0.0"
+    side_effects: List[str] = field(default_factory=list)
+    requires_models: List[str] = field(default_factory=list)
+    requires_buffers: List[str] = field(default_factory=list)
+    requires_optimizer: bool = False
+    
+    # Trainability Metadata (Richer contract)
     creates_grad: bool = False
     consumes_grad: bool = False
-    updates_params: bool = False
-    parameter_handles: List[str] = None
+    parameter_handles: List[str] = field(default_factory=list)
 
-    tags: Set[str] = None
+    # Advanced logic
     shape_fn: Optional[Callable[[Dict[str, Spec]], Dict[str, Spec]]] = None
+    deterministic: bool = False
 
     # Cost Model metrics
     estimated_flops: int = 0
@@ -101,18 +111,21 @@ class OperatorSpec:
         version: str = "1.0.0",
         pure: bool = False,
         stateful: bool = False,
+        updates_params: bool = False,
+        reads_buffer: bool = False,
+        differentiable: bool = True,
+        math_category: str = "elementwise",
+        domain_tags: Set[str] = None,
+        allowed_contexts: Set[str] = None,
+        tags: Set[str] = None,
         deterministic: bool = False,
         side_effects: List[str] = None,
         requires_models: List[str] = None,
         requires_buffers: List[str] = None,
         requires_optimizer: bool = False,
-        allowed_contexts: Set[str] = None,
-        differentiable: Optional[bool] = None,
-        creates_grad: Optional[bool] = None,
-        consumes_grad: Optional[bool] = None,
-        updates_params: Optional[bool] = None,
+        creates_grad: bool = False,
+        consumes_grad: bool = False,
         parameter_handles: List[str] = None,
-        tags: Set[str] = None,
         shape_fn: Optional[Callable[[Dict[str, Spec]], Dict[str, Spec]]] = None,
         estimated_flops: int = 0,
         memory_reads: int = 0,
@@ -135,37 +148,7 @@ class OperatorSpec:
                     v if isinstance(v, PortSpec) else PortSpec(spec=v)
                 )
 
-        allowed_contexts_provided = allowed_contexts is not None
         allowed_contexts = allowed_contexts or {"actor", "learner"}
-
-        # TODO: should probably strictly enforce this but SO MANY unit tests fail otherwise
-        # Enforce explicit declaration for learner context
-        # ONLY if allowed_contexts was explicitly provided.
-        if allowed_contexts_provided and "learner" in allowed_contexts:
-            missing = []
-            if differentiable is None:
-                missing.append("differentiable")
-            if creates_grad is None:
-                missing.append("creates_grad")
-            if consumes_grad is None:
-                missing.append("consumes_grad")
-            if updates_params is None:
-                missing.append("updates_params")
-
-            if missing:
-                raise ValueError(
-                    f"Operator '{name}' (learner context) must explicitly declare: {', '.join(missing)}"
-                )
-
-        # Apply defaults
-        if differentiable is None:
-            differentiable = True
-        if creates_grad is None:
-            creates_grad = False
-        if consumes_grad is None:
-            consumes_grad = False
-        if updates_params is None:
-            updates_params = False
 
         return cls(
             name=name,
@@ -174,18 +157,21 @@ class OperatorSpec:
             outputs=processed_outputs,
             pure=pure,
             stateful=stateful,
+            updates_params=updates_params,
+            reads_buffer=reads_buffer or bool(requires_buffers) or (math_category == "buffer_io"),
+            differentiable=differentiable,
+            math_category=math_category,
+            domain_tags=domain_tags or set(),
+            allowed_contexts=allowed_contexts,
+            tags=tags or set(),
             deterministic=deterministic,
             side_effects=side_effects or [],
             requires_models=requires_models or [],
             requires_buffers=requires_buffers or [],
             requires_optimizer=requires_optimizer,
-            allowed_contexts=allowed_contexts,
-            differentiable=differentiable,
             creates_grad=creates_grad,
             consumes_grad=consumes_grad,
-            updates_params=updates_params,
             parameter_handles=parameter_handles or [],
-            tags=tags or set(),
             shape_fn=shape_fn,
             estimated_flops=estimated_flops,
             memory_reads=memory_reads,

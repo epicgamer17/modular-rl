@@ -554,6 +554,20 @@ Batched: obs [B, D] → policy → action [B, A]
 |------|-------------|
 | R001 | Off-policy data to on-policy node |
 
+### Port Errors (E)
+| Code | Description |
+|------|-------------|
+| E203 | Typo in dst_port - suggests correct port |
+| E204 | Port type mismatch with suggestion |
+| E205 | Required port missing |
+| E206 | Ambiguous autowire (multiple compatible ports) |
+
+### Schema Errors (E)
+| Code | Description |
+|------|-------------|
+| E310 | Missing field in schema |
+| E311 | Field type/dtype mismatch |
+
 ### Gradient (G)
 | Code | Description |
 |------|-------------|
@@ -626,12 +640,24 @@ Tracks all optimizations applied to a graph:
 report = OptimizationReport()
 optimized = optimize_graph(graph, report=report)
 
-for step in report.steps:
-    print(f"Rule: {step.rule_name}")
-    print(f"Pattern: {step.pattern}")
-    print(f"Replacement: {step.replacement}")
-    print(f"Removed: {step.removed_nodes}")
+print(report)
+# Output includes:
+# - Detected trainable params
+# - Inserted backward pass
+# - Dead Node Elimination
+# - Applied rule (fusion)
+# - Skipped fusion (reasons)
+# - Applied no_grad hoist
 ```
+
+Report fields:
+
+- `steps`: List of OptimizationStep (fusion operations)
+- `dead_nodes_removed`: Nodes eliminated by DNE
+- `skipped_fusions`: Fusions not applied (e.g., backward boundary)
+- `trainable_params`: Parameter handles found
+- `backward_passes`: Autodiff insertions
+- `hoisted_no_grad`: Target network branches wrapped
 
 ### Dead Node Elimination
 

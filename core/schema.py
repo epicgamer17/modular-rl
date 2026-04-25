@@ -146,3 +146,23 @@ class TrajectorySpec:
             max_length=data.get("max_length"),
             tags=data.get("tags", [])
         )
+
+
+@dataclass(frozen=True)
+class BatchSpec:
+    """
+    Specification for a TransitionBatch.
+    """
+    fields: Dict[str, TensorSpec]
+
+
+# Convenience constants for specs
+B = -1  # Batch dimension placeholder
+AnyShape = (-2,) # Placeholder for arbitrary shape
+
+TransitionBatchSpec = BatchSpec(fields={
+    "obs": TensorSpec(shape=(AnyShape), dtype="float32"),
+    "action": TensorSpec(shape=(), dtype="int64"),
+    "reward": TensorSpec(shape=(), dtype="float32"),
+    "done": TensorSpec(shape=(), dtype="bool"),
+})

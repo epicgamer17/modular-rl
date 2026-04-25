@@ -14,22 +14,28 @@ def create_ppo_recording_fn(buffer: ReplayBuffer) -> Callable[[Dict[str, Any]], 
         A function that takes step_data and adds it to the buffer.
     """
 
-    def ppo_record(step_data: Dict[str, Any]) -> None:
-        # Flatten actor_results into top level for the collator
-        metadata = step_data.get("metadata", {})
+    def ppo_record(step_data: Any) -> None:
+        # Extract fields, supporting both dict and TransitionBatch
+        def get_field(obj, key):
+            if isinstance(obj, dict):
+                return obj.get(key)
+            return getattr(obj, key, None)
+
+        metadata = get_field(step_data, "metadata") or {}
         results = metadata.get("actor_results", {})
         actor_data = results.get("actor")
         env_idx = metadata.get("env_idx")
+        
         # Extract directly from actor_data (already unwrapped by ActorRuntime)
         buffer.add(
-            obs=step_data["obs"],
-            action=step_data["action"],
-            reward=step_data["reward"],
-            terminated=step_data["terminated"],
-            truncated=step_data["truncated"],
-            value=actor_data["value"],
-            log_prob=actor_data["log_prob"],
-            policy_version=actor_data["policy_version"],
+            obs=get_field(step_data, "obs"),
+            action=get_field(step_data, "action"),
+            reward=get_field(step_data, "reward"),
+            terminated=get_field(step_data, "terminated"),
+            truncated=get_field(step_data, "truncated"),
+            value=actor_data["values"] if isinstance(actor_data, dict) else actor_data.values,
+            log_prob=actor_data["log_prob"] if isinstance(actor_data, dict) else actor_data.log_prob,
+            policy_version=actor_data["policy_version"] if isinstance(actor_data, dict) else actor_data.policy_version,
             env_idx=env_idx,
         )
 

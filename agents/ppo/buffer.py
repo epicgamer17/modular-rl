@@ -3,7 +3,6 @@ import numpy as np
 from typing import Dict, Any, Generator, Tuple, Optional
 
 
-# TODO: this seems VERY PPO specific.. does this need to be its own class? We even hardcode GAE. The goal of this library is not to have Algorithm specific components (when possible, of course) but feature specific instead.
 class RolloutBuffer:
     """
     Rollout buffer for PPO.
@@ -48,13 +47,6 @@ class RolloutBuffer:
             (self.rollout_steps, self.num_envs), dtype=torch.long, device=self.device
         )
 
-        self.advantages = torch.zeros(
-            (self.rollout_steps, self.num_envs), device=self.device
-        )
-        self.returns = torch.zeros(
-            (self.rollout_steps, self.num_envs), device=self.device
-        )
-
         self.ptr = 0
         self.full = False
 
@@ -86,6 +78,7 @@ class RolloutBuffer:
         """
         assert self.ptr < self.rollout_steps, "Buffer is full"
 
+        # TODO: should env_idx always be required?
         if env_idx is not None:
             # Single transition add
             self.obs[self.ptr, env_idx].copy_(obs)
@@ -117,84 +110,84 @@ class RolloutBuffer:
             if self.ptr == self.rollout_steps:
                 self.full = True
 
-    def compute_returns_advantages(
-        self,
-        next_value: torch.Tensor,
-        next_terminated: torch.Tensor,
-        gamma: float,
-        gae_lambda: float,
-    ):
+    def get_all(self) -> "TransitionBatch":
         """
-        Compute returns and advantages using GAE. Correct handles truncation (timeout masking)
-        and bootstrapping.
-
-        Args:
-            next_value: [num_envs] value of the next state
-            next_terminated: [num_envs] terminated flag (actual game over) of the next state
-            gamma: discount factor
-            gae_lambda: GAE parameter
+        Return all stored transitions as a TransitionBatch.
+        Returns tensors in their structured shape [rollout_steps, num_envs, ...].
         """
-        last_gae_lam = 0
-        for t in reversed(range(self.rollout_steps)):
-            if t == self.rollout_steps - 1:
-                # For the last step in rollout, we use next_value if NOT terminated.
-                # If it was truncated, we still bootstrap (next_terminated will be False).
-                next_non_terminal = 1.0 - next_terminated.float()
-                next_values = next_value
-            else:
-                # Within the rollout, we know exactly if it was terminated.
-                # If it was truncated, we DO bootstrap (so non_terminal = 1).
-                # If it was terminated, we DON'T bootstrap (so non_terminal = 0).
-                next_non_terminal = 1.0 - self.terminateds[t + 1]
-                next_values = self.values[t + 1]
+        from core.batch import TransitionBatch
+        
+        # PPO doesn't explicitly store next_obs, we could reconstruct it from obs[1:] 
+        # but for get_all() it's safer to just return zeros or None if not needed.
+        # Since TransitionBatch expects a Tensor for next_obs in some contexts,
+        # we'll provide a zero tensor of the same shape as obs for now.
+        next_obs = torch.zeros_like(self.obs[: self.ptr])
 
-            # delta_t = r_t + gamma * V(s_{t+1}) * nonterminal - V(s_t)
-            delta = (
-                self.rewards[t]
-                + gamma * next_values * next_non_terminal
-                - self.values[t]
-            )
-
-            # A_t = delta_t + gamma * lam * nonterminal * A_{t+1}
-            self.advantages[t] = last_gae_lam = (
-                delta + gamma * gae_lambda * next_non_terminal * last_gae_lam
-            )
-
-        self.returns = self.advantages + self.values
+        return TransitionBatch(
+            obs=self.obs[: self.ptr],
+            action=self.actions[: self.ptr],
+            log_prob=self.log_probs[: self.ptr],
+            reward=self.rewards[: self.ptr],
+            next_obs=next_obs,
+            done=(self.terminateds[: self.ptr].bool() | self.truncateds[: self.ptr].bool()).float(),
+            terminated=self.terminateds[: self.ptr],
+            truncated=self.truncateds[: self.ptr],
+            value=self.values[: self.ptr],
+            policy_version=self.policy_version[: self.ptr],
+        )
 
     def iterate_minibatches(
-        self, minibatch_size: int
-    ) -> Generator[Dict[str, torch.Tensor], None, None]:
+        self, minibatch_size: int, extra_data: Optional[Dict[str, torch.Tensor]] = None
+    ) -> Generator["TransitionBatch", None, None]:
         """
-        Yield minibatches from the buffer.
+        Yield minibatches from the buffer as TransitionBatch objects.
 
         Args:
             minibatch_size: size of each minibatch
+            extra_data: optional dictionary of additional tensors to include (e.g. advantages, returns)
         """
-        # Flatten all tensors
-        b_obs = self.obs.reshape((-1, self.obs_dim))
-        # Use log_probs (plural) to match iterate_minibatches yield
-        b_log_probs = self.log_probs.reshape(-1)
-        b_actions = self.actions.reshape(-1)
-        b_advantages = self.advantages.reshape(-1)
-        b_returns = self.returns.reshape(-1)
-        b_values = self.values.reshape(-1)
+        from core.batch import TransitionBatch
 
-        indices = np.arange(self.capacity)
+        # Flatten all tensors up to ptr
+        effective_size = self.ptr * self.num_envs
+        b_obs = self.obs[: self.ptr].reshape((-1, self.obs_dim))
+        b_log_probs = self.log_probs[: self.ptr].reshape(-1)
+        b_actions = self.actions[: self.ptr].reshape(-1)
+        b_values = self.values[: self.ptr].reshape(-1)
+        b_terminateds = self.terminateds[: self.ptr].reshape(-1)
+        b_truncateds = self.truncateds[: self.ptr].reshape(-1)
+        b_policy_version = self.policy_version[: self.ptr].reshape(-1)
+        b_rewards = self.rewards[: self.ptr].reshape(-1)
+
+        # Handle extra data (e.g. advantages, returns)
+        b_extra = {}
+        if extra_data:
+            for k, v in extra_data.items():
+                b_extra[k] = v.reshape(-1)
+
+        indices = np.arange(effective_size)
         np.random.shuffle(indices)
 
-        for start in range(0, self.capacity, minibatch_size):
+        for start in range(0, effective_size, minibatch_size):
             end = start + minibatch_size
             mb_indices = indices[start:end]
 
-            yield {
-                "obs": b_obs[mb_indices],
-                "log_prob": b_log_probs[mb_indices],
-                "action": b_actions[mb_indices],
-                "advantages": b_advantages[mb_indices],
-                "returns": b_returns[mb_indices],
-                "values": b_values[mb_indices],
-            }
+            # Reconstruct next_obs is not possible here as we are shuffling
+            # For PPO minibatches, next_obs is generally not used.
+            mb_next_obs = torch.zeros_like(b_obs[mb_indices])
+
+            yield TransitionBatch(
+                obs=b_obs[mb_indices],
+                log_prob=b_log_probs[mb_indices],
+                action=b_actions[mb_indices],
+                value=b_values[mb_indices],
+                reward=b_rewards[mb_indices],
+                next_obs=mb_next_obs,
+                done=(b_terminateds[mb_indices].bool() | b_truncateds[mb_indices].bool()).float(),
+                terminated=b_terminateds[mb_indices],
+                truncated=b_truncateds[mb_indices],
+                policy_version=b_policy_version[mb_indices],
+            )
 
     def clear(self):
         """Clear the buffer."""
@@ -214,7 +207,7 @@ class RolloutBuffer:
         """
         if seed is not None:
             np.random.seed(seed)
-        
+
         # We use the existing iterate_minibatches but just take one
         gen = self.iterate_minibatches(batch_size)
         try:

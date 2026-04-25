@@ -48,6 +48,7 @@ def register_dqn_specs():
             creates_grad=False,
             consumes_grad=False,
             updates_params=False,
+            math_category="buffer_io"
         ),
     )
     register_spec(
@@ -65,6 +66,7 @@ def register_dqn_specs():
             creates_grad=False,
             consumes_grad=False,
             updates_params=False,
+            math_category="control"
         ),
     )
     register_spec(
@@ -91,6 +93,7 @@ def register_dqn_specs():
             creates_grad=False,
             consumes_grad=False,
             updates_params=False,
+            math_category="control"
         ),
     )
 
@@ -110,6 +113,8 @@ def register_dqn_specs():
             consumes_grad=False,
             updates_params=False,
             parameter_handles=["model_handle"],
+            domain_tags={"q_learning"},
+            math_category="elementwise"
         ),
     )
 
@@ -128,6 +133,8 @@ def register_dqn_specs():
             consumes_grad=False,
             updates_params=False,
             parameter_handles=["model_handle", "target_handle"],
+            domain_tags={"q_learning"},
+            math_category="loss"
         ),
     )
 
@@ -146,6 +153,8 @@ def register_dqn_specs():
             consumes_grad=False,
             updates_params=False,
             parameter_handles=["model_handle"],
+            domain_tags={"q_learning"},
+            math_category="elementwise"
         ),
     )
     # Legacy alias
@@ -164,6 +173,7 @@ def register_dqn_specs():
             creates_grad=False,
             consumes_grad=False,
             updates_params=False,
+            math_category="reduction"
         ),
     )
 
@@ -180,6 +190,7 @@ def register_dqn_specs():
             creates_grad=False,
             consumes_grad=False,
             updates_params=False,
+            math_category="elementwise"
         ),
     )
 
@@ -198,6 +209,7 @@ def register_dqn_specs():
             creates_grad=False,
             consumes_grad=True,
             updates_params=True,
+            math_category="optimizer"
         ),
     )
 
@@ -214,6 +226,7 @@ def register_dqn_specs():
             creates_grad=False,
             consumes_grad=False,
             updates_params=False,
+            math_category="elementwise"
         ),
     )
 
@@ -234,6 +247,7 @@ def register_dqn_specs():
             creates_grad=False,
             consumes_grad=False,
             updates_params=False,
+            math_category="distribution"
         ),
     )
 
@@ -248,6 +262,8 @@ def register_dqn_specs():
             creates_grad=False,
             consumes_grad=False,
             updates_params=False,
+            domain_tags={"q_learning"},
+            math_category="elementwise"
         ),
     )
 
@@ -266,5 +282,7 @@ def register_dqn_specs():
             creates_grad=False,
             consumes_grad=False,
             updates_params=False,
+            domain_tags={"q_learning"},
+            math_category="elementwise"
         ),
     )

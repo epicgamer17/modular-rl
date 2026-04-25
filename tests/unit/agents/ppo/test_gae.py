@@ -61,32 +61,43 @@ def test_gae_matches_reference():
     terminateds[5] = 1.0 # One terminal state in the middle
     next_values = torch.randn(steps)
     
-    # Mock model that returns our values
-    model = MockModel(values, next_values)
-    context = MockContext(model)
-    
     # Obs and next_obs will be indices for our mock model
     obs = torch.arange(steps).unsqueeze(1).float()
     next_obs = (torch.arange(steps) + 100).unsqueeze(1).float()
     
-    batch = {
-        "obs": obs,
-        "reward": rewards,
-        "terminated": terminateds,
-        "truncated": torch.zeros_like(terminateds),
-        "next_obs": next_obs
+    from core.batch import TransitionBatch
+    batch = TransitionBatch(
+        obs=obs,
+        reward=rewards,
+        terminated=terminateds,
+        truncated=torch.zeros_like(terminateds),
+        next_obs=next_obs,
+        action=torch.zeros(steps),
+        value=values
+    )
+    
+    node = Node(node_id="gae", node_type="PPO_GAE", params={"gamma": gamma, "gae_lambda": gae_lambda})
+    
+    # New op_gae requires next_value and next_terminated
+    # In PPO, this usually comes from the value at T
+    inputs = {
+        "batch": batch,
+        "next_value": torch.tensor([0.0]), # Placeholder since it's not strictly needed for reference check if T is small
+        "next_terminated": torch.tensor([False])
     }
     
-    node = Node("gae", "PPO_GAE", params={"gamma": gamma, "gae_lambda": gae_lambda})
-    
-    result = op_gae(node, {"batch": batch}, context=context)
+    result = op_gae(node, inputs, context=None)
     advantages = result["advantages"]
     
+    # Reference needs the actual next values for each step for the recursive formula
+    # but op_gae bootstraps from batch.value[t+1] or next_value.
+    # Our reference_gae expects next_values array.
     ref_advantages = reference_gae(
         rewards.numpy(), 
         values.numpy(), 
         terminateds.numpy(), 
-        next_values.numpy(), 
+        # For the last step, it uses next_value
+        np.concatenate([values[1:].numpy(), [0.0]]), 
         gamma, 
         gae_lambda
     )

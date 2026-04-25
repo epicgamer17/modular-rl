@@ -89,11 +89,11 @@ def op_td_loss(
     q_net = context.get_model(model_handle)
     target_net = context.get_model(target_handle)
 
-    states = batch["obs"]
-    actions = batch["action"].long()
-    rewards = batch["reward"]
-    next_states = batch["next_obs"]
-    dones = batch["done"]
+    states = batch.obs
+    actions = batch.action.long()
+    rewards = batch.reward
+    next_states = batch.next_obs
+    dones = batch.done
 
     def current_q_forward(x: torch.Tensor) -> torch.Tensor:
         return q_net(x).gather(1, actions.unsqueeze(1)).squeeze(1)
@@ -200,8 +200,6 @@ def register_dqn_operators():
     """Register all DQN related operators."""
     register_operator("QValuesSingle", op_q_values_single)
     register_operator("QForward", op_q_forward)
-    # TODO: remove this legacy alias
-    register_operator("QValuesBatch", op_q_forward)  # Legacy alias
     register_operator("TDLoss", op_td_loss)
     register_operator("Optimizer", op_optimizer_step)
     register_operator("ReduceMean", op_reduce_mean)

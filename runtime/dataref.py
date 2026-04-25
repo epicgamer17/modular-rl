@@ -61,19 +61,34 @@ class DataRef:
 
         old_location = self.location
 
-        # Physical transfer logic (specialized for PyTorch tensors)
-        if isinstance(self._data, torch.Tensor):
-            if new_location == StorageLocation.GPU:
+        # Physical transfer logic (specialized for PyTorch tensors and TransitionBatch)
+        from core.batch import TransitionBatch
+        
+        def move_tensor(t, loc, dev_id):
+            if not isinstance(t, torch.Tensor):
+                return t
+            if loc == StorageLocation.GPU:
                 if torch.cuda.is_available():
-                    target_device = f"cuda:{device_id}" if device_id is not None else "cuda"
+                    target_device = f"cuda:{dev_id}" if dev_id is not None else "cuda"
                 elif torch.backends.mps.is_available():
                     target_device = "mps"
                 else:
-                    target_device = "cpu" # Fallback to CPU if no GPU available
-                self._data = self._data.to(target_device)
-            elif new_location == StorageLocation.CPU:
-                self._data = self._data.to("cpu")
-            # SHARED_MEMORY and REMOTE would require more complex logic (multiprocessing.shared_memory, etc.)
+                    target_device = "cpu"
+                return t.to(target_device)
+            elif loc == StorageLocation.CPU:
+                return t.to("cpu")
+            return t
+
+        if isinstance(self._data, torch.Tensor):
+            self._data = move_tensor(self._data, new_location, device_id)
+        elif isinstance(self._data, TransitionBatch):
+            from dataclasses import replace
+            updates = {}
+            for field in self._data.__dataclass_fields__:
+                val = getattr(self._data, field)
+                if isinstance(val, torch.Tensor):
+                    updates[field] = move_tensor(val, new_location, device_id)
+            self._data = replace(self._data, **updates)
 
         self.location = new_location
         self.transfer_history.append(

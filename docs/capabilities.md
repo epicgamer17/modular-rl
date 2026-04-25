@@ -1011,6 +1011,23 @@ Only if:
 
 ---
 
+### Default Fusion Rules
+
+The optimizer includes default fusion rules:
+
+```python
+# Pre-registered in OPTIMIZER_ENGINE
+FusionRule(
+    name="greedy_policy",
+    pattern=["QValuesSingle", "Argmax"],
+    replacement="GreedyPolicy"
+)
+```
+
+Fuses Q-values computation + argmax into single greedy policy node.
+
+---
+
 ## Autobatching
 
 ### Vectorize Graph
@@ -1133,6 +1150,7 @@ Methods:
 - `get_execution_context(seed)` - creates context with registries
 - `compile(strict=False)` - validates both graphs
 - `actor_graph`, `learner_graph` - the IR graphs
+- `config` - the DQNConfig object
 
 ---
 
@@ -1177,6 +1195,92 @@ opt = registry.get("main_opt")
 
 - S001: Cycle detected
 - S002: Disconnected node
+
+### Port Errors (E)
+
+- E203: Typo in dst_port - provides "Did you mean..." suggestion
+- E204: Port type mismatch - shows Expected/Got with path
+- E205: Required port missing
+- E206: Ambiguous autowire - multiple compatible ports
+
+### Schema Errors (E)
+
+- E310: Missing field in schema
+- E311: Field type/dtype mismatch
+
+### Gradient Errors (G)
+
+- G001: Optimizer without preceding Backward
+- G002: Backward without optimizer
+- G003: Same parameters updated twice in one step
+- G004: Parameter update in actor (inference) context
+- G005: Gradient nodes in actor graph
+
+---
+
+## Optimization Report Details
+
+The OptimizationReport tracks multiple optimization categories:
+
+```python
+report = OptimizationReport()
+optimized = optimize_graph(graph, report=report)
+print(report)
+```
+
+Output sections:
+
+- **Detected trainable params**: Lists parameter handles used in graph
+- **Inserted backward pass**: Shows loss → Backward(node) mappings
+- **Dead Node Elimination**: Number and list of removed nodes
+- **Applied rule**: Fusion rule details (pattern → replacement)
+- **Skipped fusion**: Reasons fusion was skipped (e.g., "backward boundary blocks fusion")
+- **Applied no_grad hoist**: Target network branches wrapped in no_grad
+
+---
+
+## Port Features
+
+### Optional Ports
+
+Ports can be marked optional in OperatorSpec:
+
+```python
+OperatorSpec.create(
+    name="MyOp",
+    inputs={
+        "required": PortSpec(spec=SingleObs, required=True),
+        "optional": PortSpec(spec=SingleObs, required=False),
+    }
+)
+```
+
+- Missing optional port: No error, uses default value or skips
+- Missing required port: E205 error
+
+### Default Value Injection
+
+Missing optional ports can have default values:
+
+```python
+PortSpec(spec=SingleObs, required=False, default=0.5)
+```
+
+Executor automatically injects defaults when port is missing.
+
+### Autowiring
+
+When dst_port is not specified, the system auto-wires to the first compatible port:
+
+- One compatible port: Auto-connect (passes validation)
+- Multiple compatible ports: E206 ambiguous error
+
+### Error Suggestions
+
+The validator provides helpful suggestions:
+
+- E203: "Did you mean dst_port='correct_port'?"
+- E204: "Suggestion: Use dst_port='single_obs'"
 
 ---
 

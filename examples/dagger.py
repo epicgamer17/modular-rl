@@ -72,8 +72,8 @@ def op_sl_loss(node, inputs, context=None):
     model_handle = node.params.get("model_handle", "student")
     student_net = context.get_model(model_handle)
     
-    obs_batch = batch["obs"]
-    act_batch = batch["action"].long()
+    obs_batch = batch.obs
+    act_batch = batch.action.long()
     
     logits = student_net(obs_batch)
     return nn.functional.cross_entropy(logits, act_batch)
@@ -145,16 +145,16 @@ def run_dagger_demo(total_iterations=5, steps_per_iter=500):
     # 2. Runtime Setup
     def dagger_record(single_step):
         # Extract expert label from node results
-        expert_val = single_step["metadata"]["actor_results"].get("expert")
+        expert_val = single_step.metadata.get("actor_results", {}).get("expert")
         if expert_val and hasattr(expert_val, "data"):
             # Buffer storage for a single transition
             sl_buffer.add({
-                "obs": single_step["obs"],
+                "obs": single_step.obs,
                 "action": torch.tensor(expert_val.data)
             })
  
-        if single_step["done"]:
-            step_idx = single_step["metadata"]["step_index"]
+        if single_step.done:
+            step_idx = single_step.metadata.get("step_index", 0)
             print(
                 f"Step {step_idx} | Episode Return: {actor_runtime.last_episode_return:.2f}"
             )

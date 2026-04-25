@@ -66,7 +66,7 @@ def provides(self) -> Dict[Key, str]:
 
 ❌ Bad (Generic Strings)
 ```python
-requires = {"value": "tensor"}
+requires = {"values": "tensor"}
 ```
 
 Rationale:

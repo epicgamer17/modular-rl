@@ -45,7 +45,7 @@ class PPOAgent:
         
         # 3. Setup Optimizer
         self.opt = OptimizerState(
-            optim.Adam(self.ac_net.parameters(), lr=config.learning_rate),
+            optim.Adam(self.ac_net.parameters(), lr=config.learning_rate, eps=config.adam_epsilon),
             grad_clip=config.max_grad_norm
         )
         self.optimizer_registry = OptimizerRegistry()
@@ -63,8 +63,10 @@ class PPOAgent:
         self.buffer_registry.register(config.buffer_id, self.rb)
         
         # 5. Setup Graphs
+        from .graphs import create_ppo_update_graph
         self.interact_graph = create_interact_graph(config)
         self.train_graph = create_train_graph(config)
+        self.update_graph = create_ppo_update_graph(config)
         
         # 6. Setup Runtimes
         recording_fn = create_ppo_recording_fn(self.rb)
@@ -74,7 +76,7 @@ class PPOAgent:
             recording_fn=recording_fn
         )
         self.learner_runtime = OnPolicyLearner(
-            self.train_graph, 
+            self.update_graph, 
             config=config,
             ac_net=self.ac_net,
             actor_runtime=self.actor_runtime,

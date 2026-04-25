@@ -102,11 +102,11 @@ def op_td_loss(node, inputs, context=None):
     target_net = context.get_model(target_handle)
     gamma = node.params["gamma"]
 
-    obs = batch["obs"]
-    actions = batch["action"].long()
-    rewards = batch["reward"]
-    next_obs = batch["next_obs"]
-    dones = batch["done"]
+    obs = batch.obs
+    actions = batch.action.long()
+    rewards = batch.reward
+    next_obs = batch.next_obs
+    dones = batch.done
 
     current_q = q_net(obs).gather(1, actions.unsqueeze(1)).squeeze(1)
     with torch.no_grad():
@@ -124,8 +124,8 @@ def op_sl_loss(node, inputs, context=None):
     policy_handle = node.params.get("policy_handle", "policy")
     policy_net = context.get_model(policy_handle)
 
-    obs = batch["obs"]
-    actions = batch["action"].long()
+    obs = batch.obs
+    actions = batch.action.long()
 
     probs = policy_net(obs)
     dist = torch.distributions.Categorical(probs)
@@ -281,19 +281,19 @@ def run_nfsp_demo(total_steps=5000):
     # recording_fn handles the SL-buffer branch and logging, which the runtime
     # can't know about generically.
     def nfsp_record(single_step):
-        actor_val = single_step["metadata"]["actor_results"].get("actor")
+        actor_val = single_step.metadata.get("actor_results", {}).get("actor")
         if actor_val and hasattr(actor_val, "data"):
             mode = actor_val.data.get("mode")
             if mode == "best_response":
                 sl_buffer.add(
                     {
-                        "obs": single_step["obs"],
-                        "action": single_step["action"],
+                        "obs": single_step.obs,
+                        "action": single_step.action,
                     }
                 )
 
-        if single_step["done"]:
-            step_idx = single_step["metadata"]["step_index"]
+        if single_step.done:
+            step_idx = single_step.metadata.get("step_index", 0)
             print(
                 f"Step {step_idx} | Episode Return: {actor_runtime.last_episode_return:.2f}"
             )

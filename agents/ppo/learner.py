@@ -41,6 +41,7 @@ class OnPolicyLearner(LearnerRuntime):
             return {}  # Not enough data yet
 
         device = next(self.ac_net.parameters()).device
+        # TODO: will this work for vectorized envs with auto resets?
         last_obs = torch.as_tensor(
             self.actor_runtime.last_obs, dtype=torch.float32, device=device
         )
@@ -61,34 +62,33 @@ class OnPolicyLearner(LearnerRuntime):
             for param_group in opt_state.optimizer.param_groups:
                 param_group["lr"] = new_lr
 
-        # 2. Compute GAE
-        buffer.compute_returns_advantages(
-            next_value=next_value,
-            next_terminated=last_terminated,
-            gamma=self.config.gamma,
-            gae_lambda=self.config.gae_lambda,
-        )
+        # 2. Execute the Update Graph (GAE + Epochs + Minibatches)
+        # We pass next_state as initial_inputs for GAE
+        update_inputs = {
+            "next_state": {
+                "next_value": next_value,
+                "next_terminated": last_terminated
+            }
+        }
+        
+        from runtime.executor import execute
+        raw_results = execute(self.train_graph, initial_inputs=update_inputs, context=context)
+        
+        # 3. Extract results from the nested loops
+        # Graph structure: Sample -> GAE -> EpochLoop -> MinibatchLoop -> TrainStep
+        # LoopNode returns a list of results from its body_graph.
+        
+        epoch_results_val = raw_results.get("epoch_loop")
+        epoch_results = epoch_results_val.data if epoch_results_val else []
+        
+        all_train_results = []
+        for epoch_res in epoch_results:
+            # epoch_res is a dict from execute(epoch_body)
+            mb_results_val = epoch_res.get("mb_loop")
+            mb_results = mb_results_val.data if mb_results_val else []
+            all_train_results.extend(mb_results)
 
-        # 3. PPO Update Loop (Epochs & Minibatches)
-        all_results = []
-        for epoch in range(self.config.epochs):
-            epoch_kl = []
-            for minibatch in buffer.iterate_minibatches(self.config.minibatch_size):
-                res = super().update_step(batch=minibatch, context=context)
-                all_results.append(res)
-
-                # 3.1 Extract KL for early stopping
-                # The 'opt' node returns the metrics from 'ppo' objective
-                opt_res = res.get("opt", {})
-                if isinstance(opt_res, dict) and "approx_kl" in opt_res:
-                    epoch_kl.append(opt_res["approx_kl"])
-
-            # 3.2 Check for Early Stopping
-            if self.config.target_kl is not None and epoch_kl:
-                mean_kl = sum(epoch_kl) / len(epoch_kl)
-                if mean_kl > self.config.target_kl:
-                    # Optional: log or record early stopping
-                    break
+        all_results = all_train_results
 
         # 4. Clear the buffer
         buffer.clear()

@@ -22,12 +22,13 @@ def train_dqn(total_steps: int = 120_000, seed: int = 0):
 
     # 1. Environment Setup
     from runtime.environment import wrap_env
+
     raw_env = gym.make("CartPole-v1")
     env = wrap_env(raw_env)
     env.reset(seed=seed)
-    
+
     obs_dim = env.obs_spec.shape[0]
-    act_dim = 2 # CartPole-v1
+    act_dim = 2  # CartPole-v1
 
     # 2. Configuration
     config = DQNConfig(
@@ -73,8 +74,8 @@ def train_dqn(total_steps: int = 120_000, seed: int = 0):
     ctx = agent.get_execution_context(seed=seed)
 
     def log_episode_return(single_step):
-        if single_step["done"]:
-            step_idx = single_step["metadata"]["step_index"]
+        if single_step.done:
+            step_idx = single_step.metadata["step_index"]
             print(
                 f"Step {step_idx} | Episode Return: {actor_runtime.last_episode_return:.2f}"
             )

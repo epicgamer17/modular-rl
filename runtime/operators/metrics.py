@@ -25,6 +25,8 @@ class MetricsTracker:
         self.last_actor_step = 0
         self.last_learner_step = 0
         self.last_time = self.start_time
+        self.last_sps = 0.0
+        self.last_ups = 0.0
 
     def update(
         self, current_actor_step: int, current_learner_step: int
@@ -32,20 +34,23 @@ class MetricsTracker:
         now = time.time()
         elapsed = now - self.last_time
         if elapsed < 0.001:
-            return {"sps": 0.0, "ups": 0.0}
+            return {"sps": self.last_sps, "ups": self.last_ups}
 
         actor_delta = current_actor_step - self.last_actor_step
         learner_delta = current_learner_step - self.last_learner_step
 
-        sps = actor_delta / elapsed
-        ups = learner_delta / elapsed
+        if actor_delta > 0:
+            self.last_sps = actor_delta / elapsed
+        
+        if learner_delta > 0:
+            self.last_ups = learner_delta / elapsed
 
         # Update markers for next call
         self.last_time = now
         self.last_actor_step = current_actor_step
         self.last_learner_step = current_learner_step
 
-        return {"sps": sps, "ups": ups}
+        return {"sps": self.last_sps, "ups": self.last_ups}
 
 
 # Global tracker instance

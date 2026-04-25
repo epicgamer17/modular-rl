@@ -71,4 +71,24 @@ class ReplayCollator:
             if k not in collated:
                 collated[k] = [item[k] for item in batch]
 
-        return collated
+        # 3. Create TransitionBatch
+        from core.batch import TransitionBatch
+        
+        # Ensure required fields are present (at least as None or empty tensors if necessary)
+        # But Collator usually works with schemas, so if schema defines them, they are there.
+        
+        # Helper to get field or None
+        def g(f): return collated.get(f)
+
+        return TransitionBatch(
+            obs=collated["obs"],
+            action=collated["action"],
+            reward=collated["reward"],
+            next_obs=collated["next_obs"],
+            done=collated["done"],
+            log_prob=g("log_prob"),
+            value=g("value") if g("value") is not None else g("values"), # Handle PPO 'values' alias
+            terminated=g("terminated"),
+            truncated=g("truncated"),
+            policy_version=g("policy_version"),
+        )

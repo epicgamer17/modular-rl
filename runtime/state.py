@@ -204,11 +204,21 @@ class ReplayBuffer:
         self.position = 0
         self._lock = threading.Lock()
 
-    def add(self, transition: Dict[str, torch.Tensor]) -> None:
+    def add(self, transition: Any) -> None:
         """Adds a transition to the buffer."""
+        if not isinstance(transition, dict):
+            # Convert TransitionBatch or other dataclasses to dict
+            if hasattr(transition, "__dataclass_fields__"):
+                transition = {
+                    f: getattr(transition, f) for f in transition.__dataclass_fields__
+                }
+            else:
+                raise TypeError(f"Expected dict or dataclass, got {type(transition)}")
+
         new_entry = {
             k: (v.detach().clone() if isinstance(v, torch.Tensor) else v)
             for k, v in transition.items()
+            if v is not None # Don't store None fields
         }
         with self._lock:
             if len(self.buffer) < self.capacity:

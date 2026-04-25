@@ -146,22 +146,23 @@ class ActorRuntime:
                     final_obs = torch.from_numpy(final_obs).to(torch.float32)
                 real_next_obs[i] = final_obs
 
-        step_data = {
-            "obs": self.current_obs,
-            "action": action,
-            "reward": step_res.reward,
-            "next_obs": real_next_obs,
-            "done": done.float(),
-            "terminated": step_res.terminated.float(),
-            "truncated": step_res.truncated.float(),
-            "metadata": {
+        from core.batch import TransitionBatch
+        step_data = TransitionBatch(
+            obs=self.current_obs,
+            action=action,
+            reward=step_res.reward,
+            next_obs=real_next_obs,
+            done=done.float(),
+            terminated=step_res.terminated.float(),
+            truncated=step_res.truncated.float(),
+            metadata={
                 "step_index": context.actor_step,
                 "episode_id": context.episode_count,
                 "episode_step": context.episode_step,
                 "actor_results": results,
                 "context": context.to_dict(),
             },
-        }
+        )
 
         # 4. State Update
         # Update current observation, handling manual reset if necessary
@@ -181,7 +182,7 @@ class ActorRuntime:
 
         # 5. Unbatch and handle recording/buffer write
         if self.replay_buffer is not None or self.recording_fn:
-            batch_size = step_data["obs"].shape[0]
+            batch_size = step_data.obs.shape[0]
             for i in range(batch_size):
                 single_step = self._unbatch_step_data(step_data, i)
                 if self.replay_buffer is not None:
@@ -191,47 +192,50 @@ class ActorRuntime:
 
         return step_data
 
-    def _unbatch_step_data(self, step_data: Dict[str, Any], index: int) -> Dict[str, Any]:
+    def _unbatch_step_data(self, step_data: "TransitionBatch", index: int) -> "TransitionBatch":
         """Extract a single transition from batched step_data."""
+        from core.batch import TransitionBatch
         from runtime.values import Value
 
-        batch_size = step_data["obs"].shape[0]
-        single_step: Dict[str, Any] = {}
-        for k, v in step_data.items():
-            if k == "metadata":
-                single_metadata: Dict[str, Any] = {"env_idx": index}
-                for mk, mv in v.items():
-                    # Always unwrap RuntimeValues for metadata hooks
-                    m_data = mv.data if hasattr(mv, "has_data") and mv.has_data else mv
-                    
-                    if (
-                        isinstance(m_data, torch.Tensor)
-                        and m_data.ndim > 0
-                        and m_data.shape[0] == batch_size
-                    ):
-                        single_metadata[mk] = m_data[index]
-                    elif isinstance(m_data, dict):
-                        single_subdict: Dict[str, Any] = {}
-                        for sk, sv in m_data.items():
-                            s_data = sv.data if hasattr(sv, "has_data") and sv.has_data else sv
-                            if (
-                                isinstance(s_data, torch.Tensor)
-                                and s_data.ndim > 0
-                                and s_data.shape[0] == batch_size
-                            ):
-                                single_subdict[sk] = s_data[index]
-                            else:
-                                single_subdict[sk] = s_data
-                        single_metadata[mk] = single_subdict
-                    else:
-                        single_metadata[mk] = m_data
-                
-                single_step[k] = single_metadata
-            elif isinstance(v, torch.Tensor):
-                single_step[k] = v[index]
-            else:
-                single_step[k] = v
-        return single_step
+        batch_size = step_data.obs.shape[0]
+        
+        def unbatch_val(v):
+            if isinstance(v, torch.Tensor) and v.ndim > 0 and v.shape[0] == batch_size:
+                return v[index]
+            return v
+
+        # Unbatch metadata
+        single_metadata: Dict[str, Any] = {"env_idx": index}
+        if step_data.metadata:
+            for mk, mv in step_data.metadata.items():
+                m_data = mv.data if hasattr(mv, "has_data") and mv.has_data else mv
+                if isinstance(m_data, torch.Tensor) and m_data.ndim > 0 and m_data.shape[0] == batch_size:
+                    single_metadata[mk] = m_data[index]
+                elif isinstance(m_data, dict):
+                    single_subdict = {}
+                    for sk, sv in m_data.items():
+                        s_data = sv.data if hasattr(sv, "has_data") and sv.has_data else sv
+                        if isinstance(s_data, torch.Tensor) and s_data.ndim > 0 and s_data.shape[0] == batch_size:
+                            single_subdict[sk] = s_data[index]
+                        else:
+                            single_subdict[sk] = s_data
+                    single_metadata[mk] = single_subdict
+                else:
+                    single_metadata[mk] = m_data
+
+        return TransitionBatch(
+            obs=unbatch_val(step_data.obs),
+            action=unbatch_val(step_data.action),
+            reward=unbatch_val(step_data.reward),
+            next_obs=unbatch_val(step_data.next_obs),
+            done=unbatch_val(step_data.done),
+            terminated=unbatch_val(step_data.terminated),
+            truncated=unbatch_val(step_data.truncated),
+            log_prob=unbatch_val(step_data.log_prob),
+            value=unbatch_val(step_data.value),
+            policy_version=unbatch_val(step_data.policy_version),
+            metadata=single_metadata
+        )
 
     def collect_trajectory(
         self, max_steps: int, context: Optional[ExecutionContext] = None
@@ -241,7 +245,7 @@ class ActorRuntime:
         for _ in range(max_steps):
             step_data = self.step(context)
             trajectory.append(step_data)
-            if step_data["done"].any():
+            if step_data.done.any():
                 break
         return trajectory
 

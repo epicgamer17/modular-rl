@@ -23,12 +23,14 @@ class PPOConfig:
     vf_coef: float = 0.5
     ent_coef: float = 0.01
     learning_rate: float = 3e-4
+    adam_epsilon: float = 1e-5
     max_grad_norm: float = 0.5
     target_kl: Optional[float] = None
     normalize_advantages: bool = True
     anneal_lr: bool = True
     value_clip: bool = True
     reward_norm: bool = False
+    activation_checkpoint: bool = False
 
     # Infrastructure handles
     model_handle: str = "ppo_net"

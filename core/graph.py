@@ -130,6 +130,7 @@ class Graph:
         self.edges: List[Edge] = []
         self._adjacency: Dict[NodeId, Set[NodeId]] = {}
         self.parameters: Dict[str, Any] = {}  # Map handle -> ParameterRef metadata
+        self.tags: List[str] = []
 
     def add_node(
         self,

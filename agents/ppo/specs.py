@@ -22,7 +22,7 @@ def register_ppo_specs():
             outputs={
                 "action": Scalar("int64"),
                 "log_prob": Scalar("float32"),
-                "value": Scalar("float32"),
+                "values": Scalar("float32"),
                 "policy_version": Scalar("int64"),
             },
             pure=True,
@@ -54,6 +54,7 @@ def register_ppo_specs():
             consumes_grad=False,
             updates_params=False,
             parameter_handles=["model_handle"],
+            domain_tags={"policy_gradient"}
         ),
     )
 
@@ -88,6 +89,7 @@ def register_ppo_specs():
             creates_grad=False,
             consumes_grad=False,
             updates_params=False,
+            domain_tags={"policy_gradient"}
         ),
     )
 
@@ -102,6 +104,7 @@ def register_ppo_specs():
             creates_grad=False,
             consumes_grad=False,
             updates_params=False,
+            domain_tags={"policy_gradient"}
         ),
     )
 
@@ -120,6 +123,7 @@ def register_ppo_specs():
             creates_grad=False,
             consumes_grad=False,
             updates_params=False,
+            domain_tags={"policy_gradient"}
         ),
     )
 
@@ -152,5 +156,6 @@ def register_ppo_specs():
             creates_grad=False,
             consumes_grad=False,
             updates_params=False,
+            domain_tags={"policy_gradient"}
         ),
     )

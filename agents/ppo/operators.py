@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.func import functional_call
 from torch.utils.checkpoint import checkpoint
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from core.graph import Node
 from runtime.executor import register_operator
@@ -51,212 +51,28 @@ def op_policy_actor(
     return {
         "action": action,
         "log_prob": log_prob,
-        "value": value.squeeze(-1),
+        "values": value.squeeze(-1),
         "policy_version": version,
     }
 
 
-def op_gae(
-    node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
-):
-    """
-    Generalized Advantage Estimation (GAE) operator.
-    Correctly handles termination vs truncation (timeout masking).
+from runtime.operators.advantage import (
+    op_advantage_estimation,
+    op_gae,
+    op_td_lambda,
+    op_mc
+)
 
-    Args:
-        node: The graph node.
-        inputs: Input values (must contain 'batch').
-        context: Execution context for model access.
+# Aliases for backward compatibility in tests
+op_ppo_gae = op_gae
 
-    Returns:
-        Dictionary containing 'advantages' and 'returns'.
-    """
-    batch = inputs.get("batch")
-    if batch is None:
-        return MissingInput("batch")
-
-    gamma = node.params["gamma"]
-    gae_lambda = node.params["gae_lambda"]
-    model_handle = node.params.get("model_handle", "ppo_net")
-    ac_net = context.get_model(model_handle)
-
-    obs = batch["obs"]
-    rewards = batch["reward"]
-    # We now expect terminated and truncated separately
-    terminateds = batch["terminated"].float()
-    truncateds = batch["truncated"].float()
-    next_obs = batch["next_obs"]
-
-    with torch.no_grad():
-        _, values = ac_net(obs)
-        # Bootstrap value for the very last state
-        _, next_values_last = ac_net(next_obs[-1].unsqueeze(0))
-        # We need the values for ALL states to do the shifted calculation
-        # Or we can do it step-by-step
-        values = values.view(-1)
-        next_values_last = next_values_last.view(-1)
-
-    advantages = torch.zeros_like(rewards)
-    last_gae = 0
-
-    # We need next_values for each step
-    # For on-policy rollouts, next_obs[t] is the state after obs[t]
-    # So we can compute next_values for all t
-    with torch.no_grad():
-        _, next_values_all = ac_net(next_obs)
-        next_values_all = next_values_all.view(-1)
-
-        # Enforce no-broadcast policy
-        assert (
-            rewards.shape == values.shape
-        ), f"Rewards shape {rewards.shape} must match Values shape {values.shape}"
-        assert (
-            rewards.shape == next_values_all.shape
-        ), f"Rewards shape {rewards.shape} must match Next Values shape {next_values_all.shape}"
-        assert (
-            rewards.shape == terminateds.shape
-        ), f"Rewards shape {rewards.shape} must match Terminateds shape {terminateds.shape}"
-        assert (
-            rewards.shape == truncateds.shape
-        ), f"Rewards shape {rewards.shape} must match Truncateds shape {truncateds.shape}"
-
-    for t in reversed(range(len(rewards))):
-        # Timeout masking: only reset GAE on actual termination
-        # non_terminal = 1 if NOT terminated
-        non_terminal = 1.0 - terminateds[t]
-
-        # delta_t = r_t + gamma * V(s_{t+1}) * non_terminal - V(s_t)
-        delta = rewards[t] + gamma * next_values_all[t] * non_terminal - values[t]
-
-        # A_t = delta_t + gamma * lam * non_terminal * A_{t+1}
-        advantages[t] = last_gae = delta + gamma * gae_lambda * non_terminal * last_gae
-
-    returns = advantages + values
-    return {"advantages": advantages, "returns": returns}
+def op_ppo_objective(*args, **kwargs):
+    raise ImportError(
+        "op_ppo_objective has been removed. Use decomposed primitives (SurrogateLoss, ValueLoss, Entropy) instead."
+    )
 
 
-def op_ppo_objective(
-    node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
-):
-    """
-    PPO Objective (loss) operator.
 
-    Args:
-        node: The graph node.
-        inputs: Input values (must contain 'batch' and 'gae').
-        context: Execution context for model access.
-
-    Returns:
-        The total PPO loss.
-    """
-    batch = inputs.get("batch")
-    gae_data = inputs.get("gae")
-    if batch is None or gae_data is None:
-        return MissingInput("batch/gae")
-
-    # 1. Stale Policy Detection (On-Policy requirement)
-    if node.params.get("strict_on_policy", False):
-        param_store_handle = node.params.get("param_store_handle")
-        param_store = (
-            getattr(context, "param_stores", {}).get(param_store_handle)
-            if param_store_handle
-            else None
-        )
-
-        data_version = batch.get("policy_version") if isinstance(batch, dict) else None
-        if param_store and data_version is not None:
-            if data_version != param_store.version:
-                raise ValueError(
-                    f"STALE POLICY DETECTED: Data version {data_version} != current version {param_store.version}"
-                )
-
-    model_handle = node.params.get("model_handle", "ppo_net")
-    ac_net = context.get_model(model_handle)
-    clip_epsilon = node.params["clip_epsilon"]
-    entropy_coef = node.params.get("entropy_coef", 0.01)
-    critic_coef = node.params.get("critic_coef", 0.5)
-
-    obs = batch["obs"]
-    actions = batch["action"].long()
-    old_log_probs = batch["log_prob"]
-    old_values = batch["values"]
-    advantages = gae_data["advantages"]
-    returns = gae_data["returns"]
-
-    # Normalize advantages
-    if node.params.get("normalize_advantages", True):
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-
-    if node.params.get("activation_checkpoint", False):
-        probs, values = checkpoint(lambda x: ac_net(x), obs, use_reentrant=False)
-    else:
-        probs, values = ac_net(obs)
-    values = values.view(-1)
-
-    # Enforce no-broadcast policy
-    assert (
-        values.shape == returns.shape
-    ), f"Values shape {values.shape} must match Returns shape {returns.shape}"
-    assert (
-        advantages.shape == values.shape
-    ), f"Advantages shape {advantages.shape} must match Values shape {values.shape}"
-    assert (
-        old_values.shape == values.shape
-    ), f"Old Values shape {old_values.shape} must match Values shape {values.shape}"
-
-    dist = torch.distributions.Categorical(logits=probs)
-    new_log_probs = dist.log_prob(actions)
-
-    assert (
-        new_log_probs.shape == old_log_probs.shape
-    ), f"New Log Probs shape {new_log_probs.shape} must match Old Log Probs shape {old_log_probs.shape}"
-
-    entropy = dist.entropy().mean()
-
-    # 1. Policy Loss
-    ratio = torch.exp(new_log_probs - old_log_probs)
-    surr1 = ratio * advantages
-    surr2 = torch.clamp(ratio, 1.0 - clip_epsilon, 1.0 + clip_epsilon) * advantages
-    actor_loss = -torch.min(surr1, surr2).mean()
-
-    # 2. Value Loss (with optional clipping)
-    if node.params.get("clip_value_loss", True) and old_values is not None:
-        v_clipped = old_values + torch.clamp(
-            values - old_values, -clip_epsilon, clip_epsilon
-        )
-        v_loss_unclipped = (values - returns) ** 2
-        v_loss_clipped = (v_clipped - returns) ** 2
-        critic_loss = 0.5 * torch.max(v_loss_unclipped, v_loss_clipped).mean()
-    else:
-        critic_loss = 0.5 * nn.functional.mse_loss(values, returns)
-
-    # 3. Combined Loss
-    loss = actor_loss + critic_coef * critic_loss - entropy_coef * entropy
-
-    # 4. Additional Metrics
-    with torch.no_grad():
-        log_ratio = new_log_probs - old_log_probs
-        approx_kl = ((torch.exp(log_ratio) - 1) - log_ratio).mean()
-        clip_fraction = (torch.abs(ratio - 1.0) > clip_epsilon).float().mean()
-
-        # Explained Variance
-        y_pred, y_true = values, returns
-        var_y = torch.var(y_true)
-        explained_var = (
-            1.0 - torch.var(y_true - y_pred) / (var_y + 1e-8)
-            if var_y > 1e-8
-            else torch.tensor(0.0)
-        )
-
-    return {
-        "loss": loss,
-        "policy_loss": actor_loss.item(),
-        "value_loss": critic_loss.item(),
-        "entropy": entropy.item(),
-        "approx_kl": approx_kl.item(),
-        "clip_fraction": clip_fraction.item(),
-        "explained_variance": explained_var.item(),
-    }
 
 
 def op_optimizer_step(
@@ -290,38 +106,44 @@ def op_optimizer_step(
 
     # Perform optimization step
     step_results = opt_state.step(loss)
+    
+    # Increment learner step counter in context
+    if context:
+        context.learner_step += 1
 
     # Merge metrics
     metrics.update(step_results)
     return metrics
 
 
-def op_ppo_ratio(
+def op_policy_ratio(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
 ) -> torch.Tensor:
-    new_log_probs = inputs.get("new_log_probs")
-    old_log_probs = inputs.get("old_log_probs")
-    if new_log_probs is None:
-        return MissingInput("new_log_probs")
-    if old_log_probs is None:
-        return MissingInput("old_log_probs")
-    return torch.exp(new_log_probs - old_log_probs)
+    """PolicyRatio(new_log_prob, old_log_prob) -> exp(new - old)"""
+    new_log_prob = inputs.get("new_log_prob")
+    old_log_prob = inputs.get("old_log_prob")
+    if new_log_prob is None:
+        return MissingInput("new_log_prob")
+    if old_log_prob is None:
+        return MissingInput("old_log_prob")
+    return torch.exp(new_log_prob - old_log_prob)
 
 
-def op_clip(
+def op_ppo_clip(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
 ) -> torch.Tensor:
-    val = inputs.get("input")
-    low = node.params.get("low")
-    high = node.params.get("high")
-    if val is None:
-        return MissingInput("input")
-    return torch.clamp(val, low, high)
+    """Clip(x, eps) -> clamp(x, 1-eps, 1+eps)"""
+    x = inputs.get("x")
+    eps = node.params.get("eps", 0.2)
+    if x is None:
+        return MissingInput("x")
+    return torch.clamp(x, 1.0 - eps, 1.0 + eps)
 
 
-def op_ppo_surrogate_min(
+def op_surrogate_loss(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
 ) -> torch.Tensor:
+    """SurrogateLoss(ratio, advantages, clipped_ratio) -> -min(ratio*A, clipped*A).mean()"""
     ratio = inputs.get("ratio")
     clipped_ratio = inputs.get("clipped_ratio")
     advantages = inputs.get("advantages")
@@ -342,16 +164,19 @@ def op_ppo_surrogate_min(
 
     surr1 = ratio * advantages
     surr2 = clipped_ratio * advantages
-    return -torch.min(surr1, surr2)
+    return -torch.min(surr1, surr2).mean()
 
 
-def op_ppo_value_loss(
+def op_value_loss(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
 ) -> torch.Tensor:
+    """ValueLoss(values, returns, old_values) -> 0.5 * max((v-r)^2, (v_clip-r)^2).mean()"""
     values = inputs.get("values")
     returns = inputs.get("returns")
     old_values = inputs.get("old_values")
-    clip_epsilon = node.params.get("clip_epsilon", 0.2)
+    eps = node.params.get("eps", 0.2)
+    use_clipping = node.params.get("clip", True)
+
     if values is None:
         return MissingInput("values")
     if returns is None:
@@ -366,37 +191,300 @@ def op_ppo_value_loss(
             old_values.shape == values.shape
         ), f"Old Values shape {old_values.shape} must match Values shape {values.shape}"
 
-    if node.params.get("clip_value_loss", True) and old_values is not None:
-        v_clipped = old_values + torch.clamp(
-            values - old_values, -clip_epsilon, clip_epsilon
-        )
+    if use_clipping and old_values is not None:
+        v_clipped = old_values + torch.clamp(values - old_values, -eps, eps)
         v_loss_unclipped = (values - returns) ** 2
         v_loss_clipped = (v_clipped - returns) ** 2
-        return 0.5 * torch.max(v_loss_unclipped, v_loss_clipped)
+        return 0.5 * torch.max(v_loss_unclipped, v_loss_clipped).mean()
     else:
-        return 0.5 * (values - returns) ** 2
+        return 0.5 * nn.functional.mse_loss(values, returns)
 
 
 def op_entropy(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
 ) -> torch.Tensor:
-    probs = inputs.get("probs")
-    if probs is None:
-        return MissingInput("probs")
-    dist = torch.distributions.Categorical(logits=probs)
-    return dist.entropy()
+    """Entropy(logits) -> entropy(dist).mean()"""
+    logits = inputs.get("logits")
+    if logits is None:
+        return MissingInput("logits")
+    dist = torch.distributions.Categorical(logits=logits)
+    return dist.entropy().mean()
+
+
+def op_weighted_sum(
+    node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
+) -> torch.Tensor:
+    """WeightedSum(**inputs) -> sum(weight * tensor)"""
+    tensors = []
+    for name, tensor in inputs.items():
+        if isinstance(tensor, (torch.Tensor, float, int)):
+            weight = node.params.get(name, 1.0)
+            tensors.append(weight * tensor)
+    
+    if not tensors:
+        return torch.tensor(0.0)
+        
+    total = tensors[0]
+    for t in tensors[1:]:
+        total = total + t
+        
+    return total
+
+
+def op_ppo_train_forward(
+    node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
+) -> Dict[str, torch.Tensor]:
+    """PPO_Forward(obs) -> {logits, values}"""
+    obs = inputs.get("obs")
+    if obs is None:
+        return MissingInput("obs")
+
+    model_handle = node.params.get("model_handle", "ppo_net")
+    ac_net = context.get_model(model_handle)
+
+    if node.params.get("activation_checkpoint", False):
+        logits, values = checkpoint(lambda x: ac_net(x), obs, use_reentrant=False)
+    else:
+        logits, values = ac_net(obs)
+
+    return {"logits": logits, "values": values.squeeze(-1)}
+
+
+def op_log_prob(
+    node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
+) -> torch.Tensor:
+    """LogProb(logits, action) -> log_prob"""
+    logits = inputs.get("logits")
+    action = inputs.get("action")
+    if logits is None or action is None:
+        return MissingInput("logits/action")
+
+    dist = torch.distributions.Categorical(logits=logits)
+    return dist.log_prob(action.long())
+
+
+def op_ppo_sample_batch(
+    node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
+) -> Dict[str, torch.Tensor]:
+    """SampleBatch(buffer_id) -> all transitions from buffer"""
+    buffer_id = node.params.get("buffer_id", "main")
+    buffer = context.get_buffer(buffer_id)
+    return buffer.get_all()
+
+
+def op_loop(
+    node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
+) -> List[Dict[str, Any]]:
+    """Loop(iterations, body_graph) -> execute body_graph N times"""
+    from runtime.executor import execute
+
+    iterations = node.params.get("iterations", 1)
+    body_graph = node.params.get("body_graph")
+    if not body_graph:
+        return []
+
+    results = []
+    for _ in range(iterations):
+        res = execute(body_graph, initial_inputs=inputs, context=context)
+        results.append(res)
+    return results
+
+
+def op_ppo_minibatch_iterator(
+    node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
+) -> List[Dict[str, Any]]:
+    """MinibatchIterator(batch, advantages, returns, body_graph) -> loop over minibatches"""
+    from runtime.executor import execute
+    import numpy as np
+
+    batch = inputs.get("batch")
+    advantages = inputs.get("advantages")
+    returns = inputs.get("returns")
+    minibatch_size = node.params.get("minibatch_size", 64)
+    body_graph = node.params.get("body_graph")
+
+    if not batch or not body_graph:
+        return []
+
+    # Combine extra data
+    extra_data = {"advantages": advantages, "returns": returns}
+
+    # Slice logic
+    total_size = batch.obs.shape[0]
+    indices = np.arange(total_size)
+    np.random.shuffle(indices)
+
+    results = []
+    for start in range(0, total_size, minibatch_size):
+        end = start + minibatch_size
+        mb_indices = indices[start:end]
+
+        from core.batch import TransitionBatch
+        
+        # Create a new TransitionBatch for the minibatch
+        minibatch = TransitionBatch(
+            obs=batch.obs[mb_indices],
+            action=batch.action[mb_indices],
+            reward=batch.reward[mb_indices],
+            next_obs=batch.next_obs[mb_indices],
+            done=batch.done[mb_indices],
+            log_prob=batch.log_prob[mb_indices] if batch.log_prob is not None else None,
+            value=batch.value[mb_indices] if batch.value is not None else None,
+            terminated=batch.terminated[mb_indices] if batch.terminated is not None else None,
+            truncated=batch.truncated[mb_indices] if batch.truncated is not None else None,
+            policy_version=batch.policy_version[mb_indices] if batch.policy_version is not None else None,
+            advantages=advantages[mb_indices] if advantages is not None else None,
+            returns=returns[mb_indices] if returns is not None else None,
+        )
+
+        res = execute(body_graph, initial_inputs={"traj_in": minibatch}, context=context)
+        results.append(res)
+    return results
 
 
 def register_ppo_operators():
     """Register all PPO related operators."""
     register_operator("PolicyForward", op_policy_actor)
-    # TODO: Remove this legacy alias
-    register_operator("PPO_PolicyActor", op_policy_actor)  # Legacy alias
-    register_operator("PPO_GAE", op_gae)
-    register_operator("PPO_Objective", op_ppo_objective)
+    from runtime.operators.advantage import op_gae, op_td_lambda, op_mc
+    register_operator("AdvantageEstimation", op_advantage_estimation)
+    register_operator("PPO_GAE", op_advantage_estimation)
+    register_operator("GAE", op_gae)
+    register_operator("TDLambda", op_td_lambda)
+    register_operator("MC", op_mc)
     register_operator("PPO_Optimizer", op_optimizer_step)
-    register_operator("Ratio", op_ppo_ratio)
-    register_operator("Clip", op_clip)
-    register_operator("SurrogateMin", op_ppo_surrogate_min)
-    register_operator("ValueLoss", op_ppo_value_loss)
-    register_operator("Entropy", op_entropy)
+
+    from runtime.specs import OperatorSpec, register_spec, PortSpec
+    from core.schema import TensorSpec, TransitionBatchSpec
+    
+    # 1. Value Loss Spec
+    val_loss_spec = OperatorSpec.create(
+        name="ValueLoss",
+        inputs={
+            "values": TensorSpec(shape=(-1,), dtype="float32"),
+            "returns": TensorSpec(shape=(-1,), dtype="float32"),
+            "old_values": PortSpec(spec=TensorSpec(shape=(-1,), dtype="float32"), required=False),
+        },
+        outputs={"loss": TensorSpec(shape=(), dtype="float32")},
+        math_category="loss"
+    )
+    
+    # 2. Surrogate Loss Spec
+    surr_loss_spec = OperatorSpec.create(
+        name="SurrogateLoss",
+        inputs={
+            "ratio": TensorSpec(shape=(-1,), dtype="float32"),
+            "clipped_ratio": TensorSpec(shape=(-1,), dtype="float32"),
+            "advantages": TensorSpec(shape=(-1,), dtype="float32"),
+        },
+        outputs={"loss": TensorSpec(shape=(), dtype="float32")},
+        domain_tags={"policy_gradient"},
+        math_category="loss"
+    )
+    
+    # 3. Entropy Spec
+    entropy_spec = OperatorSpec.create(
+        name="Entropy",
+        inputs={
+            "logits": TensorSpec(shape=(-1, -1), dtype="float32"),
+        },
+        outputs={"entropy": TensorSpec(shape=(), dtype="float32")},
+        domain_tags={"policy_gradient"},
+        math_category="reduction"
+    )
+
+    # 4. Advantage Estimation Spec
+    adv_spec = OperatorSpec.create(
+        name="AdvantageEstimation",
+        inputs={
+            "batch": TransitionBatchSpec,
+            "next_value": TensorSpec(shape=(-1,), dtype="float32"),
+            "next_terminated": TensorSpec(shape=(-1,), dtype="bool"),
+        },
+        outputs={
+            "advantages": TensorSpec(shape=(-1,), dtype="float32"),
+            "returns": TensorSpec(shape=(-1,), dtype="float32"),
+        },
+        domain_tags={"policy_gradient"},
+        math_category="elementwise"
+    )
+
+    # 5. Optimizer Spec
+    opt_spec = OperatorSpec.create(
+        name="PPO_Optimizer",
+        inputs={"loss": TensorSpec(shape=(), dtype="float32")},
+        outputs={},
+        pure=False,
+        stateful=True,
+        updates_params=True,
+        math_category="optimizer"
+    )
+    
+    # 6. Sample Batch Spec
+    sample_spec = OperatorSpec.create(
+        name="SampleBatch",
+        inputs={},
+        outputs={"batch": TransitionBatchSpec},
+        pure=False,
+        stateful=True,
+        reads_buffer=True,
+        math_category="buffer_io"
+    )
+
+    # 7. LogProb Spec
+    log_prob_spec = OperatorSpec.create(
+        name="LogProb",
+        inputs={
+            "logits": TensorSpec(shape=(-1, -1), dtype="float32"), # [B, A]
+            "action": TensorSpec(shape=(-1,), dtype="int64"),      # [B]
+        },
+        outputs={"log_prob": TensorSpec(shape=(-1,), dtype="float32")},
+        domain_tags={"policy_gradient"},
+        math_category="distribution"
+    )
+    
+    # 8. PolicyRatio Spec
+    ratio_spec = OperatorSpec.create(
+        name="PolicyRatio",
+        inputs={
+            "new_log_prob": TensorSpec(shape=(-1,), dtype="float32"),
+            "old_log_prob": TensorSpec(shape=(-1,), dtype="float32"),
+        },
+        outputs={"ratio": TensorSpec(shape=(-1,), dtype="float32")},
+        domain_tags={"policy_gradient"},
+        math_category="elementwise"
+    )
+
+    # 9. Clip Spec
+    clip_spec = OperatorSpec.create(
+        name="Clip",
+        inputs={"x": TensorSpec(shape=(-1,), dtype="float32")},
+        outputs={"clipped_x": TensorSpec(shape=(-1,), dtype="float32")},
+        domain_tags={"policy_gradient"},
+        math_category="elementwise"
+    )
+    
+    # 10. WeightedSum Spec
+    weighted_sum_spec = OperatorSpec.create(
+        name="WeightedSum",
+        inputs={
+            "default": PortSpec(spec=TensorSpec(shape=(), dtype="float32"), required=False, variadic=True),
+        },
+        outputs={"sum": TensorSpec(shape=(), dtype="float32")},
+        math_category="elementwise"
+    )
+
+    register_operator("PPO_Forward", op_ppo_train_forward)
+    register_operator("LogProb", op_log_prob, spec=log_prob_spec)
+    register_operator("PolicyRatio", op_policy_ratio, spec=ratio_spec)
+    register_operator("Clip", op_ppo_clip, spec=clip_spec)
+    register_operator("SurrogateLoss", op_surrogate_loss, spec=surr_loss_spec)
+    register_operator("ValueLoss", op_value_loss, spec=val_loss_spec)
+    register_operator("Entropy", op_entropy, spec=entropy_spec)
+    register_operator("WeightedSum", op_weighted_sum, spec=weighted_sum_spec)
+    register_operator("AdvantageEstimation", op_advantage_estimation, spec=adv_spec)
+    register_operator("PPO_Optimizer", op_optimizer_step, spec=opt_spec)
+
+    # Loop Primitives
+    register_operator("SampleBatch", op_ppo_sample_batch, spec=sample_spec)
+    register_operator("Loop", op_loop)
+    register_operator("MinibatchIterator", op_ppo_minibatch_iterator)

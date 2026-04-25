@@ -46,7 +46,7 @@ def test_ppo_loss_nodes_compile():
     # 5. Value Loss
     g.add_node("returns", "Source")
     g.add_node("v_loss", "ValueLoss")
-    g.add_edge("policy", "v_loss", src_port="value", dst_port="values")
+    g.add_edge("policy", "v_loss", src_port="values", dst_port="values")
     g.add_edge("returns", "v_loss", dst_port="returns")
 
     # 6. Mean and Weighted Sum

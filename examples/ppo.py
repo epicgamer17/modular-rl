@@ -8,9 +8,10 @@ from agents.ppo import PPOAgent, PPOConfig
 from envs.wrappers import NormalizeObservation
 
 
-def run_ppo_demo(total_steps=256_000):
+def run_ppo_demo(total_steps=500_000):
     # PPO is most efficient with vectorized environments
-    num_envs = 1
+    # TODO: Make PPO work with Multiple Envs
+    num_envs = 1  # not sure if i love or not
 
     # Create vectorized gym env
     def make_env():
@@ -32,17 +33,20 @@ def run_ppo_demo(total_steps=256_000):
         obs_dim=obs_dim,
         act_dim=act_dim,
         hidden_dim=64,
-        rollout_steps=512,
+        rollout_steps=512,  # 128 * 4 Envs
         num_envs=num_envs,
         minibatch_size=128,
         epochs=4,
         gamma=0.99,
         gae_lambda=0.95,
         clip_coef=0.2,
-        learning_rate=3e-4,
-        target_kl=0.02,
+        ent_coef=0.01,
+        vf_coef=0.5,
+        learning_rate=2.5e-4,
+        adam_epsilon=1e-5,
+        target_kl=0.01,  # None
         max_grad_norm=0.5,
-        anneal_lr=True,
+        anneal_lr=False,  # True
         normalize_advantages=True,
         total_steps=total_steps,
     )
@@ -59,10 +63,12 @@ def run_ppo_demo(total_steps=256_000):
             base_record(single_step)
 
         # Check if the environment finished
-        if single_step["done"]:
+        if single_step.done:
             # ActorRuntime maintains the return of the most recently finished episode
+            # metadata is a dict inside TransitionBatch
+            step_idx = single_step.metadata["step_index"]
             print(
-                f"Step {single_step['metadata']['step_index']} | Episode Return: {agent.actor_runtime.last_episode_return:.2f}"
+                f"Step {step_idx} | Episode Return: {agent.actor_runtime.last_episode_return:.2f}"
             )
 
     agent.actor_runtime.recording_fn = logging_record

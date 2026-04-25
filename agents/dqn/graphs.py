@@ -148,7 +148,7 @@ def build_learner_graph(config: DQNConfig, collator) -> Graph:
     # 5. Metrics computation (Average Q)
     graph.add_node("get_obs", "GetField", params={"field": "obs"})
     graph.add_node(
-        "q_values_batch", "QValuesBatch", params={"model_handle": config.model_handle}
+        "q_values_batch", "QForward", params={"model_handle": config.model_handle}
     )
     graph.add_node("avg_q", "ReduceMean")
 
