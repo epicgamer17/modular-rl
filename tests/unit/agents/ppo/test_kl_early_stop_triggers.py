@@ -87,7 +87,7 @@ def test_kl_early_stop_triggers():
     
     # 4. Mock super().update_step to return large KL
     # Each call returns approx_kl = 0.02 ( > target_kl 0.01)
-    with patch("runtime.runtime.LearnerRuntime.update_step") as mock_update:
+    with patch("runtime.engine.LearnerRuntime.update_step") as mock_update:
         mock_update.return_value = {"opt": {"approx_kl": 0.02}}
         
         learner.update_step(context=ctx)

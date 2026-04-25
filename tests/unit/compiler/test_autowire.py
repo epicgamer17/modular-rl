@@ -1,6 +1,6 @@
 import pytest
 from core.graph import Graph
-from runtime.specs import register_spec, OperatorSpec, SingleObs, BatchObs, PortSpec
+from runtime.registry import register_spec, OperatorSpec, SingleObs, BatchObs, PortSpec
 from compiler.passes.validate_ports import validate_ports
 from compiler.validation import SEVERITY_ERROR
 

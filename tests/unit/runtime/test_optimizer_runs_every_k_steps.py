@@ -7,10 +7,9 @@ from agents.dqn.specs import register_dqn_specs
 from core.graph import Graph, NodeId, EdgeType
 from runtime.context import ExecutionContext
 from runtime.executor import execute, register_operator
-from runtime.operators.losses import register_loss_operators
-from runtime.specs import OperatorSpec, clear_registry, register_base_specs, register_spec
+from runtime.registry import OperatorSpec, clear_registry, register_base_specs, register_spec
 from runtime.state import OptimizerState
-from runtime.values import Value
+from runtime.refs import Value
 
 pytestmark = pytest.mark.unit
 
@@ -20,7 +19,6 @@ def setup_specs():
     clear_registry()
     register_base_specs()
     register_dqn_specs()
-    register_loss_operators()
 
 
 def _build_accum_graph():

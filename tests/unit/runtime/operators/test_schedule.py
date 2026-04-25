@@ -2,7 +2,7 @@ import pytest
 import torch
 from core.graph import Node
 from runtime.context import ExecutionContext
-from runtime.operators.schedule import op_linear_decay
+from ops.rl.exploration import op_linear_decay
 
 pytestmark = pytest.mark.unit
 

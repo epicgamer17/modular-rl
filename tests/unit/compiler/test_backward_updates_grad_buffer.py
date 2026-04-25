@@ -5,13 +5,12 @@ import torch.optim as optim
 from core.graph import Graph, NodeId
 from agents.dqn.specs import register_dqn_specs
 from agents.dqn.operators import register_dqn_operators
-from runtime.specs import register_base_specs, clear_registry, register_spec, OperatorSpec
-from runtime.operators.losses import register_loss_operators
+from runtime.registry import register_base_specs, clear_registry, register_spec, OperatorSpec
 from runtime.context import ExecutionContext
 from runtime.state import OptimizerState
 from runtime.executor import execute, register_operator
-from runtime.values import Value
-from compiler.compiler import compile_graph
+from runtime.refs import Value
+from compiler.pipeline import compile_graph
 
 pytestmark = pytest.mark.unit
 
@@ -21,7 +20,6 @@ def setup_specs():
     register_base_specs()
     register_dqn_specs()
     register_dqn_operators()
-    register_loss_operators()
 
 def test_backward_updates_grad_buffer():
     """Verifies that the Backward node actually updates gradients in the GradBuffer."""

@@ -5,7 +5,7 @@ Inserts explicit Backward nodes downstream of Loss nodes.
 
 from typing import List, Dict, Set, Optional, Any
 from core.graph import Graph, EdgeType
-from runtime.specs import get_spec
+from runtime.registry import get_spec
 
 
 def autodiff(graph: Graph, report: Optional[Any] = None) -> Graph:

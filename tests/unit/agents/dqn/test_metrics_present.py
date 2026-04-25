@@ -4,7 +4,7 @@ from core.graph import Graph
 from runtime.executor import execute, register_operator
 from runtime.context import ExecutionContext
 from runtime.state import ReplayBuffer, BufferRegistry
-from runtime.operators.metrics import op_metrics_sink
+from ops.rl.metrics import op_metrics_sink
 
 pytestmark = pytest.mark.unit
 

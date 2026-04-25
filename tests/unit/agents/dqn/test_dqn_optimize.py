@@ -1,7 +1,7 @@
 import pytest
 from agents.dqn.config import DQNConfig
 from agents.dqn.agent import DQNAgent
-from compiler.compiler import compile_graph
+from compiler.pipeline import compile_graph
 from runtime.context import ExecutionContext
 
 pytestmark = pytest.mark.unit

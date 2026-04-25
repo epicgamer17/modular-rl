@@ -1,8 +1,8 @@
 import pytest
 import warnings
 from core.graph import Graph
-from runtime.specs import OperatorSpec, register_spec, get_spec, TransitionBatch, ScalarLoss
-from compiler.compiler import compile_graph
+from runtime.registry import OperatorSpec, register_spec, get_spec, TransitionBatch, ScalarLoss
+from compiler.pipeline import compile_graph
 
 pytestmark = pytest.mark.unit
 

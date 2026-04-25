@@ -1,10 +1,11 @@
 import pytest
 import torch
 from core.graph import Graph, NODE_TYPE_SINK
-from runtime.specs import PortSpec, OperatorSpec, register_spec, SingleObs, ScalarLoss
+from runtime.registry import PortSpec, OperatorSpec, register_spec, SingleObs, ScalarLoss
 from runtime.executor import execute, register_operator
-from runtime.values import Value, NoOp
-from compiler.compiler import compile_graph
+from runtime.refs import Value
+from runtime.signals import NoOp
+from compiler.pipeline import compile_graph
 
 pytestmark = pytest.mark.unit
 

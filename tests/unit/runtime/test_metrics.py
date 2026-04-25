@@ -3,7 +3,7 @@ import torch
 from core.graph import Graph, NODE_TYPE_METRICS_SINK
 from runtime.context import ExecutionContext
 from runtime.executor import execute, register_operator
-from runtime.operators.metrics import op_metrics_sink
+from ops.rl.metrics import op_metrics_sink
 
 # Set module level marker as per RULE[testing-standards.md]
 pytestmark = pytest.mark.unit

@@ -11,7 +11,7 @@ from compiler.validation import (
     ValidationIssue,
     ValidationReport,
 )
-from runtime.specs import get_spec
+from runtime.registry import get_spec
 
 
 _EXPLICIT_GRADIENT_NODE_TYPES = {

@@ -5,7 +5,7 @@ Memory optimization passes for training graphs.
 from typing import Dict, List, Optional, Set, Tuple, Any
 
 from core.graph import Graph, Node, NodeId
-from runtime.specs import get_spec
+from runtime.registry import get_spec
 
 
 def _clone_with_params(node: Node, params: Dict[str, object]) -> Node:

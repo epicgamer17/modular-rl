@@ -68,15 +68,15 @@ def test_ppo_stale_policy_detection():
     execute(graph, initial_inputs={"traj_in": batch}, context=ctx)
 
 def test_ppo_on_policy_tag_enforcement():
-    """Verify that the validator enforces the OnPolicy tag for PPO nodes."""
-    from validate.graph_validator import validate_graph
+    """Verify that the compiler enforces the OnPolicy tag for PPO nodes."""
+    from compiler.pipeline import compile_graph
     
     graph = Graph()
     # Adding a node with 'PPO' tag but missing TAG_ON_POLICY
     graph.add_node("ppo_node", "Actor", tags=["PPO"]) 
     
-    with pytest.raises(ValueError, match="must have OnPolicy tag"):
-        validate_graph(graph)
+    with pytest.raises(RuntimeError, match="must have OnPolicy tag"):
+        compile_graph(graph)
 
 if __name__ == "__main__":
     # Register needed operators if not already

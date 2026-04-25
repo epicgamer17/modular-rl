@@ -36,7 +36,7 @@ def test_ppo_agent_initialization():
 
 def test_ppo_operator_registration():
     """Verify PPO operators can be registered."""
-    from runtime.executor import OPERATOR_REGISTRY
+    from runtime.operator_registry import OPERATOR_REGISTRY
     register_ppo_operators()
     
     assert "PPO_PolicyActor" in OPERATOR_REGISTRY

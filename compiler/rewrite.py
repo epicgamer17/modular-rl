@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Callable, Dict, Any, Optional, Set
 from core.graph import Graph, NodeId, Node, Edge
-from runtime.specs import get_spec
+from runtime.registry import get_spec
 import copy
 
 def find_linear_chain(graph: Graph, types: List[str]) -> List[NodeId]:
@@ -251,7 +251,7 @@ class RewriteEngine:
         Heuristic to determine if fusion is profitable.
         Profit = (Sum of original launch costs) - (Replacement launch cost)
         """
-        from runtime.specs import get_spec
+        from runtime.registry import get_spec
         replacement_spec = get_spec(rule.replacement)
         if not replacement_spec:
             return True

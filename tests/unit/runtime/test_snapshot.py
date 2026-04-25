@@ -3,11 +3,11 @@ import torch
 import torch.nn as nn
 import numpy as np
 import gymnasium as gym
-from runtime.runtime import ActorRuntime
+from runtime.engine import ActorRuntime
 from runtime.context import ExecutionContext, ActorSnapshot
 from runtime.state import ParameterStore
 from core.graph import Graph, NODE_TYPE_SOURCE
-from runtime.executor import register_operator
+from runtime.operator_registry import register_operator
 from torch.func import functional_call
 
 pytestmark = pytest.mark.unit
@@ -63,7 +63,7 @@ def test_actor_snapshot_immutability():
     runtime.current_obs = obs # Manual inject for test
     
     step_1 = runtime.step(ctx)
-    assert step_1["action"] == 10.0
+    assert step_1.action == 10.0
     assert ctx.get_actor_snapshot("actor").policy_version == 0
     
     # 3. Modify Parameters in ParameterStore
@@ -73,13 +73,13 @@ def test_actor_snapshot_immutability():
     # 4. Second Step with SAME Context: Should still use snapshot v0 (w=1.0)
     runtime.current_obs = obs # Re-inject same obs
     step_2 = runtime.step(ctx)
-    assert step_2["action"] == 10.0, f"Expected 10.0 (frozen), got {step_2['action']}"
+    assert step_2.action == 10.0, f"Expected 10.0 (frozen), got {step_2.action}"
     
     # 5. New Context: Should create NEW snapshot v1 (w=2.0)
     ctx_new = ExecutionContext()
     runtime.current_obs = obs # Reset for next step simulation
     step_3 = runtime.step(ctx_new)
-    assert step_3["action"] == 20.0, f"Expected 20.0 (new), got {step_3['action']}"
+    assert step_3.action == 20.0, f"Expected 20.0 (new), got {step_3.action}"
     
     print("Actor Snapshot Immutability Verified.")
 
@@ -112,7 +112,7 @@ def test_manual_snapshot_binding():
     runtime.current_obs = torch.tensor([1.0])
     step = runtime.step(ctx)
     
-    assert step["action"] == 5.0
+    assert step.action == 5.0
     
     print("Manual Snapshot Binding Verified.")
 

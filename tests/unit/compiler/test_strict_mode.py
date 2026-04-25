@@ -1,14 +1,14 @@
 import pytest
 from core.graph import Graph, NODE_TYPE_SOURCE, NODE_TYPE_SINK, Edge
-from runtime.specs import register_spec, OperatorSpec
-from compiler.compiler import compile_graph
+from runtime.registry import register_spec, OperatorSpec
+from compiler.pipeline import compile_graph
 
 pytestmark = pytest.mark.unit
 
 @pytest.fixture(autouse=True)
 def setup_specs() -> None:
     """Register specifications for test nodes. Clears registry for isolation."""
-    from runtime.specs import clear_registry
+    from runtime.registry import clear_registry
     clear_registry()
     # Register dummy specs to satisfy validate_metadata
     register_spec("StrictSource", OperatorSpec.create(name="StrictSource"))

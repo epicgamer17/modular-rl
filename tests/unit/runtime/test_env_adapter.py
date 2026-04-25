@@ -2,8 +2,8 @@ import pytest
 import torch
 import gymnasium as gym
 import numpy as np
-from runtime.environment import StepResult, SingleToBatchEnvAdapter, wrap_env
-from runtime.vector_env import VectorEnv
+from runtime.io.environment import StepResult, SingleToBatchEnvAdapter, wrap_env
+from runtime.io.vector_env import VectorEnv
 
 pytestmark = pytest.mark.unit
 
@@ -83,7 +83,7 @@ def test_env_adapter_specs():
 
 def test_validate_step_result():
     """Verify that validate_step_result catches shape and type mismatches."""
-    from runtime.environment import validate_step_result
+    from runtime.io.environment import validate_step_result
 
     batch_size = 4
     obs = torch.zeros((batch_size, 4))
@@ -111,7 +111,7 @@ def test_validate_step_result():
 
 def test_runtime_raises_scalar_reward():
     """Verify that ActorRuntime raises RuntimeError if the environment returns a scalar reward (invalid batch)."""
-    from runtime.runtime import ActorRuntime
+    from runtime.engine import ActorRuntime
     from core.graph import Graph
 
     class BadEnv:
@@ -143,7 +143,7 @@ def test_runtime_raises_scalar_reward():
     actor_rt.current_obs = torch.zeros((1, 4))
 
     # Mock the graph execution to return a dummy action
-    import runtime.runtime as runtime_module
+    import runtime.engine as runtime_module
 
     orig_execute = runtime_module.execute
     runtime_module.execute = lambda *args, **kwargs: {"actor": torch.tensor([0])}
@@ -172,7 +172,7 @@ def test_auto_reset_returns_new_obs():
 
 def test_manual_reset_requires_call():
     """Verify that ActorRuntime handles manual reset when auto_reset=False."""
-    from runtime.runtime import ActorRuntime
+    from runtime.engine import ActorRuntime
     from core.graph import Graph
     import gymnasium as gym
 
@@ -185,7 +185,7 @@ def test_manual_reset_requires_call():
     runtime.current_obs = env.reset(seed=42)
 
     # Mock the graph execution
-    import runtime.runtime as runtime_module
+    import runtime.engine as runtime_module
 
     orig_execute = runtime_module.execute
     runtime_module.execute = lambda *args, **kwargs: {"actor": torch.tensor([0])}

@@ -5,7 +5,7 @@ from compiler.validation import (
     SEVERITY_ERROR,
     SEVERITY_WARN,
 )
-from runtime.specs import get_spec
+from runtime.registry import get_spec
 
 
 def validate_purity(graph: Graph, context: str = "both") -> ValidationReport:

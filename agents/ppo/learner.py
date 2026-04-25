@@ -1,6 +1,6 @@
 import torch
 from typing import Optional, Dict, Any
-from runtime.runtime import LearnerRuntime
+from runtime.engine import LearnerRuntime
 from runtime.context import ExecutionContext
 from .config import PPOConfig
 

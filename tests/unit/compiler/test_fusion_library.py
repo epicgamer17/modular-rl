@@ -2,7 +2,7 @@ import pytest
 from core.graph import Graph
 from compiler.rewrite import RewriteEngine, find_linear_chain
 from compiler.fusion_rules import METRICS_FOLD_RULE, RL_IR_FUSION_RULES
-from runtime.specs import register_spec, OperatorSpec, Scalar, clear_registry
+from runtime.registry import register_spec, OperatorSpec, Scalar, clear_registry
 
 pytestmark = pytest.mark.unit
 

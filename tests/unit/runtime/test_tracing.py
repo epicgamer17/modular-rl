@@ -3,7 +3,8 @@ from core.graph import Graph, NODE_TYPE_SOURCE
 from runtime.executor import execute, register_operator
 from runtime.tracing import TraceLogger
 from runtime.context import ExecutionContext
-from runtime.values import Skipped, Value
+from runtime.signals import Skipped
+from runtime.refs import Value
 
 pytestmark = pytest.mark.unit
 
@@ -92,5 +93,5 @@ def test_upstream_skip_tracing() -> None:
     
     trace = tracer.get_step(0)
     assert "b" in trace.nodes
-    assert trace.nodes["b"].skipped_reason == "upstream_failed_a"
+    assert trace.nodes["b"].skipped_reason == "Predecessor a was skipped"
     assert isinstance(trace.nodes["b"].outputs, Skipped)

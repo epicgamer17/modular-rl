@@ -3,8 +3,8 @@ import torch
 from core.graph import Graph, NODE_TYPE_REPLAY_QUERY, NODE_TYPE_SOURCE
 from runtime.context import ExecutionContext
 from runtime.state import ReplayBuffer, BufferRegistry
-from runtime.runtime import LearnerRuntime
-from runtime.executor import register_operator
+from runtime.engine import LearnerRuntime
+from runtime.operator_registry import register_operator
 from core.schema import Schema, Field, TensorSpec
 
 # Set module level marker as per RULE[testing-standards.md]
@@ -51,7 +51,7 @@ def test_declarative_replay_query_and_min_size():
     
     # 1. Size 0 < 5: sampler should return Skipped, proc should receive Skipped
     results = learner.update_step(context=ctx)
-    from runtime.values import RuntimeValue
+    from runtime.refs import RuntimeValue
     assert isinstance(results["sampler"], RuntimeValue)
     assert not results["sampler"].has_data
     assert isinstance(results["proc"], RuntimeValue)
@@ -88,7 +88,8 @@ def test_learner_runtime_no_override_dqn_style():
         "min_size": 5
     })
     
-    from runtime.values import NoOp, RuntimeValue
+    from runtime.signals import NoOp
+    from runtime.refs import RuntimeValue
     def op_loss(node, inputs, context=None):
         batch = inputs["batch"]
         if isinstance(batch, (NoOp, RuntimeValue)) and not getattr(batch, "has_data", True):

@@ -1,9 +1,9 @@
 import pytest
 import torch
 from core.graph import Graph
-from compiler.compiler import compile_graph
+from compiler.pipeline import compile_graph
 from runtime.executor import execute, register_operator
-from runtime.specs import register_spec, OperatorSpec
+from runtime.registry import register_spec, OperatorSpec
 from core.schema import TensorSpec
 
 pytestmark = pytest.mark.unit
@@ -63,7 +63,7 @@ def test_fusion_semantics_numerical_comparison() -> None:
     val_opt = res_opt["sink"]
     
     # 3. Compare
-    from runtime.values import Value
+    from runtime.refs import Value
     v_orig = val_orig.data if isinstance(val_orig, Value) else val_orig
     v_opt = val_opt.data if isinstance(val_opt, Value) else val_opt
     

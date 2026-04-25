@@ -5,11 +5,8 @@ from agents.dqn.config import DQNConfig
 from agents.dqn.model import QNetwork
 from agents.dqn.graphs import build_actor_graph, build_learner_graph
 from agents.dqn.operators import register_dqn_operators
-from agents.dqn.specs import register_dqn_specs
 from core.schema import Schema, TensorSpec, Field
-from runtime.collator import ReplayCollator
-from runtime.operators.losses import register_loss_operators
-from runtime.specs import register_base_specs
+from runtime.io.collator import ReplayCollator
 from runtime.state import (
     ReplayBuffer,
     OptimizerState,
@@ -18,9 +15,9 @@ from runtime.state import (
     OptimizerRegistry,
 )
 from runtime.context import ExecutionContext
-from runtime.runtime import ActorRuntime, LearnerRuntime
-from runtime.scheduler import ScheduleExecutor
-from compiler.scheduler import compile_schedule
+from runtime.engine import ActorRuntime, LearnerRuntime
+from runtime.runner import ScheduleRunner
+from compiler.planner import compile_schedule
 
 
 class DQNAgent:
@@ -65,11 +62,8 @@ class DQNAgent:
         self.actor_graph = build_actor_graph(config)
         self.learner_graph = build_learner_graph(config, self.collator)
 
-        # 6. Register Operators and Specs (idempotent)
-        register_base_specs()
-        register_loss_operators()
+        # 6. Register Operators (idempotent)
         register_dqn_operators()
-        register_dqn_specs()
 
     def get_execution_context(self, seed: int = 42) -> ExecutionContext:
         return ExecutionContext(
@@ -83,7 +77,7 @@ class DQNAgent:
         """
         Compiles both actor and learner graphs.
         """
-        from compiler.compiler import compile_graph
+        from compiler.pipeline import compile_graph
 
         model_handles = {self.config.model_handle, self.config.target_handle}
         buffer_handles = {self.config.buffer_id}

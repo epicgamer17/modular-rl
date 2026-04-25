@@ -2,7 +2,7 @@ import pytest
 import torch
 from core.graph import Graph
 from core.schema import Schema, Field, TensorSpec
-from runtime.specs import (
+from runtime.registry import (
     register_spec,
     OperatorSpec,
     BatchObs,

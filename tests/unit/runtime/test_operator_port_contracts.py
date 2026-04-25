@@ -3,7 +3,7 @@ import torch
 from core.graph import Graph
 from runtime.executor import execute, register_operator
 from runtime.context import ExecutionContext
-from runtime.specs import OperatorSpec, PortSpec, register_spec, clear_registry
+from runtime.registry import OperatorSpec, PortSpec, register_spec, clear_registry
 
 pytestmark = pytest.mark.unit
 

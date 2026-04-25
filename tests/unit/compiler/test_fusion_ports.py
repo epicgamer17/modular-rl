@@ -1,7 +1,7 @@
 import pytest
 from core.graph import Graph, Edge
 from compiler.rewrite import rewrite, FusionRule
-from runtime.specs import register_spec, OperatorSpec
+from runtime.registry import register_spec, OperatorSpec
 from core.schema import TensorSpec
 
 pytestmark = pytest.mark.unit

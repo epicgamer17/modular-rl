@@ -6,14 +6,14 @@ from core.graph import (
     NODE_TYPE_METRICS_SINK,
     NODE_TYPE_TARGET_SYNC,
 )
-from runtime.specs import (
+from runtime.registry import (
     register_spec,
     OperatorSpec,
     TensorSpec,
     ObsTensor,
     ActionValuesTensor,
 )
-from compiler.compiler import compile_graph
+from compiler.pipeline import compile_graph
 
 pytestmark = pytest.mark.unit
 

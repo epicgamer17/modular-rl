@@ -1,7 +1,7 @@
 import pytest
 from core.graph import Graph, NODE_TYPE_SINK
 from compiler.rewrite import RewriteEngine, FusionRule, find_linear_chain
-from runtime.specs import register_spec, OperatorSpec
+from runtime.registry import register_spec, OperatorSpec
 
 pytestmark = pytest.mark.unit
 

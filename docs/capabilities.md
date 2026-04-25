@@ -188,7 +188,7 @@ Only if:
 Need:
 
 ```python
-from compiler.compiler import compile_graph
+from compiler.pipeline import compile_graph
 
 compiled = compile_graph(
     graph,

@@ -1,6 +1,6 @@
 from typing import Dict, List, Set, Optional
 from core.graph import Graph, Node, NodeId
-from runtime.specs import get_spec, Spec, Schema, Field, PortSpec, is_compatible
+from runtime.registry import get_spec, Spec, Schema, Field, PortSpec, is_compatible
 import copy
 
 

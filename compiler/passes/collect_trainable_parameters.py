@@ -4,7 +4,7 @@ Compiler pass to collect all trainable parameters referenced in the graph.
 
 from typing import Dict, List, Optional, Any
 from core.graph import Graph
-from runtime.specs import get_spec
+from runtime.registry import get_spec
 
 
 def collect_trainable_parameters(graph: Graph, report: Optional[Any] = None) -> Dict[str, List[str]]:

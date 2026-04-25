@@ -11,7 +11,7 @@ def test_minimal_linear_graph():
     Obs (Source) -> Linear -> Output
     """
     # 1. Define and register operators
-    from runtime.values import NoOp
+    from runtime.signals import NoOp
     def run_source(node, inputs, context=None):
         # Source nodes just pass through initial values provided in execute()
         return NoOp()

@@ -2,7 +2,7 @@ import pytest
 import torch
 import numpy as np
 import gymnasium as gym
-from runtime.environment import SingleToBatchEnvAdapter, EnvWrapper, StepResult
+from runtime.io.environment import SingleToBatchEnvAdapter, EnvWrapper, StepResult
 
 pytestmark = pytest.mark.unit
 
@@ -66,7 +66,7 @@ def test_adapter_middleware_composition():
 
 def test_wrapper_preserves_contract():
     """Verify that a wrapped adapter still follows all StepResult invariants."""
-    from runtime.environment import validate_step_result
+    from runtime.io.environment import validate_step_result
     
     class IdentityWrapper(EnvWrapper):
         pass

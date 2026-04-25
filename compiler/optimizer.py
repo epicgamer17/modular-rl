@@ -11,7 +11,7 @@ from core.graph import (
     NODE_TYPE_METRICS_SINK,
     NODE_TYPE_TARGET_SYNC,
 )
-from runtime.specs import get_spec
+from runtime.registry import get_spec
 from compiler.rewrite import FusionRule, RewriteEngine
 from typing import List, Dict, Set, Optional, Any
 from dataclasses import dataclass, field

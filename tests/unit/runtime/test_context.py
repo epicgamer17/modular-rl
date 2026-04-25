@@ -3,10 +3,10 @@ import torch
 import gymnasium as gym
 import threading
 from runtime.context import ExecutionContext, ActorSnapshot
-from runtime.runtime import ActorRuntime
+from runtime.engine import ActorRuntime
 from runtime.state import ParameterStore, ReplayBuffer
 from core.graph import Graph, NODE_TYPE_SOURCE
-from runtime.executor import register_operator
+from runtime.operator_registry import register_operator
 
 pytestmark = pytest.mark.unit
 
@@ -47,7 +47,7 @@ def test_parallel_context_isolation():
         return 0
         
     register_operator("VersionedActor", op_actor_with_ver)
-    from runtime.values import NoOp
+    from runtime.signals import NoOp
     register_operator(NODE_TYPE_SOURCE, lambda n, i, context=None: NoOp())
     
     graph.add_node("actor", "VersionedActor")

@@ -4,7 +4,7 @@ from core.graph import NodeId, Node
 import time
 
 if TYPE_CHECKING:
-    from runtime.executor import OPERATOR_REGISTRY
+    from runtime.operator_registry import OPERATOR_REGISTRY
     from runtime.context import ExecutionContext
 
 @dataclass
@@ -27,8 +27,9 @@ class ExecutionTrace:
         Replays the execution trace deterministically by re-running operators
         with the recorded inputs and asserting matching outputs.
         """
-        from runtime.executor import OPERATOR_REGISTRY
-        from runtime.values import Value, Skipped, NoOp
+        from runtime.operator_registry import OPERATOR_REGISTRY
+        from runtime.refs import Value
+        from runtime.signals import Skipped, NoOp
         from core.graph import NODE_TYPE_SOURCE
         
         for nid, trace in self.nodes.items():

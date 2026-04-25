@@ -1,5 +1,5 @@
 import pytest
-from runtime.specs import get_spec
+from runtime.registry import get_spec
 from agents.dqn.specs import register_dqn_specs
 
 pytestmark = pytest.mark.unit

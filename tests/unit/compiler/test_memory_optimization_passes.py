@@ -6,8 +6,13 @@ from agents.dqn.specs import register_dqn_specs
 from compiler.passes.memory_optimizations import optimize_memory
 from core.graph import Graph, NODE_TYPE_SINK
 from core.schema import Schema, Field, TensorSpec
-from runtime.collator import ReplayCollator
-from runtime.specs import OperatorSpec, clear_registry, register_base_specs, register_spec
+from runtime.io.collator import ReplayCollator
+from runtime.registry import (
+    OperatorSpec,
+    clear_registry,
+    register_base_specs,
+    register_spec,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -56,7 +61,11 @@ def test_shared_buffer_slots_are_reused_for_temporary_nodes():
     )
 
     g = Graph()
-    g.add_node("src", "Source", schema_out=Schema([Field("x", TensorSpec(shape=(4,), dtype="float32"))]))
+    g.add_node(
+        "src",
+        "Source",
+        schema_out=Schema([Field("x", TensorSpec(shape=(4,), dtype="float32"))]),
+    )
     g.add_node("a", "PureOp")
     g.add_node("b", "PureOp")
     g.add_node("c", "PureOp")
@@ -71,4 +80,13 @@ def test_shared_buffer_slots_are_reused_for_temporary_nodes():
     assert "buffer_slot" in optimized.nodes["a"].params
     assert "buffer_slot" in optimized.nodes["b"].params
     assert "buffer_slot" in optimized.nodes["c"].params
-    assert len({optimized.nodes["a"].params["buffer_slot"], optimized.nodes["b"].params["buffer_slot"], optimized.nodes["c"].params["buffer_slot"]}) <= 2
+    assert (
+        len(
+            {
+                optimized.nodes["a"].params["buffer_slot"],
+                optimized.nodes["b"].params["buffer_slot"],
+                optimized.nodes["c"].params["buffer_slot"],
+            }
+        )
+        <= 2
+    )

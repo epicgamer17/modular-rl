@@ -4,9 +4,9 @@ import torch.nn as nn
 from core.graph import Graph, NODE_TYPE_TARGET_SYNC
 from runtime.context import ExecutionContext
 from runtime.state import ModelRegistry
-from runtime.scheduler import SchedulePlan, ScheduleExecutor
-from runtime.runtime import ActorRuntime, LearnerRuntime
-from compiler.scheduler import compile_schedule
+from runtime.runner import SchedulePlan, ScheduleRunner
+from runtime.engine import ActorRuntime, LearnerRuntime
+from compiler.planner import compile_schedule
 
 pytestmark = pytest.mark.unit
 
@@ -102,7 +102,7 @@ def test_schedule_executor_triggers_sync():
         learner_frequency=1
     )
     
-    executor = ScheduleExecutor(plan, DummyActor(), DummyLearner(train_graph))
+    executor = ScheduleRunner(plan, DummyActor(), DummyLearner(train_graph))
     
     ctx = ExecutionContext(model_registry=registry)
     

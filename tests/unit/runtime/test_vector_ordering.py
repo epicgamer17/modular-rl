@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import gymnasium as gym
 import torch
-from runtime.vector_env import VectorEnv
+from runtime.io.vector_env import VectorEnv
 
 pytestmark = pytest.mark.unit
 
@@ -50,7 +50,7 @@ def test_vector_ordering_guarantee():
         env_instances.append(env)
         return env
         
-    import runtime.vector_env as ve_module
+    import runtime.io.vector_env as ve_module
     orig_make_env = ve_module.make_env
     
     # Custom make_env that uses our mocked_make

@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from runtime.vector_env import VectorEnv
+from runtime.io.vector_env import VectorEnv
 
 pytestmark = pytest.mark.unit
 

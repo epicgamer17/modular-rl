@@ -21,7 +21,7 @@ def run_ppo_demo(total_steps=500_000):
     # Add normalization wrapper
     raw_env = NormalizeObservation(raw_env)
 
-    from runtime.environment import wrap_env
+    from runtime.io.environment import wrap_env
 
     env = wrap_env(raw_env)
 

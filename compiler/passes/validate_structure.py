@@ -7,7 +7,7 @@ from collections import deque
 from typing import Set, Dict
 
 from core.graph import Graph, NodeId, NODE_TYPE_SOURCE, NODE_TYPE_SINK, NODE_TYPE_REPLAY_QUERY
-from runtime.specs import get_spec
+from runtime.registry import get_spec
 from compiler.validation import (
     ValidationIssue,
     ValidationReport,

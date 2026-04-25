@@ -5,7 +5,7 @@ Verifies that all nodes have registered metadata specs.
 
 from core.graph import Graph
 from compiler.validation import ValidationReport, ValidationIssue, SEVERITY_ERROR, SEVERITY_WARN
-from runtime.specs import get_spec
+from runtime.registry import get_spec
 
 
 def validate_metadata(graph: Graph, strict: bool = False) -> ValidationReport:

@@ -19,7 +19,7 @@ Finalize the high-performance RL Semantic Kernel architecture by implementing a 
     *   Updated `compile_schedule` to automatically detect sync nodes and set defaults (e.g., 100 step lag).
 
 4.  **Runtime Orchestration**:
-    *   `ScheduleExecutor` now manages the global clocks and triggers `_perform_target_sync` exactly when the compiled schedule dictates.
+    *   `ScheduleRunner` now manages the global clocks and triggers `_perform_target_sync` exactly when the compiled schedule dictates.
 
 ## Verification Tasks
 

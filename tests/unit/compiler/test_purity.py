@@ -1,7 +1,7 @@
 import pytest
 from core.graph import Graph
-from runtime.specs import register_spec, OperatorSpec
-from compiler.compiler import compile_graph
+from runtime.registry import register_spec, OperatorSpec
+from compiler.pipeline import compile_graph
 from compiler.validation import SEVERITY_WARN, SEVERITY_ERROR
 from compiler.passes.validate_purity import validate_purity
 

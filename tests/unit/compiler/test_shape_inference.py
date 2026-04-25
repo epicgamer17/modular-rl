@@ -1,7 +1,7 @@
 import pytest
 from core.graph import Graph
-from runtime.specs import register_spec, OperatorSpec, TensorSpec, BatchObs, BatchQ
-from compiler.compiler import compile_graph
+from runtime.registry import register_spec, OperatorSpec, TensorSpec, BatchObs, BatchQ
+from compiler.pipeline import compile_graph
 
 pytestmark = pytest.mark.unit
 
@@ -53,7 +53,7 @@ def test_gather_preserves_rank() -> None:
             return {"default": TensorSpec(shape=(data.shape[0],), dtype=data.dtype)}
         return {}
 
-    from runtime.specs import PortSpec
+    from runtime.registry import PortSpec
     register_spec(
         "Gather",
         OperatorSpec.create(

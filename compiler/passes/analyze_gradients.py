@@ -7,7 +7,7 @@ Identifies dead parameters, detached tensors, and unused branches.
 from dataclasses import dataclass, field
 from typing import List, Dict, Set, Optional, Tuple
 from core.graph import Graph, NodeId, EdgeType
-from runtime.specs import get_spec
+from runtime.registry import get_spec
 
 
 @dataclass

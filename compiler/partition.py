@@ -1,6 +1,6 @@
 from typing import Dict, List, Set, Tuple, Optional, Any
 from core.graph import Graph, NodeId, Edge, EdgeType
-from runtime.specs import get_spec
+from runtime.registry import get_spec
 
 def partition_graph(global_graph: Graph) -> Dict[str, Graph]:
     """

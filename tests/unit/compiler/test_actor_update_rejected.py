@@ -1,8 +1,8 @@
 import pytest
 
-from compiler.compiler import compile_graph
+from compiler.pipeline import compile_graph
 from core.graph import Graph
-from runtime.specs import OperatorSpec, Scalar, clear_registry, register_base_specs, register_spec
+from runtime.registry import OperatorSpec, Scalar, clear_registry, register_base_specs, register_spec
 
 pytestmark = pytest.mark.unit
 

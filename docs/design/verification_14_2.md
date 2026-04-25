@@ -8,7 +8,7 @@ This report verifies the relocation of scheduling decisions from the runtime int
 | :--- | :--- | :--- |
 | **Schedule Compiler** | Derives execution strategy from Graph topology and tags | Decision Maker |
 | **SchedulePlan** | Static artifact produced by the compiler | Compiled Plan |
-| **ScheduleExecutor** | Operationalizes the provided plan without modification | Pure Execution |
+| **ScheduleRunner** | Operationalizes the provided plan without modification | Pure Execution |
 
 ## 2. Alignment with Semantic Integrity
 
@@ -33,7 +33,7 @@ The implementation was verified against the requirement for deterministic change
 ## Modernization of Examples
 
 All core examples have been updated to utilize the new declarative systems:
-- **PPO**: Demonstrates `ActorRuntime` with automatic snapshot binding and `ScheduleExecutor` with on-policy constraints.
+- **PPO**: Demonstrates `ActorRuntime` with automatic snapshot binding and `ScheduleRunner` with on-policy constraints.
 - **DQN**: Demonstrates `ReplayQuery` nodes and compiler-driven prefetching.
 - **DAgger**: Demonstrates custom `recording_fn` for dataset aggregation and multi-actor coordination.
 - **NFSP**: Demonstrates dual-buffer management and complex orchestration using split runtimes.

@@ -3,7 +3,7 @@ import torch
 from core.graph import Graph, NODE_TYPE_SOURCE, NODE_TYPE_SINK
 from compiler.optimizer import optimize_graph, dead_node_elimination, OptimizationReport, OPTIMIZER_ENGINE
 from compiler.rewrite import FusionRule
-from runtime.specs import register_spec, OperatorSpec, SingleObs, SingleQ, Scalar
+from runtime.registry import register_spec, OperatorSpec, SingleObs, SingleQ, Scalar
 
 pytestmark = pytest.mark.unit
 

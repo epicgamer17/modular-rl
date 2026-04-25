@@ -22,9 +22,9 @@ def test_dqn_deterministic_smoke():
     
     from agents.dqn.config import DQNConfig
     from agents.dqn.agent import DQNAgent
-    from runtime.runtime import ActorRuntime, LearnerRuntime
-    from runtime.scheduler import ScheduleExecutor
-    from compiler.scheduler import compile_schedule
+    from runtime.engine import ActorRuntime, LearnerRuntime
+    from runtime.runner import ScheduleRunner
+    from compiler.planner import compile_schedule
     import gymnasium as gym
 
     def run_minimal_dqn(steps, s):
@@ -46,7 +46,7 @@ def test_dqn_deterministic_smoke():
         learner_rt = LearnerRuntime(agent.learner_graph, replay_buffer=agent.rb)
         
         plan = compile_schedule(agent.learner_graph, user_hints={"actor_frequency": 1, "learner_frequency": 1})
-        executor = ScheduleExecutor(plan, actor_rt, learner_rt)
+        executor = ScheduleRunner(plan, actor_rt, learner_rt)
         executor.run(total_actor_steps=steps, context=ctx)
         
         # Return weights for comparison

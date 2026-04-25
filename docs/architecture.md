@@ -18,11 +18,14 @@ The system is organized into three primary layers:
 ┌─────────────────────────────────────────────────────────────┐
 │                     Compiler Layer                           │
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐│
-│  │ compiler.py │ │ analyzer.py │ │ optimizer.py            ││
+│  │ pipeline.py │ │ analyzer.py │ │ optimizer.py            ││
 │  │             │ │             │ │                         ││
 │  │ - Validation│ │ - Analysis  │ │ - Fusion               ││
 │  │ - Passes    │ │ - Issues    │ │ - Pruning              ││
 │  └─────────────┘ └─────────────┘ └─────────────────────────┘│
+│  ┌─────────────┐                                             │
+│  │ planner.py  │  - Execution Planning                       │
+│  └─────────────┘                                             │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -35,38 +38,42 @@ The system is organized into three primary layers:
 │  │ - Node      │ │ - TensorSpec│ │ - NodeInstance         ││
 │  │ - Edge      │ │ - Trajectory│ │ - Registry             ││
 │  └─────────────┘ └─────────────┘ └─────────────────────────┘│
-│  ┌─────────────┐                                             │
-│  │ inspect.py  │  Introspection tools                        │
-│  └─────────────┘                                             │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                      Runtime Layer                           │
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐│
-│  │ executor.py │ │ context.py  │ │ runtime.py              ││
+│  │ executor.py │ │ context.py  │ │ engine.py               ││
 │  │             │ │             │ │                         ││
 │  │ - Execution │ │ - ExecCtx   │ │ - ActorRuntime         ││
 │  │ - TopoSort  │ │ - Snapshots │ │ - LearnerRuntime       ││
 │  └─────────────┘ └─────────────┘ └─────────────────────────┘│
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐│
-│  │ state.py    │ │ dataref.py  │ │ values.py               ││
+│  │ state.py    │ │ registry.py │ │ values.py               ││
 │  │             │ │             │ │                         ││
-│  │ - ReplayBuf │ │ - DataRef   │ │ - RuntimeValue         ││
-│  │ - ParamStore│ │ - BufferRef │ │ - Value/Skipped        ││
+│  │ - ReplayBuf │ │ - Spec Reg  │ │ - RuntimeValue         ││
+│  │ - ParamStore│ │ - Registry  │ │ - Value/Skipped        ││
 │  │ - Registry  │ │             │ │ - NoOp/MissingInput    ││
 │  └─────────────┘ └─────────────┘ └─────────────────────────┘│
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐│
-│  │ scheduler.py│ │ collator.py │ │ operators/              ││
+│  │ runner.py   │ │ io/         │ │ kernels/                ││
 │  │             │ │             │ │                         ││
-│  │ - Schedule  │ │ - ReplayCol │ │ - exploration          ││
-│  │ - Executor  │ │             │ │ - target_sync          ││
-│  └─────────────┘ └─────────────┘ │ - metrics              ││
-│                                   │ - schedule             ││
-│                                   │ - transfer             ││
-│                                   └─────────────────────────┘│
+│  │ - Execution │ │ - Env/Venv  │ │ - math/RL Kernels      ││
+│  │ - Runner    │ │ - Collator  │ │                         ││
+│  └─────────────┘ └─────────────┘ └─────────────────────────┘│
 └─────────────────────────────────────────────────────────────┘
-```
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                        Ops Library                           │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐│
+│  │ math/       │ │ rl/         │ │ loss/                   ││
+│  │             │ │             │ │                         ││
+│  │ - Clip      │ │ - Advantage │ │ - Value Loss           ││
+│  │ - Reduce    │ │ - Policy    │ │ - Surrogate            ││
+│  └─────────────┘ └─────────────┘ └─────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
 
 ### Core (`core/`)
 
@@ -77,7 +84,6 @@ The immutable IR layer containing only data structures:
 | `graph.py` | Graph, Node, Edge definitions; topological sort |
 | `schema.py` | Schema, TensorSpec, TrajectorySpec for type safety |
 | `nodes.py` | NodeDef, NodeInstance, Registry for operator definitions |
-| `inspect.py` | Introspection tools for debugging |
 
 **Constraint**: Core has zero runtime dependencies. No execution, no state, no side effects.
 
@@ -89,13 +95,13 @@ The mutable execution layer:
 |--------|----------------|
 | `executor.py` | Graph execution, operator dispatch, topological sort |
 | `context.py` | ExecutionContext, ActorSnapshot, clocks, RNG |
-| `runtime.py` | ActorRuntime, LearnerRuntime |
+| `engine.py` | ActorRuntime, LearnerRuntime |
 | `state.py` | ReplayBuffer, ParameterStore, ModelRegistry, BufferRegistry |
-| `values.py` | RuntimeValue system (Value, NoOp, Skipped, MissingInput) |
-| `dataref.py` | DataRef, BufferRef, StreamRef with location tracking |
-| `scheduler.py` | SchedulePlan, ScheduleExecutor |
-| `collator.py` | Schema-driven batch collation |
-| `operators/` | Built-in operators (exploration, target_sync, metrics, schedule, transfer) |
+| `values.py` | RuntimeValue system (Value, NoOp, Skipped, MissingInput, DataRef) |
+| `registry.py` | OperatorSpec, PortSpec, global registration |
+| `runner.py` | ScheduleRunner (outer RL loop) |
+| `io/` | I/O operators (Environment, VectorEnv, Collator) |
+| `kernels/` | Low-level math/RL kernels |
 
 **Constraint**: Runtime may import Core but never modifies graph structure at runtime.
 
@@ -105,11 +111,24 @@ The analysis and transformation layer:
 
 | Module | Responsibility |
 |--------|----------------|
-| `compiler.py` | Orchestrates validation passes |
+| `pipeline.py` | Orchestrates validation passes |
 | `analyzer.py` | Static analysis for issues |
 | `optimizer.py` | Graph optimizations (fusion, pruning) |
-| `scheduler.py` | Compile schedule from graph topology |
+| `planner.py` | Execution planning |
 | `passes/` | Individual validation passes |
+
+**Constraint**: Compiler may read but never executes graphs. Output is validated graph or error.
+
+### Ops Library (`ops/`)
+
+Centralized reusable RL primitives:
+
+| Module | Responsibility |
+|--------|----------------|
+| `math/` | Generic math ops (clip, reduce, schedule) |
+| `rl/` | RL specific ops (advantage, distribution, policy, exploration) |
+| `loss/` | Common loss functions (value, surrogate, math) |
+| `control/` | Control flow ops (Loop, MinibatchIterator) |
 
 **Constraint**: Compiler may read but never executes graphs. Output is validated graph or error.
 
@@ -151,7 +170,7 @@ User Code (examples/)
 ### Runtime Flow
 
 ```
-ScheduleExecutor
+ScheduleRunner
        │
        ├─────────────────────┐
        ▼                     ▼
@@ -280,13 +299,13 @@ from core.schema import Schema  # Core can import Core
 from core.graph import Graph, NodeId, Node  # Can import Core
 from runtime.context import ExecutionContext  # Can import Runtime
 
-# compiler/compiler.py - Core + Compiler
+# compiler/pipeline.py - Core + Compiler
 from core.graph import Graph  # Can import Core
 from compiler.validation import ValidationReport  # Can import Compiler
 
 # CANNOT DO:
 # - core/graph.py imports runtime/executor.py  (violation)
-# - compiler/compiler.py imports runtime/state.py  (violation)
+# - compiler/pipeline.py imports runtime/state.py  (violation)
 ```
 
 ### State Mutation Rules
@@ -786,13 +805,13 @@ DQNAgent
 | `core/nodes.py` | NodeDef, NodeInstance, Registry |
 | `runtime/executor.py` | execute(), register_operator(), _topological_sort() |
 | `runtime/context.py` | ExecutionContext, ActorSnapshot |
-| `runtime/runtime.py` | ActorRuntime, LearnerRuntime |
+| `runtime/engine.py` | ActorRuntime, LearnerRuntime |
 | `runtime/state.py` | ReplayBuffer, ParameterStore, *Registry |
 | `runtime/values.py` | RuntimeValue wrappers (Value, NoOp, Skipped, MissingInput) |
-| `runtime/specs.py` | OperatorSpec, PortSpec, register_spec(), get_spec() |
+| `runtime.registry.py` | OperatorSpec, PortSpec, register_spec(), get_spec() |
 | `runtime/collator.py` | ReplayCollator |
-| `runtime/operators/` | Built-in operators (exploration, target_sync, metrics, schedule, transfer) |
-| `compiler/compiler.py` | compile_graph() with autodiff, autobatch, optimization |
+| `ops/rl/`, `ops/math/`, `ops/loss/`, `ops/control/` | Built-in operator definitions (registered via `runtime/executor.py`) |
+| `compiler/pipeline.py` | compile_graph() with autodiff, autobatch, optimization |
 | `compiler/rewrite.py` | RewriteEngine, FusionRule, find_linear_chain() |
 | `compiler/optimizer.py` | optimize_graph(), OptimizationReport, dead_node_elimination() |
 | `compiler/analyzer.py` | Static analysis |

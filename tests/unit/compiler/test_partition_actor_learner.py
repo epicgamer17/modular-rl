@@ -1,7 +1,7 @@
 import pytest
 from core.graph import Graph, NODE_TYPE_SOURCE, NODE_TYPE_SINK
 from compiler.partition import partition_graph
-from runtime.specs import register_spec, OperatorSpec, Scalar, clear_registry
+from runtime.registry import register_spec, OperatorSpec, Scalar, clear_registry
 
 pytestmark = pytest.mark.unit
 

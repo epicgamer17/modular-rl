@@ -2,7 +2,7 @@ import pytest
 from core.graph import Graph, NODE_TYPE_ACTOR, NODE_TYPE_REPLAY_QUERY
 from core.nodes import create_policy_actor_def, create_replay_query_def
 from core.schema import Schema, TAG_ON_POLICY
-from compiler.scheduler import compile_schedule
+from compiler.planner import compile_schedule
 
 pytestmark = pytest.mark.unit
 

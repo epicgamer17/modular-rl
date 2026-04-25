@@ -10,7 +10,7 @@ from compiler.validation import (
     ValidationReport,
     SEVERITY_ERROR,
 )
-from runtime.specs import get_spec, is_compatible, format_spec
+from runtime.registry import get_spec, is_compatible, format_spec
 
 
 def validate_ports(graph: Graph) -> ValidationReport:

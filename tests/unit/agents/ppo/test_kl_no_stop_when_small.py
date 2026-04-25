@@ -87,7 +87,7 @@ def test_kl_no_stop_when_small():
     
     # 4. Mock super().update_step to return small KL
     # Each call returns approx_kl = 0.005 ( < target_kl 0.01)
-    with patch("runtime.runtime.LearnerRuntime.update_step") as mock_update:
+    with patch("runtime.engine.LearnerRuntime.update_step") as mock_update:
         mock_update.return_value = {"opt": {"approx_kl": 0.005}}
         
         learner.update_step(context=ctx)

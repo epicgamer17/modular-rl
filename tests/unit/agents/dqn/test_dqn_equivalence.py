@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from agents.dqn.config import DQNConfig
 from agents.dqn.agent import DQNAgent
-from compiler.compiler import compile_graph
+from compiler.pipeline import compile_graph
 from runtime.executor import execute
 from runtime.context import ExecutionContext
 

@@ -1,5 +1,5 @@
 import pytest
-from runtime.specs import OperatorSpec
+from runtime.registry import OperatorSpec
 
 pytestmark = pytest.mark.unit
 

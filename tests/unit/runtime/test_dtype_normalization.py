@@ -2,8 +2,8 @@ import pytest
 import torch
 import numpy as np
 import gymnasium as gym
-from runtime.environment import SingleToBatchEnvAdapter
-from runtime.vector_env import VectorEnv
+from runtime.io.environment import SingleToBatchEnvAdapter
+from runtime.io.vector_env import VectorEnv
 
 pytestmark = pytest.mark.unit
 

@@ -5,7 +5,7 @@ from compiler.optimizer import optimize_graph, OptimizationReport, OPTIMIZER_ENG
 from compiler.passes.autodiff import autodiff
 from compiler.passes.collect_trainable_parameters import collect_trainable_parameters
 from compiler.rewrite import FusionRule
-from runtime.specs import register_spec, OperatorSpec, SingleQ, Scalar
+from runtime.registry import register_spec, OperatorSpec, SingleQ, Scalar
 
 pytestmark = pytest.mark.unit
 

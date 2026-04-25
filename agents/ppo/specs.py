@@ -1,4 +1,4 @@
-from runtime.specs import (
+from runtime.registry import (
     OperatorSpec,
     PortSpec,
     register_spec,
@@ -97,7 +97,7 @@ def register_ppo_specs():
         "Clip",
         OperatorSpec.create(
             name="Clip",
-            inputs={"input": Scalar("float32")},
+            inputs={"x": Scalar("float32")},
             outputs={"output": Scalar("float32")},
             differentiable=True,
             allowed_contexts={"learner"},
@@ -149,7 +149,7 @@ def register_ppo_specs():
         "Entropy",
         OperatorSpec.create(
             name="Entropy",
-            inputs={"probs": PortSpec(spec=None)},
+            inputs={"logits": PortSpec(spec=None)},
             outputs={"entropy": Scalar("float32")},
             differentiable=True,
             allowed_contexts={"learner"},

@@ -2,7 +2,7 @@ import pytest
 import torch
 from core.graph import Node
 from core.batch import TransitionBatch
-from runtime.operators.advantage import op_advantage_estimation, ADVANTAGE_KERNELS
+from ops.rl.advantage import op_advantage_estimation, ADVANTAGE_KERNELS
 
 pytestmark = pytest.mark.unit
 

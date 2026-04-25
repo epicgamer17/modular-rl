@@ -2,7 +2,7 @@ import pytest
 import torch
 import gymnasium as gym
 import numpy as np
-from runtime.environment import wrap_env, StepResult
+from runtime.io.environment import wrap_env, StepResult
 
 pytestmark = pytest.mark.unit
 
@@ -85,11 +85,11 @@ def test_gym_adapter_trace_matches_raw_env():
 
 def test_episode_lengths_sum_to_steps():
     """Verify that per-env episode tracking correctly accounts for all steps and rewards."""
-    from runtime.runtime import ActorRuntime
+    from runtime.engine import ActorRuntime
     from core.graph import Graph
     from runtime.context import ExecutionContext
     import gymnasium as gym
-    from runtime.vector_env import VectorEnv
+    from runtime.io.vector_env import VectorEnv
 
     # Use a vector env with 2 envs
     num_envs = 2
@@ -97,7 +97,7 @@ def test_episode_lengths_sum_to_steps():
     env = VectorEnv("CartPole-v1", num_envs=num_envs, seed=42)
 
     # Mock execute to just return zero actions
-    import runtime.runtime as runtime_module
+    import runtime.engine as runtime_module
 
     orig_execute = runtime_module.execute
     runtime_module.execute = lambda *args, **kwargs: {

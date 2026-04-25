@@ -1,10 +1,10 @@
 import pytest
 import torch
 from core.graph import Graph
-from compiler.compiler import compile_graph
+from compiler.pipeline import compile_graph
 from runtime.executor import execute
 from runtime.tracing import TraceLogger
-from runtime.specs import register_spec, OperatorSpec
+from runtime.registry import register_spec, OperatorSpec
 from core.schema import TensorSpec
 
 pytestmark = pytest.mark.unit
@@ -19,7 +19,7 @@ def test_fusion_trace_mapping() -> None:
     register_spec("TraceSink", OperatorSpec.create(name="TraceSink", inputs={"in": spec}))
 
     # Register operators for execution
-    from runtime.executor import register_operator
+    from runtime.operator_registry import register_operator
     register_operator("TraceSource", lambda node, inputs, context: torch.tensor([1.0]))
     register_operator("TraceA", lambda node, inputs, context: next(iter(inputs.values())) + 1)
     register_operator("TraceB", lambda node, inputs, context: next(iter(inputs.values())) * 2)

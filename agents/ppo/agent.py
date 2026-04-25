@@ -3,8 +3,8 @@ import torch.optim as optim
 from typing import Optional, Dict, Any
 
 from runtime.state import ReplayBuffer, ModelRegistry, BufferRegistry, OptimizerState, OptimizerRegistry
-from runtime.runtime import ActorRuntime
-from runtime.scheduler import SchedulePlan, ScheduleExecutor
+from runtime.engine import ActorRuntime
+from runtime.runner import SchedulePlan, ScheduleRunner
 from runtime.context import ExecutionContext
 
 from .config import PPOConfig
@@ -94,7 +94,7 @@ class PPOAgent:
             actor_frequency=1, # PPO usually runs 1 rollout then N epochs
             learner_frequency=1
         )
-        self.executor = ScheduleExecutor(
+        self.runner = ScheduleRunner(
             plan, 
             self.actor_runtime, 
             self.learner_runtime
@@ -108,5 +108,5 @@ class PPOAgent:
             total_steps: Total number of actor steps to perform.
         """
         print(f"Starting PPO Training for {total_steps} steps...")
-        self.executor.run(total_actor_steps=total_steps, context=self.ctx)
+        self.runner.run(total_actor_steps=total_steps, context=self.ctx)
         print("PPO Training Finished.")

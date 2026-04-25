@@ -3,12 +3,12 @@ import torch
 import gymnasium as gym
 import threading
 import time
-from runtime.runtime import ActorRuntime, LearnerRuntime
+from runtime.engine import ActorRuntime, LearnerRuntime
 from runtime.context import ExecutionContext, ActorSnapshot
 from runtime.state import ParameterStore, ReplayBuffer
 from core.graph import Graph, NODE_TYPE_SOURCE
 from core.schema import TAG_ON_POLICY
-from runtime.executor import register_operator
+from runtime.operator_registry import register_operator
 
 pytestmark = pytest.mark.unit
 
@@ -32,7 +32,7 @@ def test_runtime_split_async_behavior():
         return 0
         
     register_operator("ActorNode", op_actor)
-    from runtime.values import NoOp
+    from runtime.signals import NoOp
     register_operator(NODE_TYPE_SOURCE, lambda n, i, c=None: NoOp())
     
     interact_graph.add_node("actor", "ActorNode")

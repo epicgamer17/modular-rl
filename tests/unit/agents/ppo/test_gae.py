@@ -1,7 +1,7 @@
 import pytest
 import torch
 import numpy as np
-from agents.ppo.operators import op_gae
+from ops.rl.advantage import op_gae
 from core.graph import Node
 
 pytestmark = pytest.mark.unit

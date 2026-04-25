@@ -1,7 +1,7 @@
 import pytest
 from core.graph import Graph
-from runtime.specs import register_spec, OperatorSpec, SingleObs, SingleQ, PortSpec, clear_registry
-from compiler.compiler import compile_graph
+from runtime.registry import register_spec, OperatorSpec, SingleObs, SingleQ, PortSpec, clear_registry
+from compiler.pipeline import compile_graph
 from compiler.passes.collect_trainable_parameters import collect_trainable_parameters
 
 pytestmark = pytest.mark.unit

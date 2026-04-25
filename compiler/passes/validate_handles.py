@@ -1,6 +1,6 @@
 """
 Validation pass for string handles (models, buffers).
-Ensures that all referenced handles are registered in the runtime environment.
+Ensures that all referenced handles are registered in the runtime.io.environment.
 """
 
 from typing import Set, Optional

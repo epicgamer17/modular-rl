@@ -1,6 +1,6 @@
 import pytest
 from core.graph import Graph
-from runtime.specs import (
+from runtime.registry import (
     register_spec,
     OperatorSpec,
     SingleObs,
@@ -16,7 +16,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def setup_specs() -> None:
     """Register specifications for test nodes. Clears registry for isolation."""
-    from runtime.specs import clear_registry
+    from runtime.registry import clear_registry
     clear_registry()
     # Register specific operators for shape/rank validation tests
     register_spec(

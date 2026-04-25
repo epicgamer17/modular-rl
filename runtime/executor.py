@@ -3,60 +3,33 @@ Minimal runtime executor for the RL IR.
 Handles topological sorting and sequential execution of graph nodes.
 """
 
+import torch
 from typing import Dict, Any, List, Set, Callable, Optional
 from core.graph import Graph, NodeId, Node
 from runtime.context import ExecutionContext
-from runtime.values import (
-    RuntimeValue,
-    Value,
-    NoOp,
-    Skipped,
-    MissingInput,
-    ExecutionError,
-)
+from runtime.refs import RuntimeValue, Value
+from runtime.signals import NoOp, Skipped, MissingInput
+from runtime.errors import ExecutionError
 from runtime.tracing import TraceLogger
-from runtime.collator import ReplayCollator
+from runtime.io.collator import ReplayCollator
 import time
 
-# Global operator registry mapping node_type -> execution function
-# def run(node: Node, inputs: Dict[NodeId, Any]) -> Any
-OPERATOR_REGISTRY: Dict[
-    str, Callable[[Node, Dict[NodeId, Any], ExecutionContext], Any]
-] = {}
+from runtime.operator_registry import (
+    OPERATOR_REGISTRY,
+    register_operator,
+    ValidatedOperator,
+)
 
-from runtime.specs import register_spec, get_spec
+from runtime.registry import register_spec, get_spec, register_base_specs
 
-
-from runtime.validator import validate_operator_output
-
-
-def ValidatedOperator(op_func):
-    """Decorator that applies runtime assertions to an operator's output."""
-
-    def wrapper(
-        node: Node, inputs: Dict[NodeId, Any], context: ExecutionContext
-    ) -> Any:
-        output = op_func(node, inputs, context)
-        validate_operator_output(node, output)
-        return output
-
-    return wrapper
-
-
-def register_operator(
-    node_type: str,
-    func: Callable[[Node, Dict[NodeId, Any], ExecutionContext], Any],
-    spec: Optional[Any] = None,
-):
-    """Registers an execution function and optional specification for a node type."""
-    # Wrap all registered operators with validation logic
-    OPERATOR_REGISTRY[node_type] = ValidatedOperator(func)
-    if spec:
-        register_spec(node_type, spec)
+# Register built-in operator specs (Backward, AccumulateGrad, OptimizerStepEvery,
+# MSELoss, Mean, WeightedSum, etc.) so strict compilation finds them without
+# requiring agents to bootstrap them individually.
+register_base_specs()
 
 
 # Register built-in operators
-from runtime.operators.transfer import register_transfer_operators
+from runtime.io.transfer import register_transfer_operators
 
 register_transfer_operators(register_operator)
 
@@ -120,15 +93,38 @@ from core.graph import (
     NODE_TYPE_EXPLORATION,
     NODE_TYPE_METRICS_SINK,
 )
-from runtime.operators.target_sync import op_target_sync
-from runtime.operators.exploration import op_epsilon_greedy
-from runtime.operators.metrics import op_metrics_sink
-from runtime.operators.schedule import op_linear_decay
+from ops.rl.sync import op_target_sync
+from ops.rl.exploration import op_epsilon_greedy
+from ops.rl.metrics import op_metrics_sink
+from ops.math.schedule import op_linear_decay
 
 register_operator(NODE_TYPE_TARGET_SYNC, op_target_sync)
 register_operator(NODE_TYPE_EXPLORATION, op_epsilon_greedy)
 register_operator(NODE_TYPE_METRICS_SINK, op_metrics_sink)
 register_operator("LinearDecay", op_linear_decay)
+
+from ops.loss.math import op_mse_loss
+from ops.math.reduce import op_reduce_mean, op_weighted_sum
+from ops.math.clip import op_clip
+
+register_operator("MSELoss", op_mse_loss)
+register_operator("Mean", op_reduce_mean)
+register_operator("WeightedSum", op_weighted_sum)
+register_operator("Clip", op_clip)
+
+from ops.rl.learner import (
+    op_backward,
+    op_grad_buffer,
+    op_accumulate_grad,
+    op_optimizer_step_every,
+    op_optimizer_step,
+)
+
+register_operator("Backward", op_backward)
+register_operator("GradBuffer", op_grad_buffer)
+register_operator("AccumulateGrad", op_accumulate_grad)
+register_operator("OptimizerStepEvery", op_optimizer_step_every)
+register_operator("Optimizer", op_optimizer_step)
 
 
 def execute(
@@ -156,7 +152,7 @@ def execute(
     Args:
         graph: The static, declarative computation graph (Compile-time IR).
         initial_inputs: Raw data inputs for source nodes.
-        context: The stateful runtime environment (Runtime Context).
+        context: The stateful runtime.io.environment (Runtime Context).
         tracer: Optional logger for execution traces.
         validate_purity: If True, performs a quick check to ensure the graph is pure.
 
@@ -235,7 +231,7 @@ def execute(
                     mapped_inputs[edge.dst_port] = val
 
         # 1.5 Inject default values and validate contract
-        from runtime.specs import get_spec
+        from runtime.registry import get_spec
 
         op_spec = get_spec(node.node_type)
         final_inputs = {}
@@ -353,3 +349,8 @@ def _topological_sort(graph: Graph) -> List[NodeId]:
         raise ValueError("Graph contains cycles; cannot perform topological sort.")
 
     return order
+
+
+# Registration should be triggered explicitly by the agent or entry point
+# from ops.registry import register_all_operators
+# register_all_operators()

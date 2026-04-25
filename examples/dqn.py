@@ -8,9 +8,9 @@ import numpy as np
 import gymnasium as gym
 from agents.dqn.config import DQNConfig
 from agents.dqn.agent import DQNAgent
-from runtime.runtime import ActorRuntime, LearnerRuntime
-from runtime.scheduler import ScheduleExecutor
-from compiler.scheduler import compile_schedule
+from runtime.engine import ActorRuntime, LearnerRuntime
+from runtime.runner import ScheduleRunner
+from compiler.planner import compile_schedule
 
 
 # TODO: make total steps in learner steps and not in env steps (or able to choose which)
@@ -21,7 +21,7 @@ def train_dqn(total_steps: int = 120_000, seed: int = 0):
     torch.backends.cudnn.deterministic = True  # For maximum reproducibility
 
     # 1. Environment Setup
-    from runtime.environment import wrap_env
+    from runtime.io.environment import wrap_env
 
     raw_env = gym.make("CartPole-v1")
     env = wrap_env(raw_env)
@@ -82,10 +82,10 @@ def train_dqn(total_steps: int = 120_000, seed: int = 0):
 
     actor_runtime.recording_fn = log_episode_return
 
-    executor = ScheduleExecutor(plan, actor_runtime, learner_runtime)
+    runner = ScheduleRunner(plan, actor_runtime, learner_runtime)
 
     print(f"Starting DQN with Modular Agent and Compiled Schedule: {plan.to_dict()}")
-    executor.run(total_actor_steps=total_steps, context=ctx)
+    runner.run(total_actor_steps=total_steps, context=ctx)
     print("DQN Modular Demo Finished.")
 
 

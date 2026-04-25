@@ -5,9 +5,9 @@ import numpy as np
 import gymnasium as gym
 from core.graph import Graph, NODE_TYPE_ACTOR, NODE_TYPE_TARGET_SYNC
 from runtime.context import ExecutionContext
-from runtime.scheduler import SchedulePlan, ScheduleExecutor
-from runtime.runtime import ActorRuntime, LearnerRuntime
-from runtime.executor import register_operator, OPERATOR_REGISTRY
+from runtime.runner import SchedulePlan, ScheduleRunner
+from runtime.engine import ActorRuntime, LearnerRuntime
+from runtime.operator_registry import register_operator, OPERATOR_REGISTRY
 
 # Set module level marker as per RULE[testing-standards.md]
 pytestmark = pytest.mark.unit
@@ -42,7 +42,7 @@ def test_clocks_actor_learner_ratio(monkeypatch):
     actor = ActorRuntime(interact_graph, env)
     learner = LearnerRuntime(train_graph)
     
-    executor = ScheduleExecutor(plan, actor, learner)
+    executor = ScheduleRunner(plan, actor, learner)
     ctx = ExecutionContext()
     
     executor.run(total_actor_steps=100, context=ctx)
@@ -86,7 +86,7 @@ def test_clocks_target_sync_trigger(monkeypatch):
     actor = ActorRuntime(interact_graph, env)
     learner = LearnerRuntime(train_graph)
     
-    executor = ScheduleExecutor(plan, actor, learner)
+    executor = ScheduleRunner(plan, actor, learner)
     ctx = ExecutionContext()
     
     # Run 30 actor steps
@@ -121,7 +121,7 @@ def test_clocks_episode_tracking(monkeypatch):
     actor = ActorRuntime(interact_graph, env)
     learner = LearnerRuntime(Graph())
     
-    executor = ScheduleExecutor(plan, actor, learner)
+    executor = ScheduleRunner(plan, actor, learner)
     ctx = ExecutionContext()
     
     # Run 12 steps. 

@@ -1,11 +1,11 @@
 import pytest
 from unittest.mock import MagicMock
-from runtime.scheduler import SchedulePlan, ScheduleExecutor
+from runtime.runner import SchedulePlan, ScheduleRunner
 
 pytestmark = pytest.mark.unit
 
 def test_schedule_plan_execution_logic():
-    """Verify that ScheduleExecutor respects frequency parameters."""
+    """Verify that ScheduleRunner respects frequency parameters."""
     # 1. Setup
     plan = SchedulePlan(
         actor_frequency=5,
@@ -21,7 +21,7 @@ def test_schedule_plan_execution_logic():
     
     learner_runtime = MagicMock()
     
-    executor = ScheduleExecutor(plan, actor_runtime, learner_runtime)
+    executor = ScheduleRunner(plan, actor_runtime, learner_runtime)
     
     # 2. Run for 10 actor steps
     # With actor_freq=5, this should result in 2 loop iterations.
@@ -43,7 +43,7 @@ def test_schedule_plan_to_dict():
     assert "batching_strategy" in data
 
 def test_schedule_plan_parallel_strategy():
-    """Verify that ScheduleExecutor uses threading for 'parallel' strategy."""
+    """Verify that ScheduleRunner uses threading for 'parallel' strategy."""
     import threading
     plan = SchedulePlan(actor_frequency=1, batching_strategy="parallel")
     
@@ -60,7 +60,7 @@ def test_schedule_plan_parallel_strategy():
     
     learner = MagicMock()
     
-    executor = ScheduleExecutor(plan, [runtime_1, runtime_2], learner)
+    executor = ScheduleRunner(plan, [runtime_1, runtime_2], learner)
     executor.run(total_actor_steps=2)
     
     # If parallel, there should be more than one thread ID (including main)

@@ -2,7 +2,7 @@ import pytest
 import torch
 from core.graph import Graph
 from runtime.executor import execute, register_operator
-from runtime.values import NoOp
+from runtime.signals import NoOp
 
 pytestmark = pytest.mark.unit
 

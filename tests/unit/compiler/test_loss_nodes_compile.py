@@ -3,8 +3,8 @@ from core.graph import Graph
 from core.graph import EdgeType
 from agents.ppo.specs import register_ppo_specs
 from agents.dqn.specs import register_dqn_specs
-from runtime.specs import register_base_specs, clear_registry
-from compiler.compiler import compile_graph
+from runtime.registry import register_base_specs, clear_registry
+from compiler.pipeline import compile_graph
 
 pytestmark = pytest.mark.unit
 

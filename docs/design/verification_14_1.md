@@ -7,7 +7,7 @@ This report verifies the introduction of the declarative `Schedule IR` system, w
 | Component | Responsibility | Semantic Role |
 | :--- | :--- | :--- |
 | **SchedulePlan** | Declarative configuration of frequencies and strategies | Orchestration Logic |
-| **ScheduleExecutor** | Operationalizes the plan by driving runtimes | Execution Engine |
+| **ScheduleRunner** | Operationalizes the plan by driving runtimes | Execution Engine |
 | **Schedule IR Node** | Represents the schedule within the computation graph | Declarative Intent |
 
 ## 2. Alignment with Semantic Integrity
@@ -20,25 +20,25 @@ This report verifies the introduction of the declarative `Schedule IR` system, w
 
 The implementation was verified using a mock-based execution test:
 - **Frequency Ratio**: Verified that setting `actor_frequency=5` and `learner_frequency=2` correctly results in 5 actor steps and 2 learner steps per iteration.
-- **Step Counting**: Proved that the `ScheduleExecutor` accurately tracks total steps and terminates precisely at the requested limit.
+- **Step Counting**: Proved that the `ScheduleRunner` accurately tracks total steps and terminates precisely at the requested limit.
 - **Serialization**: Verified that `SchedulePlan` correctly serializes to a dictionary for logging or RPC transport.
 
 ## 4. Implementation Details
 - [x] **IR Integration**: Added `NODE_TYPE_SCHEDULE` to the core graph schema.
-- [x] **Stateful Orchestration**: Implemented `ScheduleExecutor` in `runtime/scheduler.py` to coordinate `ActorRuntime` and `LearnerRuntime`.
+- [x] **Stateful Orchestration**: Implemented `ScheduleRunner` in `runtime/scheduler.py` to coordinate `ActorRuntime` and `LearnerRuntime`.
 - [x] **Export Cleanliness**: Updated `runtime/__init__.py` to export the new scheduling primitives while removing deprecated ad-hoc loop constructs.
 
 ## 5. Legacy Porting & Parallelism Strategy
 
-The transition from legacy ad-hoc scheduling to the unified IR system involved a complete port of existing functionality into the `ScheduleExecutor` logic.
+The transition from legacy ad-hoc scheduling to the unified IR system involved a complete port of existing functionality into the `ScheduleRunner` logic.
 
 ### Consolidation of Primitives
 - **EveryN & Loop**: These manual triggers were absorbed into the `actor_frequency` and `learner_frequency` parameters of the `SchedulePlan`. Instead of nested loop logic, the executor now manages the ratio of interaction to training as a first-class citizen.
-- **ParallelActorPool**: The thread-management logic was moved directly into `ScheduleExecutor._execute_actors`. 
+- **ParallelActorPool**: The thread-management logic was moved directly into `ScheduleRunner._execute_actors`. 
 
 ### How Parallel Actors are Handled Now
 With the removal of `ParallelActorPool`, parallelism is now a **declarative strategy**:
-1.  **Multiple Runtimes**: Users provide a list of `ActorRuntime` instances to the `ScheduleExecutor`.
+1.  **Multiple Runtimes**: Users provide a list of `ActorRuntime` instances to the `ScheduleRunner`.
 2.  **Strategy Selection**: By setting `batching_strategy="parallel"`, the executor spawns a multi-threaded batch execution.
 3.  **Thread Safety**: Each thread operates on its own `ActorRuntime` (and its associated `ExecutionContext`), while sharing access to the `ParameterStore` and `ReplayBuffer` through existing thread-safe locks.
 

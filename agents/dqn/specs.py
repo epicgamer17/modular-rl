@@ -1,4 +1,4 @@
-from runtime.specs import (
+from runtime.registry import (
     OperatorSpec,
     PortSpec,
     register_spec,
