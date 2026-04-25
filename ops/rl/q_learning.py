@@ -5,6 +5,93 @@ from typing import Dict, Any, Optional
 from core.graph import Node
 from runtime.context import ExecutionContext
 from runtime.signals import MissingInput
+from runtime.registry import (
+    OperatorSpec,
+    PortSpec,
+    Scalar,
+    SingleObs,
+    SingleQ,
+    BatchObs,
+    BatchQ,
+    TransitionBatch,
+    TensorSpec,
+)
+
+Q_VALUES_SINGLE_SPEC = OperatorSpec.create(
+    name="QValuesSingle",
+    inputs={"obs": SingleObs},
+    outputs={"q_values": SingleQ},
+    pure=True,
+    allowed_contexts={"actor", "learner"},
+    parameter_handles=["model_handle"],
+    differentiable=True,
+    creates_grad=True,
+    consumes_grad=False,
+    updates_params=False,
+    domain_tags={"q_learning"},
+    math_category="elementwise"
+)
+
+Q_FORWARD_SPEC = OperatorSpec.create(
+    name="QForward",
+    inputs={"obs": BatchObs},
+    outputs={"q_values": BatchQ},
+    pure=True,
+    allowed_contexts={"actor", "learner"},
+    parameter_handles=["model_handle"],
+    differentiable=True,
+    creates_grad=True,
+    consumes_grad=False,
+    updates_params=False,
+    domain_tags={"q_learning"},
+    math_category="elementwise"
+)
+
+GATHER_ACTION_Q_SPEC = OperatorSpec.create(
+    name="GatherActionQ",
+    inputs={
+        "q_values": BatchQ,
+        "actions": PortSpec(spec=None), # Usually int64
+    },
+    outputs={"q_selected": Scalar("float32")},
+    pure=True,
+    allowed_contexts={"actor", "learner"},
+    differentiable=True,
+    creates_grad=True,
+    consumes_grad=False,
+    updates_params=False,
+    math_category="elementwise"
+)
+
+BELLMAN_TARGET_SPEC = OperatorSpec.create(
+    name="BellmanTarget",
+    inputs={
+        "next_q_values": TensorSpec(shape=(-1, -1), dtype="float32"),
+        "rewards": TensorSpec(shape=(-1,), dtype="float32"),
+        "dones": TensorSpec(shape=(-1,), dtype="bool"),
+    },
+    outputs={"target": TensorSpec(shape=(-1,), dtype="float32")},
+    allowed_contexts={"learner"},
+    differentiable=False,
+    creates_grad=False,
+    consumes_grad=False,
+    updates_params=False,
+    math_category="elementwise",
+)
+
+TD_LOSS_SPEC = OperatorSpec.create(
+    name="TDLoss",
+    inputs={"batch": TransitionBatch},
+    outputs={"loss": Scalar("float32")},
+    differentiable=True,
+    creates_grad=True,
+    consumes_grad=False,
+    updates_params=False,
+    allowed_contexts={"learner"},
+    parameter_handles=["model_handle", "target_handle"],
+    domain_tags={"q_learning"},
+    math_category="loss",
+)
 
 def op_q_values_single(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None

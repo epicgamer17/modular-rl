@@ -1,3 +1,4 @@
+from runtime.bootstrap import bootstrap_runtime
 import pytest
 import torch
 import torch.nn as nn
@@ -7,7 +8,7 @@ from agents.dqn.specs import register_dqn_specs
 from core.graph import Graph, NodeId, EdgeType
 from runtime.context import ExecutionContext
 from runtime.executor import execute, register_operator
-from runtime.registry import OperatorSpec, clear_registry, register_base_specs, register_spec
+from runtime.registry import OperatorSpec, clear_registry, register_spec
 from runtime.state import GradientRegistry, OptimizerState
 
 pytestmark = pytest.mark.unit
@@ -16,7 +17,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def setup_specs():
     clear_registry()
-    register_base_specs()
+    bootstrap_runtime()
     register_dqn_specs()
 
 
@@ -32,6 +33,9 @@ def _register_forward():
             inputs={"obs": None},
             outputs={"pred": None},
             differentiable=True,
+            creates_grad=True,
+            consumes_grad=False,
+            updates_params=False,
             parameter_handles=["model_handle"],
         ),
     )

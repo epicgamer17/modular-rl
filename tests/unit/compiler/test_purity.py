@@ -3,7 +3,7 @@ from core.graph import Graph
 from runtime.registry import register_spec, OperatorSpec
 from compiler.pipeline import compile_graph
 from compiler.validation import SEVERITY_WARN, SEVERITY_ERROR
-from compiler.passes.validate_purity import validate_purity
+from compiler.passes.semantic.purity import validate_purity
 
 pytestmark = pytest.mark.unit
 
@@ -12,7 +12,15 @@ def test_impure_node_duplicated_warning() -> None:
     """Verifies that duplicated side effects trigger D001 warning."""
     register_spec(
         "SideEffectOp",
-        OperatorSpec.create(name="SideEffectOp", side_effects=["update_weights"]),
+        OperatorSpec.create(
+            name="SideEffectOp", 
+            side_effects=["update_weights"],
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        ),
     )
 
     g = Graph()
@@ -29,7 +37,15 @@ def test_impure_node_duplicated_warning() -> None:
 def test_optimizer_in_actor_graph_error() -> None:
     """Verifies that optimizer-requiring nodes in actor context trigger D003."""
     register_spec(
-        "OptimizerOp", OperatorSpec.create(name="OptimizerOp", requires_optimizer=True)
+        "OptimizerOp", OperatorSpec.create(
+            name="OptimizerOp", 
+            requires_optimizer=True,
+            allowed_contexts={"learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        )
     )
 
     g = Graph()
@@ -46,7 +62,15 @@ def test_optimizer_in_actor_graph_error() -> None:
 
 def test_pure_node_reused_allowed() -> None:
     """Verifies that pure nodes can be duplicated without warnings."""
-    register_spec("PureOp", OperatorSpec.create(name="PureOp", pure=True))
+    register_spec("PureOp", OperatorSpec.create(
+        name="PureOp", 
+        pure=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
 
     g = Graph()
     g.add_node("p1", "PureOp")

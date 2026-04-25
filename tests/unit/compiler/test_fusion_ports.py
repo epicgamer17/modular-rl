@@ -8,10 +8,46 @@ pytestmark = pytest.mark.unit
 
 def test_fusion_ports_preserved() -> None:
     """Verifies that ports (dst_port) are correctly re-mapped during fusion."""
-    register_spec("PortInput", OperatorSpec.create(name="PortInput", pure=True, deterministic=True))
-    register_spec("PortOpA", OperatorSpec.create(name="PortOpA", pure=True, deterministic=True))
-    register_spec("PortOpB", OperatorSpec.create(name="PortOpB", pure=True, deterministic=True))
-    register_spec("PortFused", OperatorSpec.create(name="PortFused", pure=True, deterministic=True))
+    register_spec("PortInput", OperatorSpec.create(
+        name="PortInput", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("PortOpA", OperatorSpec.create(
+        name="PortOpA", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("PortOpB", OperatorSpec.create(
+        name="PortOpB", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("PortFused", OperatorSpec.create(
+        name="PortFused", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
     
     g = Graph()
     g.add_node("src", "PortInput")

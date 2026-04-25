@@ -18,7 +18,12 @@ def setup_specs():
         inputs={
             "required_port": PortSpec(spec=None, required=True),
             "optional_port": PortSpec(spec=None, required=False, default=10)
-        }
+        },
+        allowed_contexts={"actor", "learner"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
     ))
     register_operator("TestOp", mock_op)
 
@@ -93,7 +98,12 @@ def test_optional_port_default_values():
         inputs={
             "required_port": PortSpec(spec=None, required=True),
             "optional_port": PortSpec(spec=None, required=False, default=42)
-        }
+        },
+        allowed_contexts={"actor", "learner"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
     ))
     
     graph = Graph()

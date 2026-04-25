@@ -29,7 +29,8 @@ class ReplayCollator:
             Dictionary of batched data.
         """
         if not batch:
-            return {}
+            from core.batch import TransitionBatch
+            return TransitionBatch()
 
         collated = {}
 
@@ -84,11 +85,11 @@ class ReplayCollator:
             return collated.get(f)
 
         return TransitionBatch(
-            obs=collated["obs"],
-            action=collated["action"],
-            reward=collated["reward"],
-            next_obs=collated["next_obs"],
-            done=collated["done"],
+            obs=g("obs"),
+            action=g("action"),
+            reward=g("reward"),
+            next_obs=g("next_obs"),
+            done=g("done"),
             log_prob=g("log_prob"),
             value=(
                 g("value") if g("value") is not None else g("values")

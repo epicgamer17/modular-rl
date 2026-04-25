@@ -70,10 +70,11 @@ def test_declarative_replay_query_and_min_size():
         rb.add({"val": i + 3})
     results = learner.update_step(context=ctx)
     
-    # sampler result is unwrapped by LearnerRuntime into a dict if it has data
+    # sampler result is unwrapped by LearnerRuntime into a TransitionBatch if it has data
     sampler_res = results["sampler"]
-    assert isinstance(sampler_res, dict)
-    assert len(sampler_res["val"]) == 2
+    from core.batch import TransitionBatch
+    assert isinstance(sampler_res, TransitionBatch)
+    assert len(sampler_res.metadata["val"]) == 2
     assert ctx.learner_step == 3
 
 def test_learner_runtime_no_override_dqn_style():

@@ -4,8 +4,16 @@ import copy
 from agents.dqn.agent import DQNAgent
 from agents.dqn.config import DQNConfig
 from runtime.executor import execute
+from runtime.bootstrap import bootstrap_runtime
+from runtime.registry import clear_registry
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def setup():
+    clear_registry()
+    bootstrap_runtime()
 
 
 # TODO: it is a flaky test, we have to fix it in the future

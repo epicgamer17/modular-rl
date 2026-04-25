@@ -123,14 +123,16 @@ The analysis and transformation layer:
 
 Centralized reusable RL primitives:
 
-| Module | Responsibility |
-|--------|----------------|
-| `math/` | Generic math ops (clip, reduce, schedule) |
-| `rl/` | RL specific ops (advantage, distribution, policy, exploration) |
-| `loss/` | Common loss functions (value, surrogate, math) |
-| `control/` | Control flow ops (Loop, MinibatchIterator) |
+| Module | Contents |
+|--------|----------|
+| `ops/registry.py` | `register_all_operators()` - central registration |
+| `ops/rl/` | RL operations (q_learning, advantage, policy, buffer, sync, learner) |
+| `ops/loss/` | Loss functions (critic, policy, supervised, math) |
+| `ops/math/` | Math operations (schedule, reduce, clip) |
+| `ops/control/` | Control flow (loops, access) |
+| `ops/buffer/` | Buffer operations (query) |
 
-**Constraint**: Compiler may read but never executes graphs. Output is validated graph or error.
+**Constraint**: Ops should be pure functions of node/inputs/context with no hidden state.
 
 ---
 
@@ -797,28 +799,66 @@ DQNAgent
 
 ## Module Map
 
+### Core (`core/`)
+
 | Module | Contents |
 |--------|----------|
 | `core/graph.py` | Graph, Node, Edge, NodeId, EdgeType |
 | `core/schema.py` | Schema, Field, TensorSpec, tags |
-| `core/types.py` | RLType hierarchy |
+| `core/types.py` | RLType hierarchy (TensorType, DistributionType, etc.) |
 | `core/nodes.py` | NodeDef, NodeInstance, Registry |
+| `core/batch.py` | TransitionBatch dataclass for typed batches |
+| `core/inspect.py` | Introspection tools |
+
+### Runtime (`runtime/`)
+
+| Module | Contents |
+|--------|----------|
 | `runtime/executor.py` | execute(), register_operator(), _topological_sort() |
 | `runtime/context.py` | ExecutionContext, ActorSnapshot |
 | `runtime/engine.py` | ActorRuntime, LearnerRuntime |
-| `runtime/state.py` | ReplayBuffer, ParameterStore, *Registry |
-| `runtime/values.py` | RuntimeValue wrappers (Value, NoOp, Skipped, MissingInput) |
-| `runtime.registry.py` | OperatorSpec, PortSpec, register_spec(), get_spec() |
-| `runtime/collator.py` | ReplayCollator |
-| `ops/rl/`, `ops/math/`, `ops/loss/`, `ops/control/` | Built-in operator definitions (registered via `runtime/executor.py`) |
-| `compiler/pipeline.py` | compile_graph() with autodiff, autobatch, optimization |
+| `runtime/state/` | ReplayBuffer, ParameterStore, *Registry, GradientRegistry |
+| `runtime/refs.py` | DataRef, BufferRef, StreamRef |
+| `runtime/signals.py` | RuntimeValue wrappers (Value, NoOp, Skipped, MissingInput) |
+| `runtime/registry.py` | OperatorSpec, PortSpec, register_spec(), get_spec() |
+| `runtime/io/` | Collator, Environment, Transfer, VectorEnv |
+| `runtime/kernels/` | Low-level kernels (GAE, TD-lambda, MC advantage) |
+| `runtime/services/` | Runtime services |
+
+### Operators (`ops/`)
+
+| Module | Contents |
+|--------|----------|
+| `ops/registry.py` | register_all_operators() - registers all operators |
+| `ops/rl/q_learning.py` | Q-values, Bellman target, TD loss |
+| `ops/rl/advantage.py` | GAE, TD-lambda, MC advantage estimation |
+| `ops/rl/policy.py` | Policy forward, PPO ratio, greedy action |
+| `ops/rl/buffer.py` | Replay buffer sampling |
+| `ops/rl/exploration.py` | Epsilon-greedy exploration |
+| `ops/rl/sync.py` | Target network synchronization |
+| `ops/rl/learner.py` | Backward, GradBuffer, Optimizer step |
+| `ops/rl/metrics.py` | MetricsSink |
+| `ops/loss/` | TDLoss, ValueLoss, SurrogateLoss, EntropyLoss |
+| `ops/math/` | LinearDecay, ReduceMean, WeightedSum, Clip |
+| `ops/control/` | Loop, MinibatchIterator, GetField |
+
+### Compiler (`compiler/`)
+
+| Module | Contents |
+|--------|----------|
+| `compiler/compiler.py` | compile_graph() - main entry point |
 | `compiler/rewrite.py` | RewriteEngine, FusionRule, find_linear_chain() |
 | `compiler/optimizer.py` | optimize_graph(), OptimizationReport, dead_node_elimination() |
 | `compiler/analyzer.py` | Static analysis |
-| `compiler/passes/` | Validation & transformation passes |
-| `compiler/passes/autodiff.py` | autodiff() - inserts Backward/GradBuffer |
-| `compiler/passes/analyze_gradients.py` | analyze_gradients() - gradient flow analysis |
-| `compiler/passes/collect_trainable_parameters.py` | collect_trainable_parameters() |
-| `compiler/passes/memory_optimizations.py` | apply_activation_checkpointing() |
+| `compiler/passes/` | Passes organized by category |
+| `compiler/passes/structural/` | Structure validation (cycles, connectivity, metadata, ports, handles) |
+| `compiler/passes/semantic/` | Semantic validation (purity, gradients, RL semantics, context, serialization) |
+| `compiler/passes/optimization/` | Optimization passes (autobatch, autodiff, memory, parameters) |
+| `compiler/passes/shape/` | Shape inference |
+
+### Agents (`agents/`)
+
+| Module | Contents |
+|--------|----------|
 | `agents/dqn/` | DQNAgent, graphs, operators, specs |
 | `agents/ppo/` | PPOAgent, graphs, operators, specs |

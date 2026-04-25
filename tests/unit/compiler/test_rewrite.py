@@ -8,8 +8,26 @@ pytestmark = pytest.mark.unit
 
 def test_find_linear_chain_basic() -> None:
     g = Graph()
-    register_spec("A", OperatorSpec.create(name="A", pure=True, deterministic=True))
-    register_spec("B", OperatorSpec.create(name="B", pure=True, deterministic=True))
+    register_spec("A", OperatorSpec.create(
+        name="A", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("B", OperatorSpec.create(
+        name="B", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
     g.add_node("n1", "A")
     g.add_node("n2", "B")
     g.add_edge("n1", "n2")
@@ -21,9 +39,36 @@ def test_find_linear_chain_basic() -> None:
 def test_find_linear_chain_single_consumer_constraint() -> None:
     """Verifies that fusion fails if a node has multiple consumers."""
     g = Graph()
-    register_spec("A", OperatorSpec.create(name="A", pure=True, deterministic=True))
-    register_spec("B", OperatorSpec.create(name="B", pure=True, deterministic=True))
-    register_spec("C", OperatorSpec.create(name="C", pure=True, deterministic=True))
+    register_spec("A", OperatorSpec.create(
+        name="A", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("B", OperatorSpec.create(
+        name="B", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("C", OperatorSpec.create(
+        name="C", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
     g.add_node("n1", "A")
     g.add_node("n2", "B")
     g.add_node("n3", "C")
@@ -37,10 +82,28 @@ def test_find_linear_chain_single_consumer_constraint() -> None:
 def test_find_linear_chain_purity_constraint() -> None:
     """Verifies that fusion fails if there are multiple impure nodes or one in the middle."""
     register_spec(
-        "ImpureOp", OperatorSpec.create(name="ImpureOp", pure=False, deterministic=True)
+        "ImpureOp", OperatorSpec.create(
+            name="ImpureOp", 
+            pure=False, 
+            deterministic=True,
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        )
     )
     register_spec(
-        "PureOp", OperatorSpec.create(name="PureOp", pure=True, deterministic=True)
+        "PureOp", OperatorSpec.create(
+            name="PureOp", 
+            pure=True, 
+            deterministic=True,
+            allowed_contexts={"actor"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        )
     )
 
     # Case 1: Multiple impure nodes
@@ -64,10 +127,28 @@ def test_find_linear_chain_determinism_constraint() -> None:
     """Verifies that fusion fails if multiple stochastic nodes are present."""
     register_spec(
         "StochasticOp",
-        OperatorSpec.create(name="StochasticOp", pure=True, deterministic=False),
+        OperatorSpec.create(
+            name="StochasticOp", 
+            pure=True, 
+            deterministic=False,
+            allowed_contexts={"actor"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        ),
     )
     register_spec(
-        "PureOp", OperatorSpec.create(name="PureOp", pure=True, deterministic=True)
+        "PureOp", OperatorSpec.create(
+            name="PureOp", 
+            pure=True, 
+            deterministic=True,
+            allowed_contexts={"actor"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        )
     )
 
     g = Graph()
@@ -83,10 +164,29 @@ def test_find_linear_chain_stateless_constraint() -> None:
     """Verifies that fusion fails if multiple stateful nodes are present."""
     register_spec(
         "StatefulOp",
-        OperatorSpec.create(name="StatefulOp", pure=True, deterministic=True, stateful=True),
+        OperatorSpec.create(
+            name="StatefulOp", 
+            pure=True, 
+            deterministic=True, 
+            stateful=True,
+            allowed_contexts={"actor"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        ),
     )
     register_spec(
-        "PureOp", OperatorSpec.create(name="PureOp", pure=True, deterministic=True)
+        "PureOp", OperatorSpec.create(
+            name="PureOp", 
+            pure=True, 
+            deterministic=True,
+            allowed_contexts={"actor"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        )
     )
 
     g = Graph()
@@ -100,9 +200,36 @@ def test_find_linear_chain_stateless_constraint() -> None:
 
 def test_find_linear_chain_no_branching_constraint() -> None:
     """Verifies that fusion fails if a node has multiple producers."""
-    register_spec("A", OperatorSpec.create(name="A", pure=True, deterministic=True))
-    register_spec("B", OperatorSpec.create(name="B", pure=True, deterministic=True))
-    register_spec("C", OperatorSpec.create(name="C", pure=True, deterministic=True))
+    register_spec("A", OperatorSpec.create(
+        name="A", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("B", OperatorSpec.create(
+        name="B", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("C", OperatorSpec.create(
+        name="C", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
     g = Graph()
     g.add_node("n1", "A")
     g.add_node("n2", "B")

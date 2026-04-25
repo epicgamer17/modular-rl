@@ -101,5 +101,8 @@ class OnPolicyLearner(LearnerRuntime):
         from observability.tracing.event_schema import get_emitter
         get_emitter().emit_metric(name="sps", value=sps, step=context.actor_step)
 
+        # Return the last minibatch results for monitoring/testing
+        if all_results:
+            return all_results[-1]
         return {}
 

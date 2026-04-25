@@ -149,7 +149,7 @@ def rewrite(graph: Graph, match: List[NodeId], rule: 'FusionRule', report: Optio
         
     # 7. Validate graph
     # Import locally to avoid circular dependencies
-    from compiler.passes.validate_structure import validate_structure
+    from compiler.passes.structural.connectivity import validate_structure
     val_report = validate_structure(new_graph)
     if val_report.has_errors():
         # If the transformation produced a broken graph, reject it and return original

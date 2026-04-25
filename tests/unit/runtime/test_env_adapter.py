@@ -203,7 +203,7 @@ def test_manual_reset_requires_call():
             env.reset = spy_reset
 
             step_data = runtime.step()
-            if step_data["done"].any():
+            if step_data.done.any():
                 assert reset_called, "ActorRuntime should have called reset() immediately after termination"
                 break
             

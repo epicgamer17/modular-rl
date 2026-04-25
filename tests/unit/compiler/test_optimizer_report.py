@@ -10,10 +10,53 @@ pytestmark = pytest.mark.unit
 def test_optimizer_report_fusion():
     """Verifies that the optimization report correctly records node fusion."""
     # Register dummy specs for testing
-    register_spec("QValuesSingle", OperatorSpec.create("QValuesSingle", inputs={"obs": SingleObs}, outputs={"q_values": SingleQ}, pure=True, deterministic=True))
-    register_spec("Argmax", OperatorSpec.create("Argmax", inputs={"input": SingleQ}, outputs={"output": Scalar("int64")}, pure=True, deterministic=True))
-    register_spec("GreedyPolicy", OperatorSpec.create("GreedyPolicy", inputs={"obs": SingleObs}, outputs={"action": Scalar("int64")}, pure=True, deterministic=True))
-    register_spec("ReportSink", OperatorSpec.create("ReportSink", inputs={"default": Scalar("int64")}, outputs={}, pure=False))
+    register_spec("QValuesSingle", OperatorSpec.create(
+        "QValuesSingle", 
+        inputs={"obs": SingleObs}, 
+        outputs={"q_values": SingleQ}, 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("Argmax", OperatorSpec.create(
+        "Argmax", 
+        inputs={"input": SingleQ}, 
+        outputs={"output": Scalar("int64")}, 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("GreedyPolicy", OperatorSpec.create(
+        "GreedyPolicy", 
+        inputs={"obs": SingleObs}, 
+        outputs={"action": Scalar("int64")}, 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("ReportSink", OperatorSpec.create(
+        "ReportSink", 
+        inputs={"default": Scalar("int64")}, 
+        outputs={}, 
+        pure=False,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
 
     graph = Graph()
     graph.add_node("obs", NODE_TYPE_SOURCE)

@@ -19,7 +19,12 @@ def test_fusion_shapes_unchanged() -> None:
         inputs={"in": TensorSpec(shape=(-1, 10), dtype="float32")},
         outputs={"out": TensorSpec(shape=(-1, 10), dtype="float32")},
         pure=True, deterministic=True,
-        shape_fn=lambda inputs: {"out": inputs["in"]}
+        shape_fn=lambda inputs: {"out": inputs["in"]},
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
     )
     
     spec_b = OperatorSpec.create(
@@ -27,7 +32,12 @@ def test_fusion_shapes_unchanged() -> None:
         inputs={"in": TensorSpec(shape=(-1, 10), dtype="float32")},
         outputs={"out": TensorSpec(shape=(-1,), dtype="float32")},
         pure=True, deterministic=True,
-        shape_fn=lambda inputs: {"out": TensorSpec(shape=(inputs["in"].shape[0],), dtype="float32")}
+        shape_fn=lambda inputs: {"out": TensorSpec(shape=(inputs["in"].shape[0],), dtype="float32")},
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
     )
     
     spec_fused = OperatorSpec.create(
@@ -35,7 +45,12 @@ def test_fusion_shapes_unchanged() -> None:
         inputs={"in": TensorSpec(shape=(-1, 10), dtype="float32")},
         outputs={"out": TensorSpec(shape=(-1,), dtype="float32")},
         pure=True, deterministic=True,
-        shape_fn=lambda inputs: {"out": TensorSpec(shape=(inputs["in"].shape[0],), dtype="float32")}
+        shape_fn=lambda inputs: {"out": TensorSpec(shape=(inputs["in"].shape[0],), dtype="float32")},
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
     )
     
     register_spec("ShapesOpA", spec_a)
@@ -49,12 +64,30 @@ def test_fusion_shapes_unchanged() -> None:
     
     g = Graph()
     g.add_node("src", "ShapesSource") # Source metadata usually registered in conftest or handled
-    register_spec("ShapesSource", OperatorSpec.create(name="ShapesSource", outputs=TensorSpec(shape=(32, 10), dtype="float32"), pure=True, deterministic=True))
+    register_spec("ShapesSource", OperatorSpec.create(
+        name="ShapesSource", 
+        outputs=TensorSpec(shape=(32, 10), dtype="float32"), 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
     
     g.add_node("a", "ShapesOpA")
     g.add_node("b", "ShapesOpB")
     g.add_node("sink", "ShapesSink")
-    register_spec("ShapesSink", OperatorSpec.create(name="ShapesSink", inputs={"in": TensorSpec(shape=(32,), dtype="float32")}))
+    register_spec("ShapesSink", OperatorSpec.create(
+        name="ShapesSink", 
+        inputs={"in": TensorSpec(shape=(32,), dtype="float32")},
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
     
     g.add_edge("src", "a", dst_port="in")
     g.add_edge("a", "b", dst_port="in")

@@ -1,7 +1,7 @@
 import pytest
 from core.graph import Graph
 from agents.dqn.specs import register_dqn_specs
-from compiler.passes.analyze_gradients import analyze_gradients
+from compiler.passes.shape.gradient_analysis import analyze_gradients
 
 pytestmark = pytest.mark.unit
 

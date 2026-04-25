@@ -1,16 +1,17 @@
+from runtime.bootstrap import bootstrap_runtime
 import pytest
 
 from agents.dqn.config import DQNConfig
 from agents.dqn.graphs import build_learner_graph
 from agents.dqn.specs import register_dqn_specs
-from compiler.passes.memory_optimizations import optimize_memory
+from compiler.passes.optimization.memory import optimize_memory
 from core.graph import Graph, NODE_TYPE_SINK
 from core.schema import Schema, Field, TensorSpec
 from runtime.io.collator import ReplayCollator
 from runtime.registry import (
     OperatorSpec,
     clear_registry,
-    register_base_specs,
+    
     register_spec,
 )
 
@@ -20,9 +21,16 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def setup_specs():
     clear_registry()
-    register_base_specs()
+    bootstrap_runtime()
     register_dqn_specs()
-    register_spec(NODE_TYPE_SINK, OperatorSpec.create(name=NODE_TYPE_SINK))
+    register_spec(NODE_TYPE_SINK, OperatorSpec.create(
+        name=NODE_TYPE_SINK,
+        allowed_contexts={"actor", "learner"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
 
 
 def _dqn_collator(config: DQNConfig) -> ReplayCollator:
@@ -57,6 +65,11 @@ def test_shared_buffer_slots_are_reused_for_temporary_nodes():
             outputs={"y": TensorSpec(shape=(4,), dtype="float32")},
             pure=True,
             deterministic=True,
+            allowed_contexts={"actor"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
 

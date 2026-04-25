@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 from core.graph import Graph
 from runtime.state import ReplayBuffer
-from compiler.passes.validate_ir_purity import validate_ir_purity
+from compiler.passes.semantic.serialization import validate_ir_purity
 from compiler.validation import SEVERITY_ERROR
 
 pytestmark = pytest.mark.unit

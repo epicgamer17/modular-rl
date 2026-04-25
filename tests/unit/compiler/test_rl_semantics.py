@@ -7,7 +7,7 @@ from core.graph import (
     NODE_TYPE_METRICS_SINK,
 )
 from core.schema import TAG_ON_POLICY
-from compiler.passes.validate_rl import validate_rl_semantics
+from compiler.passes.semantic.rl_semantics import validate_rl_semantics
 from compiler.validation import SEVERITY_ERROR
 
 pytestmark = pytest.mark.unit

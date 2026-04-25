@@ -67,11 +67,11 @@ class OperatorSpec:
     updates_params: bool = False
     reads_buffer: bool = False
     differentiable: bool = True
-    
+
     # Math/Semantic Category
     # Valid: "elementwise", "reduction", "distribution", "loss", "optimizer", "buffer_io", "control"
     math_category: str = "elementwise"
-    
+
     # Metadata and constraints
     domain_tags: Set[str] = field(default_factory=set)
     allowed_contexts: Set[str] = field(default_factory=lambda: {"actor", "learner"})
@@ -83,7 +83,7 @@ class OperatorSpec:
     requires_models: List[str] = field(default_factory=list)
     requires_buffers: List[str] = field(default_factory=list)
     requires_optimizer: bool = False
-    
+
     # Trainability Metadata (Richer contract)
     creates_grad: bool = False
     consumes_grad: bool = False
@@ -111,9 +111,9 @@ class OperatorSpec:
         version: str = "1.0.0",
         pure: bool = False,
         stateful: bool = False,
-        updates_params: bool = False,
+        updates_params: Any = "UNSET",
         reads_buffer: bool = False,
-        differentiable: bool = True,
+        differentiable: Any = "UNSET",
         math_category: str = "elementwise",
         domain_tags: Set[str] = None,
         allowed_contexts: Set[str] = None,
@@ -123,8 +123,8 @@ class OperatorSpec:
         requires_models: List[str] = None,
         requires_buffers: List[str] = None,
         requires_optimizer: bool = False,
-        creates_grad: bool = False,
-        consumes_grad: bool = False,
+        creates_grad: Any = "UNSET",
+        consumes_grad: Any = "UNSET",
         parameter_handles: List[str] = None,
         shape_fn: Optional[Callable[[Dict[str, Spec]], Dict[str, Spec]]] = None,
         estimated_flops: int = 0,
@@ -132,6 +132,22 @@ class OperatorSpec:
         kernel_launch_cost: float = 0.0,
     ) -> "OperatorSpec":
         """Helper to create a spec with defaults and single output support."""
+        allowed_contexts = allowed_contexts or {"actor", "learner"}
+        if "learner" in allowed_contexts:
+            missing = []
+            if updates_params == "UNSET": missing.append("updates_params")
+            if differentiable == "UNSET": missing.append("differentiable")
+            if creates_grad == "UNSET": missing.append("creates_grad")
+            if consumes_grad == "UNSET": missing.append("consumes_grad")
+            if missing:
+                raise ValueError(f"Every learner-side op must explicitly declare: {', '.join(missing)}")
+        
+        # Apply defaults
+        if updates_params == "UNSET": updates_params = False
+        if differentiable == "UNSET": differentiable = True
+        if creates_grad == "UNSET": creates_grad = False
+        if consumes_grad == "UNSET": consumes_grad = False
+
         # Process inputs: Wrap raw Specs in PortSpec
         processed_inputs = {}
         if inputs:
@@ -158,7 +174,9 @@ class OperatorSpec:
             pure=pure,
             stateful=stateful,
             updates_params=updates_params,
-            reads_buffer=reads_buffer or bool(requires_buffers) or (math_category == "buffer_io"),
+            reads_buffer=reads_buffer
+            or bool(requires_buffers)
+            or (math_category == "buffer_io"),
             differentiable=differentiable,
             math_category=math_category,
             domain_tags=domain_tags or set(),
@@ -301,425 +319,6 @@ def clear_parameter_registry() -> None:
     _PARAMETER_REGISTRY.clear()
 
 
-def register_base_specs():
-    """Registers basic math and loss operators."""
-    register_spec(
-        "MSELoss",
-        OperatorSpec.create(
-            name="MSELoss",
-            inputs={"pred": PortSpec(spec=None), "target": PortSpec(spec=None)},
-            outputs={"loss": Scalar("float32")},
-            differentiable=True,
-            creates_grad=True,
-            consumes_grad=False,
-            updates_params=False,
-            allowed_contexts={"learner"},
-        ),
-    )
-    register_spec(
-        "WeightedSum",
-        OperatorSpec.create(
-            name="WeightedSum",
-            inputs={"default": PortSpec(spec=None, variadic=True)},
-            outputs={"output": Scalar("float32")},
-            differentiable=True,
-            creates_grad=False,
-            consumes_grad=False,
-            updates_params=False,
-            allowed_contexts={"learner"},
-        ),
-    )
-    register_spec(
-        "Mean",
-        OperatorSpec.create(
-            name="Mean",
-            inputs={"input": PortSpec(spec=None)},
-            outputs={"output": Scalar("float32")},
-            differentiable=True,
-            creates_grad=False,
-            consumes_grad=False,
-            updates_params=False,
-            allowed_contexts={"learner"},
-        ),
-    )
-    register_spec(
-        "Backward",
-        OperatorSpec.create(
-            name="Backward",
-            inputs={"loss": Scalar("float32")},
-            outputs={"done": Scalar("bool")},
-            pure=False,
-            stateful=True,
-            allowed_contexts={"learner"},
-            differentiable=False,
-            creates_grad=False,
-            consumes_grad=False,
-            updates_params=False,
-            parameter_handles=["model_handle"],
-        ),
-    )
-    register_spec(
-        "GradBuffer",
-        OperatorSpec.create(
-            name="GradBuffer",
-            inputs={},
-            outputs={"grads": PortSpec(spec=None)},
-            pure=False,
-            stateful=True,
-            allowed_contexts={"learner"},
-            differentiable=False,
-            creates_grad=False,
-            consumes_grad=False,
-            updates_params=False,
-            parameter_handles=["model_handle"],
-        ),
-    )
-    register_spec(
-        "AccumulateGrad",
-        OperatorSpec.create(
-            name="AccumulateGrad",
-            inputs={},
-            outputs={
-                "grads": PortSpec(spec=None),
-                "count": Scalar("int64"),
-                "ready": Scalar("bool"),
-            },
-            pure=False,
-            stateful=True,
-            allowed_contexts={"learner"},
-            differentiable=False,
-            creates_grad=False,
-            consumes_grad=False,
-            updates_params=False,
-            parameter_handles=["model_handle"],
-        ),
-    )
-    register_spec(
-        "OptimizerStepEvery",
-        OperatorSpec.create(
-            name="OptimizerStepEvery",
-            inputs={},
-            outputs={
-                "stepped": Scalar("bool"),
-                "count": Scalar("int64"),
-                "loss": Scalar("float32"),
-                "grad_norm": Scalar("float32"),
-                "lr": Scalar("float32"),
-            },
-            pure=False,
-            stateful=True,
-            allowed_contexts={"learner"},
-            differentiable=False,
-            creates_grad=False,
-            consumes_grad=True,
-            updates_params=True,
-            parameter_handles=["model_handle", "optimizer_handle"],
-        ),
-    )
-
-
-    register_rl_specs()
-
-def register_rl_specs():
-    """Registers RL specific operator specifications."""
-    # --- Core RL Ops ---
-    register_spec(
-        "Source",
-        OperatorSpec.create(
-            "Source",
-            inputs={},
-            outputs={},
-            pure=True,
-            allowed_contexts={"actor", "learner"},
-            differentiable=False,
-        ),
-    )
-    register_spec(
-        "ReplayQuery",
-        OperatorSpec.create(
-            "ReplayQuery",
-            inputs={},
-            outputs={"default": TransitionBatch},
-            pure=False,
-            stateful=True,
-            allowed_contexts={"learner"},
-            requires_buffers=["main"],
-            math_category="buffer_io"
-        ),
-    )
-    register_spec(
-        "TargetSync",
-        OperatorSpec.create(
-            "TargetSync",
-            inputs={},
-            outputs={},
-            pure=False,
-            stateful=True,
-            allowed_contexts={"learner"},
-            side_effects=["target_update"],
-            requires_models=["source", "target"],
-            math_category="control"
-        ),
-    )
-    register_spec(
-        "MetricsSink",
-        OperatorSpec.create(
-            "MetricsSink",
-            inputs={
-                "loss": PortSpec(spec=Scalar("float32"), required=False),
-                "avg_q": PortSpec(spec=Scalar("float32"), required=False),
-                "reward": PortSpec(spec=Scalar("float32"), required=False),
-                "epsilon": PortSpec(spec=Scalar("float32"), required=False),
-                "replay_size": PortSpec(spec=Scalar("int64"), required=False),
-                "batch": PortSpec(spec=TransitionBatch, required=False),
-                "default": PortSpec(
-                    spec=Scalar("float32"), required=False, variadic=True
-                ),
-            },
-            outputs={},
-            pure=False,
-            stateful=True,
-            allowed_contexts={"actor", "learner"},
-            side_effects=["logging"],
-            math_category="control"
-        ),
-    )
-
-    # --- Common RL Primitives ---
-    register_spec(
-        "Exploration",
-        OperatorSpec.create(
-            name="Exploration",
-            inputs={
-                "q_values": SingleQ,
-                "epsilon": PortSpec(spec=Scalar("float32"), required=False),
-            },
-            outputs={"action": Scalar("int64")},
-            pure=False,
-            deterministic=False,
-            allowed_contexts={"actor"},
-            math_category="distribution"
-        ),
-    )
-    register_spec(
-        "LinearDecay",
-        OperatorSpec.create(
-            name="LinearDecay",
-            inputs={"clock": PortSpec(spec=Scalar("int64"), required=False)},
-            outputs={"epsilon": Scalar("float32")},
-            pure=True,
-            allowed_contexts={"actor", "learner"},
-            math_category="elementwise"
-        ),
-    )
-    register_spec(
-        "ReduceMean",
-        OperatorSpec.create(
-            name="ReduceMean",
-            inputs={"input": PortSpec(spec=None)},
-            outputs={"output": Scalar("float32")},
-            pure=True,
-            math_category="reduction"
-        ),
-    )
-    register_spec(
-        "GetField",
-        OperatorSpec.create(
-            name="GetField",
-            inputs={"input": PortSpec(spec=None)},
-            outputs={"output": PortSpec(spec=None)},
-            pure=True,
-            math_category="elementwise"
-        ),
-    )
-    # --- Q-Learning Specific ---
-    register_spec(
-        "QValuesSingle",
-        OperatorSpec.create(
-            name="QValuesSingle",
-            inputs={"obs": SingleObs},
-            outputs={"q_values": SingleQ},
-            pure=True,
-            allowed_contexts={"actor", "learner"},
-            parameter_handles=["model_handle"],
-            domain_tags={"q_learning"},
-            math_category="elementwise"
-        ),
-    )
-    register_spec(
-        "QForward",
-        OperatorSpec.create(
-            name="QForward",
-            inputs={"obs": BatchObs},
-            outputs={"q_values": BatchQ},
-            pure=True,
-            allowed_contexts={"actor", "learner"},
-            parameter_handles=["model_handle"],
-            domain_tags={"q_learning"},
-            math_category="elementwise"
-        ),
-    )
-    register_spec("QValuesBatch", get_spec("QForward"))
-
-    register_spec(
-        "GreedyAction",
-        OperatorSpec.create(
-            name="GreedyAction",
-            inputs={"input": PortSpec(spec=None)},
-            outputs={"output": Scalar("int64")},
-            pure=True,
-            math_category="distribution"
-        ),
-    )
-
-    register_spec(
-        "Optimizer",
-        OperatorSpec.create(
-            name="Optimizer",
-            inputs={"loss": Scalar("float32")},
-            outputs={"loss_val": Scalar("float32")},
-            pure=False,
-            stateful=True,
-            allowed_contexts={"learner"},
-            updates_params=True,
-            math_category="optimizer"
-        ),
-    )
-    register_spec(
-        "PPO_Optimizer",
-        OperatorSpec.create(
-            name="PPO_Optimizer",
-            inputs={"loss": PortSpec(spec=None)}, # Can be dict or tensor
-            outputs={},
-            pure=False,
-            stateful=True,
-            updates_params=True,
-            math_category="optimizer"
-        ),
-    )
-
-    # 1. Value Loss Spec
-    register_spec(
-        "ValueLoss",
-        OperatorSpec.create(
-            name="ValueLoss",
-            inputs={
-                "values": TensorSpec(shape=(-1,), dtype="float32"),
-                "returns": TensorSpec(shape=(-1,), dtype="float32"),
-                "old_values": PortSpec(
-                    spec=TensorSpec(shape=(-1,), dtype="float32"), required=False
-                ),
-            },
-            outputs={"loss": TensorSpec(shape=(), dtype="float32")},
-            math_category="loss",
-        )
-    )
-
-    # 2. Surrogate Loss Spec
-    register_spec(
-        "SurrogateLoss",
-        OperatorSpec.create(
-            name="SurrogateLoss",
-            inputs={
-                "ratio": TensorSpec(shape=(-1,), dtype="float32"),
-                "clipped_ratio": TensorSpec(shape=(-1,), dtype="float32"),
-                "advantages": TensorSpec(shape=(-1,), dtype="float32"),
-            },
-            outputs={"loss": TensorSpec(shape=(), dtype="float32")},
-            domain_tags={"policy_gradient"},
-            math_category="loss",
-        )
-    )
-
-    # 3. Entropy Spec
-    register_spec(
-        "Entropy",
-        OperatorSpec.create(
-            name="Entropy",
-            inputs={
-                "logits": TensorSpec(shape=(-1, -1), dtype="float32"),
-            },
-            outputs={"entropy": TensorSpec(shape=(), dtype="float32")},
-            domain_tags={"policy_gradient"},
-            math_category="reduction",
-        )
-    )
-
-    # 4. LogProb Spec
-    register_spec(
-        "LogProb",
-        OperatorSpec.create(
-            name="LogProb",
-            inputs={
-                "logits": TensorSpec(shape=(-1, -1), dtype="float32"),
-                "action": TensorSpec(shape=(-1,), dtype="int64"),
-            },
-            outputs={"log_prob": TensorSpec(shape=(-1,), dtype="float32")},
-            domain_tags={"policy_gradient"},
-            math_category="distribution",
-        )
-    )
-
-    # 5. PolicyRatio Spec
-    register_spec(
-        "PolicyRatio",
-        OperatorSpec.create(
-            name="PolicyRatio",
-            inputs={
-                "new_log_prob": TensorSpec(shape=(-1,), dtype="float32"),
-                "old_log_prob": TensorSpec(shape=(-1,), dtype="float32"),
-            },
-            outputs={"ratio": TensorSpec(shape=(-1,), dtype="float32")},
-            domain_tags={"policy_gradient"},
-            math_category="elementwise",
-        )
-    )
-    
-    # 6. Sample Batch (all)
-    register_spec(
-        "SampleBatch",
-        OperatorSpec.create(
-            name="SampleBatch",
-            inputs={},
-            outputs={"batch": TransitionBatch},
-            pure=False,
-            stateful=True,
-            reads_buffer=True,
-            math_category="buffer_io",
-        )
-    )
-    
-    # 7. Q-Learning Specs
-    register_spec(
-        "TDLoss",
-        OperatorSpec.create(
-            name="TDLoss",
-            inputs={"batch": TransitionBatch},
-            outputs={"loss": Scalar("float32")},
-            differentiable=True,
-            creates_grad=True,
-            allowed_contexts={"learner"},
-            parameter_handles=["model_handle", "target_handle"],
-            domain_tags={"q_learning"},
-            math_category="loss",
-        )
-    )
-    
-    register_spec(
-        "BellmanTarget",
-        OperatorSpec.create(
-            name="BellmanTarget",
-            inputs={
-                "next_q_values": TensorSpec(shape=(-1, -1), dtype="float32"),
-                "rewards": TensorSpec(shape=(-1,), dtype="float32"),
-                "dones": TensorSpec(shape=(-1,), dtype="bool"),
-            },
-            outputs={"target": TensorSpec(shape=(-1,), dtype="float32")},
-            math_category="elementwise",
-        )
-    )
-
-
 def is_compatible(src: Spec, dst: Spec) -> bool:
     """
     Checks if a source spec is compatible with a destination spec.
@@ -749,7 +348,7 @@ def is_compatible(src: Spec, dst: Spec) -> bool:
         # DType alias mapping (Torch compatibility)
         src_dtype = "int64" if src.dtype == "long" else src.dtype
         dst_dtype = "int64" if dst.dtype == "long" else dst.dtype
-        
+
         return src_dtype == dst_dtype
 
     if isinstance(src, Schema) and isinstance(dst, Schema):

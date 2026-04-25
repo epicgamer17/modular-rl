@@ -3,6 +3,20 @@ from typing import Dict, Any, Optional
 from core.graph import Node
 from runtime.context import ExecutionContext
 from runtime.signals import MissingInput
+from runtime.registry import OperatorSpec, PortSpec, Scalar, SingleQ
+
+EXPLORATION_SPEC = OperatorSpec.create(
+    name="Exploration",
+    inputs={
+        "q_values": SingleQ,
+        "epsilon": PortSpec(spec=Scalar("float32"), required=False),
+    },
+    outputs={"action": Scalar("int64")},
+    pure=False,
+    deterministic=False,
+    allowed_contexts={"actor"},
+    math_category="distribution"
+)
 
 def op_epsilon_greedy(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
@@ -37,16 +51,4 @@ def op_epsilon_greedy(
     # Greedy choice
     return torch.argmax(q_values).item()
 
-def op_linear_decay(
-    node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
-) -> float:
-    """Linear decay of a value over time."""
-    clock = inputs.get("clock", node.params.get("clock", 0))
-    start_val = node.params.get("start_val", 1.0)
-    end_val = node.params.get("end_val", 0.1)
-    total_steps = node.params.get("total_steps", 1000)
-    
-    # Simple linear decay formula
-    if clock >= total_steps:
-        return end_val
-    return start_val - (start_val - end_val) * (clock / total_steps)
+

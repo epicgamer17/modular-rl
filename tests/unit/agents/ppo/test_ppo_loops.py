@@ -7,12 +7,16 @@ import copy
 
 from agents.ppo.config import PPOConfig
 from agents.ppo.model import ActorCritic
-from agents.ppo.operators import register_ppo_operators, op_ppo_gae
+from agents.ppo.operators import register_ppo_operators
+from ops.rl.advantage import op_gae as op_ppo_gae
 from agents.ppo.graphs import create_train_graph, create_ppo_update_graph
 from runtime.context import ExecutionContext
 from runtime.state import ModelRegistry, OptimizerState, OptimizerRegistry, BufferRegistry
 from runtime.executor import execute
 from core.graph import Node, NodeId
+
+from ops.registry import register_all_operators
+register_all_operators()
 
 pytestmark = pytest.mark.unit
 
@@ -72,6 +76,7 @@ def test_loop_equivalence():
         terminated=terminated,
         truncated=torch.zeros_like(terminated),
         next_obs=torch.randn_like(obs),
+        done=terminated | torch.zeros_like(terminated),
         log_prob=log_prob,
         value=values
     )
@@ -114,6 +119,7 @@ def test_loop_equivalence():
                 terminated=batch.terminated[mb_indices],
                 truncated=batch.truncated[mb_indices],
                 next_obs=batch.next_obs[mb_indices],
+                done=batch.done[mb_indices],
                 log_prob=batch.log_prob[mb_indices],
                 value=batch.value[mb_indices],
                 advantages=advantages[mb_indices],
@@ -133,6 +139,8 @@ def test_loop_equivalence():
         def get_all(self): return batch
         def __len__(self): return config.rollout_steps
         def clear(self): pass
+        def sample_query(self, batch_size, seed=None, **kwargs):
+            return batch
         
     buffer_registry = BufferRegistry()
     buffer_registry.register(config.buffer_id, MockBuffer())

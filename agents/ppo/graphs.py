@@ -111,6 +111,7 @@ def create_train_graph(config: PPOConfig) -> Graph:
     # Wiring
     # Forward Pass
     graph.add_edge("traj_in", "forward", src_port="obs", dst_port="obs")
+    graph.add_edge("traj_in", "forward", src_port="policy_version", dst_port="policy_version")
     
     # Log Prob
     graph.add_edge("forward", "log_prob", src_port="logits", dst_port="logits")

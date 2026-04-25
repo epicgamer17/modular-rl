@@ -2,8 +2,17 @@ import pytest
 import torch
 from agents.dqn.config import DQNConfig
 from agents.dqn.agent import DQNAgent
+from runtime.bootstrap import bootstrap_runtime
+from runtime.registry import clear_registry
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def setup():
+    clear_registry()
+    bootstrap_runtime()
+
 
 def test_dqn_strict_compile():
     """

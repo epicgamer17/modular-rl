@@ -8,6 +8,9 @@ from runtime.runner import SchedulePlan, ScheduleRunner
 from runtime.engine import ActorRuntime, LearnerRuntime
 from compiler.planner import compile_schedule
 
+from ops.registry import register_all_operators
+register_all_operators()
+
 pytestmark = pytest.mark.unit
 
 class SimpleNet(nn.Module):

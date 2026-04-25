@@ -11,9 +11,30 @@ def setup_specs() -> None:
     from runtime.registry import clear_registry
     clear_registry()
     # Register dummy specs to satisfy validate_metadata
-    register_spec("StrictSource", OperatorSpec.create(name="StrictSource"))
-    register_spec("StrictSink", OperatorSpec.create(name="StrictSink"))
-    register_spec("StrictType", OperatorSpec.create(name="StrictType"))
+    register_spec("StrictSource", OperatorSpec.create(
+        name="StrictSource",
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("StrictSink", OperatorSpec.create(
+        name="StrictSink",
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("StrictType", OperatorSpec.create(
+        name="StrictType",
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
 
 
 def test_compile_strict_mode_converts_warnings_to_errors() -> None:

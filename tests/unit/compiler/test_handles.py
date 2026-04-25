@@ -4,7 +4,7 @@ from core.graph import (
     NODE_TYPE_REPLAY_QUERY,
     NODE_TYPE_TARGET_SYNC,
 )
-from compiler.passes.validate_handles import validate_handles
+from compiler.passes.structural.handles import validate_handles
 from compiler.validation import SEVERITY_ERROR
 
 pytestmark = pytest.mark.unit

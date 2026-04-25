@@ -120,9 +120,9 @@ def test_episode_lengths_sum_to_steps():
             step_data = runtime.step(context=ctx)
 
             # Check if any episode finished
-            done = step_data["done"]
+            done = step_data.done
             for i in range(num_envs):
-                manual_returns[i] += step_data["reward"][i].item()
+                manual_returns[i] += step_data.reward[i].item()
                 manual_lengths[i] += 1
 
                 if done[i]:

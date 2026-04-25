@@ -2,6 +2,7 @@ import pytest
 import torch
 import torch.nn as nn
 from agents.dqn.operators import op_td_loss
+from core.batch import TransitionBatch
 from core.graph import Node
 from runtime.context import ExecutionContext
 
@@ -21,13 +22,13 @@ def test_td_loss_rejects_scalar_reward():
     batch_size = 4
     
     # Correct batch
-    batch = {
-        "obs": torch.zeros((batch_size, 4)),
-        "action": torch.zeros(batch_size, dtype=torch.long),
-        "reward": torch.zeros(batch_size), # Correct: [B]
-        "next_obs": torch.zeros((batch_size, 4)),
-        "done": torch.zeros(batch_size)
-    }
+    batch = TransitionBatch(
+        obs=torch.zeros((batch_size, 4)),
+        action=torch.zeros(batch_size, dtype=torch.long),
+        reward=torch.zeros(batch_size), # Correct: [B]
+        next_obs=torch.zeros((batch_size, 4)),
+        done=torch.zeros(batch_size)
+    )
     
     node = Node(node_id="loss", node_type="TDLoss", params={"gamma": 0.99})
     context = ExecutionContext()
@@ -39,8 +40,13 @@ def test_td_loss_rejects_scalar_reward():
     op_td_loss(node, {"batch": batch}, context)
     
     # 2. Verify scalar reward fails (implicit broadcasting would allow this if not for our assertion)
-    batch_bad_reward = batch.copy()
-    batch_bad_reward["reward"] = torch.tensor(1.0) # Scalar instead of [B]
+    batch_bad_reward = TransitionBatch(
+        obs=batch.obs,
+        action=batch.action,
+        reward=torch.tensor(1.0), # Scalar instead of [B]
+        next_obs=batch.next_obs,
+        done=batch.done
+    )
     
     with pytest.raises(AssertionError, match="must match max_next_q shape"):
         op_td_loss(node, {"batch": batch_bad_reward}, context)

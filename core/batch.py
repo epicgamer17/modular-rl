@@ -11,11 +11,11 @@ class TransitionBatch:
     Enforces a consistent interface across algorithms (DQN, PPO, etc.)
     """
 
-    obs: torch.Tensor
-    action: torch.Tensor
-    reward: torch.Tensor
-    next_obs: torch.Tensor
-    done: torch.Tensor  # Often terminated | truncated
+    obs: Optional[torch.Tensor] = None
+    action: Optional[torch.Tensor] = None
+    reward: Optional[torch.Tensor] = None
+    next_obs: Optional[torch.Tensor] = None
+    done: Optional[torch.Tensor] = None  # Often terminated | truncated
 
     # Optional fields for specific algorithms
     log_prob: Optional[torch.Tensor] = None

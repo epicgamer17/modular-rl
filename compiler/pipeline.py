@@ -6,25 +6,10 @@ Orchestrates validation passes and optimization.
 from typing import Set, Optional, Any
 from core.graph import Graph
 from compiler.validation import ValidationReport, SEVERITY_ERROR, SEVERITY_WARN
-from compiler.passes.validate_metadata import validate_metadata
-from compiler.passes.validate_structure import validate_structure
-from compiler.passes.validate_ports import validate_ports
-from compiler.passes.validate_rl import validate_rl_semantics
-from compiler.passes.validate_handles import validate_handles
-from compiler.passes.validate_purity import validate_purity
-from compiler.passes.validate_ir_purity import validate_ir_purity
-from compiler.passes.validate_grad_semantics import validate_grad_semantics
-from compiler.passes.infer_shapes import infer_shapes
-from compiler.passes.autobatch import vectorize_graph
-from compiler.passes.autodiff import autodiff
-from compiler.passes.validate_domains import validate_domains
-from compiler.passes.validate_context import validate_context
-from compiler.passes.collect_trainable_parameters import collect_trainable_parameters
-from compiler.passes.analyze_gradients import analyze_gradients
-from compiler.passes.validate_shapes import validate_shapes
-from compiler.passes.validate_context import validate_context
-from compiler.passes.validate_domains import validate_domains
-from compiler.optimizer import optimize_graph
+from compiler.passes.structural import validate_structural
+from compiler.passes.semantic import validate_semantic
+from compiler.passes.shape import run_shape_analysis, validate_shape_semantics
+from compiler.passes.optimization import run_transformations
 
 
 def compile_graph(
@@ -73,70 +58,40 @@ def compile_graph(
 
     report = ValidationReport()
 
-    # 0. Metadata Checks (Ensure all types have specifications)
-    report.merge(validate_metadata(graph, strict=strict))
+    # 1. Structural Pre-check (Metadata)
+    with emitter.trace_pass("metadata_check"):
+        from compiler.passes.structural.metadata import validate_metadata
+        report.merge(validate_metadata(graph, strict=strict))
 
-    # 1. Shape Inference (Populate node schemas for validation)
+    # 2. Shape Inference
     with emitter.trace_pass("shape_inference"):
-        graph = infer_shapes(graph)
+        graph = run_shape_analysis(graph)
 
-    # 2. Shape Validation
-    with emitter.trace_pass("validate_shapes"):
-        report.merge(validate_shapes(graph))
+    # 3. Optimization and Transformations (Autodiff, Autobatch, Pruning, Fusion)
+    # Optimization (DNE) happens here to clean up the graph before detailed validation
+    with emitter.trace_pass("transformations"):
+        graph = run_transformations(
+            graph,
+            optimize=optimize,
+            autobatch=autobatch,
+            autodiff_lowering=autodiff_lowering,
+            context=context,
+            report=optimization_report
+        )
 
-    # 3. Autodiff Lowering (Decompose Loss -> Backward + GradBuffer)
-    if autodiff_lowering and context in ["learner", "both"]:
-        with emitter.trace_pass("autodiff"):
-            graph = autodiff(graph)
+    # 4. Detailed Validation
+    # These passes run on the optimized graph
+    with emitter.trace_pass("structural_validation"):
+        # Connectivity, Ports, Handles
+        report.merge(validate_structural(graph, model_handles, buffer_handles, strict=strict))
 
-    # 3b. AutoBatching / Vectorization (Step 3)
-    if autobatch:
-        with emitter.trace_pass("autobatch"):
-            graph = vectorize_graph(graph)
+    with emitter.trace_pass("shape_validation"):
+        # Shape consistency and gradient flow
+        report.merge(validate_shape_semantics(graph, context=context))
 
-    # 4. Optimization Passes (DNE, fusion)
-    # Applying these early removes dead nodes that might otherwise trigger validation errors
-    if optimize:
-        with emitter.trace_pass("optimize"):
-            graph = optimize_graph(graph, report=optimization_report)
-
-
-    # 5. Structural Checks (Required, Cycles, unreachable nodes)
-    report.merge(validate_structure(graph))
-
-    # 6. Port Contract Checks (Compatible types, Schema field audit)
-    report.merge(validate_ports(graph))
-
-    # 7. RL Semantic Checks (On-policy vs Off-policy, sync rules)
-    report.merge(validate_rl_semantics(graph))
-
-    # 8. Domain and Context Checks
-    report.merge(validate_context(graph))
-    report.merge(validate_domains(graph))
-
-    # 9. Handle Registry Checks (Model/Buffer handle existence)
-    report.merge(validate_handles(graph, model_handles, buffer_handles))
-
-    # 10. Purity and Side Effect Checks
-    report.merge(validate_purity(graph, context))
-
-    # 11. Gradient Safety Checks
-    report.merge(validate_grad_semantics(graph, context))
-    
-    # 12. IR Serialization Purity (No live objects in params)
-    report.merge(validate_ir_purity(graph))
-
-    # 13. Collect Trainable Parameters
-    graph.parameters = collect_trainable_parameters(graph)
-
-    # 8. Gradient Flow Analysis
-    if context in ["learner", "both"]:
-        from compiler.validation import ValidationIssue
-        grad_report = analyze_gradients(graph)
-        for warn in grad_report.warnings:
-            report.add(ValidationIssue(severity=SEVERITY_WARN, code="G001", node_id=None, message=warn))
-        for err in grad_report.errors:
-            report.add(ValidationIssue(severity=SEVERITY_ERROR, code="G001", node_id=None, message=err))
+    with emitter.trace_pass("semantic_validation"):
+        # RL rules, Context, Domains, Purity
+        report.merge(validate_semantic(graph, context=context))
 
     # Check for hard errors
     if report.has_errors():

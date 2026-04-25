@@ -2,7 +2,7 @@ import pytest
 from core.graph import Graph, NODE_TYPE_SOURCE
 from core.schema import Schema, Field, TensorSpec
 from core.types import TensorType
-from compiler.passes.autobatch import vectorize_graph
+from compiler.passes.optimization.autobatch import vectorize_graph
 
 pytestmark = pytest.mark.unit
 

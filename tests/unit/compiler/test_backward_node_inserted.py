@@ -2,7 +2,8 @@ import pytest
 import torch
 from core.graph import Graph
 from agents.dqn.specs import register_dqn_specs
-from runtime.registry import register_base_specs, clear_registry
+from runtime.bootstrap import bootstrap_runtime
+from runtime.registry import clear_registry
 from compiler.pipeline import compile_graph
 
 pytestmark = pytest.mark.unit
@@ -10,7 +11,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def setup_specs():
     clear_registry()
-    register_base_specs()
+    bootstrap_runtime()
     register_dqn_specs()
 
 def test_backward_node_inserted():

@@ -61,7 +61,7 @@ def test_parallel_context_isolation():
     # Buffers to collect results
     collected_contexts = []
     def recording_fn(step_data):
-        collected_contexts.append(step_data["metadata"]["context"])
+        collected_contexts.append(step_data.metadata["context"])
         
     for r in runtimes:
         r.recording_fn = recording_fn

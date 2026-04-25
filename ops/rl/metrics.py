@@ -3,6 +3,31 @@ from typing import Dict, Any, Optional
 from core.graph import Node
 from runtime.context import ExecutionContext
 from runtime.refs import RuntimeValue
+from runtime.registry import OperatorSpec, PortSpec, Scalar, TransitionBatch
+
+METRICS_SINK_SPEC = OperatorSpec.create(
+    "MetricsSink",
+    inputs={
+        "loss": PortSpec(spec=Scalar("float32"), required=False),
+        "avg_q": PortSpec(spec=Scalar("float32"), required=False),
+        "reward": PortSpec(spec=Scalar("float32"), required=False),
+        "epsilon": PortSpec(spec=Scalar("float32"), required=False),
+        "replay_size": PortSpec(spec=Scalar("int64"), required=False),
+        "batch": PortSpec(spec=TransitionBatch, required=False),
+        "default": PortSpec(spec=Scalar("float32"), required=False, variadic=True),
+    },
+    outputs={},
+    pure=False,
+    stateful=True,
+    allowed_contexts={"actor", "learner"},
+    side_effects=["logging"],
+    math_category="control",
+    differentiable=False,
+    creates_grad=False,
+    consumes_grad=False,
+    updates_params=False,
+)
+
 
 def _is_valid(val: Any) -> bool:
     """Helper to check if a value is real data and not a control-flow RuntimeValue."""
@@ -10,6 +35,8 @@ def _is_valid(val: Any) -> bool:
         return val.has_data
     return val is not None
 
+
+# TODO: what should be handled here and what should be handled in observations/ ?
 def op_metrics_sink(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
 ) -> Dict[str, Any]:
@@ -44,7 +71,9 @@ def op_metrics_sink(
         if isinstance(loss, dict):
             for k, v in loss.items():
                 val = v.item() if hasattr(v, "item") else v
-                metrics[k] = float(val) if isinstance(val, (int, float, torch.Tensor)) else val
+                metrics[k] = (
+                    float(val) if isinstance(val, (int, float, torch.Tensor)) else val
+                )
         else:
             metrics["loss"] = (
                 loss.mean().item()
@@ -70,15 +99,11 @@ def op_metrics_sink(
 
     # Use the new event-driven observability module
     from observability.tracing.event_schema import get_emitter
+
     emitter = get_emitter()
 
     # Log all metrics as events
     for k, v in metrics.items():
         emitter.emit_metric(name=k, value=v, step=context.actor_step)
-
-    # For backward compatibility or specific triggers, we might still want a way to signal "done with this step"
-    # But for now, emitting metrics is enough.
-
-
 
     return metrics

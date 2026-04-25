@@ -3,7 +3,8 @@ from core.graph import Graph
 from core.graph import EdgeType
 from agents.ppo.specs import register_ppo_specs
 from agents.dqn.specs import register_dqn_specs
-from runtime.registry import register_base_specs, clear_registry
+from runtime.bootstrap import bootstrap_runtime
+from runtime.registry import clear_registry
 from compiler.pipeline import compile_graph
 
 pytestmark = pytest.mark.unit
@@ -12,7 +13,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def setup_specs():
     clear_registry()
-    register_base_specs()
+    bootstrap_runtime()
     register_ppo_specs()
     register_dqn_specs()
 
@@ -34,7 +35,7 @@ def test_ppo_loss_nodes_compile():
 
     # 3. Clip
     g.add_node("clip", "Clip", params={"low": 0.8, "high": 1.2})
-    g.add_edge("ratio", "clip", dst_port="input")
+    g.add_edge("ratio", "clip", dst_port="x")
 
     # 4. Surrogate
     g.add_node("adv", "Source")

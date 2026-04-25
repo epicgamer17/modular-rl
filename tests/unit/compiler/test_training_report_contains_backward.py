@@ -2,8 +2,8 @@ import pytest
 import torch
 from core.graph import Graph, NODE_TYPE_SOURCE, NODE_TYPE_SINK
 from compiler.optimizer import optimize_graph, OptimizationReport, OPTIMIZER_ENGINE
-from compiler.passes.autodiff import autodiff
-from compiler.passes.collect_trainable_parameters import collect_trainable_parameters
+from compiler.passes.optimization.autodiff import autodiff
+from compiler.passes.optimization.parameters import collect_trainable_parameters
 from compiler.rewrite import FusionRule
 from runtime.registry import register_spec, OperatorSpec, SingleQ, Scalar
 
@@ -24,7 +24,12 @@ def test_training_report_contains_backward():
         outputs={"q": SingleQ}, 
         parameter_handles=["model_handle"],
         pure=True,
-        deterministic=True
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
     ))
     register_spec("TargetQ", OperatorSpec.create(
         "TargetQ", 
@@ -32,7 +37,12 @@ def test_training_report_contains_backward():
         outputs={"q": SingleQ}, 
         parameter_handles=["target_handle"],
         pure=True,
-        deterministic=True
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
     ))
     register_spec("IdentityBoundary", OperatorSpec.create(
         "IdentityBoundary",
@@ -40,7 +50,11 @@ def test_training_report_contains_backward():
         outputs={"output": SingleQ},
         creates_grad=True,
         pure=True,
-        deterministic=True
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        consumes_grad=False,
+        updates_params=False,
     ))
     register_spec("MSELoss", OperatorSpec.create(
         "MSELoss", 
@@ -48,26 +62,44 @@ def test_training_report_contains_backward():
         outputs={"loss": Scalar("float32")}, 
         creates_grad=True,
         pure=True,
-        deterministic=True
+        deterministic=True,
+        allowed_contexts={"learner"},
+        differentiable=False,
+        consumes_grad=False,
+        updates_params=False,
     ))
     register_spec("Optimizer", OperatorSpec.create(
         "Optimizer", 
         inputs={"loss": Scalar("float32")}, 
         outputs={}, 
         consumes_grad=True,
-        pure=False
+        pure=False,
+        allowed_contexts={"learner"},
+        differentiable=False,
+        creates_grad=False,
+        updates_params=True,
     ))
     register_spec("Backward", OperatorSpec.create(
         "Backward", 
         inputs={"loss": Scalar("float32")}, 
         outputs={}, 
-        pure=False
+        pure=False,
+        allowed_contexts={"learner"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
     ))
     register_spec("GradBuffer", OperatorSpec.create(
         "GradBuffer", 
         inputs={}, 
         outputs={}, 
-        pure=False
+        pure=False,
+        allowed_contexts={"learner"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
     ))
 
     # 2. Build the graph

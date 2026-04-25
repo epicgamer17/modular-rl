@@ -8,7 +8,7 @@ from runtime.registry import (
     SingleQ,
     BatchQ,
 )
-from compiler.passes.validate_ports import validate_ports
+from compiler.passes.structural.ports import validate_ports
 from compiler.validation import SEVERITY_ERROR
 
 pytestmark = pytest.mark.unit
@@ -20,13 +20,49 @@ def setup_specs() -> None:
     clear_registry()
     # Register specific operators for shape/rank validation tests
     register_spec(
-        "QValuesSingle", OperatorSpec.create(name="QValuesSingle", inputs={"obs": SingleObs}, outputs=SingleQ)
+        "QValuesSingle", OperatorSpec.create(
+            name="QValuesSingle", 
+            inputs={"obs": SingleObs}, 
+            outputs=SingleQ,
+            allowed_contexts={"actor"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        )
     )
     register_spec(
-        "QValuesBatch", OperatorSpec.create(name="QValuesBatch", inputs={"obs": BatchObs}, outputs=BatchQ)
+        "QValuesBatch", OperatorSpec.create(
+            name="QValuesBatch", 
+            inputs={"obs": BatchObs}, 
+            outputs=BatchQ,
+            allowed_contexts={"actor"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        )
     )
-    register_spec("SingleObsSource", OperatorSpec.create(name="SingleObsSource", inputs={}, outputs=SingleObs))
-    register_spec("BatchObsSource", OperatorSpec.create(name="BatchObsSource", inputs={}, outputs=BatchObs))
+    register_spec("SingleObsSource", OperatorSpec.create(
+        name="SingleObsSource", 
+        inputs={}, 
+        outputs=SingleObs,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("BatchObsSource", OperatorSpec.create(
+        name="BatchObsSource", 
+        inputs={}, 
+        outputs=BatchObs,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
 
 
 def test_shape_single_to_single_passes() -> None:

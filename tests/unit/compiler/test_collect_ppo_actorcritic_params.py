@@ -1,7 +1,7 @@
 import pytest
 from core.graph import Graph
 from agents.ppo.specs import register_ppo_specs
-from compiler.passes.collect_trainable_parameters import collect_trainable_parameters
+from compiler.passes.optimization.parameters import collect_trainable_parameters
 
 pytestmark = pytest.mark.unit
 

@@ -5,10 +5,12 @@ import torch.optim as optim
 from core.graph import Graph, NodeId
 from agents.dqn.specs import register_dqn_specs
 from agents.dqn.operators import register_dqn_operators
-from runtime.registry import register_base_specs, clear_registry, register_spec, OperatorSpec
+from runtime.bootstrap import bootstrap_runtime
+from runtime.registry import clear_registry, register_spec, OperatorSpec
 from runtime.context import ExecutionContext
 from runtime.state import OptimizerState
-from runtime.executor import execute, register_operator
+from runtime.operator_registry import register_operator
+from runtime.executor import execute
 from runtime.refs import Value
 from compiler.pipeline import compile_graph
 
@@ -17,7 +19,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def setup_specs():
     clear_registry()
-    register_base_specs()
+    bootstrap_runtime()
     register_dqn_specs()
     register_dqn_operators()
 
@@ -47,6 +49,9 @@ def test_backward_updates_grad_buffer():
         inputs={"obs": None},
         outputs={"pred": None},
         differentiable=True,
+        creates_grad=True,
+        consumes_grad=False,
+        updates_params=False,
         parameter_handles=["model_handle"]
     ))
 

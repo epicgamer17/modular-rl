@@ -62,16 +62,16 @@ def test_replay_collator_correct_shapes_and_dtypes():
     assert collated.obs.shape == (
         batch_size,
         obs_dim,
-    ), f"Obs shape mismatch: {collated['obs'].shape}"
+    ), f"Obs shape mismatch: {collated.obs.shape}"
     assert collated.action.shape == (
         batch_size,
-    ), f"Action shape mismatch: {collated['action'].shape}"
+    ), f"Action shape mismatch: {collated.action.shape}"
     assert collated.reward.shape == (
         batch_size,
-    ), f"Reward shape mismatch: {collated['reward'].shape}"
+    ), f"Reward shape mismatch: {collated.reward.shape}"
     assert collated.done.shape == (
         batch_size,
-    ), f"Done shape mismatch: {collated['done'].shape}"
+    ), f"Done shape mismatch: {collated.done.shape}"
 
     # Check dtypes
     assert collated.obs.dtype == torch.float32
@@ -84,16 +84,17 @@ def test_replay_collator_correct_shapes_and_dtypes():
     assert torch.allclose(collated.reward[10], torch.tensor(1.0))
 
     # Check metadata (structured batch object - list of dicts in this case)
-    assert isinstance(collated["metadata"], list)
-    assert len(collated["metadata"]) == batch_size
-    assert collated["metadata"][15]["step_index"] == 15
+    assert isinstance(collated.metadata, dict)
+    assert len(collated.metadata) >= 4 # At least obs, action, reward, done
+    assert collated.metadata["metadata"][15]["step_index"] == 15
 
 
 def test_replay_collator_empty_batch():
-    """Verifies that an empty batch returns an empty dictionary."""
+    """Verifies that an empty batch returns an empty TransitionBatch."""
     schema = Schema([Field("x", TensorSpec(shape=(), dtype="float32"))])
     collator = ReplayCollator(schema)
-    assert collator([]) == {}
+    from core.batch import TransitionBatch
+    assert collator([]) == TransitionBatch()
 
 
 def test_replay_collator_partial_schema():

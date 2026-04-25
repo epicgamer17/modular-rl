@@ -1035,7 +1035,7 @@ Fuses Q-values computation + argmax into single greedy policy node.
 Need:
 
 ```python
-from compiler.passes.autobatch import vectorize_graph
+from compiler.passes.optimization.autobatch import vectorize_graph
 batch_graph = vectorize_graph(graph)
 ```
 
@@ -1305,7 +1305,7 @@ Used by optimizer for scheduling decisions.
 Need:
 
 ```python
-from compiler.passes.memory_optimizations import apply_activation_checkpointing
+from compiler.passes.optimization.memory import apply_activation_checkpointing
 graph = apply_activation_checkpointing(graph)
 ```
 
@@ -1320,7 +1320,7 @@ Reduces memory by recomputing activations during backward pass instead of storin
 Need:
 
 ```python
-from compiler.passes.analyze_gradients import analyze_gradients
+from compiler.passes.shape.gradient_analysis import analyze_gradients
 report = analyze_gradients(graph)
 ```
 
@@ -1364,7 +1364,7 @@ Automatically inserts:
 Need:
 
 ```python
-from compiler.passes.collect_trainable_parameters import collect_trainable_parameters
+from compiler.passes.optimization.parameters import collect_trainable_parameters
 param_map = collect_trainable_parameters(graph)
 ```
 
@@ -1388,7 +1388,7 @@ Maps parameter handles to lists of node IDs that use them.
 Need:
 
 ```python
-from compiler.passes.validate_grad_semantics import validate_grad_semantics
+from compiler.passes.semantic.gradients import validate_grad_semantics
 report = validate_grad_semantics(graph, context="learner")
 ```
 
@@ -1498,3 +1498,263 @@ Set during compilation via `collect_trainable_parameters`.
 | E204 | Port mismatch with path |
 | E310 | Missing field in schema |
 | E311 | Field type/dtype mismatch |
+
+---
+
+## Typed Batch
+
+### TransitionBatch
+
+Need:
+
+```python
+from core.batch import TransitionBatch
+
+batch = TransitionBatch(
+    obs=torch.randn(32, 4),
+    action=torch.randint(0, 2, (32,)),
+    reward=torch.randn(32),
+    next_obs=torch.randn(32, 4),
+    done=torch.zeros(32, dtype=torch.bool),
+    value=torch.randn(32),           # Optional: value estimates
+    log_prob=torch.randn(32),        # Optional: action log probs
+    advantages=torch.randn(32),     # Optional: computed advantages
+    returns=torch.randn(32),        # Optional: computed returns
+    metadata={"episode_id": 1}     # Optional: extra data
+)
+```
+
+Fields:
+
+- Required: obs, action, reward, next_obs, done
+- Optional: value, log_prob, terminated, truncated, policy_version, advantages, returns, metadata
+
+Methods:
+
+- `to_dict()`: Returns shallow dict of non-None fields
+
+---
+
+## Operator Domains & Categories
+
+### Domain Tags
+
+Operators can be tagged with domain:
+
+```python
+Q_VALUES_SINGLE_SPEC = OperatorSpec.create(
+    name="QValuesSingle",
+    domain_tags={"q_learning"}
+)
+```
+
+Available domains:
+
+- `q_learning` - Q-learning algorithms (DQN)
+- `policy_gradient` - Policy gradient methods (PPO)
+- `imitation` - Imitation learning (DAgger)
+
+### Math Categories
+
+Operators specify computational category:
+
+```python
+OperatorSpec.create(
+    name="TDLoss",
+    math_category="loss"  # or "elementwise", "optimizer", "reduction"
+)
+```
+
+Used for cost modeling and fusion decisions.
+
+---
+
+## Gradient Registry
+
+### Store and Retrieve Gradients
+
+Need:
+
+```python
+from runtime.state import GradientRegistry
+
+registry = GradientRegistry()
+
+# Store flattened gradients
+registry.write("online_q", flat_grads)
+
+# Retrieve gradients
+grads = registry.get("online_q")
+
+# Accumulate for microbatch gradient accumulation
+registry.accumulate("online_q", new_grads)
+count = registry.count("online_q")
+
+# Clear gradients
+registry.clear("online_q")
+```
+
+---
+
+## Control Operators
+
+### Loop
+
+Execute a subgraph N times:
+
+```python
+# Node params
+params = {
+    "iterations": 10,
+    "body_graph": body_graph  # Graph to execute
+}
+
+# Returns list of results from each iteration
+results = op_loop(node, inputs, context)
+```
+
+### MinibatchIterator
+
+Split batch into minibatches:
+
+```python
+params = {
+    "minibatch_size": 64,
+    "body_graph": update_graph  # Graph to execute per minibatch
+}
+
+# Iterates over shuffled minibatches
+minibatch_results = op_minibatch_iterator(node, inputs, context)
+```
+
+---
+
+## Advantage Estimation Kernels
+
+### GAE (Generalized Advantage Estimation)
+
+Need:
+
+```python
+from runtime.kernels.advantage import gae_advantage
+
+advantages, returns = gae_advantage(
+    batch=transition_batch,
+    next_value=value_at_done,
+    next_terminated=terminated_at_done,
+    gamma=0.99,
+    gae_lambda=0.95
+)
+```
+
+### TD-Lambda
+
+```python
+from runtime.kernels.advantage import td_lambda_advantage
+
+advantages, returns = td_lambda_advantage(
+    batch=transition_batch,
+    next_value=value_at_done,
+    next_terminated=terminated_at_done,
+    gamma=0.99,
+    td_lambda=0.95
+)
+```
+
+### Monte Carlo
+
+```python
+from runtime.kernels.advantage import mc_advantage
+
+advantages, returns = mc_advantage(
+    batch=transition_batch,
+    next_value=value_at_done,
+    next_terminated=terminated_at_done,
+    gamma=0.99
+)
+```
+
+---
+
+## Operator Registration
+
+### Register All Operators
+
+Need:
+
+```python
+from ops.registry import register_all_operators
+
+register_all_operators()
+```
+
+This registers all built-in operators:
+
+**Q-Learning**: QValuesSingle, QForward, GatherActionQ, BellmanTarget
+**Policy**: PolicyForward, PPO_Forward, PolicyRatio, GreedyAction, ExpertActor
+**Buffer**: SampleBatch, SampleBatchRandom
+**Losses**: TDLoss, ValueLoss, SurrogateLoss, EntropyLoss, SLLoss, CrossEntropyLoss, MSELoss
+**RL Utils**: LogProb, Entropy, AdvantageEstimation, GAE, TDLambda, MC, LinearDecay, Exploration, TargetSync, MetricsSink
+**Math**: ReduceMean, WeightedSum, Clip
+**Learner**: Backward, GradBuffer, AccumulateGrad, OptimizerStepEvery
+**Control**: Loop, MinibatchIterator, GetField
+
+---
+
+## Q-Learning Operators
+
+### QValuesSingle
+
+- Purpose: Acting (single observation)
+- Input: `obs` [obs_dim]
+- Output: `q_values` [act_dim]
+- Uses: ActorSnapshot for functional_call
+- Parameters: `model_handle`, `no_grad_region`, `activation_checkpoint`
+
+### QForward (Batch)
+
+- Purpose: Training (batched observations)
+- Input: `obs` [batch_size, obs_dim]
+- Output: `q_values` [batch_size, act_dim]
+- Parameters: `model_handle`, `no_grad_region`, `activation_checkpoint`
+
+### GatherActionQ
+
+- Purpose: Extract Q-values for selected actions
+- Input: `q_values` [batch, act_dim], `actions` [batch]
+- Output: `q_selected` [batch]
+- Operation: `q_values.gather(1, actions.unsqueeze(1)).squeeze(1)`
+
+### BellmanTarget
+
+- Purpose: Compute DQN Bellman targets
+- Input: `next_q_values`, `rewards`, `dones`
+- Output: `target` = rewards + gamma * (1 - dones) * max(next_q)
+
+---
+
+## Learner Operators
+
+### OptimizerStepEvery
+
+Execute optimizer only when accumulated gradient count reaches k:
+
+```python
+params = {
+    "model_handle": "online_q",
+    "optimizer_handle": "main_opt",
+    "k": 4  # Step every 4 microbatch gradients
+}
+```
+
+Returns: `{"stepped": bool, "count": int, "loss": float, "grad_norm": float, "lr": float}`
+
+### AccumulateGrad
+
+Accumulates microbatch gradients into persistent buffer:
+
+```python
+params = {"model_handle": "online_q", "k": 1}
+```
+
+Returns: `{"grads": tensor, "count": int, "ready": bool}`

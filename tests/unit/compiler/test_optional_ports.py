@@ -20,11 +20,32 @@ def test_optional_port_missing_passes() -> None:
                 "required_in": PortSpec(spec=SingleObs, required=True),
                 "optional_in": PortSpec(spec=SingleObs, required=False),
             },
-            outputs=SingleObs
+            outputs=SingleObs,
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
-    register_spec("OptSrc", OperatorSpec.create(name="OptSrc", outputs=SingleObs))
-    register_spec("OptSink", OperatorSpec.create(name="OptSink", inputs={"in": SingleObs}))
+    register_spec("OptSrc", OperatorSpec.create(
+        name="OptSrc", 
+        outputs=SingleObs,
+        allowed_contexts={"actor", "learner"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("OptSink", OperatorSpec.create(
+        name="OptSink", 
+        inputs={"in": SingleObs},
+        allowed_contexts={"actor", "learner"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
 
     g = Graph()
     g.add_node("s", "OptSrc")
@@ -45,6 +66,11 @@ def test_required_port_missing_fails() -> None:
         OperatorSpec.create(
             name="ReqPortOp",
             inputs={"required_in": PortSpec(spec=SingleObs, required=True)},
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
 
@@ -70,6 +96,11 @@ def test_default_value_injection() -> None:
         OperatorSpec.create(
             name="DefaultOp",
             inputs={"epsilon": PortSpec(spec=SingleObs, required=False, default=DEFAULT_VAL)},
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
 

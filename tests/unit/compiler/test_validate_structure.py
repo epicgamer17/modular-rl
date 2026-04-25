@@ -8,7 +8,7 @@ from core.graph import (
     Node,
     Schema,
 )
-from compiler.passes.validate_structure import validate_structure
+from compiler.passes.structural.connectivity import validate_structure
 from compiler.validation import SEVERITY_ERROR, SEVERITY_WARN
 
 pytestmark = pytest.mark.unit

@@ -1,8 +1,9 @@
+from runtime.bootstrap import bootstrap_runtime
 import pytest
 
 from compiler.pipeline import compile_graph
 from core.graph import Graph
-from runtime.registry import OperatorSpec, Scalar, clear_registry, register_base_specs, register_spec
+from runtime.registry import OperatorSpec, Scalar, clear_registry, register_spec
 
 pytestmark = pytest.mark.unit
 
@@ -10,7 +11,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def setup_specs():
     clear_registry()
-    register_base_specs()
+    bootstrap_runtime()
     register_spec(
         "Optimizer",
         OperatorSpec.create(

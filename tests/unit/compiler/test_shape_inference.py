@@ -19,7 +19,14 @@ def test_q_values_batch_infers_batch_q() -> None:
     register_spec(
         "QBatch",
         OperatorSpec.create(
-            name="QBatch", inputs={"obs": BatchObs}, shape_fn=q_batch_shape_fn
+            name="QBatch", 
+            inputs={"obs": BatchObs}, 
+            shape_fn=q_batch_shape_fn,
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
 
@@ -27,7 +34,13 @@ def test_q_values_batch_infers_batch_q() -> None:
     register_spec(
         "BatchSrc",
         OperatorSpec.create(
-            name="BatchSrc", outputs=TensorSpec(shape=(32, 128), dtype="float32")
+            name="BatchSrc", 
+            outputs=TensorSpec(shape=(32, 128), dtype="float32"),
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
 
@@ -63,12 +76,25 @@ def test_gather_preserves_rank() -> None:
                 "indices": PortSpec(spec=TensorSpec(shape=(-1,), dtype="int64"), required=False)
             },
             shape_fn=gather_shape_fn,
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
 
     register_spec(
         "QSrc",
-        OperatorSpec.create(name="QSrc", outputs=TensorSpec(shape=(64, 10), dtype="float32")),
+        OperatorSpec.create(
+            name="QSrc", 
+            outputs=TensorSpec(shape=(64, 10), dtype="float32"),
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        ),
     )
 
     g = Graph()
@@ -95,13 +121,24 @@ def test_reduce_mean_outputs_scalar() -> None:
             name="ReduceMean",
             inputs={"input": TensorSpec(shape=(-1, -1), dtype="float32")},
             shape_fn=reduce_shape_fn,
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
 
     register_spec(
         "InputSrc",
         OperatorSpec.create(
-            name="InputSrc", outputs=TensorSpec(shape=(10, 10), dtype="float32")
+            name="InputSrc", 
+            outputs=TensorSpec(shape=(10, 10), dtype="float32"),
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
 

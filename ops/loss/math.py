@@ -4,6 +4,18 @@ from typing import Dict, Any, Optional
 from core.graph import Node
 from runtime.context import ExecutionContext
 from runtime.signals import MissingInput
+from runtime.registry import OperatorSpec, PortSpec, Scalar
+
+MSE_LOSS_SPEC = OperatorSpec.create(
+    name="MSELoss",
+    inputs={"pred": PortSpec(spec=None), "target": PortSpec(spec=None)},
+    outputs={"loss": Scalar("float32")},
+    differentiable=True,
+    creates_grad=True,
+    consumes_grad=False,
+    updates_params=False,
+    allowed_contexts={"learner"},
+)
 
 
 def op_mse_loss(

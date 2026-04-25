@@ -1,3 +1,4 @@
+from runtime.bootstrap import bootstrap_runtime
 import pytest
 import torch
 import torch.nn as nn
@@ -8,7 +9,7 @@ from compiler.pipeline import compile_graph
 from core.graph import Graph, NodeId
 from runtime.context import ExecutionContext
 from runtime.executor import execute, register_operator
-from runtime.registry import OperatorSpec, clear_registry, register_base_specs, register_spec
+from runtime.registry import OperatorSpec, clear_registry, register_spec
 from runtime.state import OptimizerState
 from runtime.refs import Value
 
@@ -18,7 +19,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def setup_specs():
     clear_registry()
-    register_base_specs()
+    bootstrap_runtime()
     register_dqn_specs()
 
 
@@ -44,6 +45,9 @@ def test_grad_buffer_written():
             inputs={"obs": None},
             outputs={"pred": None},
             differentiable=True,
+            creates_grad=True,
+            consumes_grad=False,
+            updates_params=False,
             parameter_handles=["model_handle"],
         ),
     )

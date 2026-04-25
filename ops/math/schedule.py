@@ -1,6 +1,20 @@
 from typing import Dict, Any, Optional
 from core.graph import Node
 from runtime.context import ExecutionContext
+from runtime.registry import OperatorSpec, PortSpec, Scalar
+
+LINEAR_DECAY_SPEC = OperatorSpec.create(
+    name="LinearDecay",
+    inputs={"clock": PortSpec(spec=Scalar("int64"), required=False)},
+    outputs={"epsilon": Scalar("float32")},
+    pure=True,
+    allowed_contexts={"actor", "learner"},
+    math_category="elementwise",
+    differentiable=False,
+    creates_grad=False,
+    consumes_grad=False,
+    updates_params=False,
+)
 
 def op_linear_decay(node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None) -> float:
     """

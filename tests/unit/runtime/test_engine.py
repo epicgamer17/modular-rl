@@ -35,9 +35,9 @@ def test_actor_runtime_basic():
     assert step_data.action is not None
     assert step_data.action == 0
     assert len(recorded_steps) == 1
-    assert "metadata" in recorded_steps[0]
-    assert recorded_steps[0]["metadata"]["step_index"] == 1
-    assert recorded_steps[0]["metadata"]["episode_step"].item() == 1
+    assert recorded_steps[0].metadata is not None
+    assert recorded_steps[0].metadata["step_index"] == 1
+    assert recorded_steps[0].metadata["episode_step"].item() == 1
 
 
 def test_dagger_triviality():
@@ -64,9 +64,9 @@ def test_dagger_triviality():
 
     # DAgger Recording Logic: Record Student's Obs and Expert's Action
     def dagger_record_fn(step_data):
-        expert_val = step_data["metadata"]["actor_results"]["expert"]
+        expert_val = step_data.metadata["actor_results"]["expert"]
         sl_buffer.add(
-            {"obs": step_data["obs"], "action": torch.tensor(expert_val.data)}
+            {"obs": step_data.obs, "action": torch.tensor(expert_val)}
         )
 
     runtime = ActorRuntime(graph, env, recording_fn=dagger_record_fn)

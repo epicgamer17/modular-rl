@@ -8,7 +8,7 @@ from runtime.registry import (
     BatchObs,
     Tensor,
 )
-from compiler.passes.validate_ports import validate_ports
+from compiler.passes.structural.ports import validate_ports
 from compiler.validation import SEVERITY_ERROR
 
 pytestmark = pytest.mark.unit
@@ -21,7 +21,16 @@ def setup_specs() -> None:
     # Define TDLoss to expect the standard TransitionBatch
     register_spec(
         "TDLoss",
-        OperatorSpec.create(name="TDLoss", inputs={"batch": TransitionBatch}, outputs=Tensor((), "float32")),
+        OperatorSpec.create(
+            name="TDLoss", 
+            inputs={"batch": TransitionBatch}, 
+            outputs=Tensor((), "float32"),
+            allowed_contexts={"learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        ),
     )
 
 
@@ -39,7 +48,16 @@ def test_schema_missing_done_fails() -> None:
     )
 
     register_spec(
-        "IncompleteSampler", OperatorSpec.create(name="IncompleteSampler", inputs={}, outputs=IncompleteBatch)
+        "IncompleteSampler", OperatorSpec.create(
+            name="IncompleteSampler", 
+            inputs={}, 
+            outputs=IncompleteBatch,
+            allowed_contexts={"actor"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        )
     )
 
     g = Graph()
@@ -69,7 +87,16 @@ def test_schema_wrong_dtype_fails() -> None:
     )
 
     register_spec(
-        "WrongDtypeSampler", OperatorSpec.create(name="WrongDtypeSampler", inputs={}, outputs=WrongDtypeBatch)
+        "WrongDtypeSampler", OperatorSpec.create(
+            name="WrongDtypeSampler", 
+            inputs={}, 
+            outputs=WrongDtypeBatch,
+            allowed_contexts={"actor"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        )
     )
 
     g = Graph()
@@ -89,7 +116,16 @@ def test_schema_wrong_dtype_fails() -> None:
 def test_schema_valid_batch_passes() -> None:
     """Verifies that a valid TransitionBatch passes schema validation."""
     register_spec(
-        "ValidSampler", OperatorSpec.create(name="ValidSampler", inputs={}, outputs=TransitionBatch)
+        "ValidSampler", OperatorSpec.create(
+            name="ValidSampler", 
+            inputs={}, 
+            outputs=TransitionBatch,
+            allowed_contexts={"actor"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        )
     )
 
     g = Graph()

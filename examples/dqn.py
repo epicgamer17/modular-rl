@@ -15,6 +15,10 @@ from compiler.planner import compile_schedule
 
 # TODO: make total steps in learner steps and not in env steps (or able to choose which)
 def train_dqn(total_steps: int = 120_000, seed: int = 0):
+    # 0. Bootstrap Runtime
+    from runtime.bootstrap import bootstrap_runtime
+    bootstrap_runtime()
+    
     # 0. Global Seeding
     torch.manual_seed(seed)
     np.random.seed(seed)

@@ -3,6 +3,20 @@ from typing import Dict, Any, Optional
 from core.graph import Node
 from runtime.context import ExecutionContext
 from runtime.signals import MissingInput
+from runtime.registry import OperatorSpec, PortSpec
+
+CLIP_SPEC = OperatorSpec.create(
+    name="Clip",
+    inputs={"x": PortSpec(spec=None)},
+    outputs={"y": PortSpec(spec=None)},
+    pure=True,
+    math_category="elementwise",
+    allowed_contexts={"actor", "learner"},
+    differentiable=True,
+    creates_grad=False,
+    consumes_grad=False,
+    updates_params=False,
+)
 
 def op_clip(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None

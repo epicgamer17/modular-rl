@@ -8,7 +8,7 @@ from runtime.registry import (
     TransitionBatch,
     ScalarLoss,
 )
-from compiler.passes.validate_ports import validate_ports
+from compiler.passes.structural.ports import validate_ports
 from compiler.validation import SEVERITY_ERROR
 
 pytestmark = pytest.mark.unit
@@ -20,13 +20,49 @@ def setup_specs() -> None:
     clear_registry()
     register_spec(
         "QValuesSingle",
-        OperatorSpec.create(name="QValuesSingle", inputs={"obs": ObsTensor}, outputs=ActionValuesTensor),
+        OperatorSpec.create(
+            name="QValuesSingle", 
+            inputs={"obs": ObsTensor}, 
+            outputs=ActionValuesTensor,
+            allowed_contexts={"actor"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        ),
     )
     register_spec(
-        "TDLoss", OperatorSpec.create(name="TDLoss", inputs={"batch": TransitionBatch}, outputs=ScalarLoss)
+        "TDLoss", OperatorSpec.create(
+            name="TDLoss", 
+            inputs={"batch": TransitionBatch}, 
+            outputs=ScalarLoss,
+            allowed_contexts={"learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        )
     )
-    register_spec("Sampler", OperatorSpec.create(name="Sampler", inputs={}, outputs=TransitionBatch))
-    register_spec("ObservationSource", OperatorSpec.create(name="ObservationSource", inputs={}, outputs=ObsTensor))
+    register_spec("Sampler", OperatorSpec.create(
+        name="Sampler", 
+        inputs={}, 
+        outputs=TransitionBatch,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("ObservationSource", OperatorSpec.create(
+        name="ObservationSource", 
+        inputs={}, 
+        outputs=ObsTensor,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
 
 
 def test_ports_correct_obs_wiring() -> None:

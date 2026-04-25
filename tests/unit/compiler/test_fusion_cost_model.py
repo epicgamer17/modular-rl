@@ -11,10 +11,56 @@ def test_fusion_skipped_due_to_profitability():
     # Register specs with launch costs
     # OpA + OpB -> OpFused
     # launch_cost: 1 + 1 -> 1.5 (Profit = 0.5)
-    register_spec("OpA", OperatorSpec.create("OpA", inputs={"in": Scalar("float32")}, outputs={"out": Scalar("float32")}, pure=True, deterministic=True, kernel_launch_cost=1.0))
-    register_spec("OpB", OperatorSpec.create("OpB", inputs={"in": Scalar("float32")}, outputs={"out": Scalar("float32")}, pure=True, deterministic=True, kernel_launch_cost=1.0))
-    register_spec("OpFused", OperatorSpec.create("OpFused", inputs={"in": Scalar("float32")}, outputs={"out": Scalar("float32")}, pure=True, deterministic=True, kernel_launch_cost=1.5))
-    register_spec("Sink", OperatorSpec.create("Sink", inputs={"in": Scalar("float32")}, outputs={}, pure=False))
+    register_spec("OpA", OperatorSpec.create(
+        "OpA", 
+        inputs={"in": Scalar("float32")}, 
+        outputs={"out": Scalar("float32")}, 
+        pure=True, 
+        deterministic=True, 
+        kernel_launch_cost=1.0,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("OpB", OperatorSpec.create(
+        "OpB", 
+        inputs={"in": Scalar("float32")}, 
+        outputs={"out": Scalar("float32")}, 
+        pure=True, 
+        deterministic=True, 
+        kernel_launch_cost=1.0,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("OpFused", OperatorSpec.create(
+        "OpFused", 
+        inputs={"in": Scalar("float32")}, 
+        outputs={"out": Scalar("float32")}, 
+        pure=True, 
+        deterministic=True, 
+        kernel_launch_cost=1.5,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("Sink", OperatorSpec.create(
+        "Sink", 
+        inputs={"in": Scalar("float32")}, 
+        outputs={}, 
+        pure=False,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
 
     engine = RewriteEngine()
     # Require profit of at least 0.6
@@ -44,9 +90,45 @@ def test_fusion_skipped_due_to_profitability():
 def test_fusion_skipped_due_to_branching():
     """Verifies that fusion is skipped if a node in the chain has multiple consumers."""
     # Register specs
-    register_spec("OpX", OperatorSpec.create("OpX", inputs={"in": Scalar("float32")}, outputs={"out": Scalar("float32")}, pure=True, deterministic=True, kernel_launch_cost=1.0))
-    register_spec("OpY", OperatorSpec.create("OpY", inputs={"in": Scalar("float32")}, outputs={"out": Scalar("float32")}, pure=True, deterministic=True, kernel_launch_cost=1.0))
-    register_spec("OpXY", OperatorSpec.create("OpXY", inputs={"in": Scalar("float32")}, outputs={"out": Scalar("float32")}, pure=True, deterministic=True, kernel_launch_cost=1.5))
+    register_spec("OpX", OperatorSpec.create(
+        "OpX", 
+        inputs={"in": Scalar("float32")}, 
+        outputs={"out": Scalar("float32")}, 
+        pure=True, 
+        deterministic=True, 
+        kernel_launch_cost=1.0,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("OpY", OperatorSpec.create(
+        "OpY", 
+        inputs={"in": Scalar("float32")}, 
+        outputs={"out": Scalar("float32")}, 
+        pure=True, 
+        deterministic=True, 
+        kernel_launch_cost=1.0,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("OpXY", OperatorSpec.create(
+        "OpXY", 
+        inputs={"in": Scalar("float32")}, 
+        outputs={"out": Scalar("float32")}, 
+        pure=True, 
+        deterministic=True, 
+        kernel_launch_cost=1.5,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
 
     engine = RewriteEngine()
     engine.add_rule(FusionRule(name="xy_fusion", pattern=["OpX", "OpY"], replacement="OpXY"))

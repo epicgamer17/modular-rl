@@ -4,6 +4,9 @@ import numpy as np
 from ops.rl.advantage import op_gae
 from core.graph import Node
 
+from ops.registry import register_all_operators
+register_all_operators()
+
 pytestmark = pytest.mark.unit
 
 def reference_gae(rewards, values, terminateds, next_values, gamma, gae_lambda):
@@ -73,6 +76,7 @@ def test_gae_matches_reference():
         truncated=torch.zeros_like(terminateds),
         next_obs=next_obs,
         action=torch.zeros(steps),
+        done=terminateds, # term | trunc
         value=values
     )
     
@@ -119,17 +123,27 @@ def test_gae_handles_truncation():
     model = MockModel(values, next_values)
     context = MockContext(model)
     
-    batch = {
-        "obs": torch.arange(steps).unsqueeze(1).float(),
-        "reward": rewards,
-        "terminated": terminateds,
-        "truncated": truncateds,
-        "next_obs": (torch.arange(steps) + 100).unsqueeze(1).float()
-    }
+    from core.batch import TransitionBatch
+    batch_obj = TransitionBatch(
+        obs=torch.arange(steps).unsqueeze(1).float(),
+        reward=rewards,
+        terminated=terminateds,
+        truncated=truncateds,
+        done=terminateds.bool() | truncateds.bool(),
+        next_obs=(torch.arange(steps) + 100).unsqueeze(1).float(),
+        action=torch.zeros(steps),
+        value=values
+    )
     
     node = Node("gae", "PPO_GAE", params={"gamma": gamma, "gae_lambda": gae_lambda})
     
-    result = op_gae(node, {"batch": batch}, context=context)
+    inputs = {
+        "batch": batch_obj,
+        "next_value": next_values[-1:], # Bootstrapping value
+        "next_terminated": terminateds[-1:] # Final terminal
+    }
+    
+    result = op_gae(node, inputs, context=context)
     advantages = result["advantages"]
     
     # For t=1 (last step):

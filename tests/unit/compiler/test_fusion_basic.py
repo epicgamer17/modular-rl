@@ -7,10 +7,44 @@ pytestmark = pytest.mark.unit
 
 def test_fusion_simple_chain() -> None:
     """Verifies that a basic A -> B chain is fused into C."""
-    register_spec("BasicA", OperatorSpec.create(name="BasicA", pure=True, deterministic=True))
-    register_spec("BasicB", OperatorSpec.create(name="BasicB", pure=True, deterministic=True))
-    register_spec("BasicC", OperatorSpec.create(name="BasicC", pure=True, deterministic=True))
-    register_spec(NODE_TYPE_SINK, OperatorSpec.create(name=NODE_TYPE_SINK))
+    register_spec("BasicA", OperatorSpec.create(
+        name="BasicA", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("BasicB", OperatorSpec.create(
+        name="BasicB", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("BasicC", OperatorSpec.create(
+        name="BasicC", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec(NODE_TYPE_SINK, OperatorSpec.create(
+        name=NODE_TYPE_SINK,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
     
     engine = RewriteEngine()
     engine.add_rule(FusionRule(name="a_b_fusion", pattern=["BasicA", "BasicB"], replacement="BasicC"))

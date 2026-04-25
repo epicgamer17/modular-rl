@@ -21,10 +21,33 @@ pytestmark = pytest.mark.unit
 def test_dead_node_elimination() -> None:
     """Verifies that nodes with no path to a Sink or side-effect are removed."""
     # Register necessary specs
-    register_spec(NODE_TYPE_SINK, OperatorSpec.create(name=NODE_TYPE_SINK))
-    register_spec("PureOp", OperatorSpec.create(name="PureOp", pure=True))
+    register_spec(NODE_TYPE_SINK, OperatorSpec.create(
+        name=NODE_TYPE_SINK,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("PureOp", OperatorSpec.create(
+        name="PureOp", 
+        pure=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
     register_spec(
-        "SideEffectOp", OperatorSpec.create(name="SideEffectOp", side_effects=["log"])
+        "SideEffectOp", OperatorSpec.create(
+            name="SideEffectOp", 
+            side_effects=["log"],
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        )
     )
 
     g = Graph()
@@ -56,7 +79,15 @@ def test_dead_node_elimination() -> None:
 def test_unreachable_metrics_branch_preserved() -> None:
     """Verifies that side-effect nodes (like metrics) are not removed even if sinkless."""
     register_spec(
-        "MyMetrics", OperatorSpec.create(name="MyMetrics", side_effects=["metrics"])
+        "MyMetrics", OperatorSpec.create(
+            name="MyMetrics", 
+            side_effects=["metrics"],
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        )
     )
 
     g = Graph()
@@ -72,7 +103,15 @@ def test_unreachable_metrics_branch_preserved() -> None:
 
 def test_multi_step_dne() -> None:
     """Verifies that DNE removes long chains of unused pure nodes."""
-    register_spec("PureChain", OperatorSpec.create(name="PureChain", pure=True))
+    register_spec("PureChain", OperatorSpec.create(
+        name="PureChain", 
+        pure=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
 
     g = Graph()
     g.add_node("src", NODE_TYPE_SOURCE)
@@ -104,6 +143,11 @@ def test_greedy_policy_fusion() -> None:
             outputs=ActionValuesTensor,
             pure=True,
             deterministic=True,
+            allowed_contexts={"actor"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
     register_spec(
@@ -114,6 +158,11 @@ def test_greedy_policy_fusion() -> None:
             outputs=TensorSpec(shape=(-1,), dtype="int64"),
             pure=True,
             deterministic=True,
+            allowed_contexts={"actor"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
     register_spec(
@@ -124,9 +173,21 @@ def test_greedy_policy_fusion() -> None:
             outputs=TensorSpec(shape=(-1,), dtype="int64"),
             pure=True,
             deterministic=True,
+            allowed_contexts={"actor"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
         ),
     )
-    register_spec(NODE_TYPE_SINK, OperatorSpec.create(name=NODE_TYPE_SINK))
+    register_spec(NODE_TYPE_SINK, OperatorSpec.create(
+        name=NODE_TYPE_SINK,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
 
     g = Graph()
     g.add_node("src", NODE_TYPE_SOURCE)

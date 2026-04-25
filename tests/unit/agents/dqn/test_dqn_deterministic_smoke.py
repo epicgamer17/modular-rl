@@ -1,8 +1,17 @@
 import pytest
 import torch
 import numpy as np
+from runtime.bootstrap import bootstrap_runtime
+from runtime.registry import clear_registry
 
 pytestmark = pytest.mark.slow
+
+
+@pytest.fixture(autouse=True)
+def setup():
+    clear_registry()
+    bootstrap_runtime()
+
 
 def test_dqn_deterministic_smoke():
     """

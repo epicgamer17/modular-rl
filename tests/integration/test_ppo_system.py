@@ -7,12 +7,11 @@ from runtime.state import ParameterStore, OptimizerState, ModelRegistry
 from runtime.context import ExecutionContext
 from agents.ppo.model import ActorCritic
 from agents.ppo.config import PPOConfig
-from agents.ppo.operators import register_ppo_operators
+from ops.registry import register_ppo_operators_with_base
+register_ppo_operators_with_base()
 
 pytestmark = pytest.mark.integration
 
-# Register PPO operators for integration tests
-register_ppo_operators()
 
 def test_ppo_stale_policy_detection():
     """Verify that PPOObjective detects and rejects stale policy data."""
@@ -47,7 +46,7 @@ def test_ppo_stale_policy_detection():
     # 4. Execute with decomposed graph
     model_registry = ModelRegistry()
     model_registry.register(config.model_handle, ac_net)
-    ctx = ExecutionContext(model_registry=model_registry)
+    ctx = ExecutionContext(model_registry=model_registry, policy_versions={config.model_handle: 1})
     
     # We need to wrap data in a TransitionBatch
     from core.batch import TransitionBatch
@@ -59,13 +58,15 @@ def test_ppo_stale_policy_detection():
         next_obs=data["next_obs"],
         terminated=data["terminated"],
         truncated=data["truncated"],
+        done=(data["terminated"].bool() | data["truncated"].bool()).float(),
         policy_version=data["policy_version"],
         advantages=torch.ones(32),
         returns=torch.zeros(32)
     )
     
-    # This should now succeed or fail based on current logic
-    execute(graph, initial_inputs={"traj_in": batch}, context=ctx)
+    # This should now fail with Stale Policy Error
+    with pytest.raises(RuntimeError, match="Stale Policy Error"):
+        execute(graph, initial_inputs={"traj_in": batch}, context=ctx)
 
 def test_ppo_on_policy_tag_enforcement():
     """Verify that the compiler enforces the OnPolicy tag for PPO nodes."""
@@ -76,17 +77,5 @@ def test_ppo_on_policy_tag_enforcement():
     graph.add_node("ppo_node", "Actor", tags=["PPO"]) 
     
     with pytest.raises(RuntimeError, match="must have OnPolicy tag"):
-        compile_graph(graph)
+        compile_graph(graph, optimize=False)
 
-if __name__ == "__main__":
-    # Register needed operators if not already
-    register_ppo_operators()
-    
-    test_ppo_stale_policy_detection()
-    print("PPO Stale Policy Detection Verified!")
-    
-    try:
-        test_ppo_on_policy_tag_enforcement()
-        print("PPO OnPolicy Tag Enforcement Verified!")
-    except ImportError:
-        print("Skipping tag enforcement test (validator not in path)")

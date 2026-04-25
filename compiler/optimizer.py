@@ -16,7 +16,7 @@ from compiler.rewrite import FusionRule, RewriteEngine
 from typing import List, Dict, Set, Optional, Any
 from dataclasses import dataclass, field
 import copy
-from compiler.passes.memory_optimizations import optimize_memory
+from compiler.passes.optimization.memory import optimize_memory
 
 
 @dataclass
@@ -155,7 +155,7 @@ def dead_node_elimination(graph: Graph, report: Optional[OptimizationReport] = N
     # 3. Create new graph with only live nodes
     removed_nodes = [nid for nid in graph.nodes if nid not in live_nodes]
     if removed_nodes:
-        from observability.tracing.event_schema import get_emitter, EventType
+        from observability.tracing.event_schema import get_emitter, EventType, Event
         emitter = get_emitter()
         for nid in removed_nodes:
             emitter.emit(Event(

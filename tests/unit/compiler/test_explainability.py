@@ -10,7 +10,7 @@ from runtime.registry import (
     TransitionBatch,
     ScalarLoss,
 )
-from compiler.passes.validate_ports import validate_ports
+from compiler.passes.structural.ports import validate_ports
 from compiler.validation import SEVERITY_ERROR
 
 pytestmark = pytest.mark.unit
@@ -20,10 +20,28 @@ def test_explainable_port_mismatch_e204() -> None:
     """Rule E204: Port mismatch should show connection path and Expected/Got blocks."""
     # Use unique names to avoid registry conflicts
     register_spec(
-        "ExpSampler", OperatorSpec.create(name="ExpSampler", inputs={}, outputs=TransitionBatch)
+        "ExpSampler", OperatorSpec.create(
+            name="ExpSampler", 
+            inputs={}, 
+            outputs=TransitionBatch,
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        )
     )
     register_spec(
-        "ExpQNet", OperatorSpec.create(name="ExpQNet", inputs={"obs": SingleObs}, outputs=BatchObs)
+        "ExpQNet", OperatorSpec.create(
+            name="ExpQNet", 
+            inputs={"obs": SingleObs}, 
+            outputs=BatchObs,
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        )
     )
 
     g = Graph()
@@ -61,10 +79,28 @@ def test_explainable_field_mismatch_e311() -> None:
         ]
     )
 
-    register_spec("BadSampler", OperatorSpec.create(name="BadSampler", inputs={}, outputs=BadBatch))
+    register_spec("BadSampler", OperatorSpec.create(
+        name="BadSampler", 
+        inputs={}, 
+        outputs=BadBatch,
+        allowed_contexts={"actor", "learner"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
     register_spec(
         "ExpTDLoss",
-        OperatorSpec.create(name="ExpTDLoss", inputs={"batch": TransitionBatch}, outputs=ScalarLoss),
+        OperatorSpec.create(
+            name="ExpTDLoss", 
+            inputs={"batch": TransitionBatch}, 
+            outputs=ScalarLoss,
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        ),
     )
 
     g = Graph()
@@ -96,7 +132,16 @@ def test_explainable_missing_field_e310() -> None:
     )
 
     register_spec(
-        "IncompleteSampler", OperatorSpec.create(name="IncompleteSampler", inputs={}, outputs=IncompleteBatch)
+        "IncompleteSampler", OperatorSpec.create(
+            name="IncompleteSampler", 
+            inputs={}, 
+            outputs=IncompleteBatch,
+            allowed_contexts={"actor", "learner"},
+            differentiable=False,
+            creates_grad=False,
+            consumes_grad=False,
+            updates_params=False,
+        )
     )
 
     g = Graph()

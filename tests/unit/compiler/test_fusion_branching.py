@@ -7,9 +7,36 @@ pytestmark = pytest.mark.unit
 
 def test_fusion_no_fuse_multi_consumer() -> None:
     """Verifies that fusion is blocked if the source node has multiple consumers."""
-    register_spec("BranchA", OperatorSpec.create(name="BranchA", pure=True, deterministic=True))
-    register_spec("BranchB", OperatorSpec.create(name="BranchB", pure=True, deterministic=True))
-    register_spec("BranchC", OperatorSpec.create(name="BranchC", pure=True, deterministic=True))
+    register_spec("BranchA", OperatorSpec.create(
+        name="BranchA", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("BranchB", OperatorSpec.create(
+        name="BranchB", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("BranchC", OperatorSpec.create(
+        name="BranchC", 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
     
     g = Graph()
     g.add_node("n1", "BranchA")

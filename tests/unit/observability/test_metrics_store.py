@@ -1,10 +1,10 @@
 import pytest
-from observability.metrics.store import MetricsStore
+from observability.metrics.store import MetricStore
 
 pytestmark = pytest.mark.unit
 
 def test_metrics_store_log_and_get():
-    store = MetricsStore()
+    store = MetricStore()
     store.log("reward", 10.5, step=1)
     store.log("reward", 12.0, step=2)
     
@@ -16,7 +16,7 @@ def test_metrics_store_log_and_get():
     assert rewards[1].step == 2
 
 def test_metrics_store_compute_rates():
-    store = MetricsStore()
+    store = MetricStore()
     
     # Simulate some steps and time
     rates = store.compute_rates(current_actor_step=100, current_learner_step=50)

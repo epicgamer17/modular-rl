@@ -6,6 +6,7 @@ from runtime.signals import MissingInput
 from runtime.context import ExecutionContext
 
 
+
 def op_ppo_objective(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
 ) -> Dict[str, torch.Tensor]:
@@ -19,18 +20,24 @@ def op_ppo_objective(
         return MissingInput("batch/gae")
 
     # Extract inputs
-    obs = batch.get("obs")
-    actions = batch.get("action")
-    old_log_probs = batch.get("log_prob")
-    advantages = gae.get("advantages")
-    returns = gae.get("returns")
+    obs = batch.obs if hasattr(batch, "obs") else batch.get("obs")
+    actions = batch.action if hasattr(batch, "action") else batch.get("action")
+    old_log_probs = batch.log_prob if hasattr(batch, "log_prob") else batch.get("log_prob")
+    advantages = gae.get("advantages") if isinstance(gae, dict) else gae.advantages
+    returns = gae.get("returns") if isinstance(gae, dict) else gae.returns
 
     if any(x is None for x in [obs, actions, old_log_probs, advantages]):
         return MissingInput("missing_ppo_inputs")
 
-    # Get model
+    # Get model and check for stale data
     model_handle = node.params.get("model_handle", "ppo_net")
     ac_net = context.get_model(model_handle)
+    
+    # Stale policy detection
+    if hasattr(batch, "policy_version") and batch.policy_version is not None:
+        current_version = context.policy_versions.get(model_handle, 0)
+        if batch.policy_version < current_version:
+            raise RuntimeError(f"Stale Policy Error: Batch version {batch.policy_version} < current {current_version}")
 
     # Forward pass
     logits, values = ac_net(obs)

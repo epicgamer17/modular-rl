@@ -4,6 +4,37 @@ from typing import Dict, Any, Optional
 from core.graph import Node
 from runtime.context import ExecutionContext
 from runtime.signals import MissingInput
+from runtime.registry import OperatorSpec, TensorSpec, Scalar, PortSpec
+
+POLICY_RATIO_SPEC = OperatorSpec.create(
+    name="PolicyRatio",
+    inputs={
+        "new_log_prob": TensorSpec(shape=(-1,), dtype="float32"),
+        "old_log_prob": TensorSpec(shape=(-1,), dtype="float32"),
+    },
+    outputs={"ratio": TensorSpec(shape=(-1,), dtype="float32")},
+    domain_tags={"policy_gradient"},
+    math_category="elementwise",
+    allowed_contexts={"actor", "learner"},
+    differentiable=True,
+    creates_grad=True,
+    consumes_grad=False,
+    updates_params=False,
+)
+
+GREEDY_ACTION_SPEC = OperatorSpec.create(
+    name="GreedyAction",
+    inputs={"input": PortSpec(spec=None)},
+    outputs={"output": Scalar("int64")},
+    pure=True,
+    math_category="distribution",
+    allowed_contexts={"actor", "learner"},
+    differentiable=False,
+    creates_grad=False,
+    consumes_grad=False,
+    updates_params=False,
+)
+
 
 def op_policy_actor(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
@@ -44,6 +75,7 @@ def op_policy_actor(
         "policy_version": version,
     }
 
+
 def op_policy_forward(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
 ) -> Dict[str, torch.Tensor]:
@@ -55,9 +87,28 @@ def op_policy_forward(
     model_handle = node.params.get("model_handle", "ppo_net")
     ac_net = context.get_model(model_handle)
 
+    # Stale policy detection
+    # TODO: clean this up its messy but works for now
+    version = inputs.get("policy_version")
+    if version is not None:
+        current_version = context.policy_versions.get(model_handle, 0)
+        # Handle both tensor and scalar versions
+        if hasattr(version, "numel") and version.numel() == 1:
+            # It's a scalar tensor
+            version = version.item()
+        elif hasattr(version, "numel") and version.numel() > 1:
+            # It's a batch tensor - check if any are stale
+            if torch.any(version < current_version):
+                raise RuntimeError(f"Stale Policy Error: Batch has stale policies")
+        elif version < current_version:
+            raise RuntimeError(
+                f"Stale Policy Error: Batch version {version} < current {current_version}"
+            )
+
     # We don't use functional_call here because we want gradients
     logits, values = ac_net(obs)
     return {"logits": logits, "values": values.squeeze(-1)}
+
 
 def op_policy_ratio(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None
@@ -68,6 +119,7 @@ def op_policy_ratio(
     if new_log_prob is None or old_log_prob is None:
         return MissingInput("log_probs")
     return torch.exp(new_log_prob - old_log_prob)
+
 
 def op_greedy_action(
     node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None

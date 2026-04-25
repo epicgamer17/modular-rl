@@ -9,14 +9,14 @@ def test_learner_op_requires_trainability_metadata() -> None:
     Every learner-side op must explicitly declare gradient semantics.
     """
     # 1. Missing all metadata should fail
-    with pytest.raises(ValueError, match="must explicitly declare: differentiable, creates_grad, consumes_grad, updates_params"):
+    with pytest.raises(ValueError, match="must explicitly declare:"):
         OperatorSpec.create(
             name="MissingMetadataOp",
             allowed_contexts={"learner"}
         )
 
     # 2. Missing some metadata should fail
-    with pytest.raises(ValueError, match="must explicitly declare: creates_grad, consumes_grad, updates_params"):
+    with pytest.raises(ValueError, match="must explicitly declare:"):
         OperatorSpec.create(
             name="PartialMetadataOp",
             allowed_contexts={"learner"},

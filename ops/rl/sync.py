@@ -3,6 +3,23 @@ from typing import Dict, Any, Optional
 from core.graph import Node
 from runtime.context import ExecutionContext
 from runtime.signals import NoOp, Skipped
+from runtime.registry import OperatorSpec
+
+TARGET_SYNC_SPEC = OperatorSpec.create(
+    "TargetSync",
+    inputs={},
+    outputs={},
+    pure=False,
+    stateful=True,
+    allowed_contexts={"learner"},
+    side_effects=["target_update"],
+    requires_models=["source", "target"],
+    math_category="control",
+    differentiable=False,
+    creates_grad=False,
+    consumes_grad=False,
+    updates_params=False,
+)
 
 def op_target_sync(node: Node, inputs: Dict[str, Any], context: Optional[ExecutionContext] = None) -> None:
     """

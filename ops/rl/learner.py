@@ -4,6 +4,87 @@ from core.graph import Node
 from runtime.context import ExecutionContext
 from runtime.state import GradientRegistry
 from runtime.signals import MissingInput
+from runtime.registry import OperatorSpec, PortSpec, Scalar
+
+OPTIMIZER_SPEC = OperatorSpec.create(
+    name="Optimizer",
+    inputs={"loss": Scalar("float32")},
+    outputs={"loss_val": Scalar("float32")},
+    pure=False,
+    stateful=True,
+    allowed_contexts={"learner"},
+    differentiable=False,
+    creates_grad=False,
+    consumes_grad=False,
+    updates_params=True,
+    math_category="optimizer",
+)
+
+BACKWARD_SPEC = OperatorSpec.create(
+    name="Backward",
+    inputs={"loss": Scalar("float32")},
+    outputs={"done": Scalar("bool")},
+    pure=False,
+    stateful=True,
+    allowed_contexts={"learner"},
+    differentiable=False,
+    creates_grad=False,
+    consumes_grad=False,
+    updates_params=False,
+    parameter_handles=["model_handle"],
+)
+
+GRAD_BUFFER_SPEC = OperatorSpec.create(
+    name="GradBuffer",
+    inputs={},
+    outputs={"grads": PortSpec(spec=None)},
+    pure=False,
+    stateful=True,
+    allowed_contexts={"learner"},
+    differentiable=False,
+    creates_grad=False,
+    consumes_grad=False,
+    updates_params=False,
+    parameter_handles=["model_handle"],
+)
+
+ACCUMULATE_GRAD_SPEC = OperatorSpec.create(
+    name="AccumulateGrad",
+    inputs={},
+    outputs={
+        "grads": PortSpec(spec=None),
+        "count": Scalar("int64"),
+        "ready": Scalar("bool"),
+    },
+    pure=False,
+    stateful=True,
+    allowed_contexts={"learner"},
+    differentiable=False,
+    creates_grad=False,
+    consumes_grad=False,
+    updates_params=False,
+    parameter_handles=["model_handle"],
+)
+
+OPTIMIZER_STEP_EVERY_SPEC = OperatorSpec.create(
+    name="OptimizerStepEvery",
+    inputs={},
+    outputs={
+        "stepped": Scalar("bool"),
+        "count": Scalar("int64"),
+        "loss": Scalar("float32"),
+        "grad_norm": Scalar("float32"),
+        "lr": Scalar("float32"),
+    },
+    pure=False,
+    stateful=True,
+    allowed_contexts={"learner"},
+    differentiable=False,
+    creates_grad=False,
+    consumes_grad=True,
+    updates_params=True,
+    parameter_handles=["model_handle", "optimizer_handle"],
+)
 
 
 def op_optimizer_step(

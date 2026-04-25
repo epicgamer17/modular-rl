@@ -30,11 +30,62 @@ def test_fusion_semantics_numerical_comparison() -> None:
     register_operator("SemanticSink", lambda node, inputs, context: next(iter(inputs.values())))
     
     spec = TensorSpec(shape=(1,), dtype="float32")
-    register_spec("SemanticOpA", OperatorSpec.create(name="SemanticOpA", inputs={"in": spec}, outputs=spec, pure=True, deterministic=True))
-    register_spec("SemanticOpB", OperatorSpec.create(name="SemanticOpB", inputs={"in": spec}, outputs=spec, pure=True, deterministic=True))
-    register_spec("SemanticOpFused", OperatorSpec.create(name="SemanticOpFused", inputs={"in": spec}, outputs=spec, pure=True, deterministic=True))
-    register_spec("SemanticSource", OperatorSpec.create(name="SemanticSource", outputs=spec, pure=True, deterministic=True))
-    register_spec("SemanticSink", OperatorSpec.create(name="SemanticSink", inputs={"in": spec}))
+    register_spec("SemanticOpA", OperatorSpec.create(
+        name="SemanticOpA", 
+        inputs={"in": spec}, 
+        outputs=spec, 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("SemanticOpB", OperatorSpec.create(
+        name="SemanticOpB", 
+        inputs={"in": spec}, 
+        outputs=spec, 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("SemanticOpFused", OperatorSpec.create(
+        name="SemanticOpFused", 
+        inputs={"in": spec}, 
+        outputs=spec, 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("SemanticSource", OperatorSpec.create(
+        name="SemanticSource", 
+        outputs=spec, 
+        pure=True, 
+        deterministic=True,
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
+    register_spec("SemanticSink", OperatorSpec.create(
+        name="SemanticSink", 
+        inputs={"in": spec},
+        allowed_contexts={"actor"},
+        differentiable=False,
+        creates_grad=False,
+        consumes_grad=False,
+        updates_params=False,
+    ))
     
     from compiler.optimizer import OPTIMIZER_ENGINE
     from compiler.rewrite import FusionRule
