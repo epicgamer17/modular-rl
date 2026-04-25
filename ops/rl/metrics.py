@@ -3,7 +3,6 @@ from typing import Dict, Any, Optional
 from core.graph import Node
 from runtime.context import ExecutionContext
 from runtime.refs import RuntimeValue
-from runtime.services.metrics import MetricsStore
 
 def _is_valid(val: Any) -> bool:
     """Helper to check if a value is real data and not a control-flow RuntimeValue."""
@@ -69,21 +68,17 @@ def op_metrics_sink(
     if _is_valid(replay_size):
         metrics["replay_size"] = int(replay_size)
 
-    rates = MetricsStore.default().update(context.actor_step, context.learner_step)
-    metrics["sps"] = rates["sps"]
-    metrics["learner_ups"] = rates["ups"]
+    # Use the new event-driven observability module
+    from observability.tracing.event_schema import get_emitter
+    emitter = get_emitter()
 
-    log_frequency = node.params.get("log_frequency", 100)
-    if context.learner_step % log_frequency == 0:
-        loss_str = f"{metrics['loss']:.4f}" if "loss" in metrics else "N/A"
-        q_str = f"{metrics['avg_q']:.4f}" if "avg_q" in metrics else "N/A"
-        rew_str = f"{metrics['reward']:.2f}" if "reward" in metrics else "N/A"
-        eps_str = f"{metrics['epsilon']:.3f}" if "epsilon" in metrics else "N/A"
+    # Log all metrics as events
+    for k, v in metrics.items():
+        emitter.emit_metric(name=k, value=v, step=context.actor_step)
 
-        print(
-            f"[Metrics] Step {context.actor_step} | Learner {context.learner_step} | "
-            f"Loss: {loss_str} | AvgQ: {q_str} | Reward: {rew_str} | Eps: {eps_str} | "
-            f"SPS: {metrics['sps']:.1f} | UPS: {metrics['learner_ups']:.1f} | Replay: {metrics.get('replay_size', 0)}"
-        )
+    # For backward compatibility or specific triggers, we might still want a way to signal "done with this step"
+    # But for now, emitting metrics is enough.
+
+
 
     return metrics

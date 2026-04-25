@@ -122,6 +122,18 @@ def infer_shapes(graph: Graph) -> Graph:
             params=node.params,
             tags=node.tags,
         )
+        
+        from observability.tracing.event_schema import get_emitter, EventType, Event
+        get_emitter().emit(Event(
+            type=EventType.SHAPE_INFERENCE,
+            name=node.node_type,
+            metadata={
+                "node_id": str(nid),
+                "schema_in": str(new_schema_in),
+                "schema_out": str(new_schema_out)
+            }
+        ))
+
 
     # Handle nodes that weren't in topo_order (cycles)
     for nid in graph.nodes:

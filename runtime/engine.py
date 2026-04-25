@@ -135,6 +135,13 @@ class ActorRuntime:
 
                     if context:
                         context.episode_count += 1
+                    
+                    # Emit episodic metrics as events
+                    from observability.tracing.event_schema import get_emitter
+                    emitter = get_emitter()
+                    emitter.emit_metric(name="episode_return", value=self.last_episode_return, step=context.actor_step)
+                    emitter.emit_metric(name="episode_length", value=self.last_episode_length, step=context.actor_step)
+
 
         # Handle truncation bootstrapping: if truncated, next_obs should be the final_observation
         # from the info dict (standard gymnasium behavior for auto-resetting vector envs)

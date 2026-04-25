@@ -58,29 +58,48 @@ def compile_graph(
     Raises:
         RuntimeError: If validation fails (due to errors or strict mode warnings).
     """
+    from observability.tracing.event_schema import get_emitter, EventType
+    import time
+    
+    emitter = get_emitter()
+    start_time = time.time()
+    
+    emitter.emit_trace(
+        name="compile_graph",
+        type=EventType.COMPILER_START,
+        metadata={"strict": strict, "context": context}
+    )
+
+
     report = ValidationReport()
 
     # 0. Metadata Checks (Ensure all types have specifications)
     report.merge(validate_metadata(graph, strict=strict))
 
     # 1. Shape Inference (Populate node schemas for validation)
-    graph = infer_shapes(graph)
+    with emitter.trace_pass("shape_inference"):
+        graph = infer_shapes(graph)
 
     # 2. Shape Validation
-    report.merge(validate_shapes(graph))
+    with emitter.trace_pass("validate_shapes"):
+        report.merge(validate_shapes(graph))
 
     # 3. Autodiff Lowering (Decompose Loss -> Backward + GradBuffer)
     if autodiff_lowering and context in ["learner", "both"]:
-        graph = autodiff(graph)
+        with emitter.trace_pass("autodiff"):
+            graph = autodiff(graph)
 
     # 3b. AutoBatching / Vectorization (Step 3)
     if autobatch:
-        graph = vectorize_graph(graph)
+        with emitter.trace_pass("autobatch"):
+            graph = vectorize_graph(graph)
 
     # 4. Optimization Passes (DNE, fusion)
     # Applying these early removes dead nodes that might otherwise trigger validation errors
     if optimize:
-        graph = optimize_graph(graph, report=optimization_report)
+        with emitter.trace_pass("optimize"):
+            graph = optimize_graph(graph, report=optimization_report)
+
 
     # 5. Structural Checks (Required, Cycles, unreachable nodes)
     report.merge(validate_structure(graph))
@@ -137,4 +156,13 @@ def compile_graph(
             f"Graph compilation failed in STRICT mode due to warnings:\n{warn_details}"
         )
 
+    emitter.emit_trace(
+        name="compile_graph",
+        type=EventType.COMPILER_END,
+        duration=time.time() - start_time,
+        metadata={"nodes": len(graph.nodes), "edges": len(graph.edges)}
+    )
+
+
     return graph
+

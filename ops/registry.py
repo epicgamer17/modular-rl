@@ -22,8 +22,16 @@ from agents.ppo.operators import register_ppo_operators
 from agents.dqn.operators import register_dqn_operators
 
 
+_REGISTERED = False
+
 def register_all_operators():
     """Registers all operators in the system."""
+    global _REGISTERED
+    if _REGISTERED:
+        return
+    _REGISTERED = True
+    
+
     # Control
     register_operator("Loop", op_loop)
     register_operator("MinibatchIterator", op_minibatch_iterator)
@@ -80,5 +88,17 @@ def register_all_operators():
     register_operator("OptimizerStepEvery", op_optimizer_step_every)
     
     # Agent Specific
+    # These call their own logic but don't recurse back to register_all_operators
     register_ppo_operators()
     register_dqn_operators()
+
+def register_ppo_operators_with_base():
+    """Register PPO specific and all base operators."""
+    register_all_operators()
+    register_ppo_operators()
+
+def register_dqn_operators_with_base():
+    """Register DQN specific and all base operators."""
+    register_all_operators()
+    register_dqn_operators()
+

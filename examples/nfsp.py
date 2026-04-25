@@ -78,7 +78,11 @@ register_operator("MixtureActor", op_mixture_actor)
 
 # 3. Training Loop
 def run_nfsp():
+    from ops.registry import register_all_operators
+    register_all_operators()
+
     env = gym.make("CartPole-v1")
+
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.n
 
@@ -93,16 +97,26 @@ def run_nfsp():
     dqn_graph.add_node("batch_in", NODE_TYPE_SOURCE)
     dqn_graph.add_node("loss", "TDLoss", params={"gamma": 0.99})
     dqn_graph.add_node("opt", "Optimizer", params={"optimizer_handle": "dqn_opt"})
+    dqn_graph.add_node("metrics", "MetricsSink", params={"buffer_id": "rl"})
+
     dqn_graph.add_edge("batch_in", "loss", dst_port="batch")
     dqn_graph.add_edge("loss", "opt", dst_port="loss")
+    dqn_graph.add_edge("loss", "metrics", dst_port="loss")
+    dqn_graph.add_edge("opt", "metrics", dst_port="opt_stats")
+
 
     # SL Learner (Average Policy)
     sl_graph = Graph()
     sl_graph.add_node("batch_in", NODE_TYPE_SOURCE)
     sl_graph.add_node("loss", "SLLoss", params={"policy_handle": "policy"})
     sl_graph.add_node("opt", "Optimizer", params={"optimizer_handle": "sl_opt"})
+    sl_graph.add_node("metrics", "MetricsSink", params={"buffer_id": "sl"})
+
     sl_graph.add_edge("batch_in", "loss", dst_port="batch")
     sl_graph.add_edge("loss", "opt", dst_port="loss")
+    sl_graph.add_edge("loss", "metrics", dst_port="loss")
+    sl_graph.add_edge("opt", "metrics", dst_port="opt_stats")
+
 
     # 2. Registries
     online_q = QNetwork(obs_dim, act_dim)
@@ -162,7 +176,14 @@ def run_nfsp():
             
             res_dqn = dqn_learner.update_step(batch=rl_batch, context=context)
             res_sl = sl_learner.update_step(batch=sl_batch, context=context)
+            
+            from observability.tracing.event_schema import get_emitter
+            emitter = get_emitter()
+            emitter.emit_metric("dqn_loss", res_dqn["opt"], step=context.actor_step if context else 0)
+            emitter.emit_metric("sl_loss", res_sl["opt"], step=context.actor_step if context else 0)
+            
             return {"dqn_loss": res_dqn["opt"], "sl_loss": res_sl["opt"]}
+
 
     runner = ScheduleRunner(
         SchedulePlan(actor_frequency=1, learner_frequency=4),
@@ -171,9 +192,25 @@ def run_nfsp():
     )
 
     # 6. Run
+    from observability.dispatcher import setup_default_observability
+    setup_default_observability()
+
     print("Starting NFSP demo...")
-    runner.run(total_actor_steps=1000, context=ctx)
-    print("NFSP demo finished.")
+    try:
+        runner.run(total_actor_steps=1000, context=ctx)
+    except KeyboardInterrupt:
+        print("\nTraining interrupted by user. Generating plots...")
+    finally:
+        print("NFSP demo finished.")
+        
+        # 7. Plot Results
+        from observability.plotting.rl_plots import plot_metric
+        plot_metric("episode_return", title="NFSP: Episodic Return", save_path="nfsp_return.png")
+        plot_metric("dqn_loss", title="NFSP: DQN Loss", save_path="nfsp_dqn_loss.png")
+        plot_metric("sl_loss", title="NFSP: SL Loss", save_path="nfsp_sl_loss.png")
+        print("Plots saved to nfsp_return.png, nfsp_dqn_loss.png, and nfsp_sl_loss.png")
+
+
 
 if __name__ == "__main__":
     run_nfsp()

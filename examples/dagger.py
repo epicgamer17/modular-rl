@@ -40,7 +40,11 @@ def expert_policy(obs):
 
 # 2. Training Loop
 def run_dagger():
+    from ops.registry import register_all_operators
+    register_all_operators()
+    
     env = gym.make("CartPole-v1")
+
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.n
 
@@ -58,8 +62,13 @@ def run_dagger():
     train_graph.add_node("batch_in", NODE_TYPE_SOURCE)
     train_graph.add_node("loss", "SLLoss", params={"model_handle": "student"})
     train_graph.add_node("opt", "Optimizer", params={"optimizer_handle": "main_opt"})
+    train_graph.add_node("metrics", "MetricsSink", params={"buffer_id": "main"})
+    
     train_graph.add_edge("batch_in", "loss", dst_port="batch")
     train_graph.add_edge("loss", "opt", dst_port="loss")
+    train_graph.add_edge("loss", "metrics", dst_port="loss")
+    train_graph.add_edge("opt", "metrics", dst_port="opt_stats")
+
 
     # 2. Registries
     student = SimpleMLP(obs_dim, act_dim)
@@ -105,9 +114,23 @@ def run_dagger():
     runner = ScheduleRunner(plan, actor_runtime, learner_runtime)
 
     # 6. Run
+    from observability.dispatcher import setup_default_observability
+    setup_default_observability()
+
     print("Starting DAgger demo...")
-    runner.run(total_actor_steps=1000, context=ctx)
-    print("DAgger demo finished.")
+    try:
+        runner.run(total_actor_steps=1000, context=ctx)
+    except KeyboardInterrupt:
+        print("\nTraining interrupted by user. Generating plots...")
+    finally:
+        print("DAgger demo finished.")
+        
+        # 7. Plot Results
+        from observability.plotting.rl_plots import plot_metric
+        plot_metric("episode_return", title="DAgger: Episodic Return", save_path="dagger_return.png")
+        plot_metric("loss", title="DAgger: Imitation Loss", save_path="dagger_loss.png")
+        print("Plots saved to dagger_return.png and dagger_loss.png")
+
 
 if __name__ == "__main__":
     run_dagger()

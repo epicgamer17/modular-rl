@@ -31,8 +31,10 @@ class PPOAgent:
         self.config = config
         self.env = env
         
-        # 1. Register PPO specific operators
-        register_ppo_operators()
+        # 1. Register PPO specific and base operators
+        from ops.registry import register_ppo_operators_with_base
+        register_ppo_operators_with_base()
+
         
         # 2. Setup Model
         self.ac_net = ActorCritic(

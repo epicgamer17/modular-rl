@@ -63,7 +63,9 @@ class DQNAgent:
         self.learner_graph = build_learner_graph(config, self.collator)
 
         # 6. Register Operators (idempotent)
-        register_dqn_operators()
+        from ops.registry import register_dqn_operators_with_base
+        register_dqn_operators_with_base()
+
 
     def get_execution_context(self, seed: int = 42) -> ExecutionContext:
         return ExecutionContext(

@@ -10,7 +10,8 @@ from runtime.context import ExecutionContext
 from runtime.refs import RuntimeValue, Value
 from runtime.signals import NoOp, Skipped, MissingInput
 from runtime.errors import ExecutionError
-from runtime.tracing import TraceLogger
+from runtime.errors import ExecutionError
+
 from runtime.io.collator import ReplayCollator
 import time
 
@@ -131,9 +132,9 @@ def execute(
     graph: Graph,
     initial_inputs: Dict[NodeId, Any],
     context: Optional[ExecutionContext] = None,
-    tracer: Optional[TraceLogger] = None,
     validate_purity: bool = True,
 ) -> Dict[NodeId, Any]:
+
     """
     Executes the graph using the provided initial inputs and runtime context.
 
@@ -174,8 +175,7 @@ def execute(
             )
 
     context = context or ExecutionContext()
-    if tracer:
-        tracer.start_step()
+
 
     # 1. Topological Sort (Kahn's Algorithm)
     order = _topological_sort(graph)
@@ -190,11 +190,8 @@ def execute(
     for nid in order:
         if nid in node_outputs and nid in initial_inputs:
             # Source node already materialized
-            if tracer:
-                tracer.record_node(
-                    node_id=nid, inputs={}, outputs=node_outputs[nid], runtime_ms=0.0
-                )
             continue
+
 
         node = graph.nodes[nid]
 
@@ -295,9 +292,26 @@ def execute(
             output = Skipped(skip_reason)
             runtime_ms = 0.0
         else:
+            from observability.tracing.event_schema import get_emitter, EventType, Event
+            emitter = get_emitter()
+            
+            emitter.emit(Event(
+                type=EventType.NODE_ENTER,
+                name=node.node_type,
+                metadata={"node_id": str(nid)}
+            ))
+            
             start_time = time.perf_counter()
             output = op_func(node, unwrapped_inputs, context=context)
             runtime_ms = (time.perf_counter() - start_time) * 1000
+            
+            emitter.emit(Event(
+                type=EventType.NODE_EXIT,
+                name=node.node_type,
+                duration=runtime_ms,
+                metadata={"node_id": str(nid)}
+            ))
+
 
         # Ensure output is a RuntimeValue
         if not isinstance(output, RuntimeValue):
@@ -310,16 +324,8 @@ def execute(
         if isinstance(output, Skipped) and not final_skip_reason:
             final_skip_reason = output.reason
 
-        if tracer:
-            tracer.record_node(
-                node_id=nid,
-                inputs=unwrapped_inputs,
-                outputs=output,
-                runtime_ms=runtime_ms,
-                skipped_reason=final_skip_reason,
-            )
-
         node_outputs[nid] = output
+
 
     return node_outputs
 

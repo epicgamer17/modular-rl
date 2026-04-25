@@ -9,6 +9,9 @@ from envs.wrappers import NormalizeObservation
 
 
 def run_ppo_demo(total_steps=500_000):
+    from observability.dispatcher import setup_default_observability
+    setup_default_observability()
+
     # PPO is most efficient with vectorized environments
     # TODO: Make PPO work with Multiple Envs
     num_envs = 1  # not sure if i love or not
@@ -54,28 +57,23 @@ def run_ppo_demo(total_steps=500_000):
     # 2. Initialize Modular Agent
     agent = PPOAgent(config, env)
 
-    # 3. Add Logging to Recording Function
-    base_record = agent.actor_runtime.recording_fn
-
-    def logging_record(single_step):
-        # Ensure the actual PPO recording (to buffer) still happens
-        if base_record:
-            base_record(single_step)
-
-        # Check if the environment finished
-        if single_step.done:
-            # ActorRuntime maintains the return of the most recently finished episode
-            # metadata is a dict inside TransitionBatch
-            step_idx = single_step.metadata["step_index"]
-            print(
-                f"Step {step_idx} | Episode Return: {agent.actor_runtime.last_episode_return:.2f}"
-            )
-
-    agent.actor_runtime.recording_fn = logging_record
-
     # 4. Train
-    agent.train(total_steps=total_steps)
-    print("PPO Modern Demo Finished.")
+    try:
+        agent.train(total_steps=total_steps)
+    except KeyboardInterrupt:
+        print("\nTraining interrupted by user. Generating plots...")
+    finally:
+        print("PPO Modern Demo Finished.")
+        
+        # 5. Plot Results
+        from observability.plotting.rl_plots import plot_metric
+        # Plot canonical PPO metrics
+        plot_metric("episode_return", title="PPO: Episodic Return", save_path="ppo_return.png")
+        plot_metric("loss", title="PPO: Total Loss", save_path="ppo_loss.png")
+        plot_metric("entropy", title="PPO: Policy Entropy", save_path="ppo_entropy.png")
+        print("Plots saved to ppo_return.png, ppo_loss.png, and ppo_entropy.png")
+
+
 
 
 if __name__ == "__main__":

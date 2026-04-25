@@ -93,38 +93,13 @@ class OnPolicyLearner(LearnerRuntime):
         # 4. Clear the buffer
         buffer.clear()
 
-        if not all_results:
-            return {}
-
-        # 5. Aggregate Metrics
-        # Flatten all_results because some nodes (like metrics sink) return dictionaries
-        flattened_results = []
-        for res in all_results:
-            flat = {}
-            for k, v in res.items():
-                if isinstance(v, dict):
-                    flat.update(v)
-                else:
-                    flat[k] = v
-            flattened_results.append(flat)
-
-        if not flattened_results:
-            return {}
-
-        agg_metrics = {}
-        # Aggregate mean across all minibatches/epochs for this update
-        for k in flattened_results[0].keys():
-            values = [
-                r[k] for r in flattened_results if isinstance(r.get(k), (int, float))
-            ]
-            if values:
-                agg_metrics[k] = sum(values) / len(values)
-
-        # 6. Add Diagnostics
+        # 5. Emit throughput metrics
         end_time = time.perf_counter()
         total_steps = self.config.rollout_steps * self.config.num_envs
-        agg_metrics["sps"] = total_steps / (end_time - start_time + 1e-8)
-        agg_metrics["episodic_return"] = self.actor_runtime.last_episode_return
-        agg_metrics["episodic_length"] = self.actor_runtime.last_episode_length
+        sps = total_steps / (end_time - start_time + 1e-8)
+        
+        from observability.tracing.event_schema import get_emitter
+        get_emitter().emit_metric(name="sps", value=sps, step=context.actor_step)
 
-        return agg_metrics
+        return {}
+

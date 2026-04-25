@@ -71,22 +71,29 @@ def train_dqn(total_steps: int = 120_000, seed: int = 0):
     )
 
     # 7. Execution
+    from observability.dispatcher import setup_default_observability
+    setup_default_observability()
+
     ctx = agent.get_execution_context(seed=seed)
-
-    def log_episode_return(single_step):
-        if single_step.done:
-            step_idx = single_step.metadata["step_index"]
-            print(
-                f"Step {step_idx} | Episode Return: {actor_runtime.last_episode_return:.2f}"
-            )
-
-    actor_runtime.recording_fn = log_episode_return
 
     runner = ScheduleRunner(plan, actor_runtime, learner_runtime)
 
+
     print(f"Starting DQN with Modular Agent and Compiled Schedule: {plan.to_dict()}")
-    runner.run(total_actor_steps=total_steps, context=ctx)
-    print("DQN Modular Demo Finished.")
+    try:
+        runner.run(total_actor_steps=total_steps, context=ctx)
+    except KeyboardInterrupt:
+        print("\nTraining interrupted by user. Generating plots...")
+    finally:
+        print("DQN Modular Demo Finished.")
+        
+        # 8. Plot Results
+        from observability.plotting.rl_plots import plot_metric
+        plot_metric("episode_return", title="DQN: Episodic Return", save_path="dqn_return.png")
+        plot_metric("loss", title="DQN: Bellman Loss", save_path="dqn_loss.png")
+        plot_metric("sps", title="DQN: Training Throughput (SPS)", save_path="dqn_sps.png")
+        print("Plots saved to dqn_return.png, dqn_loss.png, and dqn_sps.png")
+
 
 
 if __name__ == "__main__":

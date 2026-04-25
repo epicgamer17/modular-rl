@@ -155,8 +155,17 @@ def dead_node_elimination(graph: Graph, report: Optional[OptimizationReport] = N
     # 3. Create new graph with only live nodes
     removed_nodes = [nid for nid in graph.nodes if nid not in live_nodes]
     if removed_nodes:
+        from observability.tracing.event_schema import get_emitter, EventType
+        emitter = get_emitter()
+        for nid in removed_nodes:
+            emitter.emit(Event(
+                type=EventType.PRUNING_EVENT,
+                name="dead_node_elimination",
+                metadata={"node_id": str(nid), "node_type": graph.nodes[nid].node_type}
+            ))
         print(f"[DNE] Removing dead nodes: {removed_nodes}")
     new_graph = Graph()
+
     new_graph.nodes = {
         nid: node for nid, node in graph.nodes.items() if nid in live_nodes
     }
