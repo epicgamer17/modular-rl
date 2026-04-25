@@ -50,7 +50,10 @@ class EventDispatcher:
                 # Note: We need learner_step too, for now let's assume it's in metadata or similar
                 # or just use actor_step as a proxy for now.
                 rates = self.store.compute_rates(event.step, event.step // 4) # Proxy
-                
+
+                self.store.log("sps", rates["sps"], step=event.step)
+                self.store.log("ups", rates["ups"], step=event.step)
+
                 metrics_to_print = self._metrics_buffer[event.step]
                 metrics_to_print["SPS"] = rates["sps"]
                 metrics_to_print["UPS"] = rates["ups"]

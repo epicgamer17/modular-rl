@@ -221,3 +221,9 @@ xxhash==3.5.0
 yarl==1.18.3
 zipp==3.21.0
 pytest-rerunfailures
+SciencePlots>=2.1.0
+catppuccin-matplotlib>=0.5
+mplcyberpunk>=0.7.1
+matplotx>=0.3.10
+aquarel>=0.0.6
+qbstyles>=0.1.4

@@ -1,66 +1,161 @@
+import contextlib
+import matplotlib as mpl
 import matplotlib.pyplot as plt
-import seaborn as sns
-from typing import Dict, Any, Optional
 
-# Muted Scientific Palette (based on common paper styles like Nature/Science or standard high-quality libraries)
-# Avoids "neon" look, focuses on readability and aesthetics.
-SCIENTIFIC_COLORS = {
-    "primary": "#4A69BD",      # Muted Blue
-    "secondary": "#E58E26",    # Muted Orange
-    "accent": "#78E08F",       # Muted Green
-    "critical": "#EB2F06",     # Muted Red
-    "neutral": "#60A3BC",      # Muted Cyan
-    "dark_bg": "#1E272E",      # Deep Slate for Dark Mode
-    "light_bg": "#FFFFFF",     # Pure White for Light Mode
-    "text_dark": "#D2DAE2",    # Light Grey text for Dark Mode
-    "text_light": "#2F3640",   # Dark Slate text for Light Mode
-    "grid": "#485460",         # Grid color
-}
 
-def apply_scientific_style(mode: str = "dark"):
-    """Apply premium scientific plotting styles."""
-    is_dark = mode == "dark"
-    bg_color = SCIENTIFIC_COLORS["dark_bg"] if is_dark else SCIENTIFIC_COLORS["light_bg"]
-    text_color = SCIENTIFIC_COLORS["text_dark"] if is_dark else SCIENTIFIC_COLORS["text_light"]
-    grid_color = SCIENTIFIC_COLORS["grid"] if is_dark else "#DCDDE1"
+_PLOTLY_TEMPLATE_NAME = "_observability_active_theme"
 
-    # Matplotlib Global RC Params
-    plt.rcParams.update({
-        "figure.facecolor": bg_color,
-        "axes.facecolor": bg_color,
-        "axes.edgecolor": text_color,
-        "axes.labelcolor": text_color,
-        "axes.grid": True,
-        "grid.color": grid_color,
-        "grid.linestyle": "--",
-        "grid.alpha": 0.5,
-        "xtick.color": text_color,
-        "ytick.color": text_color,
-        "text.color": text_color,
-        "font.family": "sans-serif",
-        "font.sans-serif": ["Inter", "Roboto", "Arial", "DejaVu Sans"],
-        "legend.frameon": True,
-        "legend.facecolor": bg_color,
-        "legend.edgecolor": text_color,
-        "savefig.facecolor": bg_color,
-        "savefig.edgecolor": bg_color,
-    })
 
-    # Seaborn Theme
-    sns.set_theme(
-        style="whitegrid" if not is_dark else "darkgrid",
-        palette=sns.color_palette([
-            SCIENTIFIC_COLORS["primary"],
-            SCIENTIFIC_COLORS["secondary"],
-            SCIENTIFIC_COLORS["accent"],
-            SCIENTIFIC_COLORS["critical"],
-            SCIENTIFIC_COLORS["neutral"],
-        ]),
+def _resolve_matplotx_style(spec: str, dark: bool):
+    """Resolve a matplotx style spec to a flat rcParams dict.
+
+    Accepts:
+      "dracula"             - flat style, used as-is
+      "pitaya_smoothie"     - nested group, picks variant via dark flag
+      "tokyo_night.storm"   - nested group, explicit variant
+    """
+    import matplotx
+    if "." in spec:
+        name, variant = spec.split(".", 1)
+    else:
+        name, variant = spec, None
+
+    style = getattr(matplotx.styles, name)
+    if not isinstance(style, dict):
+        raise AttributeError(f"matplotx.styles.{name} is not a style dict")
+
+    is_nested = any(isinstance(v, dict) for v in style.values())
+    if not is_nested:
+        return style
+
+    if variant is None:
+        variant = "dark" if dark else "light"
+    if variant not in style:
+        raise KeyError(
+            f"matplotx style '{name}' has no variant '{variant}'. "
+            f"Available: {list(style.keys())}"
+        )
+    return style[variant]
+
+
+def _apply_plotly_template_from_rc():
+    """Mirror current matplotlib rcParams into a Plotly default template.
+
+    Returns a teardown callable, or None if plotly isn't installed.
+    Soft-fails on missing plotly so matplotlib-only callers aren't penalized.
+    """
+    try:
+        import plotly.io as pio
+        import plotly.graph_objects as go
+    except ImportError:
+        return None
+
+    rc = mpl.rcParams
+
+    cycler = rc.get("axes.prop_cycle")
+    colorway = list(cycler.by_key().get("color", [])) if cycler is not None else []
+
+    font_family = rc.get("font.family")
+    if isinstance(font_family, (list, tuple)) and font_family:
+        font_family = font_family[0]
+    if not isinstance(font_family, str):
+        font_family = "sans-serif"
+
+    axis_common = dict(
+        gridcolor=rc.get("grid.color"),
+        linecolor=rc.get("axes.edgecolor"),
+        zerolinecolor=rc.get("axes.edgecolor"),
     )
 
-def get_color(key: str) -> str:
-    return SCIENTIFIC_COLORS.get(key, "#000000")
+    template = go.layout.Template(
+        layout=dict(
+            paper_bgcolor=rc.get("figure.facecolor"),
+            plot_bgcolor=rc.get("axes.facecolor"),
+            font=dict(color=rc.get("text.color"), family=font_family),
+            colorway=colorway,
+            xaxis=dict(
+                **axis_common,
+                tickcolor=rc.get("xtick.color"),
+                tickfont=dict(color=rc.get("xtick.color")),
+                title=dict(font=dict(color=rc.get("axes.labelcolor"))),
+            ),
+            yaxis=dict(
+                **axis_common,
+                tickcolor=rc.get("ytick.color"),
+                tickfont=dict(color=rc.get("ytick.color")),
+                title=dict(font=dict(color=rc.get("axes.labelcolor"))),
+            ),
+        )
+    )
+
+    prev_default = pio.templates.default
+    pio.templates[_PLOTLY_TEMPLATE_NAME] = template
+    pio.templates.default = _PLOTLY_TEMPLATE_NAME
+
+    def restore():
+        pio.templates.default = prev_default
+        if _PLOTLY_TEMPLATE_NAME in pio.templates:
+            del pio.templates[_PLOTLY_TEMPLATE_NAME]
+
+    return restore
+
+
+@contextlib.contextmanager
+def plot_theme(theme: str = "matplotx:dracula", dark: bool = True):
+    """Universal theme orchestrator with strict global state isolation.
+
+    Applies the theme to matplotlib rcParams and (when plotly is installed)
+    to a Plotly default template, so matplotlib figures and Plotly figures
+    created inside the block share the same theme. Restores both on exit.
+
+    Format examples:
+    - "science+ieee"                  (SciencePlots, '+' joins style stack)
+    - "catppuccin-mocha"              (Catppuccin)
+    - "cyberpunk"                     (mplcyberpunk)
+    - "matplotx:dracula"              (matplotx, flat style)
+    - "matplotx:pitaya_smoothie"      (matplotx, nested - picks variant via `dark`)
+    - "matplotx:tokyo_night.storm"    (matplotx, explicit nested variant)
+    - "aquarel:arctic_light"          (aquarel)
+    - "qbstyles"                      (qbstyles)
+    - "ggplot"                        (matplotlib built-in)
+    """
+    original_rc = mpl.rcParams.copy()
+    restore_plotly = None
+
+    try:
+        if theme.startswith("science"):
+            import scienceplots  # noqa: F401
+            plt.style.use(theme.split("+"))
+
+        elif theme.startswith("matplotx:"):
+            spec = theme.split(":", 1)[1]
+            plt.style.use(_resolve_matplotx_style(spec, dark))
+
+        elif theme.startswith("aquarel:"):
+            from aquarel import Theme
+            style_name = theme.split(":", 1)[1]
+            Theme(style_name).apply()
+
+        elif theme == "qbstyles":
+            import qbstyles
+            qbstyles.mpl_style(dark=dark)
+
+        else:
+            plt.style.use(theme)
+
+        restore_plotly = _apply_plotly_template_from_rc()
+
+        yield
+
+    except ImportError as e:
+        raise ImportError(f"Failed to load theme '{theme}'. Missing dependency: {e}")
+
+    finally:
+        if restore_plotly is not None:
+            restore_plotly()
+        mpl.rcParams.clear()
+        mpl.rcParams.update(original_rc)
+
 
 def get_alpha(uncertainty: bool = False) -> float:
-    """Standardized transparency rules."""
     return 0.2 if uncertainty else 0.8

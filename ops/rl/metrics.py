@@ -97,6 +97,20 @@ def op_metrics_sink(
     if _is_valid(replay_size):
         metrics["replay_size"] = int(replay_size)
 
+    handled = {"loss", "avg_q", "reward", "epsilon", "replay_size", "batch"}
+    for port_name, val in inputs.items():
+        if port_name in handled or not _is_valid(val):
+            continue
+        if isinstance(val, dict):
+            for k, v in val.items():
+                scalar = v.item() if hasattr(v, "item") else v
+                if isinstance(scalar, (int, float)):
+                    metrics[k] = float(scalar)
+        else:
+            scalar = val.item() if hasattr(val, "item") else val
+            if isinstance(scalar, (int, float)):
+                metrics[port_name] = float(scalar)
+
     # Use the new event-driven observability module
     from observability.tracing.event_schema import get_emitter
 
