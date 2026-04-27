@@ -22,6 +22,8 @@ It provides a unified execution model for RL systems that is independent of back
 
 It supports a more debuggable form of RL research, where behavior can be analyzed at the level of components, streams, and subgraphs, and where full algorithm structure is explicit rather than embedded across training scripts.
 
+Ultimately, the system is designed to maximize Time-to-Science. It bridges the historical gap between rapid research prototyping and hyper-optimized distributed execution. By acting as the "glue rather than the engine," researchers can invent and debug custom mathematical operations natively in PyTorch, and then instantly scale to DeepMind-level cluster speeds (using C++ backends like Reverb, EnvPool, or MCTX) via a single line of configuration—without ever rewriting their algorithm's logic.
+
 ## Design Philosophy
 - **Small Decision Groups**: Minimize friction by keeping decision-making tight and focused.
 - **Clear Focus**: Maintain a sharp focus on the core value proposition: a typed, compiled RL systems graph.
@@ -48,7 +50,11 @@ It supports a more debuggable form of RL research, where behavior can be analyze
 - Provide a rich semantic type system (Box, Discrete, Continuous, Trajectory[T], Sequence[T], Tree[T], Actor[I,O]) with automatic shape propagation and compatibility checking
 - Enable modular reuse across RL paradigms (online RL, offline RL, imitation learning, DAgger, self-play, model-based RL, hybrid systems)
 - Preserve rapid experimentation by allowing local custom components that integrate cleanly into the graph model
-
+- **Declarative Data Access**: Treat Replay and data fetching as Declarative Query Nodes (IR) rather than imperative Python objects, allowing the compiler to optimize data routing, pre-fetching, and backend delegation.
+- **The Adapter/Provider Pattern**: Delegate physical execution of performance-critical bottlenecks (Search, Environments, Distributed Replay) to world-class external engines (e.g., MCTX, EnvPool, Reverb, TorchRL) without polluting the pure mathematical IR.
+- **Component-Level Fusion**: Use pattern matching in the compiler to fuse standard subgraphs (e.g., standard UCT search) into highly optimized backend calls, while explicitly avoiding brittle "whole-algorithm" fusion.
+- **Graceful Degradation (Native Fallback)**: Ensure that when researchers build custom, non-standard nodes that external backends do not support, the compiler seamlessly falls back to a pure PyTorch execution path (leveraging torch.compile for automatic kernel generation) to guarantee custom research always runs.
+- **Zero-Config Baselines (Graph Factories)**: Prevent "configuration fatigue" by providing standard baseline recipes (e.g., standard PPO or SAC graphs) out of the box, allowing users to modify a single node without having to wire the entire graph themselves.
 
 
 
@@ -61,13 +67,9 @@ It supports a more debuggable form of RL research, where behavior can be analyze
 - No reliance on Python object graphs in storage or performance-critical paths
 - No requirement for a custom standalone language syntax in early versions
 - No black-box trainer APIs that obscure system structure
-
-## Core Concepts
-- **Contract (Semantic + Shape)**: Strict tensor definitions ensuring axial and semantic consistency across the system. (ADR-0015, ADR-0019)
-- **Execution Graph (DAG)**: A dependency-resolved graph of nodes that ensures only required computation is executed for a given target. (ADR-0001, ADR-0003)
-- **Blackboard Storage**: A tensor-only state store where all transition data and intermediate results are managed via semantic keys. (ADR-0001, ADR-0018)
-- **Pipeline Components / Transforms**: Stateless, composable transformations that operate on tensors within a contract boundary. (ADR-0007, ADR-0013)
-- **Executors**: Specialized runtime engines (Sequential, Workspace) that manage the dispatching and execution of the computation graph. (ADR-0030)
+- **No reimplementing hyper-optimized low-level C++ structures**: We will not write custom C++ segment trees, MCTS parallelization loops, or gRPC communication layers. We wrap world-class libraries instead of competing with them.
+- **No Whole-Algorithm Black-Box Fusion**: The compiler will never look at a graph and replace it with an external Acme.PPO or RLlib.SAC call. **Fusion** strictly happens at the component level to preserve the user's ability to tweak the surrounding algorithm.
+- **No algorithm-awareness inside core operators**: Mathematical operators (ops/) will never know if they belong to PPO, DQN, or SAC. They remain purely functional Lego bricks.
 
 ## Current Architecture Summary
 The system is structured around the interaction between actors, learners, and a shared blackboard:

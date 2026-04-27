@@ -16,7 +16,7 @@ register_operator(NODE_TYPE_SOURCE, lambda n, i, context=None: None)
 # Set module level marker as per RULE[testing-standards.md]
 pytestmark = pytest.mark.unit
 
-
+# TODO: do we still need this test/functionality?
 def test_metrics_sink_output_dict():
     """Verifies that MetricsSink returns a dictionary of processed metrics."""
     from core.graph import NODE_TYPE_SOURCE
