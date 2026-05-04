@@ -1,3 +1,24 @@
+"""
+Notes on C51 (Distributional/Categorical) DQN:
+Unlike standard DQN which estimates the expected value of the return, distributional RL estimates the
+full probability distribution of the return. This allows us to capture the riskiness of different actions and states leading to potentially better performance. The key idea is to discretize the return into a set of bins called atoms.
+
+Although it learns the riskiness of different actions and states C51 does not use it. It still selects actions via the expected value. However learning the distribution instead of the scalar expected values allows for better representation learning and richer gradients, leading to better performance.
+
+This changes the shape of the loss treating the problem as a classification problem, where we are trying to predict the probability of each atom. With MSE or Huber large differences were penalized more, here the scale of the difference between values is not as important as the classification error. This can lead to better stability and performance, especially in environments with stochastic rewards.
+It also has an effect on PER priorities.
+
+A specific detail is that for Q = r + gamma * max_a Q(s',a), the distribution needs to be shifted to have the correct expected value. For C51 this is done in a way that maintains the rich distribution predicted by the network, unlike MuZero and other models which compute a scalar target, and then compute a totally fresh distribution from that target (instead of using the prediction).
+
+In short:
+- C51 treats the environment and the returns as a distribution. It explicitly learns how uncertainty unfolds over time.
+- Other algorithms like MuZero treat the neural network output as a distribution strictly to make the gradient descent smoother. It completely destroys the distributional information of the future by averaging it into a scalar before making its target.
+
+This paradigm/approach of treating q value estimation, value estimation, or reward estimation as classification problems has been applied to other algorithms as well like MuZero and Dreamer, though with different supports and support transformations or targets (e.g., two-hot with a projection or exponentially spaced bins). This is a powerful idea that has led to significant improvements in performance.
+
+Note: the below DQN implementation is not the same as used in the paper (it does not use dueling DQN, double DQN, etc).
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -108,7 +129,7 @@ wandb.init(
         "gamma": GAMMA,
         "learning_rate": LEARNING_RATE,
         "atom_size": ATOM_SIZE,
-    }
+    },
 )
 
 # --- 2. The Monolithic Loop (The Imperative Shell) ---
@@ -138,13 +159,13 @@ for step in range(MAX_STEPS):
 
     # 3. Add to Buffer
     transition = {
-        "obs": obs,
-        "action": [action],
-        "reward": [reward],
-        "terminated": [terminated],
-        "truncated": [truncated],
-        "next_obs": next_obs,
-        "gamma": [GAMMA],
+        "obs": obs[None, ...],
+        "action": torch.tensor([[action]], dtype=torch.long),
+        "reward": torch.tensor([[reward]], dtype=torch.float32),
+        "terminated": torch.tensor([[terminated]], dtype=torch.float32),
+        "truncated": torch.tensor([[truncated]], dtype=torch.float32),
+        "next_obs": next_obs[None, ...],
+        "gamma": torch.tensor([[GAMMA]], dtype=torch.float32),
     }
     buffer_state, _ = circular_write_strategy(buffer_state, transition)
 
@@ -185,12 +206,20 @@ for step in range(MAX_STEPS):
         if step % 100 == 0:
             # Log all metrics from info_dict. W&B handles scalars and histograms of tensors.
             # We exclude 'predictions' and 'priorities' from the direct log to handle them specially.
-            log_dict = {k: v for k, v in info_dict.items() if k not in ["predictions", "priorities"]}
+            log_dict = {
+                k: v
+                for k, v in info_dict.items()
+                if k not in ["predictions", "priorities"]
+            }
             log_dict.update({"epsilon": current_epsilon})
 
             # Add distributional metrics (Expected Q every 100 steps, Chart every 1000 steps)
-            log_dict.update(log_distributional_metrics(info_dict, SUPPORT, step, log_chart=(step % 1000 == 0)))
-            
+            log_dict.update(
+                log_distributional_metrics(
+                    info_dict, SUPPORT, step, log_chart=(step % 1000 == 0)
+                )
+            )
+
             wandb.log(log_dict, step=step)
 
     # 4. Target Network Update

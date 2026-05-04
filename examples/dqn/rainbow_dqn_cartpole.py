@@ -1,3 +1,14 @@
+"""
+Notes on RainbowDQN:
+The main idea of the paper was that there had been several incremental improvements to DQN that had been developed, but not combined together. This paper simply combined all of them to achieve state-of-the-art performance on Atari. With a few changes to make certain improvements compatible. The components are:
+1. Prioritized Experience Replay
+2. Double DQN
+3. Dueling Networks
+4. Multi-step Learning
+5. Distributional RL
+6. Noisy Nets
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -267,12 +278,20 @@ for step in range(MAX_STEPS):
         if step % 100 == 0:
             # We log the info_dict directly. W&B handles scalars and histograms of tensors.
             # We exclude 'predictions' and 'priorities' from the direct log to handle them specially.
-            log_dict = {k: v for k, v in info_dict.items() if k not in ["predictions", "priorities"]}
+            log_dict = {
+                k: v
+                for k, v in info_dict.items()
+                if k not in ["predictions", "priorities"]
+            }
             log_dict.update({"beta": beta})
 
             # Add distributional metrics (Expected Q every 100 steps, Chart every 1000 steps)
-            log_dict.update(log_distributional_metrics(info_dict, SUPPORT, step, log_chart=(step % 1000 == 0)))
-            
+            log_dict.update(
+                log_distributional_metrics(
+                    info_dict, SUPPORT, step, log_chart=(step % 1000 == 0)
+                )
+            )
+
             wandb.log(log_dict, step=step)
 
     # 4. Target Network Update

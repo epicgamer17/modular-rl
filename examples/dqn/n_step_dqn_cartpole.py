@@ -1,3 +1,12 @@
+"""
+Notes on Multi-step (N-step) DQN:
+The idea is to use n-step returns to speed up learning. Instead of using the 1-step return $R_{t+1} + \gamma \max_{a} Q(s_{t+1}, a)$, we use the n-step return $\sum_{k=0}^{n-1} \gamma^k R_{t+k+1} + \gamma^n \max_{a} Q(s_{t+n}, a)$. This allows for faster propagation of rewards to earlier time steps.
+
+This method increases the variance of updates but reduces the bias. In a sense, it is a compromise between 1-step TD and Monte Carlo returns (which use the full episode return). By increasing n, we can trade decreased bias for increased variance (and vice versa). By using the n step return we rely less on our flawed guesses (reducing bias) but more on environmental randomness (increasing variance).
+
+This idea of bootstrapping the value n steps ahead is foundational to Reinforcement Learning and extremely common. The overall concept is used in N-Step TD (TD(lambda)), GAE (for policy gradients), and Monte Carlo returns. Note, however, that TD(lambda) and GAE use an exponentially weighted sum of all possible n-step returns (all values of n). rather than a single value of n. So learning from n-step returns is a general concept that applies to many other algorithms.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -108,9 +117,8 @@ wandb.init(
         "gamma": GAMMA,
         "learning_rate": LEARNING_RATE,
         "n_steps": N_STEPS,
-    }
+    },
 )
-
 
 
 # --- 2. The Monolithic Loop (The Imperative Shell) ---

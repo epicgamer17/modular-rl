@@ -1,3 +1,16 @@
+"""
+Notes on Dueling DQN:
+The main idea is to separate the estimation of the value function and the advantage function. Instead of having a single Q function, we have a V function and an A function. These two functions are then combined to produce the Q function. The advantage function is then used to estimate the Q values for each action. The idea being that in many states all actions are good. We can split the learning into learning good states and learning good actions. This means for good states the network no longer has to learn that every action is good, it can simply learn that the value of the state is high.
+
+Q = V + A wouldnt work as the network would not be able to tell what is V and what is A (the bias could appear in A instead of V). instead we do:
+Q = V + (A - mean(A))
+This means for a state to have all high Q values, it must have a high V value, and all A values must be 0 (relative to each other).
+
+The specific Dueling architecture is mostly unique to algorithms that estimate Q-values (like DQN and its variants). However, the underlying concept of separating Value from Advantage is a fundamental pillar of modern RL. Actor-Critic methods (like PPO, TRPO, or A3C) rely heavily on computing advantages (often via Generalized Advantage Estimation) to update the policy network (the Actor), using a state-value network (the Critic) as a baseline. What makes the Dueling architecture unique is how it forces a single network to bottleneck and separate these two concepts internally before squashing them back together into an action-value ($Q$) output
+
+Note this is implemented inline with common Rainbow Implementations and may not be in line with the original paper.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -97,7 +110,7 @@ wandb.init(
         "gamma": GAMMA,
         "learning_rate": LEARNING_RATE,
         "buffer_capacity": BUFFER_CAPACITY,
-    }
+    },
 )
 
 # --- 2. The Monolithic Loop (The Imperative Shell) ---
@@ -127,13 +140,13 @@ for step in range(MAX_STEPS):
 
     # 3. Add to Buffer
     transition = {
-        "obs": obs,
-        "action": [action],
-        "reward": [reward],
-        "terminated": [terminated],
-        "truncated": [truncated],
-        "next_obs": next_obs,
-        "gamma": [GAMMA],
+        "obs": obs[None, ...],
+        "action": torch.tensor([[action]], dtype=torch.long),
+        "reward": torch.tensor([[reward]], dtype=torch.float32),
+        "terminated": torch.tensor([[terminated]], dtype=torch.float32),
+        "truncated": torch.tensor([[truncated]], dtype=torch.float32),
+        "next_obs": next_obs[None, ...],
+        "gamma": torch.tensor([[GAMMA]], dtype=torch.float32),
     }
     buffer_state, _ = circular_write_strategy(buffer_state, transition)
 

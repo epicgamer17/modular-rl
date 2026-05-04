@@ -5,7 +5,6 @@ from tensordict import TensorDict
 from typing import Callable, Tuple
 
 
-# TODO: no **kwargs and use partials instead?
 def bellman_error(
     model: torch.nn.Module,
     target_model: torch.nn.Module,
@@ -55,18 +54,21 @@ def bellman_error(
     # 4. Compute Loss (Force shape alignment to prevent broadcasting)
     if loss_fn is None:
         from functional.losses import mse_loss
+
         loss_fn = mse_loss
 
     loss, info = loss_fn(pred_sa, td_target.view_as(pred_sa))
 
     # 5. Augment info with orchestration-level metrics for W&B
-    info.update({
-        "q_values/mean": pred_sa.mean().item(),
-        "q_values/min": pred_sa.min().item(),
-        "q_values/max": pred_sa.max().item(),
-        "td_targets/mean": td_target.mean().item(),
-        "rewards/mean": batch["reward"].mean().item(),
-    })
+    info.update(
+        {
+            "q_values/mean": pred_sa.mean().item(),
+            "q_values/min": pred_sa.min().item(),
+            "q_values/max": pred_sa.max().item(),
+            "td_targets/mean": td_target.mean().item(),
+            "rewards/mean": batch["reward"].mean().item(),
+        }
+    )
 
     return loss, info
 

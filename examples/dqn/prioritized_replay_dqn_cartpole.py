@@ -1,3 +1,23 @@
+"""
+Notes on PER:
+
+Prioritized Experience Replay (PER) is an optimization technique for experience replay in DQN. Instead of sampling transitions uniformly from the replay buffer, PER samples transitions based on their "priority" (commonly their TD error). Transitions with higher TD errors are sampled more frequently, allowing the agent to focus on learning from more "surprising" or informative experiences.
+
+This method introduces a trade-off: we want to learn from important transitions, but sampling in a non uniform way introduces bias into the training process because the updates no longer match the underlying data distribution. To mitigate this, PER uses "Importance Sampling" (IS) weights. When we sample a transition, we weight its contribution to the loss by the inverse of its sampling probability. This corrects the bias introduced by non uniform sampling. IS weights scale the gradients so that the mathematical expectation matches uniform sampling. Note the IS weights must be normalized by $1/\max_i w_i$ so that they only scale gradient updates downwards.
+
+The priority of a transition is updated after each training step. The new priority is typically set to the absolute difference between the predicted Q-value and the target Q-value, $p_i = |\delta_i| + \epsilon$ where epsilon is a small constant to ensure all transitions have a non-zero probability of being sampled. This ensures that transitions that are currently "surprising" are given higher priority for future sampling. You can also use a rank based method for priority $p_i = 1/\text{rank}(i)$, which is much more robust to outliers and spikes than the standard TD error based method, however is used much less often than the standard TD error based method. The authors of the PER paper actually expected the rank-based variant to be more robust because it ignores extreme outliers. However, they found that, surprisingly, both variants performed similarly in practice. They suspected this was because standard DQN heavily relies on clipping rewards and TD-errors (typically between -1 and 1), which naturally removes the extreme outliers that the rank-based method was designed to protect against. Because the proportional variant is slightly more straightforward to implement with a single sum-tree, it became the community standard. Addtionally, in many papers PER is used with distributional value prediction, and the cross entropy loss between the predition and target is used, this has similar effects to clipping the TD-error, hence why the TD approach is more popular in practice.
+
+For more efficient sampling a sum tree and min tree can be used. This requires more memory but allows for $O(\log n)$ sampling and update times, as opposed to $O(n)$ for a naive implementation. For the rank based priority method a binary heap can be used for efficiency.
+
+The $\alpha$ parameter controls how much weight is given to the priorities. A value of 0 means that all transitions are sampled uniformly. A value of 1 means that transitions are sampled strictly based on their priorities.
+
+The $\beta$ parameter controls the degree of importance sampling. It is typically annealed from a starting value to 1 over time. This allows the agent to explore more initially and then focus on learning from important transitions later.
+
+In summary, PER is a simple but effective technique that can significantly improve sample efficiency. PER is very generally applicable and can be used in many different RL algorithms that use replay buffers and experience replay.
+
+Note: below we only implement the TD error based priority method for simplicity.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -111,7 +131,7 @@ wandb.init(
         "gamma": GAMMA,
         "learning_rate": LEARNING_RATE,
         "alpha": ALPHA,
-    }
+    },
 )
 
 # --- 2. The Monolithic Loop (The Imperative Shell) ---
@@ -139,13 +159,13 @@ for step in range(MAX_STEPS):
 
     # 3. Add to Buffer
     transition = {
-        "obs": obs,
-        "action": [action],
-        "reward": [reward],
-        "terminated": [terminated],
-        "truncated": [truncated],
-        "next_obs": next_obs,
-        "gamma": [GAMMA],
+        "obs": obs[None, ...],
+        "action": torch.tensor([[action]], dtype=torch.long),
+        "reward": torch.tensor([[reward]], dtype=torch.float32),
+        "terminated": torch.tensor([[terminated]], dtype=torch.float32),
+        "truncated": torch.tensor([[truncated]], dtype=torch.float32),
+        "next_obs": next_obs[None, ...],
+        "gamma": torch.tensor([[GAMMA]], dtype=torch.float32),
     }
     buffer_state = per_add_transition(buffer_state, transition)
 
@@ -193,7 +213,9 @@ for step in range(MAX_STEPS):
         if step % 100 == 0:
             # W&B handles scalars and histograms of tensors (like priorities) automatically.
             log_dict = info_dict.copy()
-            log_dict.update({"loss": loss.item(), "epsilon": current_epsilon, "beta": beta})
+            log_dict.update(
+                {"loss": loss.item(), "epsilon": current_epsilon, "beta": beta}
+            )
             wandb.log(log_dict, step=step)
 
     # 4. Target Network Update

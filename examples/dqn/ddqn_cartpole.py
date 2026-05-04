@@ -1,3 +1,12 @@
+"""
+Notes on Double DQN:
+The idea is to decouple value prediction from action selection. To prevent the estimation errors caused by the maximization step, where the same network is used to select the action and evaluate the value of that action, we use an online network and a delayed target network. The online network is used to select the action, and the target network is used to evaluate the value of that action. This prevents the network from overestimating the value of the action that it selects, which can lead to unstable training and poor performance. This is in contrast to DQN, where the same network is used to select the action and evaluate the value of that action.
+
+Standard DQN Target: $Y_{t}^{DQN} \equiv R_{t+1} + \gamma \max_{a} Q(S_{t+1}, a; \theta_{t}^{-})$.  Double DQN Target: $Y_{t}^{DoubleDQN} \equiv R_{t+1} + \gamma Q(S_{t+1}, \text{argmax}_{a} Q(S_{t+1}, a; \theta_{t}); \theta_{t}^{-})$.
+
+Note this is implemented inline with common Rainbow Implementations and may not be in line with the original paper.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -97,7 +106,7 @@ wandb.init(
         "gamma": GAMMA,
         "learning_rate": LEARNING_RATE,
         "buffer_capacity": BUFFER_CAPACITY,
-    }
+    },
 )
 
 # --- 2. The Monolithic Loop (The Imperative Shell) ---
@@ -127,13 +136,13 @@ for step in range(MAX_STEPS):
 
     # 3. Add to Buffer
     transition = {
-        "obs": obs,
-        "action": [action],
-        "reward": [reward],
-        "terminated": [terminated],
-        "truncated": [truncated],
-        "next_obs": next_obs,
-        "gamma": [GAMMA],
+        "obs": obs[None, ...],
+        "action": torch.tensor([[action]], dtype=torch.long),
+        "reward": torch.tensor([[reward]], dtype=torch.float32),
+        "terminated": torch.tensor([[terminated]], dtype=torch.float32),
+        "truncated": torch.tensor([[truncated]], dtype=torch.float32),
+        "next_obs": next_obs[None, ...],
+        "gamma": torch.tensor([[GAMMA]], dtype=torch.float32),
     }
     buffer_state, _ = circular_write_strategy(buffer_state, transition)
 

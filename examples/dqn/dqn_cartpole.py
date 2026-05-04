@@ -1,3 +1,17 @@
+"""
+Notes on DQN:
+DQN is a foundational algorithm in deep reinforcement learning that combines Q-learning with deep neural networks. It learns a policy that maximizes the expected cumulative reward by estimating Q-values for each state-action pair.
+
+What made DQN revolutionary was that it was the first deep learning model to successfully learn control policies end-to-end directly from high-dimensional sensory input (raw pixels). Previous successes usually relied on hand-crafted features or low-dimensional state spaces. DQN proved that a Convolutional Neural Network (CNN) could act as the function approximator for raw video frames, and that Experience Replay could stabilize the normally chaotic process of training a neural network on correlated, non-stationary RL data
+
+The paper also popularized the use of Experience Replay. That instead of learning from consecutive samples (which are correlated), we store past experiences in a buffer and sample randomly from it. This breaks the correlation between samples and improves learning stability.
+
+Additionally, the paper introduced the concept of a separate target network to stabilize training. Instead of using the same network to calculate the target Q-values, a copy of the network is kept and updated only periodically. This prevents the network from chasing a moving target, which can lead to instability and divergence.
+
+End to end learning is now essentially standard practice, and tabular methods are rarely used in deep RL. Additionally Experience Replay is used in MANY deep RL algorithms, and target networks are very commonly used (although not always, e.g. in actor-critic methods).
+
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -97,7 +111,7 @@ wandb.init(
         "gamma": GAMMA,
         "learning_rate": LEARNING_RATE,
         "buffer_capacity": BUFFER_CAPACITY,
-    }
+    },
 )
 
 for step in range(MAX_STEPS):
@@ -125,13 +139,13 @@ for step in range(MAX_STEPS):
 
     # 3. Add to Buffer
     transition = {
-        "obs": obs,
-        "action": [action],
-        "reward": [reward],
-        "terminated": [terminated],
-        "truncated": [truncated],
-        "next_obs": next_obs,
-        "gamma": [GAMMA],
+        "obs": obs[None, ...],
+        "action": torch.tensor([[action]], dtype=torch.long),
+        "reward": torch.tensor([[reward]], dtype=torch.float32),
+        "terminated": torch.tensor([[terminated]], dtype=torch.float32),
+        "truncated": torch.tensor([[truncated]], dtype=torch.float32),
+        "next_obs": next_obs[None, ...],
+        "gamma": torch.tensor([[GAMMA]], dtype=torch.float32),
     }
     buffer_state, _ = circular_write_strategy(buffer_state, transition)
 

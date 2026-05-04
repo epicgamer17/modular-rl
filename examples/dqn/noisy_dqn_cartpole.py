@@ -1,3 +1,19 @@
+"""
+Notes on Noisy DQN:
+
+This idea was introduced in Noisy Nets for Exploration. The idea is to add noise to the weights of the network to encourage exploration.
+
+Unlike standard DQN where exploration is achieved by using epsilon-greedy action selection, NoisyDQN explores by adding noise to the weights of the network. To achieve this, the noisy linear layer parameterizes the noise as $\mu + \sigma \cdot \epsilon$, where $\mu$ and $\sigma$ are learnable parameters and $\epsilon$ is a random variable sampled from a noise distribution (usually a standard Gaussian or a discrete distribution). The key idea is that $\mu$ and $\sigma$ are learnable, so the network can learn the optimal level of exploration for each state. Generating a unique random Gaussian variable for every single weight in a massive linear layer during every forward pass is computationally brutal. The paper solves this by using Factorized Gaussian Noise, generating just two small vectors of noise (one for the input size, one for the output size) and taking their outer product. This makes the layer fast enough to actually use.
+
+Noisy Nets provide a consistent, state-dependent local exploration strategy, meaning if the agent finds a promising path, the noise pushes it to explore variations of that path rather than just taking a random, suicidal action ($\epsilon$-greedy). However, it is not "curious", like intrinsic motivation methods.
+
+This is useful for games like Montezuma's Revenge where exploration is very important and random exploration is not very efficient. In theory, noisy nets allows the agent to learn to get far enough in the game to achieve rewards while still selectively exploring when it is safe to do so. The agent can learn to focus its exploration on the areas of the state space where it is most uncertain.
+
+This method is very generally applicable as a method of exploration and in the original paper is applied both to DQN and A2C. It could feasibly be applied to any other algorithm that uses neural networks to output actions, whether they are deterministic or stochastic.
+
+Note: the below DQN implementation is not the same as used in the paper (it does not use dueling DQN, double DQN, etc).
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -101,7 +117,7 @@ wandb.init(
         "gamma": GAMMA,
         "learning_rate": LEARNING_RATE,
         "buffer_capacity": BUFFER_CAPACITY,
-    }
+    },
 )
 
 # --- 2. The Monolithic Loop (The Imperative Shell) ---
@@ -127,13 +143,13 @@ for step in range(MAX_STEPS):
 
     # 3. Add to Buffer
     transition = {
-        "obs": obs,
-        "action": [action],
-        "reward": [reward],
-        "terminated": [terminated],
-        "truncated": [truncated],
-        "next_obs": next_obs,
-        "gamma": [GAMMA],
+        "obs": obs[None, ...],
+        "action": torch.tensor([[action]], dtype=torch.long),
+        "reward": torch.tensor([[reward]], dtype=torch.float32),
+        "terminated": torch.tensor([[terminated]], dtype=torch.float32),
+        "truncated": torch.tensor([[truncated]], dtype=torch.float32),
+        "next_obs": next_obs[None, ...],
+        "gamma": torch.tensor([[GAMMA]], dtype=torch.float32),
     }
     buffer_state, _ = circular_write_strategy(buffer_state, transition)
 
