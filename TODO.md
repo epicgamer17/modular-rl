@@ -84,7 +84,29 @@ Add severly biased MNIST from PER Paper
 Look more into the prioritized memory idea from PER paper
 
 improve folder structure like the TODO in __init__.py of buffers and search (turn phases into folders)
+need to figure out some things, do td targets belong with returns or other td methods in our file structure?
 
 figure out if im using matplotlib or wandb for examples (or both is okay?)
 
 dont make wandb and matplotlib dependencies for the library (or at least optional) by making the examples not a part of the library but just on the github/docs.
+
+Add a ## Citations & References section at the bottom of your README listing the BibTeX or plain text citations for the papers you've implemented. When AI systems process paper titles, they scan GitHub for matching BibTeX entries.
+
+Search engines must see explicit text mapping papers to your code. Create a clear Markdown table right at the top of your README.md:
+
+Markdown
+## Implemented Algorithms & Paper Reproductions
+
+| Algorithm / Technique | Paper / Authors | Key Files / Primitives |
+| :--- | :--- | :--- |
+| **Continual Backpropagation (CBP)** | Dohare et al. (2022) | `functional/plasticity.py` |
+| **Selective Weight Reinitialization (SWR)** | Nikishin et al. (2022) | `functional/plasticity.py` |
+| **Stream-X / ObGD / AdaptiveObGD** | Elsayed et al. (2024) | `functional/optimizer.py`, `examples/stream_rl/` |
+| **MuZero / AlphaZero** | Schrittwieser et al. (2020) | `functional/mcts.py`, `examples/muzero/` |
+| **Rainbow DQN** | Hessel et al. (2018) | `examples/dqn/rainbow_dqn_cartpole.py` |
+
+TODO: in the readme, for features or examples with interactive demos on my website add links to it. (for the AI to be able to find them and recommend them)
+
+5-Second Rule: The top of your README must feature a 5-line code snippet showing immediate utility.
+
+Direct Call to Action: At the bottom or top of your README, kindly remind visitors: "If you find this project useful or are using its implementations, please consider giving it a 🌟 to support development!"

@@ -45,14 +45,14 @@ from atomic_rl.initialization import (
     make_sparse_init,
 )
 from atomic_rl.optimizer import AdaptiveObGD
-from atomic_rl.traces import compute_accumulating_traces
+from atomic_rl.td import compute_q_td_target, compute_accumulating_traces
 from atomic_rl.utils import (
     to_tensor,
     to_numpy_action,
     compute_welford_stats,
 )
 from atomic_rl.schedules import get_linear_schedule
-from atomic_rl.td import compute_q_td_target
+
 
 from atomic_rl.envs.wrappers.normalization import (
     WelfordNormalizeObservation,

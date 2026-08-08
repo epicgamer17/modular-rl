@@ -13,8 +13,8 @@ from typing import List, Tuple
 from pathlib import Path
 
 from atomic_rl.envs.mdp.random_walk import RandomWalkEnv
-from atomic_rl.td import true_online_td_update_
-from atomic_rl.traces import compute_true_online_traces
+from atomic_rl.td import true_online_td_update_, compute_true_online_traces
+
 
 # --- CONSTANTS ---
 NUM_NON_TERMINAL_STATES = 5

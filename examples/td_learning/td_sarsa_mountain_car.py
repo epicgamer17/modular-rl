@@ -22,12 +22,14 @@ import concurrent.futures
 from typing import Tuple
 from pathlib import Path
 
-from atomic_rl.td import true_online_td_update_, semi_gradient_td_update_
-from atomic_rl.traces import (
+from atomic_rl.td import (
+    true_online_td_update_,
+    semi_gradient_td_update_,
     compute_true_online_traces,
     compute_replacing_traces,
     compute_accumulating_traces,
 )
+
 from atomic_rl.utils import compute_tile_coding_features
 from atomic_rl.action_selection import with_epsilon_greedy, argmax_selector
 

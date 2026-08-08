@@ -29,8 +29,12 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from pathlib import Path
 
-from atomic_rl.td import true_online_td_update_, semi_gradient_td_update_
-from atomic_rl.traces import compute_true_online_traces
+from atomic_rl.td import (
+    true_online_td_update_,
+    semi_gradient_td_update_,
+    compute_true_online_traces,
+)
+
 from atomic_rl.optimizer.metaoptimization import (
     update_autostep_rates_,
     update_idbd_rates_,

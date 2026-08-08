@@ -1,8 +1,11 @@
 import gymnasium as gym
 import numpy as np
+import pytest
 
 from atomic_rl.envs.wrappers.normalization import VecNormalize, VecTransformObservation
 from atomic_rl.envs.wrappers.pomdp import VecFlickeringObservation
+
+pytestmark = pytest.mark.unit
 
 
 class DummyVectorEnv:

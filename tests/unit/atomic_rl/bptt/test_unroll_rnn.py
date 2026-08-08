@@ -3,17 +3,8 @@ import torch
 import torch.nn as nn
 from typing import Tuple
 from atomic_rl.bptt.unroll_rnn import unroll_rnn
-from atomic_rl.update_target_net import (
-    hard_update_target_network_,
-    soft_update_target_network_,
-)
 
 pytestmark = pytest.mark.unit
-
-
-# ==========================================
-# Mock Components for Isolated Behavior Tests
-# ==========================================
 
 
 class MockRNNCell(nn.Module):
@@ -52,51 +43,6 @@ class DummyDRQN(nn.Module):
         }
         # Return mock Q-values [Batch, Actions]
         return torch.ones(batch_size, 3, device=x.device), lstm_state
-
-
-def test_hard_update_target_network():
-    model = nn.Linear(5, 1)
-    target_model = nn.Linear(5, 1)
-
-    # Initialize with different weights
-    with torch.no_grad():
-        model.weight.fill_(1.0)
-        target_model.weight.fill_(0.0)
-
-    hard_update_target_network_(model, target_model)
-
-    torch.testing.assert_close(target_model.weight, model.weight)
-    assert target_model.weight[0, 0] == 1.0
-
-
-def test_soft_update_target_network():
-    model = nn.Linear(5, 1)
-    target_model = nn.Linear(5, 1)
-
-    # Initialize with different weights
-    with torch.no_grad():
-        model.weight.fill_(1.0)
-        target_model.weight.fill_(0.0)
-
-    # target = (1 - tau) * target + tau * model
-    # target = (1 - 0.5) * 0.0 + 0.5 * 1.0 = 0.5
-    soft_update_target_network_(model, target_model, tau=0.5)
-
-    torch.testing.assert_close(
-        target_model.weight, torch.full_like(target_model.weight, 0.5)
-    )
-
-    # Test with default tau (0.005)
-    # target = (1 - 0.005) * 0.5 + 0.005 * 1.0 = 0.4975 + 0.005 = 0.5025
-    soft_update_target_network_(model, target_model)
-    torch.testing.assert_close(
-        target_model.weight, torch.full_like(target_model.weight, 0.5025)
-    )
-
-
-# ==========================================
-# Tests for unroll_rnn
-# ==========================================
 
 
 def test_unroll_rnn_fast_path_batch_first():

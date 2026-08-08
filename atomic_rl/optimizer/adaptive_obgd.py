@@ -98,8 +98,9 @@ class AdaptiveObGD(Optimizer):
 
     NOTE (reference vs. paper): We intentionally match the authors' released code (https://github.com/mohmdelsayed/streaming-drl/blob/main/src/optim.py) rather than the algorithm as written in the paper. The reference `AdaptiveObGD.step` applies a bias correction v_hat = v / (1 - beta^step) to the EMA second moment before normalizing; this correction is NOT in paper Algorithm 11. We follow the reference and apply it — a conscious and intentional decision for parity.
 
-    NOTE (intentional divergence from the reference): The reference keeps eligibility traces internally (constructor takes gamma, lamda, kappa) and exposes a single .step(); we intentionally split trace management into atomic_rl.traces + td_step(error, traces).
+    NOTE (intentional divergence from the reference): The reference keeps eligibility traces internally (constructor takes gamma, lamda, kappa) and exposes a single .step(); we intentionally split trace management into atomic_rl.td.traces + td_step(error, traces).
     """
+
 
     def __init__(
         self,
