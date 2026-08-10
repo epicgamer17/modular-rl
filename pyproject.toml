@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "atomic-rl"
 version = "0.1.0"
-description = "A high-performance, researcher-centric Reinforcement Learning library for PyTorch built on the Functional Core, Imperative Shell design pattern."
+description = "Reinforcement learning utilities for Deep RL and the Alberta Plan: readable implementations of DQN, Rainbow, PPO, and MCTS."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
@@ -64,10 +64,10 @@ plot = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["atomic_rl", "networks", "envs", "envs.*"]
+include = ["atomic_rl", "atomic_rl.*"]
 
 [tool.setuptools]
-exclude-package-data = { envs = ["wrappers/deprecated/*", "custom/setup.py"] }
+exclude-package-data = { "atomic_rl.envs" = ["wrappers/deprecated/*", "custom/setup.py"] }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -75,7 +75,7 @@ python_files = ["test_*.py", "*_test.py"]
 python_functions = ["test_*"]
 
 [tool.coverage.run]
-source = ["atomic_rl", "networks"]
+source = ["atomic_rl"]
 omit = [
     "**/deprecated/**",
     "tests/**",
