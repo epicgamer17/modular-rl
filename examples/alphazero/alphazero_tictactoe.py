@@ -29,6 +29,8 @@ Differences in this Implementation:
     - All-in-one Self-Contained Example: Includes network, dynamics simulator, loss function,
       self-play collector, replay buffer, and baseline evaluation harness.
 
+NOTE: We do not follow the convention of using the gym env as a simulator and encourage the user to extract the dynamics from the env and attempt to remove unecessary overhead to improve the training speed and MCTS speed. Although it may be possible, AlphaZero is not the focus of the library, as mentioned below, and some environments from PettingZoo and Gym can have trouble with copy operations leading to courrupted data.
+
 NOTE: Focus of the library (when it comes to search based algos) is not on AlphaZero-like algorithms, but MuZero-like ones. This is here as a stepping stone for people looking to understand MuZero better, but in general I encourage you to look into model learned algorithms (like Dreamerv3, MuZero, etc.) over model given ones.
 
 TODO: some hyperparameter tuning. it works well, but still loses sometimes to a random bot, which i remember when i had muzero working on the older library never happened. I imagine alphazero should be better.

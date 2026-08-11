@@ -4,6 +4,7 @@ from typing import Tuple, Callable, List, Optional
 from ..utils import add_dirichlet_noise
 
 
+# TODO: is this tree representation efficient? do we overlap on children?
 def init_mcts_tree(
     root_embeddings: torch.Tensor,
     num_simulations: int,

@@ -1,8 +1,12 @@
 import pytest
 import torch
 
-from atomic_rl.search import init_mcts_tree, puct_score, select_leaf
-from atomic_rl.search.selection import _normalize_q_values
+from atomic_rl.search import (
+    init_mcts_tree,
+    puct_score,
+    select_leaf,
+    qtrasforms_by_min_max,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -11,25 +15,25 @@ pytestmark = pytest.mark.unit
 # ==========================================
 
 
-def test_normalize_q_values_standard():
+def test_qtrasforms_by_min_max_standard():
     """Verify standard min-max mapping to the [0, 1] interval."""
     q_values = torch.tensor([[0.0, 5.0, 10.0], [2.0, 3.0, 4.0]])
     min_q = torch.tensor([0.0, 2.0])
     max_q = torch.tensor([10.0, 4.0])
 
-    normalized = _normalize_q_values(q_values, min_q, max_q)
+    normalized = qtrasforms_by_min_max(q_values, min_q, max_q)
     expected = torch.tensor([[0.0, 0.5, 1.0], [0.0, 0.5, 1.0]])
     torch.testing.assert_close(normalized, expected)
 
 
-def test_normalize_q_values_division_by_zero():
+def test_qtrasforms_by_min_max_division_by_zero():
     """Verify numerical safety adjustments when min_q equals max_q."""
     q_values = torch.tensor([[5.0, 5.0], [0.0, 0.0]])
     min_q = torch.tensor([5.0, 0.0])
     max_q = torch.tensor([5.0, 0.0])  # Span is 0.0
 
     # Should safely treat span as 1.0 to map (q_values - min_q) / 1.0 -> 0.0
-    normalized = _normalize_q_values(q_values, min_q, max_q)
+    normalized = qtrasforms_by_min_max(q_values, min_q, max_q)
     torch.testing.assert_close(normalized, torch.zeros_like(q_values))
 
 

@@ -12,6 +12,9 @@ def puct_score(
     total_visit_counts: torch.Tensor,
     min_q: torch.Tensor,
     max_q: torch.Tensor,
+    qtransform: Callable[
+        [torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor
+    ] = qtrasform_by_min_max,
     pb_c_base: float = 19652,
     pb_c_init: float = 1.25,
 ) -> torch.Tensor:
@@ -54,9 +57,8 @@ def puct_score(
     pb_c = torch.log((tot_visits_t + pb_c_base + 1) / pb_c_base) + pb_c_init
     pb_c = pb_c * (torch.sqrt(tot_visits_t) / (visit_counts + 1))
 
-    # MuZero: Normalize Q-values to [0, 1] before adding the PUCT term
-    normalized_q = _normalize_q_values(q_values, min_q, max_q)
-    raw_puct = normalized_q + pb_c * policy_prior
+    transformed_q = qtransform(q_values, min_q, max_q)
+    raw_puct = transformed_q + pb_c * policy_prior
 
     # Zero-prior guard: Actions with 0 prior (e.g. masked illegal actions) receive -1e9 penalty
     return torch.where(policy_prior > 0, raw_puct, raw_puct.new_tensor(-1e9))
@@ -136,27 +138,3 @@ def select_leaf(
         current_node = torch.where(active_mask, next_node, current_node)
 
     return current_node, trajectory
-
-
-# TODO: soft min max stats? efficient_zero.pdf
-def _normalize_q_values(
-    q_values: torch.Tensor, min_q: torch.Tensor, max_q: torch.Tensor
-) -> torch.Tensor:
-    """
-    Normalizes Q-values to [0, 1] using the min/max observed in the tree.
-
-    Args:
-        q_values: Q-values to normalize [..., Num_Actions].
-        min_q: Minimum observed Q-value per batch element [B].
-        max_q: Maximum observed Q-value per batch element [B].
-    """
-    # Reshape min/max for broadcasting if q_values is [B, A]
-    if q_values.ndim > min_q.ndim:
-        min_q = min_q.view(-1, 1)
-        max_q = max_q.view(-1, 1)
-
-    span = max_q - min_q
-    # Protect against division by zero and handle uninitialized min/max
-    # TODO: is this justified by the original paper or is this soft min max stats from efficient zero bleeding through?
-    span = torch.where(span > 1e-6, span, torch.ones_like(span))
-    return (q_values - min_q) / span
