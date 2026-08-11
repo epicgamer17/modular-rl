@@ -119,25 +119,32 @@ def scale_tensor_by_std(tensor: torch.Tensor, eps: float = 1e-8) -> torch.Tensor
 
 
 def add_dirichlet_noise(
-    probs: torch.Tensor,
+    logits: torch.Tensor,
     epsilon: float,
     alpha: float,
     mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
-    Adds Dirichlet noise to the given probabilities for exploration.
+    Adds Dirichlet noise to the given logits for exploration.
     Formula: P(s, a) = (1 - epsilon) * P(s, a) + epsilon * noise
     where noise ~ Dirichlet(alpha).
 
     Args:
-        probs: The probabilities to add noise to [..., Num_Actions].
+        logits: The logits to add noise to [..., Num_Actions].
         epsilon: The weight of the noise.
         alpha: The concentration parameter of the Dirichlet distribution.
         mask: Optional boolean mask [..., Num_Actions] of valid actions.
 
     Returns:
-        The probabilities with added noise.
+        The logits with added noise.
     """
+
+    # 0. Convert logits to probs
+    masked_logits = logits.clone()
+    if mask is not None:
+        masked_logits = masked_logits.masked_fill(mask == 0, -float("inf"))
+    probs = torch.softmax(masked_logits, dim=-1)
+
     # 1. Sample noise from Dirichlet distribution
     num_actions = probs.shape[-1]
     alphas = torch.full((num_actions,), alpha, device=probs.device, dtype=probs.dtype)
@@ -152,10 +159,12 @@ def add_dirichlet_noise(
 
         # Re-normalize the noise so it still sums to 1.0 across valid actions
         # Add 1e-8 to prevent division by zero in case of severe precision issues
-        noise_sum = noise.sum(dim=-1, keepdim=True)
-        noise = noise / (noise_sum + 1e-8)
+        noise = noise / torch.clamp(noise.sum(dim=-1, keepdim=True), min=1e-8)
 
-    return (1.0 - epsilon) * probs + epsilon * noise
+    noisy_probs = (1.0 - epsilon) * probs + epsilon * noise
+    noisy_logits = torch.log(torch.clamp(noisy_probs, min=1e-8))
+
+    return noisy_logits
 
 
 def to_tensor(

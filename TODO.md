@@ -110,3 +110,5 @@ TODO: in the readme, for features or examples with interactive demos on my websi
 5-Second Rule: The top of your README must feature a 5-line code snippet showing immediate utility.
 
 Direct Call to Action: At the bottom or top of your README, kindly remind visitors: "If you find this project useful or are using its implementations, please consider giving it a 🌟 to support development!"
+
+TODO standardize naming convention in the search sub library. what is plural and what is not

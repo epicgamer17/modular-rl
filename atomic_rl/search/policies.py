@@ -4,6 +4,7 @@ from typing import Tuple, Callable, List, Optional
 from ..utils import add_dirichlet_noise
 
 
+# TODO: should I make this accept a tree?
 def get_mcts_visit_policy(
     visit_counts: torch.Tensor,
     temperature: float = 1.0,
@@ -25,6 +26,7 @@ def get_mcts_visit_policy(
     assert temperature >= 0.0, f"Temperature must be non-negative, got {temperature}"
 
     if temperature == 0.0:
+        # TODO: right now for 2 equally visited actions this will output 0.5, 0.5. Is this what we want? Or do we want to use F.one_hot and get a 1, 0? or 0, 1? Should we add a random tie-breaking method?
         is_max = (
             visit_counts == torch.max(visit_counts, dim=-1, keepdim=True).values
         ).float()

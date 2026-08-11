@@ -1,22 +1,24 @@
 import torch
+import torch.nn.functional as F
 from tensordict import TensorDict
 from typing import Tuple, Callable, List, Optional
 from ..utils import add_dirichlet_noise
+from .qtransforms import (
+    qtransform_completed_by_mix_value,
+    qtransform_by_parent_and_siblings,
+    qtransform_by_min_max,
+)
 
 
 # TODO: should we merge this with select_leaf?
 def puct_score(
-    q_values: torch.Tensor,
-    policy_prior: torch.Tensor,
-    visit_counts: torch.Tensor,
-    total_visit_counts: torch.Tensor,
-    min_q: torch.Tensor,
-    max_q: torch.Tensor,
-    qtransform: Callable[
-        [torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor
-    ] = qtrasform_by_min_max,
-    pb_c_base: float = 19652,
+    tree: TensorDict,
+    parent_nodes: torch.Tensor,  # [B]
+    depth: int,
+    *,
     pb_c_init: float = 1.25,
+    pb_c_base: float = 19652.0,
+    qtransform: Callable = qtransform_by_parent_and_siblings,
 ) -> torch.Tensor:
     """
     The PUCT score.
@@ -32,36 +34,60 @@ def puct_score(
         pb_c_base: Base constant for PUCT.
         pb_c_init: Additive constant for PUCT (used for virtual exploration).
     """
-    # 1. Fail Fast: Ensure shape contracts match expected [B, num_actions] and [B, 1] dimensions
-    assert (
-        q_values.shape == policy_prior.shape
-    ), f"q_values shape {q_values.shape} must match policy_prior shape {policy_prior.shape}"
-    assert (
-        q_values.shape == visit_counts.shape
-    ), f"q_values shape {q_values.shape} must match visit_counts shape {visit_counts.shape}"
-    assert (
-        total_visit_counts.shape[:-1] == q_values.shape[:-1]
-    ), f"total_visit_counts batch shape {total_visit_counts.shape[:-1]} must match q_values batch shape {q_values.shape[:-1]}"
+    # Fail Fast: Ensure shape contracts match expected [B, num_actions] and [B, 1] dimensions
+    # TODO: Add shape asserts
 
-    # Ensure policy prior is normalized (sums to 1)
-    assert torch.allclose(
-        policy_prior.sum(dim=-1),
-        torch.ones_like(policy_prior.sum(dim=-1)),
-        atol=1e-5,
-    ), "Policy prior must be normalized (sum to 1) for PUCT calculation."
+    batch_size = tree.batch_size[0]
+    batch_range = torch.arange(batch_size, device=tree.device)
 
-    tot_visits_t = torch.as_tensor(
-        total_visit_counts, dtype=q_values.dtype, device=q_values.device
+    # 1. Fetch node and child statistics
+    visit_counts = tree["children_visits"][
+        batch_range, parent_nodes
+    ]  # [B, num_actions]
+    node_visits = tree["node_visits"][batch_range, parent_nodes].unsqueeze(-1)  # [B, 1]
+    prior_logits = tree["children_prior_logits"][
+        batch_range, parent_nodes
+    ]  # [B, num_actions]
+    prior_probs = F.softmax(prior_logits, dim=-1)
+
+    # 2. Compute PUCT exploration term: c_puct * P(s,a) * sqrt(N(s)) / (1 + N(s,a))
+    pb_c = pb_c_init + torch.log((node_visits + pb_c_base + 1.0) / pb_c_base)
+    policy_score = (
+        torch.sqrt(node_visits.to(prior_probs.dtype))
+        * pb_c
+        * prior_probs
+        / (visit_counts + 1.0)
     )
 
-    pb_c = torch.log((tot_visits_t + pb_c_base + 1) / pb_c_base) + pb_c_init
-    pb_c = pb_c * (torch.sqrt(tot_visits_t) / (visit_counts + 1))
+    # 3. Compute transformed Q-value score
+    value_score = qtransform(tree, parent_nodes)  # [B, num_actions]
 
-    transformed_q = qtransform(q_values, min_q, max_q)
-    raw_puct = transformed_q + pb_c * policy_prior
+    # 4. Add tiny uniform noise for tie breaking (matches mctx)
+    noise = 1e-7 * torch.rand_like(value_score)
 
-    # Zero-prior guard: Actions with 0 prior (e.g. masked illegal actions) receive -1e9 penalty
-    return torch.where(policy_prior > 0, raw_puct, raw_puct.new_tensor(-1e9))
+    puct_score = value_score + policy_score + noise
+
+    # 5. Mask root invalid actions if at depth 0
+    if depth == 0 and "root_legal_mask" in tree.keys():
+        legal_mask = tree["root_legal_mask"]  # [B, num_actions]
+        # Mask out where legal_mask is False
+        puct_score = torch.where(legal_mask, puct_score, -float("inf"))
+
+    return puct_score
+
+
+def gumbel_interior_action_score(
+    tree: TensorDict,
+    parent_nodes: torch.Tensor,  # [B]
+    depth: int = 0,
+    *,
+    qtransform: Callable = qtransform_completed_by_mix_value,
+) -> torch.Tensor:
+    """Computes deterministic argmax input for non-root nodes in Gumbel MuZero.
+
+    Matches `mctx.gumbel_muzero_interior_action_selection`.
+    """
+    pass
 
 
 # TODO: work with Batched MCTS, batch_mcts.pdf
@@ -70,21 +96,28 @@ def puct_score(
 # TODO: can we reuse our action_selection.py methods/functions?
 # TODO: Stochastic MuZero
 def select_leaf(
-    tree: TensorDict, pb_c_base: float, pb_c_init: float, max_depth: int = 512
+    tree: TensorDict,
+    pb_c_base: float = 19652.0,
+    pb_c_init: float = 1.25,
+    qtransform: Callable = qtransform_by_parent_and_siblings,
+    scoring_fn: Callable = puct_score,
+    max_depth: int = 512,
 ) -> Tuple[torch.Tensor, List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]]:
     """
-    Selects a leaf node to expand by following the PUCT policy.
+    Selects leaf nodes to expand by descending the search tree using scoring_fn.
 
     Args:
         tree: The MCTS tree TensorDict.
         pb_c_base: PUCT base constant.
         pb_c_init: PUCT init constant.
-        max_depth: Maximum depth to search to avoid infinite loops. For default AlphaZero and MuZero behaviour simply set this to num_simulations.
+        qtransform: Q-value normalization function.
+        scoring_fn: Function (tree, parent_nodes, depth, ...) -> scores [B, A].
+        max_depth: Maximum tree descent depth.
 
     Returns:
         A tuple containing:
-            - leaf_indices: The indices of the selected leaf nodes [B].
-            - trajectory: A list of (node_idx, action_idx, mask) tuples for backpropagation.
+            - leaf_indices: The selected leaf node indices [B].
+            - trajectory: List of (node_idx, action_idx, active_mask) tuples.
     """
     batch_size = tree.batch_size[0]
     device = tree.device
@@ -93,34 +126,26 @@ def select_leaf(
     current_node = tree["min_q"].new_zeros(batch_size, dtype=torch.long)
     trajectory = []  # List of (node_idx, action_idx, mask)
 
-    # Track which batch elements are still descending the tree
-    active_mask = tree["min_q"].new_ones(batch_size, dtype=torch.bool)
+    # Active batch mask (True = still descending, False = hit leaf or terminal)
+    active_mask = torch.ones(batch_size, dtype=torch.bool, device=device)
 
     # The search depth is naturally bounded by the number of nodes or a safety limit
-    for _ in range(max_depth):
-        # 1. Get stats for current nodes
-        q_values = tree["children_q_values"][batch_range, current_node]
-        priors = tree["children_prior"][batch_range, current_node]
-        visits = tree["children_visits"][batch_range, current_node]
-        total_visits = visits.sum(dim=-1, keepdim=True)
+    for depth in range(max_depth):
+        # 1. Compute action scores using decoupled scoring function
+        scores = scoring_fn(
+            tree,
+            current_node,
+            depth=depth,
+            pb_c_base=pb_c_base,
+            pb_c_init=pb_c_init,
+            qtransform=qtransform,
+        )  # [B, num_actions]
 
-        # 2. Calculate PUCT scores
-        scores = puct_score(
-            q_values,
-            priors,
-            visits,
-            total_visits,
-            tree["min_q"],
-            tree["max_q"],
-            pb_c_base,
-            pb_c_init,
-        )
-
-        # 3. Select best action
+        # 2. Select best action
         # TODO: should we use action_selection.py here? Does it make sense to use it?
-        action = torch.argmax(scores, dim=-1)
+        action = scores.argmax(dim=-1)  # [B]
 
-        # 4. Check for leaf (child index is -1) or terminal node
+        # 3. Check for leaf (child index is -1) or terminal node
         next_node = tree["children_index"][batch_range, current_node, action]
         is_leaf = next_node == -1
         is_term = tree["is_terminal"][batch_range, current_node]

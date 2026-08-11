@@ -6,117 +6,148 @@ from .backpropagation import backpropagate_
 from .expansion import expand_node_
 from .selection import select_leaf
 from .tree import init_mcts_tree
+from .qtransforms import qtransform_by_parent_and_siblings
+from .policies import get_mcts_visit_policy
 
 
 # TODO: remember we eventually want gumbel sequential halving and possibly other search methods too.
 # TODO: dont hard code dirichlet params, pass em in as optional arguments
 # TODO: avoid flags like is_zero_sum
+# TODO: make it easier to do stochastic muzero and stochastic alphazero.
+# TODO: should this just return the tree?
+# TODO: what about sampled muzero?
+# TODO: make this less hardcoded. I don't mind if search orchestration goes in the orchestration code, if it gives users more freedom.
 def mcts_search(
     root_embeddings: torch.Tensor,
+    root_logits: torch.Tensor,
+    root_value: torch.Tensor,
+    recurrent_fn: Callable[
+        [torch.Tensor, torch.Tensor],
+        Tuple[
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+        ],
+    ],
     num_simulations: int,
     num_actions: int,
-    expansion_fn: Callable,  # Returns (policy_logits, value)
-    dynamics_fn: Callable,  # Returns (next_embedding, reward) or (next_embedding, reward, next_to_play) or (next_embedding, reward, next_to_play, is_terminal) or (next_embedding, reward, next_to_play, is_terminal, next_legal_mask)
-    pb_c_base: float = 19652,
-    pb_c_init: float = 1.25,
-    gamma: float = 0.99,
-    dirichlet_epsilon: float = 0.25,
+    *,
+    legal_mask: Optional[torch.Tensor] = None,
+    qtransform: Callable = qtransform_by_parent_and_siblings,
+    dirichlet_epsilon: float = 0.0,
     dirichlet_alpha: float = 0.3,
-    root_to_play: torch.Tensor = None,
-    root_legal_mask: Optional[torch.Tensor] = None,
-) -> TensorDict:
+    pb_c_base: float = 19652.0,
+    pb_c_init: float = 1.25,
+    temperature: float = 1.0,
+) -> Tuple[torch.Tensor, torch.Tensor, TensorDict]:
     """
-    Orchestrates a batched MCTS search.
+    Runs batched MuZero MCTS search without custom output wrappers.
 
     Args:
-        root_embeddings: Initial state representations [B, D]
-        num_simulations: Number of simulations to perform.
-        num_actions: Number of possible actions.
-        expansion_fn: Function to get policy/value from embeddings.
-        dynamics_fn: Learned model for MuZero (or simulator for AlphaZero).
-        pb_c_base: Base constant for PUCT.
-        pb_c_init: Additive constant for PUCT.
-        gamma: Discount factor for rewards.
-        dirichlet_epsilon: Weight of Dirichlet noise at the root.
-        dirichlet_alpha: Concentration parameter for Dirichlet noise.
-        root_to_play: Optional initial player array [B].
-        root_legal_mask: Optional explicit boolean mask [B, num_actions] of legal actions at the root environment state.
+        root_embeddings: State embeddings at root [B, D]
+        root_logits: Initial policy network logits [B, A]
+        root_value: Initial value network prediction [B]
+        recurrent_fn: Callable (actions, embeddings) -> (logits, value, reward,
+          discount, next_embeddings)
+        num_simulations: Number of search simulations
+        num_actions: Action space size
+        legal_mask: Boolean mask of legal actions at root [B, A]
+        qtransform: Q-value normalization callback
+        dirichlet_epsilon: Dirichlet noise fraction at root
+        dirichlet_alpha: Dirichlet concentration parameter
+        pb_c_base: PUCT base parameter
+        pb_c_init: PUCT init parameter
+        temperature: Action selection temperature for final policy
+
+    Returns:
+        A tuple of:
+            - selected_action: Selected actions [B]
+            - action_probs: Target action probability distribution [B, A]
+            - tree: The complete MCTS search tree TensorDict
     """
     device = root_embeddings.device
     batch_size = root_embeddings.shape[0]
     batch_range = torch.arange(batch_size, device=device)
 
-    # 1. Initialize Tree State
-    tree = init_mcts_tree(root_embeddings, num_simulations, num_actions)
-    if root_to_play is not None:
-        tree["to_play"][:, 0] = root_to_play
+    # 1. Mask illegal actions at root if provided
+    curr_root_logits = root_logits.clone()
+    if legal_mask is not None:
+        curr_root_logits = curr_root_logits.masked_fill(~legal_mask, -1e9)
 
-    # 2. Initial Evaluation (Root)
-    policy_logits, _ = expansion_fn(root_embeddings)
-    if root_legal_mask is None:
-        import warnings
-
-        warnings.warn(
-            "root_legal_mask was not provided to mcts_search. Illegal actions at the root will not be masked during search or Dirichlet noise calculation.",
-            UserWarning,
-            stacklevel=2,
-        )
-    else:
-        policy_logits = torch.where(root_legal_mask, policy_logits, -1e9)
-
-    priors = torch.softmax(policy_logits, dim=-1)
-
-    # 3. Add Dirichlet Noise (Root exploration, using explicit legal action mask)
-    if dirichlet_epsilon > 0:
-        priors = add_dirichlet_noise(
-            priors, dirichlet_epsilon, dirichlet_alpha, mask=root_legal_mask
+    # 2. Inject Dirichlet exploration noise to root logits if enabled
+    if dirichlet_epsilon > 0.0:
+        curr_root_logits = add_dirichlet_noise(
+            curr_root_logits,
+            dirichlet_epsilon,
+            dirichlet_alpha,
+            mask=legal_mask,
         )
 
-    tree["children_prior"][:, 0] = priors
+    # 3. Initialize Tree State
+    tree = init_mcts_tree(
+        root_embeddings=root_embeddings,
+        root_logits=curr_root_logits,
+        root_value=root_value,
+        num_simulations=num_simulations,
+        num_actions=num_actions,
+        legal_mask=legal_mask,
+    )
 
     for _ in range(num_simulations):
         # A. Selection: Find the best leaf using PUCT score
-        leaf_indices, trajectory = select_leaf(tree, pb_c_base, pb_c_init)
+        leaf_indices, trajectory = select_leaf(
+            tree,
+            pb_c_base,
+            pb_c_init,
+            qtransform=qtransform,
+        )
 
         # The expansion happens at the end of the trajectory
-        parent_nodes, actions_taken = trajectory[-1][0], trajectory[-1][1]
-
-        # B. Dynamics (MuZero style / Simulator): Transition to next state
-        dyn_output = dynamics_fn(
-            tree["embeddings"][batch_range, parent_nodes], actions_taken
+        parent_nodes, actions_taken, masks = (
+            trajectory[-1][0],
+            trajectory[-1][1],
+            trajectory[-1][2],
         )
-        next_legal_mask = None
-        if len(dyn_output) == 5:
-            next_embeddings, rewards, next_to_play, is_terminal, next_legal_mask = (
-                dyn_output
-            )
-        elif len(dyn_output) == 4:
-            next_embeddings, rewards, next_to_play, is_terminal = dyn_output
-        else:
-            next_embeddings, rewards, next_to_play = dyn_output
-            is_terminal = root_embeddings.new_zeros(batch_size, dtype=torch.bool)
+        parent_embeddings = tree["embeddings"][batch_range, parent_nodes]
 
-        # C. Expansion & Evaluation: Predict policy and value for the leaf
-        policy_logits, value = expansion_fn(next_embeddings)
-        if next_legal_mask is not None:
-            policy_logits = torch.where(next_legal_mask, policy_logits, -1e9)
-
-        # For terminal states, value should be 0.0 (terminal state has no future expected return)
-        value = torch.where(is_terminal, torch.zeros_like(value), value)
-
-        # D. Expand Tree: Add the new node
-        expand_node_(
-            tree,
-            parent_nodes,
-            actions_taken,
-            policy_logits,
-            rewards,
+        # B. Model Step (Dynamics)
+        (
+            prior_logits,
+            value,
+            reward,
+            discount,
             next_embeddings,
-            next_to_play,
-            is_terminal=is_terminal,
+        ) = recurrent_fn(actions_taken, parent_embeddings)
+
+        # C. Expansion Phase
+        expand_node_(
+            tree=tree,
+            parent_nodes=parent_nodes,
+            actions_taken=actions_taken,
+            policy_logits=prior_logits,
+            value=value,
+            rewards=reward,
+            discounts=discount,
+            next_embeddings=next_embeddings,
+            legal_mask=None,  # Handled via logits in recurrent_fn if needed
+            masks=masks,
         )
 
-        # E. Backpropagation: Update value/visit counts up the trajectory
-        backpropagate_(tree, trajectory, value, gamma)
+        # D. Backpropagation Phase
+        backpropagate_(
+            tree=tree,
+            trajectory=trajectory,
+            leaf_value=value,
+        )
 
-    return tree
+    root_visits = tree["children_visits"][:, 0]  # [B, A]
+    action_probs = get_mcts_visit_policy(root_visits, temperature=temperature)
+
+    if temperature == 0.0:
+        selected_action = action_probs.argmax(dim=-1)
+    else:
+        selected_action = torch.multinomial(action_probs, num_samples=1).squeeze(-1)
+
+    return selected_action, action_probs, tree

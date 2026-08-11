@@ -1,54 +1,57 @@
-"""
-AlphaZero on PettingZoo TicTacToe (torch.multiprocessing Multiprocess Version)
+"""AlphaZero on PettingZoo TicTacToe (torch.multiprocessing Multiprocess Version)
+
 ================================================================================
 
 Paper Reference:
-    "Mastering Chess and Shogi by Self-Play with a General Reinforcement Learning Algorithm"
+    "Mastering Chess and Shogi by Self-Play with a General Reinforcement
+    Learning Algorithm"
     Silver et al., Science 2018 (arXiv 2017: https://arxiv.org/abs/1712.01815)
-    "Mastering the Game of Go without Human Knowledge"
-    Silver et al., Nature 2017 (AlphaGo Zero)
 
-Multiprocessing Architecture (Matching ape_x_mp_cartpole.py style):
-    - 3 Actor Processes: Each actor runs batched self-play across 5 parallel environments
+Multiprocessing Architecture:
+    - 3 Actor Processes: Each actor runs batched self-play across 5 parallel
+    environments
       simultaneously using batched MCTS (root embeddings shape [5, 3, 3, 2]).
-    - 1 Learner Process: Continuously samples minibatches from the SharedReplayBuffer,
-      computes policy and value loss, steps the SGD optimizer, and updates shared weights.
-    - 1 Async Evaluator Process: Periodically evaluates the shared model against a Random
+    - 1 Learner Process: Continuously samples minibatches from the
+    SharedReplayBuffer,
+      computes policy and value loss, steps the SGD optimizer, and updates
+      shared weights.
+    - 1 Async Evaluator Process: Periodically evaluates the shared model against
+    a Random
       baseline in the background, logging metrics to W&B asynchronously.
-    - Shared Model Memory: Weights synced via shared_model.share_memory().
 """
 
-import copy
-import os
-import time
 import random
-from typing import Tuple, List, Dict, Any, Callable
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.multiprocessing as mp
-from tensordict import TensorDict
-import wandb
+import time
+from typing import Any, Callable, Dict, List, Tuple
 
-from atomic_rl.search import mcts_search, get_mcts_visit_policy
-from atomic_rl.losses import cross_entropy_loss, mse_loss
 from atomic_rl.action_selection import argmax_selector, sample_distribution
+
+from atomic_rl.networks import ResNetBackbone
 from atomic_rl.buffers.replay import (
-    init_buffer,
     circular_write_strategy_,
+    init_buffer,
     uniform_sample,
-    BufferState,
 )
 from atomic_rl.envs.functions.tictactoe import (
     check_tictactoe_winner,
-    tictactoe_dynamics_fn,
-    get_canonical_obs,
     embeddings_to_canonical,
+    get_canonical_obs,
     get_legal_actions_mask,
+    tictactoe_dynamics_fn,
 )
+from atomic_rl.losses import cross_entropy_loss, mse_loss
+from atomic_rl.search import get_mcts_visit_policy, mcts_search
 from pettingzoo.classic import tictactoe_v3
 
+from tensordict import TensorDict
+import torch
+import torch.multiprocessing as mp
+import torch.nn as nn
+import torch.nn.functional as F
+import wandb
 
+# TODO: use get_legal_action_mask
+# TODO: use argmax selector for evaluation
 # ---------------------------------------------------------------------------
 # Hyperparameters & Constants
 # ---------------------------------------------------------------------------
@@ -86,18 +89,21 @@ SEED = 42
 # ============================================================================
 # 1. Dual-Head AlphaZero ResNet Neural Network
 # ============================================================================
-
-
 class TicTacToeNet(nn.Module):
+
     def __init__(
-        self, num_filters: int = NUM_FILTERS, num_res_blocks: int = NUM_RES_BLOCKS
+        self,
+        num_filters: int = NUM_FILTERS,
+        num_res_blocks: int = NUM_RES_BLOCKS,
     ):
         super().__init__()
         self.conv_in = nn.Conv2d(3, num_filters, kernel_size=3, padding=1)
         self.bn_in = nn.BatchNorm2d(num_filters)
 
-        self.res_blocks = nn.ModuleList(
-            [ResNetBlock(num_filters) for _ in range(num_res_blocks)]
+        self.res_blocks = ResNetBackbone(
+            in_channels=num_filters,
+            num_filters=num_filters,
+            num_blocks=num_res_blocks,
         )
 
         self.policy_head = nn.Sequential(
@@ -121,20 +127,20 @@ class TicTacToeNet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         features = F.relu(self.bn_in(self.conv_in(x)))
-        for block in self.res_blocks:
-            features = block(features)
+        features = self.res_blocks(features)
 
         policy_logits = self.policy_head(features)
         value = self.value_head(features)
-        return policy_logits, value
+        return policy_logits, value.squeeze(-1)
 
 
 # ============================================================================
-# 3. Thread & Process-Safe Shared Replay Buffer
+# 2. Thread & Process-Safe Shared Replay Buffer
 # ============================================================================
 
 
 class SharedReplayBuffer:
+
     def __init__(self, capacity: int, shapes: Dict[str, Any], device: torch.device):
         self.buffer_state = init_buffer(capacity, shapes, device=device)
         self.buffer_state.data.share_memory_()
@@ -171,7 +177,7 @@ class SharedReplayBuffer:
 
 
 # ============================================================================
-# 4. Multiprocessing Workers (Matching ape_x_mp_cartpole.py style)
+# 3. Multiprocessing Workers
 # ============================================================================
 
 
@@ -207,29 +213,56 @@ def actor_worker(
         if step_counter % PARAM_SYNC_INTERVAL == 0:
             local_model.load_state_dict(shared_model.state_dict())
 
+        # TODO: I don't love this part. Ideally we use the pettingzoo obs and stuff directly.
         # Construct root embeddings for search batch size [B, 3, 3, 2]
         root_embed = boards.new_zeros(envs_per_actor, 3, 3, 2)
         root_embed[..., 0] = boards
         root_embed[..., 1] = players.view(-1, 1, 1).expand(-1, 3, 3).float()
-        root_legal_mask = boards.view(envs_per_actor, -1) == 0
+        invalid_actions = boards.view(envs_per_actor, -1) != 0  # Illegal mask
 
-        def expansion_fn(embeddings):
+        # Root Model Prediction
+        with torch.no_grad():
+            canonical_x = embeddings_to_canonical(root_embed)
+            root_logits, root_value = local_model(canonical_x)
+
+        # Define Unified RecurrentFn (actions, embeddings) -> (logits, value, reward, discount, next_embeddings)
+        def recurrent_fn(actions_taken, embeddings):
+            (
+                next_embed,
+                reward,
+                next_to_play,
+                is_terminal,
+                next_legal_mask,
+            ) = tictactoe_dynamics_fn(embeddings, actions_taken)
+
             with torch.no_grad():
-                canonical_x = embeddings_to_canonical(embeddings)
-                logits, value = local_model(canonical_x)
-                return logits, value.squeeze(-1)
+                canonical_next = embeddings_to_canonical(next_embed)
+                logits, value = local_model(canonical_next)
 
-        tree = mcts_search(
+            # TODO: not sure how I feel about this but its probably okay. Is it nicer in the search or is that too slow/inneficient?
+            # Mask illegal moves for child states
+            logits = logits.masked_fill(~next_legal_mask, -1e9)
+
+            # NOTE: Terminal states have discount = 0.0, non-terminal = -1.0 (or gamma) (for 2 player zero sum game)
+            discount = torch.where(
+                is_terminal,
+                torch.zeros_like(reward),
+                -torch.ones_like(reward),
+            )
+            return logits, value, reward, discount, next_embed
+
+        # Execute MCTS Search
+        search_action, action_probs, tree = mcts_search(
             root_embeddings=root_embed,
+            root_logits=root_logits,
+            root_value=root_value,
+            recurrent_fn=recurrent_fn,
             num_simulations=num_simulations,
             num_actions=9,
-            expansion_fn=expansion_fn,
-            dynamics_fn=tictactoe_dynamics_fn,
-            root_to_play=players,
-            root_legal_mask=root_legal_mask,
-            pb_c_init=C_PUCT,
+            legal_mask=~invalid_actions,  # TODO: update this to legal mask and use the one directly given by petting zoo.
             dirichlet_epsilon=DIRICHLET_EPSILON,
             dirichlet_alpha=DIRICHLET_ALPHA,
+            pb_c_init=C_PUCT,
         )
 
         completed_samples = []
@@ -239,20 +272,16 @@ def actor_worker(
             move_counts[b_idx] += 1
             curr_player = players[b_idx].item()
 
-            action_mask = (boards[b_idx] == 0).view(-1)
-            root_visits = tree["children_visits"][b_idx, 0]  # [9]
+            # Target policy from search
+            target_policy = action_probs[b_idx]
 
-            # Target policy (tau = 1.0)
-            target_policy = get_mcts_visit_policy(
-                root_visits.unsqueeze(0), temperature=1.0
-            ).squeeze(0)
-
-            # Action selection policy
+            # Select action according to move-count temperature schedule
             temp = (
                 TEMPERATURE_EXPLORATION
                 if move_counts[b_idx] <= TEMP_THRESHOLD_MOVES
                 else TEMPERATURE_EXPLOITATION
             )
+            root_visits = tree["children_visits"][b_idx, 0]
             action_policy = get_mcts_visit_policy(
                 root_visits.unsqueeze(0), temperature=temp
             ).squeeze(0)
@@ -262,8 +291,7 @@ def actor_worker(
                 action_idx_t, _ = sample_distribution(dist, explore=True)
                 action_idx = action_idx_t.item()
             else:
-                action_idx_t, _ = argmax_selector(action_policy.unsqueeze(0))
-                action_idx = action_idx_t.squeeze().item()
+                action_idx = search_action[b_idx].item()
 
             canonical_obs = get_canonical_obs(boards[b_idx], curr_player).squeeze(0)
 
@@ -359,6 +387,7 @@ def evaluator_worker(
                     env.step(None)
                     continue
 
+                # TODO: this is how the action mask logic should be done in the self play loop too. Why is it not done like this?
                 player = 0 if agent == "player_1" else 1
                 action_mask = torch.tensor(
                     obs["action_mask"], device=device, dtype=torch.bool
@@ -366,31 +395,49 @@ def evaluator_worker(
                 legal_actions = action_mask.nonzero(as_tuple=False).squeeze(-1).tolist()
 
                 if player == az_player:
-
-                    def expansion_fn(embeddings):
-                        with torch.no_grad():
-                            canonical_x = embeddings_to_canonical(embeddings)
-                            logits, value = local_model(canonical_x)
-                            return logits, value.squeeze(-1)
-
                     root_embed = board_3x3.new_zeros(1, 3, 3, 2)
                     root_embed[0, ..., 0] = board_3x3
                     root_embed[0, ..., 1] = float(player)
 
-                    tree = mcts_search(
+                    with torch.no_grad():
+                        canonical_x = embeddings_to_canonical(root_embed)
+                        root_logits, root_value = local_model(canonical_x)
+
+                    def recurrent_fn(actions_taken, embeddings):
+                        (
+                            next_embed,
+                            r,
+                            next_to_play,
+                            is_terminal,
+                            next_legal_mask,
+                        ) = tictactoe_dynamics_fn(embeddings, actions_taken)
+
+                        with torch.no_grad():
+                            canonical_next = embeddings_to_canonical(next_embed)
+                            logits, value = local_model(canonical_next)
+
+                        # Mask illegal moves for child states
+                        logits = logits.masked_fill(~next_legal_mask, -1e9)
+
+                        discount = torch.where(
+                            is_terminal, torch.zeros_like(r), -torch.ones_like(r)
+                        )
+                        return logits, value, r, discount, next_embed
+
+                    search_action, action_probs, tree = mcts_search(
                         root_embeddings=root_embed,
+                        root_logits=root_logits,
+                        root_value=root_value,
+                        recurrent_fn=recurrent_fn,
                         num_simulations=NUM_MCTS_SIMULATIONS,
                         num_actions=9,
-                        expansion_fn=expansion_fn,
-                        dynamics_fn=tictactoe_dynamics_fn,
-                        root_to_play=board_3x3.new_tensor([player], dtype=torch.long),
-                        root_legal_mask=action_mask.unsqueeze(0),
-                        pb_c_init=C_PUCT,
+                        legal_mask=action_mask.unsqueeze(0),
                         dirichlet_epsilon=0.0,
+                        pb_c_init=C_PUCT,
+                        temperature=0.0,
                     )
 
-                    root_visits = tree["children_visits"][0, 0]
-                    action_idx = root_visits.argmax().item()
+                    action_idx = search_action[0].item()
                 else:
                     action_idx = random.choice(legal_actions)
 
@@ -523,7 +570,8 @@ def learner_worker(
 
         if step_count % 100 == 0:
             print(
-                f"[Learner Step {step_count}/{max_steps}] Loss: {loss.item():.4f} | Buffer: {buffer.size}"
+                f"[Learner Step {step_count}/{max_steps}] Loss: {loss.item():.4f} |"
+                f" Buffer: {buffer.size}"
             )
 
         wandb.log(log_dict)
@@ -532,7 +580,7 @@ def learner_worker(
 
 
 # ============================================================================
-# 5. Main Multiprocessing Setup
+# 4. Main Multiprocessing Setup
 # ============================================================================
 
 
@@ -592,7 +640,8 @@ def main():
     processes.append(eval_p)
 
     print(
-        f"Launched AlphaZero Multiprocessing Pipeline (1 Learner, {NUM_ACTORS} Actors with {ENVS_PER_ACTOR} Envs per Actor, 1 Evaluator)."
+        "Launched AlphaZero Multiprocessing Pipeline (1 Learner, "
+        f"{NUM_ACTORS} Actors with {ENVS_PER_ACTOR} Envs per Actor, 1 Evaluator)."
     )
 
     learner_p.join()
