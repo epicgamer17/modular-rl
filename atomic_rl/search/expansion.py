@@ -7,6 +7,11 @@ from ..utils import add_dirichlet_noise
 # TODO: legal move masking for AlphaZero and terminal nodes for AlphaZero
 # TODO: Sampled MuZero
 # TODO: initial value for unvisited nodes, allow options, AlphaZero and MuZero: 0, Gumbel Muzero, v_mix, EfficientZero and Batch MCTS mean score
+import torch
+from tensordict import TensorDict
+from typing import Optional
+
+
 def expand_node_(
     tree: TensorDict,
     parent_nodes: torch.Tensor,  # [B]
@@ -25,7 +30,7 @@ def expand_node_(
     device = tree.device
     batch_range = torch.arange(batch_size, device=device)
 
-    # 1. Filter indices up front if a mask is provided
+    # 1. Filter active batch elements if a mask is provided
     if masks is not None:
         b_idx = batch_range[masks]
         p_idx = parent_nodes[masks]
@@ -50,30 +55,43 @@ def expand_node_(
         p_idx = parent_nodes
         a_idx = actions_taken
 
-    # 2. Get new_node_indices FOR THE MASKED BATCH ELEMENTS (length = len(b_idx))
+    # 2. Allocate new node indices per batch item
     new_node_indices = tree["node_counts"][b_idx]
 
-    # 3. Update structural edge from parent -> child
+    # 3. Update structural forward edge: parent -> child
     tree["children_index"][b_idx, p_idx, a_idx] = new_node_indices
     tree["children_rewards"][b_idx, p_idx, a_idx] = rewards
     tree["children_discounts"][b_idx, p_idx, a_idx] = discounts
 
-    # 4. Mask illegal actions in policy logits
+    # 4. Update structural reverse edge: child -> parent
+    tree["parents"][b_idx, new_node_indices] = p_idx
+    tree["action_from_parent"][b_idx, new_node_indices] = a_idx
+
+    # 5. Initialize children of the NEW node to UNVISITED (-1)
+    tree["children_index"][b_idx, new_node_indices] = -1
+
+    # 6. Reset/initialize search statistics for the new node
+    tree["node_visits"][b_idx, new_node_indices] = 0
+    tree["children_visits"][b_idx, new_node_indices] = 0
+    tree["children_values"][b_idx, new_node_indices] = 0.0
+
+    # 7. Mask illegal actions safely across float dtypes
     curr_logits = policy_logits.clone()
     if legal_mask is not None:
-        curr_logits = curr_logits.masked_fill(~legal_mask, -1e9)
+        min_val = torch.finfo(curr_logits.dtype).min
+        curr_logits = curr_logits.masked_fill(~legal_mask, min_val)
 
-    # 5. Populate child node data (Shapes now match [len(b_idx), 3, 3, 2] == [2, 3, 3, 2])
+    # 8. Populate child node values and embeddings
     tree["embeddings"][b_idx, new_node_indices] = next_embeddings
     tree["children_prior_logits"][b_idx, new_node_indices] = curr_logits
     tree["raw_values"][b_idx, new_node_indices] = value
     tree["node_values"][b_idx, new_node_indices] = value
 
-    # 6. Populate optional attributes
+    # 9. Populate optional metadata
     if next_to_play is not None:
         tree["to_play"][b_idx, new_node_indices] = next_to_play
 
     tree["is_terminal"][b_idx, new_node_indices] = discounts == 0.0
 
-    # 7. Increment node_counts ONLY for the active batch elements
+    # 10. Increment allocation count for active elements
     tree["node_counts"][b_idx] += 1

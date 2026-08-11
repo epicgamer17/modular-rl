@@ -1,5 +1,35 @@
-from tensordict import TensorDict
 import torch
+import torch.nn.functional as F
+from tensordict import TensorDict
+from typing import Union
+
+
+def get_qvalues(tree: TensorDict, parent_nodes: torch.Tensor) -> torch.Tensor:
+    """Computes Q-values for parent_nodes matching mctx.Tree.qvalues().
+
+    Q(s, a) = rewards(s, a) + discounts(s, a) * V(s')
+    """
+    batch_size = tree.batch_size[0]
+    batch_range = torch.arange(batch_size, device=tree.device)
+
+    rewards = tree["children_rewards"][batch_range, parent_nodes]
+    discounts = tree["children_discounts"][batch_range, parent_nodes]
+    values = tree["children_values"][batch_range, parent_nodes]
+
+    return rewards + discounts * values
+
+
+def _format_bound(
+    val: Union[torch.Tensor, float], target_tensor: torch.Tensor
+) -> torch.Tensor:
+    """Helper to reshape min/max bounds into [B, 1] tensors for safe broadcasting."""
+    if not isinstance(val, torch.Tensor):
+        val = torch.tensor(val, device=target_tensor.device, dtype=target_tensor.dtype)
+    if val.ndim == 0:
+        return val.unsqueeze(0).unsqueeze(-1)
+    if val.ndim == 1:
+        return val.unsqueeze(-1)
+    return val
 
 
 # TODO: soft min max stats? efficient_zero.pdf
@@ -15,29 +45,27 @@ def qtransform_by_min_max(
     """
     Returns Q-values normalized by the given `min_value` and `max_value`.
 
-    Unvisited actions are assigned zero Q-value score after normalization.
+    Unvisited actions receive a normalized value of 0.0.
     Shape: [B, num_actions].
     """
     batch_size = tree.batch_size[0]
     batch_range = torch.arange(batch_size, device=tree.device)
 
     # Extract Q-values and visit counts for candidate actions: [B, A]
-    qvalues = tree["children_values"][batch_range, parent_nodes]
-    visit_counts = tree["children_visits"][batch_range, parent_nodes]
+    qvalues = get_qvalues(tree, parent_nodes)  # [B, A]
+    visit_counts = tree["children_visits"][batch_range, parent_nodes]  # [B, A]
 
-    # TODO: can we do this without the if statements
-    min_val = min_value.unsqueeze(-1) if min_value.ndim == 1 else min_value
-    max_val = max_value.unsqueeze(-1) if max_value.ndim == 1 else max_value
+    min_val = _format_bound(min_value, qvalues)
+    max_val = _format_bound(max_value, qvalues)
 
-    # Assign min_value to unvisited actions before scaling
+    # Assign min_value to unvisited actions prior to normalization
     value_score = torch.where(visit_counts > 0, qvalues, min_val)
 
     # Safe normalization
     denom = torch.clamp(max_val - min_val, min=epsilon)
-    value_score = (value_score - min_val) / denom
+    normalized = (value_score - min_val) / denom
 
-    # Unvisited actions explicitly get 0.0 Q-value
-    return torch.where(visit_counts > 0, value_score, 0.0)
+    return normalized
 
 
 def qtransform_by_parent_and_siblings(
@@ -49,13 +77,13 @@ def qtransform_by_parent_and_siblings(
     """
     Returns Q-values normalized by min/max over V(parent) and visited Q-values.
 
-    Unvisited actions will have zero Q-value.
+    Unvisited actions receive a normalized value of 0.0.
     Shape: [B, num_actions].
     """
     batch_size = tree.batch_size[0]
     batch_range = torch.arange(batch_size, device=tree.device)
 
-    qvalues = tree["children_values"][batch_range, parent_nodes]  # [B, A]
+    qvalues = get_qvalues(tree, parent_nodes)  # [B, A]
     visit_counts = tree["children_visits"][batch_range, parent_nodes]  # [B, A]
     node_value = tree["node_values"][batch_range, parent_nodes].unsqueeze(-1)  # [B, 1]
 
@@ -70,8 +98,7 @@ def qtransform_by_parent_and_siblings(
     denom = torch.clamp(max_value - min_value, min=epsilon)
     normalized = (completed_by_min - min_value) / denom
 
-    # Unvisited actions get 0.0
-    return torch.where(visit_counts > 0, normalized, 0.0)
+    return normalized
 
 
 def qtransform_completed_by_mix_value(
@@ -94,7 +121,7 @@ def qtransform_completed_by_mix_value(
     batch_size = tree.batch_size[0]
     batch_range = torch.arange(batch_size, device=tree.device)
 
-    qvalues = tree["children_values"][batch_range, parent_nodes]  # [B, A]
+    qvalues = get_qvalues(tree, parent_nodes)  # [B, A]
     visit_counts = tree["children_visits"][batch_range, parent_nodes]  # [B, A]
     raw_value = tree["raw_values"][batch_range, parent_nodes]  # [B]
     prior_logits = tree["children_prior_logits"][batch_range, parent_nodes]  # [B, A]

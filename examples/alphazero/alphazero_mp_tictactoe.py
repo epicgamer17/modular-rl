@@ -24,9 +24,7 @@ import random
 import time
 from typing import Any, Callable, Dict, List, Tuple
 
-from atomic_rl.action_selection import argmax_selector, sample_distribution
-
-from atomic_rl.networks import ResNetBackbone
+from atomic_rl.action_selection import sample_distribution
 from atomic_rl.buffers.replay import (
     circular_write_strategy_,
     init_buffer,
@@ -36,10 +34,10 @@ from atomic_rl.envs.functions.tictactoe import (
     check_tictactoe_winner,
     embeddings_to_canonical,
     get_canonical_obs,
-    get_legal_actions_mask,
     tictactoe_dynamics_fn,
 )
 from atomic_rl.losses import cross_entropy_loss, mse_loss
+from atomic_rl.networks import ResNetBackbone
 from atomic_rl.search import get_mcts_visit_policy, mcts_search
 from pettingzoo.classic import tictactoe_v3
 
@@ -72,7 +70,6 @@ DIRICHLET_EPSILON = 0.25
 TEMP_THRESHOLD_MOVES = 5
 TEMPERATURE_EXPLORATION = 1.0
 TEMPERATURE_EXPLOITATION = 0.0
-TEMPERATURE_EVAL = 0.0
 
 # Optimization & Network Parameters
 BATCH_SIZE = 48
@@ -90,11 +87,8 @@ SEED = 42
 # 1. Dual-Head AlphaZero ResNet Neural Network
 # ============================================================================
 class TicTacToeNet(nn.Module):
-
     def __init__(
-        self,
-        num_filters: int = NUM_FILTERS,
-        num_res_blocks: int = NUM_RES_BLOCKS,
+        self, num_filters: int = NUM_FILTERS, num_res_blocks: int = NUM_RES_BLOCKS
     ):
         super().__init__()
         self.conv_in = nn.Conv2d(3, num_filters, kernel_size=3, padding=1)
@@ -140,7 +134,6 @@ class TicTacToeNet(nn.Module):
 
 
 class SharedReplayBuffer:
-
     def __init__(self, capacity: int, shapes: Dict[str, Any], device: torch.device):
         self.buffer_state = init_buffer(capacity, shapes, device=device)
         self.buffer_state.data.share_memory_()
@@ -179,6 +172,31 @@ class SharedReplayBuffer:
 # ============================================================================
 # 3. Multiprocessing Workers
 # ============================================================================
+def create_recurrent_fn(local_model: nn.Module):
+    """Creates a clean recurrent_fn without hardcoded -1e9 logit masks."""
+
+    def recurrent_fn(actions_taken: torch.Tensor, embeddings: torch.Tensor):
+        (
+            next_embed,
+            reward,
+            next_to_play,
+            is_terminal,
+            next_legal_mask,
+        ) = tictactoe_dynamics_fn(embeddings, actions_taken)
+
+        with torch.no_grad():
+            canonical_next = embeddings_to_canonical(next_embed)
+            logits, value = local_model(canonical_next)
+
+        # Discount is 0.0 for terminal states, -1.0 for alternating turn zero-sum games
+        discount = torch.where(
+            is_terminal,
+            torch.zeros_like(reward),
+            -torch.ones_like(reward),
+        )
+        return logits, value, reward, discount, next_embed
+
+    return recurrent_fn
 
 
 def actor_worker(
@@ -207,6 +225,7 @@ def actor_worker(
     trajectories = [[] for _ in range(envs_per_actor)]
 
     step_counter = 0
+    recurrent_fn = create_recurrent_fn(local_model)
 
     while True:
         step_counter += 1
@@ -218,38 +237,12 @@ def actor_worker(
         root_embed = boards.new_zeros(envs_per_actor, 3, 3, 2)
         root_embed[..., 0] = boards
         root_embed[..., 1] = players.view(-1, 1, 1).expand(-1, 3, 3).float()
-        invalid_actions = boards.view(envs_per_actor, -1) != 0  # Illegal mask
+        legal_mask = boards.view(envs_per_actor, -1) == 0.0
 
         # Root Model Prediction
         with torch.no_grad():
             canonical_x = embeddings_to_canonical(root_embed)
             root_logits, root_value = local_model(canonical_x)
-
-        # Define Unified RecurrentFn (actions, embeddings) -> (logits, value, reward, discount, next_embeddings)
-        def recurrent_fn(actions_taken, embeddings):
-            (
-                next_embed,
-                reward,
-                next_to_play,
-                is_terminal,
-                next_legal_mask,
-            ) = tictactoe_dynamics_fn(embeddings, actions_taken)
-
-            with torch.no_grad():
-                canonical_next = embeddings_to_canonical(next_embed)
-                logits, value = local_model(canonical_next)
-
-            # TODO: not sure how I feel about this but its probably okay. Is it nicer in the search or is that too slow/inneficient?
-            # Mask illegal moves for child states
-            logits = logits.masked_fill(~next_legal_mask, -1e9)
-
-            # NOTE: Terminal states have discount = 0.0, non-terminal = -1.0 (or gamma) (for 2 player zero sum game)
-            discount = torch.where(
-                is_terminal,
-                torch.zeros_like(reward),
-                -torch.ones_like(reward),
-            )
-            return logits, value, reward, discount, next_embed
 
         # Execute MCTS Search
         search_action, action_probs, tree = mcts_search(
@@ -259,10 +252,11 @@ def actor_worker(
             recurrent_fn=recurrent_fn,
             num_simulations=num_simulations,
             num_actions=9,
-            legal_mask=~invalid_actions,  # TODO: update this to legal mask and use the one directly given by petting zoo.
+            legal_mask=legal_mask,
             dirichlet_epsilon=DIRICHLET_EPSILON,
             dirichlet_alpha=DIRICHLET_ALPHA,
             pb_c_init=C_PUCT,
+            temperature=1.0,  # Keeps target policy distributions smooth
         )
 
         completed_samples = []
@@ -281,17 +275,13 @@ def actor_worker(
                 if move_counts[b_idx] <= TEMP_THRESHOLD_MOVES
                 else TEMPERATURE_EXPLOITATION
             )
-            root_visits = tree["children_visits"][b_idx, 0]
-            action_policy = get_mcts_visit_policy(
-                root_visits.unsqueeze(0), temperature=temp
-            ).squeeze(0)
 
-            if temp > 0.0:
-                dist = torch.distributions.Categorical(probs=action_policy)
+            if temp == 0.0:
+                action_idx = target_policy.argmax(dim=-1).item()
+            else:
+                dist = torch.distributions.Categorical(probs=target_policy)
                 action_idx_t, _ = sample_distribution(dist, explore=True)
                 action_idx = action_idx_t.item()
-            else:
-                action_idx = search_action[b_idx].item()
 
             canonical_obs = get_canonical_obs(boards[b_idx], curr_player).squeeze(0)
 
@@ -360,6 +350,7 @@ def evaluator_worker(
     device = torch.device(device_str)
     local_model = model_creator().to(device)
     local_model.eval()
+    recurrent_fn = create_recurrent_fn(local_model)
 
     while True:
         time.sleep(2.0)
@@ -402,27 +393,6 @@ def evaluator_worker(
                     with torch.no_grad():
                         canonical_x = embeddings_to_canonical(root_embed)
                         root_logits, root_value = local_model(canonical_x)
-
-                    def recurrent_fn(actions_taken, embeddings):
-                        (
-                            next_embed,
-                            r,
-                            next_to_play,
-                            is_terminal,
-                            next_legal_mask,
-                        ) = tictactoe_dynamics_fn(embeddings, actions_taken)
-
-                        with torch.no_grad():
-                            canonical_next = embeddings_to_canonical(next_embed)
-                            logits, value = local_model(canonical_next)
-
-                        # Mask illegal moves for child states
-                        logits = logits.masked_fill(~next_legal_mask, -1e9)
-
-                        discount = torch.where(
-                            is_terminal, torch.zeros_like(r), -torch.ones_like(r)
-                        )
-                        return logits, value, r, discount, next_embed
 
                     search_action, action_probs, tree = mcts_search(
                         root_embeddings=root_embed,
@@ -509,14 +479,13 @@ def learner_worker(
             "num_actors": NUM_ACTORS,
             "envs_per_actor": ENVS_PER_ACTOR,
             "num_mcts_simulations": NUM_MCTS_SIMULATIONS,
-            "c_puct": C_PUCT,
+            "c_puCT": C_PUCT,
             "batch_size": batch_size,
             "learning_rate": learning_rate,
             "weight_decay": weight_decay,
             "seed": SEED,
         },
     )
-    wandb.define_metric("*", step_metric="global_step")
 
     step_count = 0
     latest_eval_metrics = {}
@@ -543,11 +512,11 @@ def learner_worker(
 
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(local_model.parameters(), max_norm=1.0)
         optimizer.step()
 
         # Update shared model memory
         shared_model.load_state_dict(local_model.state_dict())
-
         step_count += 1
 
         # Check for fresh evaluation metrics from background evaluator
@@ -563,15 +532,12 @@ def learner_worker(
             "loss/policy": policy_loss.item(),
             "loss/value": value_loss.item(),
             "buffer/size": buffer.size,
-            "search/mcts_simulations": NUM_MCTS_SIMULATIONS,
-            "search/c_puct": C_PUCT,
         }
         log_dict.update(latest_eval_metrics)
 
         if step_count % 100 == 0:
             print(
-                f"[Learner Step {step_count}/{max_steps}] Loss: {loss.item():.4f} |"
-                f" Buffer: {buffer.size}"
+                f"[Learner Step {step_count}/{max_steps}] Loss: {loss.item():.4f} | Buffer: {buffer.size}"
             )
 
         wandb.log(log_dict)
@@ -640,10 +606,8 @@ def main():
     processes.append(eval_p)
 
     print(
-        "Launched AlphaZero Multiprocessing Pipeline (1 Learner, "
-        f"{NUM_ACTORS} Actors with {ENVS_PER_ACTOR} Envs per Actor, 1 Evaluator)."
+        f"Launched AlphaZero Multiprocessing Pipeline ({NUM_ACTORS} Actors, 1 Learner, 1 Evaluator)."
     )
-
     learner_p.join()
 
     # Clean termination of actors
@@ -652,7 +616,6 @@ def main():
             p.terminate()
 
     print("AlphaZero Multiprocessing Training Completed Successfully.")
-
 
 if __name__ == "__main__":
     main()

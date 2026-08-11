@@ -17,6 +17,18 @@ from .policies import get_mcts_visit_policy
 # TODO: should this just return the tree?
 # TODO: what about sampled muzero?
 # TODO: make this less hardcoded. I don't mind if search orchestration goes in the orchestration code, if it gives users more freedom.
+import torch
+from tensordict import TensorDict
+from typing import Tuple, Callable, Optional
+from ..utils import add_dirichlet_noise
+from .backpropagation import backpropagate_
+from .expansion import expand_node_
+from .selection import select_leaf
+from .tree import init_mcts_tree
+from .qtransforms import qtransform_by_parent_and_siblings
+from .policies import get_mcts_visit_policy
+
+
 def mcts_search(
     root_embeddings: torch.Tensor,
     root_logits: torch.Tensor,
@@ -42,41 +54,13 @@ def mcts_search(
     pb_c_init: float = 1.25,
     temperature: float = 1.0,
 ) -> Tuple[torch.Tensor, torch.Tensor, TensorDict]:
-    """
-    Runs batched MuZero MCTS search without custom output wrappers.
-
-    Args:
-        root_embeddings: State embeddings at root [B, D]
-        root_logits: Initial policy network logits [B, A]
-        root_value: Initial value network prediction [B]
-        recurrent_fn: Callable (actions, embeddings) -> (logits, value, reward,
-          discount, next_embeddings)
-        num_simulations: Number of search simulations
-        num_actions: Action space size
-        legal_mask: Boolean mask of legal actions at root [B, A]
-        qtransform: Q-value normalization callback
-        dirichlet_epsilon: Dirichlet noise fraction at root
-        dirichlet_alpha: Dirichlet concentration parameter
-        pb_c_base: PUCT base parameter
-        pb_c_init: PUCT init parameter
-        temperature: Action selection temperature for final policy
-
-    Returns:
-        A tuple of:
-            - selected_action: Selected actions [B]
-            - action_probs: Target action probability distribution [B, A]
-            - tree: The complete MCTS search tree TensorDict
-    """
+    """Runs batched MuZero MCTS search matching mctx semantics."""
     device = root_embeddings.device
     batch_size = root_embeddings.shape[0]
     batch_range = torch.arange(batch_size, device=device)
 
-    # 1. Mask illegal actions at root if provided
+    # 1. Apply Dirichlet noise to root logits if enabled (Masking is handled inside init_mcts_tree)
     curr_root_logits = root_logits.clone()
-    if legal_mask is not None:
-        curr_root_logits = curr_root_logits.masked_fill(~legal_mask, -1e9)
-
-    # 2. Inject Dirichlet exploration noise to root logits if enabled
     if dirichlet_epsilon > 0.0:
         curr_root_logits = add_dirichlet_noise(
             curr_root_logits,
@@ -85,7 +69,7 @@ def mcts_search(
             mask=legal_mask,
         )
 
-    # 3. Initialize Tree State
+    # 2. Initialize Tree State
     tree = init_mcts_tree(
         root_embeddings=root_embeddings,
         root_logits=curr_root_logits,
@@ -95,44 +79,41 @@ def mcts_search(
         legal_mask=legal_mask,
     )
 
+    # 3. Simulation Loop
     for _ in range(num_simulations):
-        # A. Selection: Find the best leaf using PUCT score
-        leaf_indices, trajectory = select_leaf(
+        # A. Selection Phase
+        leaf_parents, leaf_actions, expansion_mask, trajectory = select_leaf(
             tree,
-            pb_c_base,
-            pb_c_init,
+            pb_c_base=pb_c_base,
+            pb_c_init=pb_c_init,
             qtransform=qtransform,
         )
 
-        # The expansion happens at the end of the trajectory
-        parent_nodes, actions_taken, masks = (
-            trajectory[-1][0],
-            trajectory[-1][1],
-            trajectory[-1][2],
-        )
-        parent_embeddings = tree["embeddings"][batch_range, parent_nodes]
+        if not trajectory:
+            break
 
-        # B. Model Step (Dynamics)
+        # B. Model Dynamics Step
+        parent_embeddings = tree["embeddings"][batch_range, leaf_parents]
         (
             prior_logits,
             value,
             reward,
             discount,
             next_embeddings,
-        ) = recurrent_fn(actions_taken, parent_embeddings)
+        ) = recurrent_fn(leaf_actions, parent_embeddings)
 
         # C. Expansion Phase
         expand_node_(
             tree=tree,
-            parent_nodes=parent_nodes,
-            actions_taken=actions_taken,
+            parent_nodes=leaf_parents,
+            actions_taken=leaf_actions,
             policy_logits=prior_logits,
             value=value,
             rewards=reward,
             discounts=discount,
             next_embeddings=next_embeddings,
-            legal_mask=None,  # Handled via logits in recurrent_fn if needed
-            masks=masks,
+            legal_mask=None,
+            masks=expansion_mask,
         )
 
         # D. Backpropagation Phase
@@ -142,6 +123,7 @@ def mcts_search(
             leaf_value=value,
         )
 
+    # 4. Extract Visit Policy and Select Actions
     root_visits = tree["children_visits"][:, 0]  # [B, A]
     action_probs = get_mcts_visit_policy(root_visits, temperature=temperature)
 
