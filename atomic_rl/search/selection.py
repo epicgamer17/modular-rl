@@ -1,13 +1,8 @@
 import torch
 import torch.nn.functional as F
 from tensordict import TensorDict
-from typing import Tuple, Callable, List, Optional
-from ..utils import add_dirichlet_noise
-from .qtransforms import (
-    qtransform_completed_by_mix_value,
-    qtransform_by_parent_and_siblings,
-    qtransform_by_min_max,
-)
+from typing import Tuple, Callable, List
+from .qtransforms import qtransform_by_parent_and_siblings
 
 
 # TODO: should we merge this with select_leaf?
@@ -28,6 +23,19 @@ def puct_score(
     """
     batch_size = tree.batch_size[0]
     batch_range = torch.arange(batch_size, device=tree.device)
+
+    assert tree["node_visits"].ndim == 2, (
+        f"tree node buffers must be flat [B, N], got shape "
+        f"{tuple(tree['node_visits'].shape)}"
+    )
+    assert parent_nodes.shape == (batch_size,), (
+        f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
+    )
+    assert isinstance(depth, int) and depth >= 0, (
+        f"depth must be a non-negative int, got {depth!r}"
+    )
+    assert pb_c_init >= 0, f"pb_c_init must be >= 0, got {pb_c_init}"
+    assert pb_c_base >= 0, f"pb_c_base must be >= 0, got {pb_c_base}"
 
     # 1. Fetch node and child statistics
     visit_counts = tree["children_visits"][
@@ -64,33 +72,10 @@ def puct_score(
     return scores
 
 
-def gumbel_interior_action_score(
-    tree: TensorDict,
-    parent_nodes: torch.Tensor,  # [B]
-    depth: int = 0,
-    *,
-    qtransform: Callable = qtransform_completed_by_mix_value,
-    **kwargs,
-) -> torch.Tensor:
-    """Computes deterministic argmax input for non-root nodes in Gumbel MuZero.
-
-    Matches `mctx.gumbel_muzero_interior_action_selection`.
-    """
-    pass
-
-
 # TODO: work with Batched MCTS, batch_mcts.pdf
 # TODO: work with Vectorized MCTS
 # TODO: work iwth Batched + Vectorized MCTS
-# TODO: can we reuse our action_selection.py methods/functions?
 # TODO: Stochastic MuZero
-import torch
-from tensordict import TensorDict
-from typing import Tuple, Callable, List
-from .qtransforms import qtransform_by_parent_and_siblings
-from .selection import puct_score
-
-
 def select_leaf(
     tree: TensorDict,
     pb_c_base: float = 19652.0,
@@ -116,6 +101,16 @@ def select_leaf(
     batch_size = tree.batch_size[0]
     device = tree.device
     batch_range = torch.arange(batch_size, device=device)
+
+    assert tree["node_visits"].ndim == 2, (
+        f"tree node buffers must be flat [B, N], got shape "
+        f"{tuple(tree['node_visits'].shape)}"
+    )
+    assert isinstance(max_depth, int) and max_depth >= 1, (
+        f"max_depth must be an int >= 1, got {max_depth!r}"
+    )
+    assert pb_c_init >= 0, f"pb_c_init must be >= 0, got {pb_c_init}"
+    assert pb_c_base >= 0, f"pb_c_base must be >= 0, got {pb_c_base}"
 
     current_node = torch.zeros(batch_size, dtype=torch.long, device=device)
     active_mask = torch.ones(batch_size, dtype=torch.bool, device=device)

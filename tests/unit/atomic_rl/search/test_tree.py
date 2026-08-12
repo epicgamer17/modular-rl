@@ -13,8 +13,12 @@ def test_init_mcts_tree_geometry():
     num_actions = 3
     embedding_dim = 8
     root_embeddings = torch.randn(batch_size, embedding_dim)
+    root_logits = torch.randn(batch_size, num_actions)
+    root_value = torch.randn(batch_size)
 
-    tree = init_mcts_tree(root_embeddings, num_simulations, num_actions)
+    tree = init_mcts_tree(
+        root_embeddings, root_logits, root_value, num_simulations, num_actions
+    )
     max_nodes = num_simulations + 1  # 5 slots
 
     assert tree["embeddings"].shape == (batch_size, max_nodes, embedding_dim)

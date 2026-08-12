@@ -164,6 +164,11 @@ def add_dirichlet_noise(
     noisy_probs = (1.0 - epsilon) * probs + epsilon * noise
     noisy_logits = torch.log(torch.clamp(noisy_probs, min=1e-8))
 
+    # Preserve the mask in log-space so masked/illegal actions get exactly 0.0
+    # probability after softmax (log(1e-8) would leak a tiny nonzero prior).
+    if mask is not None:
+        noisy_logits = noisy_logits.masked_fill(mask == 0, -float("inf"))
+
     return noisy_logits
 
 

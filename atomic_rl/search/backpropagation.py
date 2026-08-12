@@ -1,16 +1,10 @@
 import torch
 from tensordict import TensorDict
-from typing import Tuple, Callable, List, Optional
-from ..utils import add_dirichlet_noise
+from typing import List, Tuple
 
 
 # TODO: make this work with alternating and single player games. also make work for catan (inconsistent turn ordering, ie p1 twice then p2 3 times, then p3 once)
 # TODO: make it work with more than 2 players
-import torch
-from tensordict import TensorDict
-from typing import List, Tuple
-
-
 def backpropagate_(
     tree: TensorDict,
     trajectory: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
@@ -18,6 +12,12 @@ def backpropagate_(
 ):
     """
     Backpropagates the leaf value up the search trajectory in-place.
+
+    Matches mctx's `search.backward`: each edge (s_t, a_t) stores the value of
+    its child node, so that Q(s, a) = reward(s, a) + discount(s, a) * V(s') is
+    reconstructed by `get_qvalues`. In particular, an alternating zero-sum game
+    is encoded by a negative discount on the edge, which flips the perspective
+    exactly once (in `get_qvalues`), not twice.
 
     Args:
         tree: The MCTS tree TensorDict matching mctx structure.
@@ -28,35 +28,22 @@ def backpropagate_(
     device = tree.device
     batch_range = torch.arange(batch_size, device=device)
 
-    # Running return starts at the evaluated leaf node value
+    # Fail fast on mismatched input shapes before doing any tree work.
+    assert tree["node_visits"].ndim == 2, (
+        f"tree node buffers must be flat [B, N], got shape "
+        f"{tuple(tree['node_visits'].shape)}"
+    )
+    assert leaf_value.shape == (batch_size,), (
+        f"leaf_value shape mismatch: expected [{batch_size}], got {tuple(leaf_value.shape)}"
+    )
+
+    # Running return starts at the evaluated leaf node value.
+    # The leaf node itself was initialized by expand_node_ (node_visits=1,
+    # node_values=raw value), matching mctx's update_tree_node, so backprop does
+    # not touch it again.
     running_value = leaf_value.clone()
 
-    # 1. Update leaf node statistics (s_L) before stepping backward
-    if trajectory:
-        last_node_idx, last_action_idx, last_mask = trajectory[-1]
-        b_idx = batch_range[last_mask]
-        ln_idx = last_node_idx[last_mask]
-        la_idx = last_action_idx[last_mask]
-
-        leaf_child_idx = tree["children_index"][b_idx, ln_idx, la_idx]
-        valid_leaf_mask = leaf_child_idx >= 0
-
-        if valid_leaf_mask.any():
-            lb_idx = b_idx[valid_leaf_mask]
-            lc_idx = leaf_child_idx[valid_leaf_mask]
-
-            # Increment leaf node visits
-            tree["node_visits"][lb_idx, lc_idx] += 1
-            l_visits = tree["node_visits"][lb_idx, lc_idx].to(tree["node_values"].dtype)
-
-            # Update leaf node value towards leaf_value
-            old_leaf_v = tree["node_values"][lb_idx, lc_idx]
-            target_leaf_v = running_value[lb_idx][valid_leaf_mask]
-            tree["node_values"][lb_idx, lc_idx] += (
-                target_leaf_v - old_leaf_v
-            ) / l_visits
-
-    # 2. Iterate backwards through trajectory (leaf -> root)
+    # Iterate backwards through trajectory (leaf -> root)
     for node_idx, action_idx, mask in reversed(trajectory):
         b_idx = batch_range[mask]
         n_idx = node_idx[mask]
@@ -64,6 +51,23 @@ def backpropagate_(
 
         if b_idx.numel() == 0:
             continue
+
+        # Fetch child node id for the transition (n_idx, a_idx); -1 if the edge
+        # has not been expanded this simulation (e.g. terminal lanes).
+        child_idx = tree["children_index"][b_idx, n_idx, a_idx]
+        has_child = child_idx >= 0
+
+        if has_child.any():
+            cb_idx = b_idx[has_child]
+            cn_idx = n_idx[has_child]
+            ca_idx = a_idx[has_child]
+            cc_idx = child_idx[has_child]
+
+            # Store the child node value on the edge (mctx semantics), so that
+            # get_qvalues computes Q(s, a) = reward + discount * V(s').
+            tree["children_values"][cb_idx, cn_idx, ca_idx] = tree["node_values"][
+                cb_idx, cc_idx
+            ]
 
         # Fetch reward and discount for transition from (n_idx, a_idx)
         rewards = tree["children_rewards"][b_idx, n_idx, a_idx]
@@ -73,23 +77,12 @@ def backpropagate_(
         step_return = rewards + discounts * running_value[b_idx]
         running_value[b_idx] = step_return
 
-        # 3. Update parent node (s_t) statistics (includes Root node at t=0)
+        # Update parent node (s_t) statistics (includes Root node at t=0)
         tree["node_visits"][b_idx, n_idx] += 1
         n_visits = tree["node_visits"][b_idx, n_idx].to(tree["node_values"].dtype)
 
         old_node_v = tree["node_values"][b_idx, n_idx]
         tree["node_values"][b_idx, n_idx] += (step_return - old_node_v) / n_visits
 
-        # 4. Update child edge (s_t, a_t) Q-value and visit statistics
+        # Update child edge (s_t, a_t) visit statistics
         tree["children_visits"][b_idx, n_idx, a_idx] += 1
-        c_visits = tree["children_visits"][b_idx, n_idx, a_idx].to(
-            tree["children_values"].dtype
-        )
-
-        old_q = tree["children_values"][b_idx, n_idx, a_idx]
-        new_q = old_q + (step_return - old_q) / c_visits
-        tree["children_values"][b_idx, n_idx, a_idx] = new_q
-
-        # 5. Update Min-Max Q-value bounds
-        tree["min_q"][b_idx] = torch.minimum(tree["min_q"][b_idx], new_q)
-        tree["max_q"][b_idx] = torch.maximum(tree["max_q"][b_idx], new_q)

@@ -172,10 +172,20 @@ class SharedReplayBuffer:
 # ============================================================================
 # 3. Multiprocessing Workers
 # ============================================================================
-def create_recurrent_fn(local_model: nn.Module):
-    """Creates a clean recurrent_fn without hardcoded -1e9 logit masks."""
+# TODO: i think we have a function for this already. Use it.
+def apply_action_mask(logits: torch.Tensor, legal_mask: torch.Tensor) -> torch.Tensor:
+    """Masks illegal actions to the minimum finite value of the dtype."""
+    min_logit = torch.finfo(logits.dtype).min
+    return logits.masked_fill(~legal_mask, min_logit)
 
-    def recurrent_fn(actions_taken: torch.Tensor, embeddings: torch.Tensor):
+
+def create_recurrent_fn(local_model: nn.Module) -> Callable:
+    """Creates an mctx-compliant recurrent_fn for PyTorch MCTS."""
+
+    def recurrent_fn(
+        actions_taken: torch.Tensor, embeddings: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        # 1. Step environment dynamics (AlphaZero simulator or MuZero world model)
         (
             next_embed,
             reward,
@@ -184,17 +194,26 @@ def create_recurrent_fn(local_model: nn.Module):
             next_legal_mask,
         ) = tictactoe_dynamics_fn(embeddings, actions_taken)
 
+        # 2. Evaluate policy logits and value network predictions for the next state
         with torch.no_grad():
             canonical_next = embeddings_to_canonical(next_embed)
             logits, value = local_model(canonical_next)
 
-        # Discount is 0.0 for terminal states, -1.0 for alternating turn zero-sum games
+        # 3. Mask illegal actions for the internal child node using min_logit
+        masked_logits = apply_action_mask(logits, next_legal_mask)
+
+        # 4. Handle discounts and terminal states
+        # For alternating-turn zero-sum games: non-terminal discount is -1.0, terminal is 0.0
         discount = torch.where(
             is_terminal,
             torch.zeros_like(reward),
             -torch.ones_like(reward),
         )
-        return logits, value, reward, discount, next_embed
+
+        # 5. Zero out network value for terminal states (terminal nodes have no future return)
+        value = torch.where(is_terminal, torch.zeros_like(value), value)
+
+        return masked_logits, value, reward, discount, next_embed
 
     return recurrent_fn
 
@@ -616,6 +635,7 @@ def main():
             p.terminate()
 
     print("AlphaZero Multiprocessing Training Completed Successfully.")
+
 
 if __name__ == "__main__":
     main()

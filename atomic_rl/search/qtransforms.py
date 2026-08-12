@@ -12,6 +12,10 @@ def get_qvalues(tree: TensorDict, parent_nodes: torch.Tensor) -> torch.Tensor:
     batch_size = tree.batch_size[0]
     batch_range = torch.arange(batch_size, device=tree.device)
 
+    assert parent_nodes.shape == (batch_size,), (
+        f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
+    )
+
     rewards = tree["children_rewards"][batch_range, parent_nodes]
     discounts = tree["children_discounts"][batch_range, parent_nodes]
     values = tree["children_values"][batch_range, parent_nodes]
@@ -51,6 +55,16 @@ def qtransform_by_min_max(
     batch_size = tree.batch_size[0]
     batch_range = torch.arange(batch_size, device=tree.device)
 
+    assert parent_nodes.shape == (batch_size,), (
+        f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
+    )
+    assert min_value.ndim <= 1, (
+        f"min_value must be scalar or [B], got shape {tuple(min_value.shape)}"
+    )
+    assert max_value.ndim <= 1, (
+        f"max_value must be scalar or [B], got shape {tuple(max_value.shape)}"
+    )
+
     # Extract Q-values and visit counts for candidate actions: [B, A]
     qvalues = get_qvalues(tree, parent_nodes)  # [B, A]
     visit_counts = tree["children_visits"][batch_range, parent_nodes]  # [B, A]
@@ -82,6 +96,10 @@ def qtransform_by_parent_and_siblings(
     """
     batch_size = tree.batch_size[0]
     batch_range = torch.arange(batch_size, device=tree.device)
+
+    assert parent_nodes.shape == (batch_size,), (
+        f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
+    )
 
     qvalues = get_qvalues(tree, parent_nodes)  # [B, A]
     visit_counts = tree["children_visits"][batch_range, parent_nodes]  # [B, A]
@@ -120,6 +138,10 @@ def qtransform_completed_by_mix_value(
     """
     batch_size = tree.batch_size[0]
     batch_range = torch.arange(batch_size, device=tree.device)
+
+    assert parent_nodes.shape == (batch_size,), (
+        f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
+    )
 
     qvalues = get_qvalues(tree, parent_nodes)  # [B, A]
     visit_counts = tree["children_visits"][batch_range, parent_nodes]  # [B, A]

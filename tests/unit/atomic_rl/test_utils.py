@@ -174,7 +174,8 @@ def test_add_dirichlet_noise():
     alpha = 0.3
 
     torch.manual_seed(42)
-    noisy_probs = add_dirichlet_noise(probs, epsilon, alpha)
+    noisy_logits = add_dirichlet_noise(torch.log(probs), epsilon, alpha)
+    noisy_probs = torch.softmax(noisy_logits, dim=-1)
 
     assert noisy_probs.shape == probs.shape
     torch.testing.assert_close(noisy_probs.sum(dim=-1), torch.ones(2))
@@ -274,7 +275,8 @@ def test_add_dirichlet_noise_with_action_mask():
     # Action index 1 is blocked out by the environment mask
     mask = torch.tensor([[1, 0, 1]], dtype=torch.bool)
 
-    noisy_probs = add_dirichlet_noise(probs, epsilon=0.5, alpha=0.3, mask=mask)
+    noisy_logits = add_dirichlet_noise(torch.log(probs), epsilon=0.5, alpha=0.3, mask=mask)
+    noisy_probs = torch.softmax(noisy_logits, dim=-1)
 
     assert noisy_probs.shape == probs.shape
     # Masked index must remain exactly 0.0

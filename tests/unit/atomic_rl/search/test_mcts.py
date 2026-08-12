@@ -7,7 +7,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_mcts_search_root_legal_mask():
-    """Verify that passing root_legal_mask to mcts_search explicitly masks root illegal actions."""
+    """Verify that passing legal_mask to mcts_search explicitly masks root illegal actions."""
     root_embed = torch.zeros(1, 4)
 
     def expansion_fn(embeds):
@@ -26,19 +26,32 @@ def test_mcts_search_root_legal_mask():
         [[True, False, True]]
     )  # Action 1 is explicitly ILLEGAL
 
-    tree = mcts_search(
+    root_logits, root_value = expansion_fn(root_embed)
+
+    def recurrent_fn(actions, embeds):
+        next_embeds, rewards, _, is_terminal = dummy_dynamics_fn(embeds, actions)
+        logits, values = expansion_fn(next_embeds)
+        values = torch.where(is_terminal, torch.zeros_like(values), values)
+        discount = torch.where(
+            is_terminal, torch.zeros_like(values), torch.ones_like(values)
+        )
+        return logits, values, rewards, discount, next_embeds
+
+    search_action, action_probs, tree = mcts_search(
         root_embeddings=root_embed,
+        root_logits=root_logits,
+        root_value=root_value,
+        recurrent_fn=recurrent_fn,
         num_simulations=20,
         num_actions=3,
-        expansion_fn=expansion_fn,
-        dynamics_fn=dummy_dynamics_fn,
-        root_legal_mask=root_legal_mask,
+        legal_mask=root_legal_mask,
         dirichlet_epsilon=0.5,
         dirichlet_alpha=0.3,
     )
 
     # Action 1 (highest raw logit) must be masked to 0.0 prior at root and receive 0 visits
-    assert tree["children_prior"][0, 0, 1].item() == 0.0
+    root_priors = torch.softmax(tree["children_prior_logits"][0, 0], dim=-1)
+    assert root_priors[1].item() == 0.0
     assert tree["children_visits"][0, 0, 1].item() == 0.0
     assert (
         tree["children_visits"][0, 0, 0].item()
@@ -48,7 +61,7 @@ def test_mcts_search_root_legal_mask():
 
 
 def test_mcts_search_dynamics_fn_legal_mask():
-    """Verify that dynamics_fn returning next_legal_mask explicitly masks child node illegal actions during search."""
+    """Verify that recurrent_fn masking child logits explicitly masks child node illegal actions during search."""
     root_embed = torch.zeros(1, 4)
 
     def expansion_fn(embeds):
@@ -69,13 +82,29 @@ def test_mcts_search_dynamics_fn_legal_mask():
     # Root legal mask allows all actions at root so simulation moves to child
     root_legal_mask = torch.tensor([[True, True, True]])
 
-    tree = mcts_search(
+    root_logits, root_value = expansion_fn(root_embed)
+
+    def recurrent_fn(actions, embeds):
+        next_embeds, rewards, _, is_terminal, next_legal_mask = dynamics_fn_with_mask(
+            embeds, actions
+        )
+        logits, values = expansion_fn(next_embeds)
+        # Mask illegal actions for the child node inside the recurrent_fn
+        masked_logits = torch.where(next_legal_mask, logits, -1e9)
+        values = torch.where(is_terminal, torch.zeros_like(values), values)
+        discount = torch.where(
+            is_terminal, torch.zeros_like(values), torch.ones_like(values)
+        )
+        return masked_logits, values, rewards, discount, next_embeds
+
+    search_action, action_probs, tree = mcts_search(
         root_embeddings=root_embed,
+        root_logits=root_logits,
+        root_value=root_value,
+        recurrent_fn=recurrent_fn,
         num_simulations=10,
         num_actions=3,
-        expansion_fn=expansion_fn,
-        dynamics_fn=dynamics_fn_with_mask,
-        root_legal_mask=root_legal_mask,
+        legal_mask=root_legal_mask,
         dirichlet_epsilon=0.0,
     )
 

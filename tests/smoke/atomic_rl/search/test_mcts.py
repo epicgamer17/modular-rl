@@ -16,6 +16,7 @@ def test_mcts_search_loop():
     batch_size = 2
     num_simulations = 3
     num_actions = 2
+    gamma = 0.95
     root_embeddings = torch.randn(batch_size, 4)
 
     # Mock neural network output dynamics
@@ -32,15 +33,23 @@ def test_mcts_search_loop():
         next_to_play = torch.zeros(embeddings.shape[0], dtype=torch.long)
         return next_emb, rewards, next_to_play
 
+    root_logits, root_value = dummy_expansion(root_embeddings)
+
+    def recurrent_fn(actions, embeddings):
+        next_emb, rewards, _ = dummy_dynamics(embeddings, actions)
+        logits, values = dummy_expansion(next_emb)
+        discount = torch.full((embeddings.shape[0],), gamma)
+        return logits, values, rewards, discount, next_emb
+
     # Explicitly deactivate dirichlet noise injection to avoid mock patching utils modules
-    tree = mcts_search(
+    search_action, action_probs, tree = mcts_search(
         root_embeddings=root_embeddings,
+        root_logits=root_logits,
+        root_value=root_value,
+        recurrent_fn=recurrent_fn,
         num_simulations=num_simulations,
         num_actions=num_actions,
-        expansion_fn=dummy_expansion,
-        dynamics_fn=dummy_dynamics,
         dirichlet_epsilon=0.0,
-        gamma=0.95,
     )
 
     assert isinstance(tree, TensorDict)

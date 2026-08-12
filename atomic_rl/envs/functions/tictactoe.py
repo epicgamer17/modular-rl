@@ -59,7 +59,8 @@ def tictactoe_dynamics_fn(
             - next_legal_mask: [B, 9] (boolean mask)
     """
     batch_size = embeddings.shape[0]
-    batch_range = torch.arange(batch_size, device=embeddings.device)
+    device = embeddings.device
+    batch_range = torch.arange(batch_size, device=device)
 
     board = embeddings[..., 0].clone()  # [B, 3, 3] (+1 for P0, -1 for P1)
     current_player = embeddings[:, 0, 0, 1].long()  # [B] (0 or 1)
@@ -67,6 +68,30 @@ def tictactoe_dynamics_fn(
     # Convert flat action 0..8 to (row, col)
     row = actions_taken // 3
     col = actions_taken % 3
+    # 1. Bounds check
+    if (actions_taken < 0).any() or (actions_taken > 8).any():
+        invalid_actions = actions_taken[(actions_taken < 0) | (actions_taken > 8)]
+        raise ValueError(
+            f"Action out of bounds [0..8]. Got actions: {invalid_actions.tolist()}"
+        )
+
+    # 2. Check if selected cells are already occupied (occupied != 0.0)
+    target_cells = board[batch_range, row, col]
+    illegal_mask = target_cells != 0.0
+
+    if illegal_mask.any():
+        illegal_batch_indices = batch_range[illegal_mask].tolist()
+        illegal_actions = actions_taken[illegal_mask].tolist()
+        occupied_values = target_cells[illegal_mask].tolist()
+
+        raise ValueError(
+            f"\n[FATAL ERROR] Illegal action(s) detected in dynamics transition!\n"
+            f" - Affected Batch Indices: {illegal_batch_indices}\n"
+            f" - Illegal Actions Attempted: {illegal_actions}\n"
+            f" - Occupied Square Values: {occupied_values}\n"
+            f"This indicates MCTS selection or tree structure selected an invalid action branch."
+        )
+    # =========================================================================
 
     piece = torch.where(current_player == 0, 1.0, -1.0)
     board[batch_range, row, col] = piece

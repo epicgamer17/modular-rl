@@ -1,7 +1,4 @@
 import torch
-from tensordict import TensorDict
-from typing import Tuple, Callable, List, Optional
-from ..utils import add_dirichlet_noise
 
 
 # TODO: should I make this accept a tree?
@@ -24,6 +21,9 @@ def get_mcts_visit_policy(
         torch.Tensor: Target policy probability distribution with same shape as visit_counts.
     """
     assert temperature >= 0.0, f"Temperature must be non-negative, got {temperature}"
+    assert visit_counts.ndim in [1, 2], (
+        f"visit_counts must be 1D [A] or 2D [B, A], got shape {tuple(visit_counts.shape)}"
+    )
 
     if temperature == 0.0:
         # TODO: right now for 2 equally visited actions this will output 0.5, 0.5. Is this what we want? Or do we want to use F.one_hot and get a 1, 0? or 0, 1? Should we add a random tie-breaking method?

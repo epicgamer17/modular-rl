@@ -25,7 +25,31 @@ def init_mcts_tree(
     Returns:
         A TensorDict representing the initial tree state.
     """
+    assert isinstance(num_simulations, int) and not isinstance(
+        num_simulations, bool
+    ), f"num_simulations must be an int, got {num_simulations!r}"
+    assert num_simulations >= 1, f"num_simulations must be >= 1, got {num_simulations}"
+    assert isinstance(num_actions, int) and not isinstance(num_actions, bool), (
+        f"num_actions must be an int, got {num_actions!r}"
+    )
+    assert num_actions >= 1, f"num_actions must be >= 1, got {num_actions}"
+    assert root_embeddings.ndim >= 2, (
+        f"root_embeddings must be at least 2D [B, D...], got shape "
+        f"{tuple(root_embeddings.shape)}"
+    )
     batch_size = root_embeddings.shape[0]
+    assert root_logits.shape == (batch_size, num_actions), (
+        f"root_logits shape mismatch: expected [{batch_size}, {num_actions}], "
+        f"got {tuple(root_logits.shape)}"
+    )
+    assert root_value.shape == (batch_size,), (
+        f"root_value shape mismatch: expected [{batch_size}], got {tuple(root_value.shape)}"
+    )
+    if legal_mask is not None:
+        assert legal_mask.shape == (batch_size, num_actions), (
+            f"legal_mask shape mismatch: expected [{batch_size}, {num_actions}], "
+            f"got {tuple(legal_mask.shape)}"
+        )
     max_nodes = num_simulations + 1  # Root + 1 node per simulation
 
     # Pre-allocate the tree tensors (Torch Compile friendly)
@@ -71,32 +95,12 @@ def init_mcts_tree(
             "embeddings": root_embeddings.new_zeros(
                 (batch_size, max_nodes, *root_embeddings.shape[1:])
             ),
-            "node_type": root_embeddings.new_zeros(
-                (batch_size, max_nodes), dtype=torch.int8
-            ),  # 0: decision, 1: chance
-            # TODO: remove to_play and is_terminal. Have the dynamics_fn output the correct value for discount factor isntead. 0.0 for terminal states, * -1 if another player otherwise * 1 for discount.
-            "to_play": root_embeddings.new_zeros(
-                (batch_size, max_nodes), dtype=torch.long
-            ),
             "is_terminal": root_embeddings.new_zeros(
                 (batch_size, max_nodes), dtype=torch.bool
             ),
             # Node counter starts at 1 (index 0 is root)
             "node_counts": root_embeddings.new_ones(batch_size, dtype=torch.long),
-            # NOTE: not in mctx?
-            # Search bounds for Q-transforms
-            # TODO: why init with float inf and -inf and then just reinit below with root value?
-            # Search bounds for Q-transforms initialized with root value
-            "min_q": torch.full(
-                (batch_size,),
-                float("inf"),
-                dtype=torch.float32,
-            ),
-            "max_q": torch.full(
-                (batch_size,),
-                float("-inf"),
-                dtype=torch.float32,
-            ),  # Root action mask (mctx uses root_invalid_actions = ~legal_mask)
+            # Root action mask (mctx uses root_invalid_actions = ~legal_mask)
             "root_legal_mask": (
                 legal_mask
                 if legal_mask is not None
