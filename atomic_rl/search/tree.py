@@ -29,9 +29,9 @@ def init_mcts_tree(
         num_simulations, bool
     ), f"num_simulations must be an int, got {num_simulations!r}"
     assert num_simulations >= 1, f"num_simulations must be >= 1, got {num_simulations}"
-    assert isinstance(num_actions, int) and not isinstance(num_actions, bool), (
-        f"num_actions must be an int, got {num_actions!r}"
-    )
+    assert isinstance(num_actions, int) and not isinstance(
+        num_actions, bool
+    ), f"num_actions must be an int, got {num_actions!r}"
     assert num_actions >= 1, f"num_actions must be >= 1, got {num_actions}"
     assert root_embeddings.ndim >= 2, (
         f"root_embeddings must be at least 2D [B, D...], got shape "
@@ -42,9 +42,9 @@ def init_mcts_tree(
         f"root_logits shape mismatch: expected [{batch_size}, {num_actions}], "
         f"got {tuple(root_logits.shape)}"
     )
-    assert root_value.shape == (batch_size,), (
-        f"root_value shape mismatch: expected [{batch_size}], got {tuple(root_value.shape)}"
-    )
+    assert root_value.shape == (
+        batch_size,
+    ), f"root_value shape mismatch: expected [{batch_size}], got {tuple(root_value.shape)}"
     if legal_mask is not None:
         assert legal_mask.shape == (batch_size, num_actions), (
             f"legal_mask shape mismatch: expected [{batch_size}, {num_actions}], "

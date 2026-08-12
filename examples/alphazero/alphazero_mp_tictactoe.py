@@ -16,8 +16,8 @@ Multiprocessing Architecture:
       computes policy and value loss, steps the SGD optimizer, and updates
       shared weights.
     - 1 Async Evaluator Process: Periodically evaluates the shared model against
-    a Random
-      baseline in the background, logging metrics to W&B asynchronously.
+    both a Random baseline and a Perfect (negamax) opponent in the background,
+    logging metrics to W&B asynchronously.
 """
 
 import random
@@ -55,15 +55,15 @@ import wandb
 # ---------------------------------------------------------------------------
 TOTAL_TRAINING_STEPS = 20000
 NUM_ACTORS = 3
-ENVS_PER_ACTOR = 5  # 5 parallel vectorized environments per actor
+ENVS_PER_ACTOR = 3  # 4 parallel vectorized environments per actor
 MIN_BUFFER_SIZE = 64
-EVAL_INTERVAL_STEPS = 500
-PARAM_SYNC_INTERVAL = 50
-NUM_MCTS_SIMULATIONS = 25
+EVAL_INTERVAL_STEPS = 250
+PARAM_SYNC_INTERVAL = 100
+NUM_MCTS_SIMULATIONS = 50
 
 # MCTS PUCT Search Constants
 C_PUCT = 1.25
-DIRICHLET_ALPHA = 1.0
+DIRICHLET_ALPHA = 0.3
 DIRICHLET_EPSILON = 0.25
 
 # Temperature Schedule Constants
@@ -77,7 +77,7 @@ REPLAY_BUFFER_CAPACITY = 10000
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
 NUM_FILTERS = 24
-NUM_RES_BLOCKS = 3
+NUM_RES_BLOCKS = 6
 
 NUM_EVAL_GAMES = 100
 SEED = 42
